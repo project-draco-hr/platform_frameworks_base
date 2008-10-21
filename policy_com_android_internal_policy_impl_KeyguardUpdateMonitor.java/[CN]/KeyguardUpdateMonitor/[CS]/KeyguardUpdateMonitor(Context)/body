@@ -1,0 +1,83 @@
+{
+  mContext=context;
+  mHandler=new Handler(){
+    @Override public void handleMessage(    Message msg){
+switch (msg.what) {
+case MSG_CONFIGURATION_CHANGED:
+        handleConfigurationChange();
+      break;
+case MSG_TIME_UPDATE:
+    handleTimeUpdate();
+  break;
+case MSG_BATTERY_UPDATE:
+handleBatteryUpdate(msg.arg1,msg.arg2);
+break;
+case MSG_CARRIER_INFO_UPDATE:
+handleCarrierInfoUpdate();
+break;
+case MSG_SIM_STATE_CHANGE:
+handleSimStateChange((SimArgs)msg.obj);
+break;
+}
+}
+}
+;
+mDeviceProvisioned=Settings.System.getInt(mContext.getContentResolver(),Settings.System.DEVICE_PROVISIONED,0) != 0;
+if (!mDeviceProvisioned) {
+mContentObserver=new ContentObserver(mHandler){
+@Override public void onChange(boolean selfChange){
+super.onChange(selfChange);
+mDeviceProvisioned=Settings.System.getInt(mContext.getContentResolver(),Settings.System.DEVICE_PROVISIONED,0) != 0;
+if (mDeviceProvisioned && mContentObserver != null) {
+mContext.getContentResolver().unregisterContentObserver(mContentObserver);
+mContentObserver=null;
+}
+if (DEBUG) Log.d(TAG,"DEVICE_PROVISIONED state = " + mDeviceProvisioned);
+}
+}
+;
+mContext.getContentResolver().registerContentObserver(Settings.System.getUriFor(Settings.System.DEVICE_PROVISIONED),false,mContentObserver);
+mDeviceProvisioned=Settings.System.getInt(mContext.getContentResolver(),Settings.System.DEVICE_PROVISIONED,0) != 0;
+}
+mInPortrait=queryInPortrait();
+mKeyboardOpen=queryKeyboardOpen();
+mSimState=SimCard.State.READY;
+mDevicePluggedIn=true;
+mBatteryLevel=100;
+mTelephonyPlmn=getDefaultPlmn();
+final IntentFilter filter=new IntentFilter();
+filter.addAction(Intent.ACTION_CONFIGURATION_CHANGED);
+filter.addAction(Intent.ACTION_TIME_TICK);
+filter.addAction(Intent.ACTION_TIME_CHANGED);
+filter.addAction(Intent.ACTION_BATTERY_CHANGED);
+filter.addAction(Intent.ACTION_TIMEZONE_CHANGED);
+filter.addAction(TelephonyIntents.ACTION_SIM_STATE_CHANGED);
+filter.addAction(SPN_STRINGS_UPDATED_ACTION);
+context.registerReceiver(new BroadcastReceiver(){
+public void onReceive(Context context,Intent intent){
+final String action=intent.getAction();
+if (DEBUG) Log.d(TAG,"received broadcast " + action);
+if (Intent.ACTION_CONFIGURATION_CHANGED.equals(action)) {
+mHandler.sendMessage(mHandler.obtainMessage(MSG_CONFIGURATION_CHANGED));
+}
+ else if (Intent.ACTION_TIME_TICK.equals(action) || Intent.ACTION_TIME_CHANGED.equals(action) || Intent.ACTION_TIMEZONE_CHANGED.equals(action)) {
+mHandler.sendMessage(mHandler.obtainMessage(MSG_TIME_UPDATE));
+}
+ else if (SPN_STRINGS_UPDATED_ACTION.equals(action)) {
+mTelephonyPlmn=getTelephonyPlmnFrom(intent);
+mTelephonySpn=getTelephonySpnFrom(intent);
+mHandler.sendMessage(mHandler.obtainMessage(MSG_CARRIER_INFO_UPDATE));
+}
+ else if (Intent.ACTION_BATTERY_CHANGED.equals(action)) {
+final int pluggedInStatus=intent.getIntExtra("status",BATTERY_STATUS_UNKNOWN);
+int batteryLevel=intent.getIntExtra("level",0);
+final Message msg=mHandler.obtainMessage(MSG_BATTERY_UPDATE,pluggedInStatus,batteryLevel);
+mHandler.sendMessage(msg);
+}
+ else if (TelephonyIntents.ACTION_SIM_STATE_CHANGED.equals(action)) {
+mHandler.sendMessage(mHandler.obtainMessage(MSG_SIM_STATE_CHANGE,new SimArgs(intent)));
+}
+}
+}
+,filter);
+}
