@@ -1,0 +1,91 @@
+{
+  if (DEBUG_VISBILITY)   Log.v(TAG,"ensureActivitiesVisible behind " + top + " configChanges=0x"+ Integer.toHexString(configChanges));
+  final int count=mHistory.size();
+  int i=count - 1;
+  while (mHistory.get(i) != top) {
+    i--;
+  }
+  HistoryRecord r;
+  boolean behindFullscreen=false;
+  for (; i >= 0; i--) {
+    r=(HistoryRecord)mHistory.get(i);
+    if (DEBUG_VISBILITY)     Log.v(TAG,"Make visible? " + r + " finishing="+ r.finishing+ " state="+ r.state);
+    if (r.finishing) {
+      continue;
+    }
+    final boolean doThisProcess=onlyThisProcess == null || onlyThisProcess.equals(r.processName);
+    if (r != starting && doThisProcess) {
+      ensureActivityConfigurationLocked(r);
+    }
+    if (r.app == null || r.app.thread == null) {
+      if (onlyThisProcess == null || onlyThisProcess.equals(r.processName)) {
+        if (DEBUG_VISBILITY)         Log.v(TAG,"Start and freeze screen for " + r);
+        if (r != starting) {
+          r.startFreezingScreenLocked(r.app,configChanges);
+        }
+        if (!r.visible) {
+          if (DEBUG_VISBILITY)           Log.v(TAG,"Starting and making visible: " + r);
+          mWindowManager.setAppVisibility(r,true);
+        }
+        if (r != starting) {
+          startSpecificActivityLocked(r,false,false);
+        }
+      }
+    }
+ else     if (r.visible) {
+      if (DEBUG_VISBILITY)       Log.v(TAG,"Skipping: already visible at " + r);
+      r.stopFreezingScreenLocked(false);
+    }
+ else     if (onlyThisProcess == null) {
+      r.visible=true;
+      if (r.state != ActivityState.RESUMED && r != starting) {
+        if (DEBUG_VISBILITY)         Log.v(TAG,"Making visible and scheduling visibility: " + r);
+        try {
+          mWindowManager.setAppVisibility(r,true);
+          r.app.thread.scheduleWindowVisibility(r,true);
+          r.stopFreezingScreenLocked(false);
+        }
+ catch (        Exception e) {
+          Log.w(TAG,"Exception thrown making visibile: " + r.intent.getComponent(),e);
+        }
+      }
+    }
+    configChanges|=r.configChangeFlags;
+    if (r.fullscreen) {
+      if (DEBUG_VISBILITY)       Log.v(TAG,"Stopping: fullscreen at " + r);
+      behindFullscreen=true;
+      i--;
+      break;
+    }
+  }
+  while (i >= 0) {
+    r=(HistoryRecord)mHistory.get(i);
+    if (DEBUG_VISBILITY)     Log.v(TAG,"Make invisible? " + r + " finishing="+ r.finishing+ " state="+ r.state+ " behindFullscreen="+ behindFullscreen);
+    if (!r.finishing) {
+      if (behindFullscreen) {
+        if (r.visible) {
+          if (DEBUG_VISBILITY)           Log.v(TAG,"Making invisible: " + r);
+          r.visible=false;
+          try {
+            mWindowManager.setAppVisibility(r,false);
+            if ((r.state == ActivityState.STOPPING || r.state == ActivityState.STOPPED) && r.app != null && r.app.thread != null) {
+              if (DEBUG_VISBILITY)               Log.v(TAG,"Scheduling invisibility: " + r);
+              r.app.thread.scheduleWindowVisibility(r,false);
+            }
+          }
+ catch (          Exception e) {
+            Log.w(TAG,"Exception thrown making hidden: " + r.intent.getComponent(),e);
+          }
+        }
+ else {
+          if (DEBUG_VISBILITY)           Log.v(TAG,"Already invisible: " + r);
+        }
+      }
+ else       if (r.fullscreen) {
+        if (DEBUG_VISBILITY)         Log.v(TAG,"Now behindFullscreen: " + r);
+        behindFullscreen=true;
+      }
+    }
+    i--;
+  }
+}

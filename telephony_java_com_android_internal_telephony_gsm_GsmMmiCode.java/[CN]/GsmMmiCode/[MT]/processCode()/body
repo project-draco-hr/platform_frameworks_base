@@ -1,0 +1,156 @@
+{
+  try {
+    if (isShortCode()) {
+      Log.d(LOG_TAG,"isShortCode");
+      sendUssd(dialingNumber);
+    }
+ else     if (dialingNumber != null) {
+      throw new RuntimeException("Invalid or Unsupported MMI Code");
+    }
+ else     if (sc != null && sc.equals(SC_CLIP)) {
+      Log.d(LOG_TAG,"is CLIP");
+      if (isInterrogate()) {
+        phone.mCM.queryCLIP(obtainMessage(EVENT_QUERY_COMPLETE,this));
+      }
+ else {
+        throw new RuntimeException("Invalid or Unsupported MMI Code");
+      }
+    }
+ else     if (sc != null && sc.equals(SC_CLIR)) {
+      Log.d(LOG_TAG,"is CLIR");
+      if (isActivate()) {
+        phone.mCM.setCLIR(CommandsInterface.CLIR_INVOCATION,obtainMessage(EVENT_SET_COMPLETE,this));
+      }
+ else       if (isDeactivate()) {
+        phone.mCM.setCLIR(CommandsInterface.CLIR_SUPPRESSION,obtainMessage(EVENT_SET_COMPLETE,this));
+      }
+ else       if (isInterrogate()) {
+        phone.mCM.getCLIR(obtainMessage(EVENT_GET_CLIR_COMPLETE,this));
+      }
+ else {
+        throw new RuntimeException("Invalid or Unsupported MMI Code");
+      }
+    }
+ else     if (isServiceCodeCallForwarding(sc)) {
+      Log.d(LOG_TAG,"is CF");
+      String dialingNumber=sia;
+      int serviceClass=siToServiceClass(sib);
+      int reason=scToCallForwardReason(sc);
+      int time=siToTime(sic);
+      if (isInterrogate()) {
+        phone.mCM.queryCallForwardStatus(reason,serviceClass,dialingNumber,obtainMessage(EVENT_QUERY_CF_COMPLETE,this));
+      }
+ else {
+        int cfAction;
+        if (isActivate()) {
+          cfAction=CommandsInterface.CF_ACTION_ENABLE;
+        }
+ else         if (isDeactivate()) {
+          cfAction=CommandsInterface.CF_ACTION_DISABLE;
+        }
+ else         if (isRegister()) {
+          cfAction=CommandsInterface.CF_ACTION_REGISTRATION;
+        }
+ else         if (isErasure()) {
+          cfAction=CommandsInterface.CF_ACTION_ERASURE;
+        }
+ else {
+          throw new RuntimeException("invalid action");
+        }
+        int isSettingUnconditionalVoice=((reason == CommandsInterface.CF_REASON_UNCONDITIONAL) && ((serviceClass & CommandsInterface.SERVICE_CLASS_VOICE) != 0)) ? 1 : 0;
+        int isEnableDesired=((cfAction == CommandsInterface.CF_ACTION_ENABLE) || (cfAction == CommandsInterface.CF_ACTION_REGISTRATION)) ? 1 : 0;
+        phone.mCM.setCallForward(cfAction,reason,serviceClass,dialingNumber,time,obtainMessage(EVENT_SET_CFF_COMPLETE,isSettingUnconditionalVoice,isEnableDesired,this));
+      }
+    }
+ else     if (isServiceCodeCallBarring(sc)) {
+      String password=sia;
+      int serviceClass=siToServiceClass(sib);
+      String facility=scToBarringFacility(sc);
+      if (isInterrogate()) {
+        phone.mCM.queryFacilityLock(facility,password,serviceClass,obtainMessage(EVENT_QUERY_COMPLETE,this));
+      }
+ else       if (isActivate() || isDeactivate()) {
+        phone.mCM.setFacilityLock(facility,isActivate(),password,serviceClass,obtainMessage(EVENT_SET_COMPLETE,this));
+      }
+ else {
+        throw new RuntimeException("Invalid or Unsupported MMI Code");
+      }
+    }
+ else     if (sc != null && sc.equals(SC_PWD)) {
+      String facility;
+      String oldPwd=sib;
+      String newPwd=sic;
+      if (isActivate() || isRegister()) {
+        action=ACTION_REGISTER;
+        if (sia == null) {
+          facility=CommandsInterface.CB_FACILITY_BA_ALL;
+        }
+ else {
+          facility=scToBarringFacility(sia);
+        }
+        if (newPwd.equals(pwd)) {
+          phone.mCM.changeBarringPassword(facility,oldPwd,newPwd,obtainMessage(EVENT_SET_COMPLETE,this));
+        }
+ else {
+          handlePasswordError(com.android.internal.R.string.passwordIncorrect);
+        }
+      }
+ else {
+        throw new RuntimeException("Invalid or Unsupported MMI Code");
+      }
+    }
+ else     if (sc != null && sc.equals(SC_WAIT)) {
+      int serviceClass=siToServiceClass(sia);
+      if (isActivate() || isDeactivate()) {
+        phone.mCM.setCallWaiting(isActivate(),serviceClass,obtainMessage(EVENT_SET_COMPLETE,this));
+      }
+ else       if (isInterrogate()) {
+        phone.mCM.queryCallWaiting(serviceClass,obtainMessage(EVENT_QUERY_COMPLETE,this));
+      }
+ else {
+        throw new RuntimeException("Invalid or Unsupported MMI Code");
+      }
+    }
+ else     if (isPinCommand()) {
+      String oldPinOrPuk=sia;
+      String newPin=sib;
+      int pinLen=newPin.length();
+      if (isRegister()) {
+        if (!newPin.equals(sic)) {
+          handlePasswordError(com.android.internal.R.string.mismatchPin);
+        }
+ else         if (pinLen < 4 || pinLen > 8) {
+          handlePasswordError(com.android.internal.R.string.invalidPin);
+        }
+ else {
+          if (sc.equals(SC_PIN)) {
+            phone.mCM.changeSimPin(oldPinOrPuk,newPin,obtainMessage(EVENT_SET_COMPLETE,this));
+          }
+ else           if (sc.equals(SC_PIN2)) {
+            phone.mCM.changeSimPin2(oldPinOrPuk,newPin,obtainMessage(EVENT_SET_COMPLETE,this));
+          }
+ else           if (sc.equals(SC_PUK)) {
+            phone.mCM.supplySimPuk(oldPinOrPuk,newPin,obtainMessage(EVENT_SET_COMPLETE,this));
+          }
+ else           if (sc.equals(SC_PUK2)) {
+            phone.mCM.supplySimPuk2(oldPinOrPuk,newPin,obtainMessage(EVENT_SET_COMPLETE,this));
+          }
+        }
+      }
+ else {
+        throw new RuntimeException("Invalid or Unsupported MMI Code");
+      }
+    }
+ else     if (poundString != null) {
+      sendUssd(poundString);
+    }
+ else {
+      throw new RuntimeException("Invalid or Unsupported MMI Code");
+    }
+  }
+ catch (  RuntimeException exc) {
+    state=State.FAILED;
+    message=context.getText(com.android.internal.R.string.mmiError);
+    phone.onMMIDone(this);
+  }
+}

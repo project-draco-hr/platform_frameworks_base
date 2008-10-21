@@ -1,0 +1,139 @@
+{
+switch (field) {
+case PduHeaders.MMS_VERSION:
+    appendOctet(field);
+  int version=mPduHeader.getOctet(field);
+if (0 == version) {
+  appendShortInteger(PduHeaders.MMS_VERSION_1_3);
+}
+ else {
+  appendShortInteger(version);
+}
+break;
+case PduHeaders.MESSAGE_ID:
+case PduHeaders.TRANSACTION_ID:
+byte[] textString=mPduHeader.getTextString(field);
+if (null == textString) {
+return PDU_COMPOSE_FIELD_NOT_SET;
+}
+appendOctet(field);
+appendTextString(textString);
+break;
+case PduHeaders.TO:
+case PduHeaders.BCC:
+case PduHeaders.CC:
+EncodedStringValue[] addr=mPduHeader.getEncodedStringValues(field);
+if (null == addr) {
+return PDU_COMPOSE_FIELD_NOT_SET;
+}
+EncodedStringValue temp;
+for (int i=0; i < addr.length; i++) {
+try {
+int addressType=checkAddressType(addr[i].getString());
+temp=EncodedStringValue.copy(addr[i]);
+if (PDU_PHONE_NUMBER_ADDRESS_TYPE == addressType) {
+temp.appendTextString(STRING_PHONE_NUMBER_ADDRESS_TYPE.getBytes());
+}
+ else if (PDU_IPV4_ADDRESS_TYPE == addressType) {
+temp.appendTextString(STRING_IPV4_ADDRESS_TYPE.getBytes());
+}
+ else if (PDU_IPV6_ADDRESS_TYPE == addressType) {
+temp.appendTextString(STRING_IPV6_ADDRESS_TYPE.getBytes());
+}
+}
+ catch (NullPointerException e) {
+return PDU_COMPOSE_CONTENT_ERROR;
+}
+appendOctet(field);
+appendEncodedString(temp);
+}
+break;
+case PduHeaders.FROM:
+appendOctet(field);
+EncodedStringValue from=mPduHeader.getEncodedStringValue(field);
+if ((from == null) || new String(from.getTextString()).equals(PduHeaders.FROM_INSERT_ADDRESS_TOKEN_STR)) {
+append(1);
+append(PduHeaders.FROM_INSERT_ADDRESS_TOKEN);
+}
+ else {
+mStack.newbuf();
+PositionMarker fstart=mStack.mark();
+append(PduHeaders.FROM_ADDRESS_PRESENT_TOKEN);
+appendEncodedString(from);
+int flen=fstart.getLength();
+mStack.pop();
+appendValueLength(flen);
+mStack.copy();
+}
+break;
+case PduHeaders.READ_STATUS:
+case PduHeaders.STATUS:
+case PduHeaders.REPORT_ALLOWED:
+case PduHeaders.PRIORITY:
+case PduHeaders.DELIVERY_REPORT:
+case PduHeaders.READ_REPORT:
+int octet=mPduHeader.getOctet(field);
+if (0 == octet) {
+return PDU_COMPOSE_FIELD_NOT_SET;
+}
+appendOctet(field);
+appendOctet(octet);
+break;
+case PduHeaders.DATE:
+long date=mPduHeader.getLongInteger(field);
+if (-1 == date) {
+return PDU_COMPOSE_FIELD_NOT_SET;
+}
+appendOctet(field);
+appendDateValue(date);
+break;
+case PduHeaders.SUBJECT:
+EncodedStringValue enString=mPduHeader.getEncodedStringValue(field);
+if (null == enString) {
+return PDU_COMPOSE_FIELD_NOT_SET;
+}
+appendOctet(field);
+appendEncodedString(enString);
+break;
+case PduHeaders.MESSAGE_CLASS:
+byte[] messageClass=mPduHeader.getTextString(field);
+if (null == messageClass) {
+return PDU_COMPOSE_FIELD_NOT_SET;
+}
+appendOctet(field);
+if (Arrays.equals(messageClass,PduHeaders.MESSAGE_CLASS_ADVERTISEMENT_STR.getBytes())) {
+appendOctet(PduHeaders.MESSAGE_CLASS_ADVERTISEMENT);
+}
+ else if (Arrays.equals(messageClass,PduHeaders.MESSAGE_CLASS_AUTO_STR.getBytes())) {
+appendOctet(PduHeaders.MESSAGE_CLASS_AUTO);
+}
+ else if (Arrays.equals(messageClass,PduHeaders.MESSAGE_CLASS_PERSONAL_STR.getBytes())) {
+appendOctet(PduHeaders.MESSAGE_CLASS_PERSONAL);
+}
+ else if (Arrays.equals(messageClass,PduHeaders.MESSAGE_CLASS_INFORMATIONAL_STR.getBytes())) {
+appendOctet(PduHeaders.MESSAGE_CLASS_INFORMATIONAL);
+}
+ else {
+appendTextString(messageClass);
+}
+break;
+case PduHeaders.EXPIRY:
+long expiry=mPduHeader.getLongInteger(field);
+if (-1 == expiry) {
+return PDU_COMPOSE_FIELD_NOT_SET;
+}
+appendOctet(field);
+mStack.newbuf();
+PositionMarker expiryStart=mStack.mark();
+append(PduHeaders.VALUE_RELATIVE_TOKEN);
+appendLongInteger(expiry);
+int expiryLength=expiryStart.getLength();
+mStack.pop();
+appendValueLength(expiryLength);
+mStack.copy();
+break;
+default :
+return PDU_COMPOSE_FIELD_NOT_SUPPORTED;
+}
+return PDU_COMPOSE_SUCCESS;
+}

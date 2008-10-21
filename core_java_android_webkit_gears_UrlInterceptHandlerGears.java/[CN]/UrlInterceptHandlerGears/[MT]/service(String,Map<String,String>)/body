@@ -1,0 +1,66 @@
+{
+  Map<String,String[]> lowercaseRequestHeaders=new HashMap<String,String[]>();
+  Iterator<Map.Entry<String,String>> requestHeadersIt=requestHeaders.entrySet().iterator();
+  while (requestHeadersIt.hasNext()) {
+    Map.Entry<String,String> entry=requestHeadersIt.next();
+    String key=entry.getKey();
+    String mapValue[]={key,entry.getValue()};
+    lowercaseRequestHeaders.put(key.toLowerCase(),mapValue);
+  }
+  ServiceResponse response=getServiceResponse(url,lowercaseRequestHeaders);
+  if (response == null) {
+    return null;
+  }
+  String gearsUrl="gears" + url.substring("http".length());
+  long now_ms=System.currentTimeMillis();
+  String expires=DateUtils.formatDate(new Date(now_ms + CACHE_EXPIRY_MS));
+  response.setResponseHeader(HttpRequestAndroid.KEY_EXPIRES,expires);
+  Headers headers=new Headers();
+  Iterator<Map.Entry<String,String[]>> responseHeadersIt=response.getResponseHeaders().entrySet().iterator();
+  while (responseHeadersIt.hasNext()) {
+    Map.Entry<String,String[]> entry=responseHeadersIt.next();
+    String keyValue=entry.getKey() + ": " + entry.getValue()[HEADERS_MAP_INDEX_VALUE];
+    CharArrayBuffer buffer=new CharArrayBuffer(keyValue.length());
+    buffer.append(keyValue);
+    headers.parseHeader(buffer);
+  }
+  CacheResult cacheResult=CacheManager.createCacheFile(gearsUrl,response.getStatusCode(),headers,response.getMimeType(),true);
+  if (cacheResult == null) {
+    return null;
+  }
+  String encoding=response.getEncoding();
+  if (encoding != null) {
+    cacheResult.setEncoding(encoding);
+  }
+  InputStream inputStream=response.getInputStream();
+  OutputStream outputStream=cacheResult.getOutputStream();
+  boolean copied=copyStream(inputStream,outputStream);
+  try {
+    inputStream.close();
+  }
+ catch (  IOException ex) {
+    log("IOException closing InputStream: " + ex);
+    copied=false;
+  }
+  try {
+    outputStream.close();
+  }
+ catch (  IOException ex) {
+    log("IOException closing OutputStream: " + ex);
+    copied=false;
+  }
+  if (!copied) {
+    log("copyStream of local result failed");
+    return null;
+  }
+  CacheManager.saveCacheFile(gearsUrl,cacheResult);
+  cacheResult=CacheManager.getCacheFile(gearsUrl,null);
+  if (cacheResult != null) {
+    if (logEnabled)     log("Returning surrogate result");
+    return cacheResult;
+  }
+ else {
+    Log.e(LOG_TAG,"Lost CacheResult between save and get. Can't serve.\n");
+    return null;
+  }
+}

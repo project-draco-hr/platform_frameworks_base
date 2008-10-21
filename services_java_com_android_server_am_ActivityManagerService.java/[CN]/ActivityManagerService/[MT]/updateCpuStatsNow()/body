@@ -1,0 +1,44 @@
+{
+synchronized (mProcessStatsThread) {
+    final long now=SystemClock.uptimeMillis();
+    boolean haveNewCpuStats=false;
+    if (MONITOR_CPU_USAGE && mLastCpuTime < (now - MONITOR_CPU_MIN_TIME)) {
+      mLastCpuTime=now;
+      haveNewCpuStats=true;
+      mProcessStats.update();
+      if ("true".equals(SystemProperties.get("events.cpu"))) {
+        int user=mProcessStats.getLastUserTime();
+        int system=mProcessStats.getLastSystemTime();
+        int iowait=mProcessStats.getLastIoWaitTime();
+        int irq=mProcessStats.getLastIrqTime();
+        int softIrq=mProcessStats.getLastSoftIrqTime();
+        int idle=mProcessStats.getLastIdleTime();
+        int total=user + system + iowait+ irq+ softIrq+ idle;
+        if (total == 0)         total=1;
+        EventLog.writeEvent(LOG_CPU,((user + system + iowait+ irq+ softIrq) * 100) / total,(user * 100) / total,(system * 100) / total,(iowait * 100) / total,(irq * 100) / total,(softIrq * 100) / total);
+      }
+    }
+synchronized (mBatteryStats) {
+synchronized (mPidsSelfLocked) {
+        if (haveNewCpuStats) {
+          if (mBatteryStats.isOnBattery()) {
+            final int N=mProcessStats.countWorkingStats();
+            for (int i=0; i < N; i++) {
+              ProcessStats.Stats st=mProcessStats.getWorkingStats(i);
+              ProcessRecord pr=mPidsSelfLocked.get(st.pid);
+              if (pr != null) {
+                BatteryStats.Uid.Proc ps=pr.batteryStats;
+                ps.userTime+=st.rel_utime;
+                ps.systemTime+=st.rel_stime;
+              }
+            }
+          }
+        }
+      }
+      if (mLastWriteTime < (now - BATTERY_STATS_TIME)) {
+        mLastWriteTime=now;
+        mBatteryStats.writeLocked();
+      }
+    }
+  }
+}

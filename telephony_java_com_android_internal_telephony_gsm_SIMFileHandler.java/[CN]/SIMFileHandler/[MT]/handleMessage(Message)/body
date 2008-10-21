@@ -1,0 +1,166 @@
+{
+  AsyncResult ar;
+  SimIoResult result;
+  Message response=null;
+  String str;
+  LoadLinearFixedContext lc;
+  SimException simException;
+  byte data[];
+  int size;
+  int fileid;
+  int recordNum;
+  int recordSize[];
+  try {
+switch (msg.what) {
+case EVENT_READ_IMG_DONE:
+      ar=(AsyncResult)msg.obj;
+    lc=(LoadLinearFixedContext)ar.userObj;
+  result=(SimIoResult)ar.result;
+response=lc.onLoaded;
+simException=result.getException();
+if (simException != null) {
+sendResult(response,result.payload,ar.exception);
+}
+break;
+case EVENT_READ_ICON_DONE:
+ar=(AsyncResult)msg.obj;
+response=(Message)ar.userObj;
+result=(SimIoResult)ar.result;
+simException=result.getException();
+if (simException != null) {
+sendResult(response,result.payload,ar.exception);
+}
+break;
+case EVENT_GET_EF_LINEAR_RECORD_SIZE_DONE:
+ar=(AsyncResult)msg.obj;
+lc=(LoadLinearFixedContext)ar.userObj;
+result=(SimIoResult)ar.result;
+response=lc.onLoaded;
+if (ar.exception != null) {
+sendResult(response,null,ar.exception);
+break;
+}
+simException=result.getException();
+if (simException != null) {
+sendResult(response,null,simException);
+break;
+}
+data=result.payload;
+if (TYPE_EF != data[RESPONSE_DATA_FILE_TYPE] || EF_TYPE_LINEAR_FIXED != data[RESPONSE_DATA_STRUCTURE]) {
+throw new SimFileTypeMismatch();
+}
+recordSize=new int[3];
+recordSize[0]=data[RESPONSE_DATA_RECORD_LENGTH] & 0xFF;
+recordSize[1]=((data[RESPONSE_DATA_FILE_SIZE_1] & 0xff) << 8) + (data[RESPONSE_DATA_FILE_SIZE_2] & 0xff);
+recordSize[2]=recordSize[1] / recordSize[0];
+sendResult(response,recordSize,null);
+break;
+case EVENT_GET_RECORD_SIZE_DONE:
+ar=(AsyncResult)msg.obj;
+lc=(LoadLinearFixedContext)ar.userObj;
+result=(SimIoResult)ar.result;
+response=lc.onLoaded;
+if (ar.exception != null) {
+sendResult(response,null,ar.exception);
+break;
+}
+simException=result.getException();
+if (simException != null) {
+sendResult(response,null,simException);
+break;
+}
+data=result.payload;
+fileid=lc.efid;
+recordNum=lc.recordNum;
+if (TYPE_EF != data[RESPONSE_DATA_FILE_TYPE]) {
+throw new SimFileTypeMismatch();
+}
+if (EF_TYPE_LINEAR_FIXED != data[RESPONSE_DATA_STRUCTURE]) {
+throw new SimFileTypeMismatch();
+}
+lc.recordSize=data[RESPONSE_DATA_RECORD_LENGTH] & 0xFF;
+size=((data[RESPONSE_DATA_FILE_SIZE_1] & 0xff) << 8) + (data[RESPONSE_DATA_FILE_SIZE_2] & 0xff);
+lc.countRecords=size / lc.recordSize;
+if (lc.loadAll) {
+lc.results=new ArrayList<byte[]>(lc.countRecords);
+}
+phone.mCM.simIO(COMMAND_READ_RECORD,lc.efid,null,lc.recordNum,READ_RECORD_MODE_ABSOLUTE,lc.recordSize,null,null,obtainMessage(EVENT_READ_RECORD_DONE,lc));
+break;
+case EVENT_GET_BINARY_SIZE_DONE:
+ar=(AsyncResult)msg.obj;
+response=(Message)ar.userObj;
+result=(SimIoResult)ar.result;
+if (ar.exception != null) {
+sendResult(response,null,ar.exception);
+break;
+}
+simException=result.getException();
+if (simException != null) {
+sendResult(response,null,simException);
+break;
+}
+data=result.payload;
+fileid=msg.arg1;
+if (TYPE_EF != data[RESPONSE_DATA_FILE_TYPE]) {
+throw new SimFileTypeMismatch();
+}
+if (EF_TYPE_TRANSPARENT != data[RESPONSE_DATA_STRUCTURE]) {
+throw new SimFileTypeMismatch();
+}
+size=((data[RESPONSE_DATA_FILE_SIZE_1] & 0xff) << 8) + (data[RESPONSE_DATA_FILE_SIZE_2] & 0xff);
+phone.mCM.simIO(COMMAND_READ_BINARY,fileid,null,0,0,size,null,null,obtainMessage(EVENT_READ_BINARY_DONE,fileid,0,response));
+break;
+case EVENT_READ_RECORD_DONE:
+ar=(AsyncResult)msg.obj;
+lc=(LoadLinearFixedContext)ar.userObj;
+result=(SimIoResult)ar.result;
+response=lc.onLoaded;
+if (ar.exception != null) {
+sendResult(response,null,ar.exception);
+break;
+}
+simException=result.getException();
+if (simException != null) {
+sendResult(response,null,simException);
+break;
+}
+if (!lc.loadAll) {
+sendResult(response,result.payload,null);
+}
+ else {
+lc.results.add(result.payload);
+lc.recordNum++;
+if (lc.recordNum > lc.countRecords) {
+sendResult(response,lc.results,null);
+}
+ else {
+phone.mCM.simIO(COMMAND_READ_RECORD,lc.efid,null,lc.recordNum,READ_RECORD_MODE_ABSOLUTE,lc.recordSize,null,null,obtainMessage(EVENT_READ_RECORD_DONE,lc));
+}
+}
+break;
+case EVENT_READ_BINARY_DONE:
+ar=(AsyncResult)msg.obj;
+response=(Message)ar.userObj;
+result=(SimIoResult)ar.result;
+if (ar.exception != null) {
+sendResult(response,null,ar.exception);
+break;
+}
+simException=result.getException();
+if (simException != null) {
+sendResult(response,null,simException);
+break;
+}
+sendResult(response,result.payload,null);
+break;
+}
+}
+ catch (Exception exc) {
+if (response != null) {
+sendResult(response,null,exc);
+}
+ else {
+Log.e(LOG_TAG,"uncaught exception",exc);
+}
+}
+}

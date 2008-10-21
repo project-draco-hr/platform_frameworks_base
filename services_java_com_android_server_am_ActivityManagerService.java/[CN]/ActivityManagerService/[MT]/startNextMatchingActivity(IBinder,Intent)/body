@@ -1,0 +1,57 @@
+{
+  if (intent != null && intent.hasFileDescriptors() == true) {
+    throw new IllegalArgumentException("File descriptors passed in Intent");
+  }
+synchronized (this) {
+    int index=indexOfTokenLocked(callingActivity,false);
+    if (index < 0) {
+      return false;
+    }
+    HistoryRecord r=(HistoryRecord)mHistory.get(index);
+    if (r.app == null || r.app.thread == null) {
+      return false;
+    }
+    intent=new Intent(intent);
+    intent.setDataAndType(r.intent.getData(),r.intent.getType());
+    intent.setComponent(null);
+    ActivityInfo aInfo=null;
+    try {
+      List<ResolveInfo> resolves=ActivityThread.getPackageManager().queryIntentActivities(intent,r.resolvedType,PackageManager.MATCH_DEFAULT_ONLY | PackageManager.GET_SHARED_LIBRARY_FILES);
+      final int N=resolves != null ? resolves.size() : 0;
+      for (int i=0; i < N; i++) {
+        ResolveInfo rInfo=resolves.get(i);
+        if (rInfo.activityInfo.packageName.equals(r.packageName) && rInfo.activityInfo.name.equals(r.info.name)) {
+          i++;
+          if (i < N) {
+            aInfo=resolves.get(i).activityInfo;
+          }
+          break;
+        }
+      }
+    }
+ catch (    RemoteException e) {
+    }
+    if (aInfo == null) {
+      return false;
+    }
+    intent.setComponent(new ComponentName(aInfo.applicationInfo.packageName,aInfo.name));
+    intent.setFlags(intent.getFlags() & ~(Intent.FLAG_ACTIVITY_FORWARD_RESULT | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_MULTIPLE_TASK| Intent.FLAG_ACTIVITY_NEW_TASK));
+    final boolean wasFinishing=r.finishing;
+    r.finishing=true;
+    final HistoryRecord resultTo=r.resultTo;
+    final String resultWho=r.resultWho;
+    final int requestCode=r.requestCode;
+    r.resultTo=null;
+    if (resultTo != null) {
+      resultTo.removeResultsLocked(r,resultWho,requestCode);
+    }
+    final long origId=Binder.clearCallingIdentity();
+    int res=startActivityLocked(r.app.thread,intent,r.resolvedType,null,0,aInfo,resultTo,resultWho,requestCode,-1,r.launchedFromUid,false);
+    Binder.restoreCallingIdentity(origId);
+    r.finishing=wasFinishing;
+    if (res != START_SUCCESS) {
+      return false;
+    }
+    return true;
+  }
+}

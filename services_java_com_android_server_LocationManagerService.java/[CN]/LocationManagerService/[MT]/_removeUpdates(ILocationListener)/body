@@ -1,0 +1,57 @@
+{
+  if (Config.LOGD) {
+    Log.d(TAG,"_removeUpdates: listener = " + listener.asBinder());
+  }
+  long identity=Binder.clearCallingIdentity();
+  try {
+synchronized (mLocationListeners) {
+      IBinder binder=listener.asBinder();
+      Listener myListener=mListeners.remove(binder);
+      if (myListener != null) {
+        binder.unlinkToDeath(myListener,0);
+      }
+      HashSet<String> providers=new HashSet<String>();
+      HashMap<String,UpdateRecord> oldRecords=mLocationListeners.get(binder);
+      if (oldRecords != null) {
+        for (        UpdateRecord record : oldRecords.values()) {
+          if (record.mProvider.equals(LocationManager.NETWORK_PROVIDER)) {
+            if (mNetworkLocationProvider != null) {
+              mNetworkLocationProvider.removeListener(record.mPackages);
+            }
+          }
+          record.dispose();
+        }
+        providers.addAll(oldRecords.keySet());
+      }
+      mLocationListeners.remove(binder);
+      mLastFixBroadcast.remove(binder);
+      mLastStatusBroadcast.remove(binder);
+      for (      String provider : providers) {
+        if (!isAllowedBySettings(provider)) {
+          continue;
+        }
+        boolean hasOtherListener=false;
+synchronized (mRecordsByProvider) {
+          HashSet<UpdateRecord> recordsForProvider=mRecordsByProvider.get(provider);
+          if (recordsForProvider != null && recordsForProvider.size() > 0) {
+            hasOtherListener=true;
+          }
+        }
+        LocationProviderImpl p=LocationProviderImpl.getProvider(provider);
+        if (p != null) {
+          if (hasOtherListener) {
+            p.setMinTime(getMinTime(provider));
+          }
+ else {
+            mLocationHandler.removeMessages(MESSAGE_HEARTBEAT,provider);
+            p.enableLocationTracking(false);
+          }
+        }
+      }
+      updateWakelockStatus(mScreenOn);
+    }
+  }
+  finally {
+    Binder.restoreCallingIdentity(identity);
+  }
+}

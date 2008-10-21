@@ -1,0 +1,41 @@
+{
+  enforceCallingPermission(android.Manifest.permission.SET_PROCESS_LIMIT,"setProcessForeground()");
+synchronized (this) {
+    boolean changed=false;
+synchronized (mPidsSelfLocked) {
+      ProcessRecord pr=mPidsSelfLocked.get(pid);
+      if (pr == null) {
+        Log.w(TAG,"setProcessForeground called on unknown pid: " + pid);
+        return;
+      }
+      ForegroundToken oldToken=mForegroundProcesses.get(pid);
+      if (oldToken != null) {
+        oldToken.token.unlinkToDeath(oldToken,0);
+        mForegroundProcesses.remove(pid);
+        pr.forcingToForeground=null;
+        changed=true;
+      }
+      if (isForeground && token != null) {
+        ForegroundToken newToken=new ForegroundToken(){
+          public void binderDied(){
+            foregroundTokenDied(this);
+          }
+        }
+;
+        newToken.pid=pid;
+        newToken.token=token;
+        try {
+          token.linkToDeath(newToken,0);
+          mForegroundProcesses.put(pid,newToken);
+          pr.forcingToForeground=token;
+          changed=true;
+        }
+ catch (        RemoteException e) {
+        }
+      }
+    }
+    if (changed) {
+      updateOomAdjLocked();
+    }
+  }
+}

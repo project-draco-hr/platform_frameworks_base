@@ -1,0 +1,75 @@
+{
+  Surface surface=mSurface;
+  if (surface == null || !surface.isValid()) {
+    return;
+  }
+  Rect dirty=mDirty;
+  if (mUseGL) {
+    if (!dirty.isEmpty()) {
+      Canvas canvas=mGlCanvas;
+      if (mGL != null && canvas != null) {
+        mGL.glDisable(GL_SCISSOR_TEST);
+        mGL.glClearColor(0,0,0,0);
+        mGL.glClear(GL_COLOR_BUFFER_BIT);
+        mGL.glEnable(GL_SCISSOR_TEST);
+        mAttachInfo.mDrawingTime=SystemClock.uptimeMillis();
+        mView.draw(canvas);
+        mEgl.eglSwapBuffers(mEglDisplay,mEglSurface);
+        checkEglErrors();
+        if (SHOW_FPS) {
+          int now=(int)SystemClock.elapsedRealtime();
+          if (sDrawTime != 0) {
+            nativeShowFPS(canvas,now - sDrawTime);
+          }
+          sDrawTime=now;
+        }
+      }
+    }
+    return;
+  }
+  if (fullRedrawNeeded)   dirty.union(0,0,mWidth,mHeight);
+  if (DEBUG_ORIENTATION || DEBUG_DRAW) {
+    Log.v("ViewRoot","Draw " + mView + "/"+ mWindowAttributes.getTitle()+ ": dirty={"+ dirty.left+ ","+ dirty.top+ ","+ dirty.right+ ","+ dirty.bottom+ "} surface="+ surface+ " surface.isValid()="+ surface.isValid());
+  }
+  if (!dirty.isEmpty()) {
+    Canvas canvas;
+    try {
+      canvas=surface.lockCanvas(dirty);
+    }
+ catch (    Surface.OutOfResourcesException e) {
+      Log.e("ViewRoot","OutOfResourcesException locking surface",e);
+      return;
+    }
+    long startTime;
+    try {
+      if (DEBUG_ORIENTATION || DEBUG_DRAW) {
+        Log.v("ViewRoot","Surface " + surface + " drawing to bitmap w="+ canvas.getWidth()+ ", h="+ canvas.getHeight());
+      }
+      if (PROFILE_DRAWING) {
+        startTime=SystemClock.elapsedRealtime();
+      }
+      if (!canvas.isOpaque()) {
+        canvas.drawColor(0,PorterDuff.Mode.CLEAR);
+      }
+      dirty.setEmpty();
+      mAttachInfo.mDrawingTime=SystemClock.uptimeMillis();
+      mView.draw(canvas);
+      if (SHOW_FPS) {
+        int now=(int)SystemClock.elapsedRealtime();
+        if (sDrawTime != 0) {
+          nativeShowFPS(canvas,now - sDrawTime);
+        }
+        sDrawTime=now;
+      }
+    }
+  finally {
+      surface.unlockCanvasAndPost(canvas);
+    }
+    if (PROFILE_DRAWING) {
+      EventLog.writeEvent(60000,SystemClock.elapsedRealtime() - startTime);
+    }
+    if (LOCAL_LOGV) {
+      Log.v("ViewRoot","Surface " + surface + " unlockCanvasAndPost");
+    }
+  }
+}

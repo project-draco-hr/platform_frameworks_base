@@ -1,0 +1,58 @@
+{
+  int sensors_of_interest;
+  float[] values=new float[6];
+  Process.setThreadPriority(Process.THREAD_PRIORITY_DISPLAY);
+synchronized (sListeners) {
+    _sensors_data_open(mSensorDataFd.getFileDescriptor());
+    try {
+      mSensorDataFd.close();
+    }
+ catch (    IOException e) {
+      Log.e(TAG,"IOException: ",e);
+    }
+    mSensorDataFd=null;
+    sensors_of_interest=0;
+    final int size=sListeners.size();
+    for (int i=0; i < size; i++) {
+      sensors_of_interest|=sListeners.get(i).mSensors;
+      if ((sensors_of_interest & SENSOR_ALL) == SENSOR_ALL)       break;
+    }
+  }
+  while (true) {
+    final int sensor_result=_sensors_data_poll(values,sensors_of_interest);
+    final int sensor_order=sensor_result & SENSOR_ORDER_MASK;
+    final int sensor=1 << sensor_result;
+    int accuracy=sensor_result >>> SENSOR_STATUS_SHIFT;
+    if ((sensors_of_interest & sensor) != 0) {
+      if (accuracy != mAccuracies[sensor_order]) {
+        try {
+          mSensorService.reportAccuracy(sensor,accuracy);
+          mAccuracies[sensor_order]=(byte)accuracy;
+        }
+ catch (        RemoteException e) {
+          Log.e(TAG,"RemoteException in reportAccuracy: ",e);
+        }
+      }
+ else {
+        accuracy=-1;
+      }
+    }
+synchronized (sListeners) {
+      if (sListeners.isEmpty()) {
+        _sensors_data_close();
+        mThread=null;
+        break;
+      }
+      mapSensorDataToWindow(sensor,values,SensorManager.getRotation());
+      sensors_of_interest=0;
+      final int size=sListeners.size();
+      for (int i=0; i < size; i++) {
+        ListenerDelegate listener=sListeners.get(i);
+        sensors_of_interest|=listener.mSensors;
+        if (listener.hasSensor(sensor)) {
+          listener.onSensorChanged(sensor,values,accuracy);
+        }
+      }
+    }
+  }
+}

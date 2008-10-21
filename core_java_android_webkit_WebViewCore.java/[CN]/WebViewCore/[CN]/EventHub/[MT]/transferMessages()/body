@@ -1,0 +1,233 @@
+{
+  mTid=Process.myTid();
+  mSavedPriority=Process.getThreadPriority(mTid);
+  mHandler=new Handler(){
+    @Override public void handleMessage(    Message msg){
+switch (msg.what) {
+case WEBKIT_DRAW:
+        webkitDraw();
+      break;
+case DESTROY:
+    mBrowserFrame.destroy();
+  mBrowserFrame=null;
+mNativeClass=0;
+break;
+case LOAD_URL:
+loadUrl((String)msg.obj);
+break;
+case LOAD_DATA:
+HashMap loadParams=(HashMap)msg.obj;
+mBrowserFrame.loadData((String)loadParams.get("baseUrl"),(String)loadParams.get("data"),(String)loadParams.get("mimeType"),(String)loadParams.get("encoding"),(String)loadParams.get("failUrl"));
+break;
+case STOP_LOADING:
+if (mBrowserFrame.committed() && !mBrowserFrame.firstLayoutDone()) {
+mBrowserFrame.didFirstLayout(mBrowserFrame.currentUrl());
+}
+stopLoading();
+break;
+case RELOAD:
+mBrowserFrame.reload(false);
+break;
+case KEY_DOWN:
+keyDown(msg.arg1,(KeyEvent)msg.obj);
+break;
+case KEY_UP:
+keyUp(msg.arg1,(KeyEvent)msg.obj);
+break;
+case VIEW_SIZE_CHANGED:
+viewSizeChanged(msg.arg1,msg.arg2,((Float)msg.obj).floatValue());
+break;
+case SET_VISIBLE_RECT:
+Rect r=(Rect)msg.obj;
+nativeSetVisibleRect(r.left,r.top,r.width(),r.height());
+break;
+case GO_BACK_FORWARD:
+if (!mBrowserFrame.committed() && msg.arg1 == -1 && (mBrowserFrame.loadType() == BrowserFrame.FRAME_LOADTYPE_STANDARD)) {
+mBrowserFrame.reload(true);
+}
+ else {
+mBrowserFrame.goBackOrForward(msg.arg1);
+}
+break;
+case RESTORE_STATE:
+stopLoading();
+restoreState(msg.arg1);
+break;
+case PAUSE_TIMERS:
+mSavedPriority=Process.getThreadPriority(mTid);
+Process.setThreadPriority(mTid,Process.THREAD_PRIORITY_BACKGROUND);
+pauseTimers();
+if (CacheManager.disableTransaction()) {
+WebCoreThread.mCacheTickersBlocked=true;
+sWebCoreHandler.removeMessages(WebCoreThread.CACHE_TICKER);
+}
+break;
+case RESUME_TIMERS:
+Process.setThreadPriority(mTid,mSavedPriority);
+resumeTimers();
+if (CacheManager.enableTransaction()) {
+WebCoreThread.mCacheTickersBlocked=false;
+sWebCoreHandler.sendMessageDelayed(sWebCoreHandler.obtainMessage(WebCoreThread.CACHE_TICKER),WebCoreThread.CACHE_TICKER_INTERVAL);
+}
+break;
+case CLEAR_CACHE:
+mBrowserFrame.clearCache();
+if (msg.arg1 == 1) {
+CacheManager.removeAllCacheFiles();
+}
+break;
+case CLEAR_HISTORY:
+mCallbackProxy.getBackForwardList().close(mBrowserFrame.mNativeFrame);
+break;
+case REPLACE_TEXT:
+HashMap jMap=(HashMap)msg.obj;
+FocusData fData=(FocusData)jMap.get("focusData");
+String replace=(String)jMap.get("replace");
+int newStart=((Integer)jMap.get("start")).intValue();
+int newEnd=((Integer)jMap.get("end")).intValue();
+nativeReplaceTextfieldText(fData.mFrame,fData.mNode,fData.mX,fData.mY,msg.arg1,msg.arg2,replace,newStart,newEnd);
+break;
+case PASS_TO_JS:
+{
+HashMap jsMap=(HashMap)msg.obj;
+FocusData fDat=(FocusData)jsMap.get("focusData");
+KeyEvent evt=(KeyEvent)jsMap.get("event");
+int keyCode=evt.getKeyCode();
+int keyValue=evt.getUnicodeChar();
+int generation=msg.arg1;
+passToJs(fDat.mFrame,fDat.mNode,fDat.mX,fDat.mY,generation,(String)jsMap.get("currentText"),keyCode,keyValue,evt.isDown(),evt.isShiftPressed(),evt.isAltPressed(),evt.isSymPressed());
+break;
+}
+case SAVE_DOCUMENT_STATE:
+{
+FocusData fDat=(FocusData)msg.obj;
+nativeSaveDocumentState(fDat.mFrame,fDat.mNode,fDat.mX,fDat.mY);
+break;
+}
+case FIND:
+Message response=(Message)msg.obj;
+boolean find=nativeFind(msg.getData().getString("find"),msg.arg1 != -1,msg.arg1 != 0);
+response.arg1=find ? 1 : 0;
+response.sendToTarget();
+break;
+case FIND_ALL:
+int found=nativeFindAll(msg.getData().getString("find"));
+Message resAll=(Message)msg.obj;
+resAll.arg1=found;
+resAll.sendToTarget();
+break;
+case CLEAR_MATCHES:
+nativeClearMatches();
+break;
+case CLEAR_SSL_PREF_TABLE:
+Network.getInstance(mContext).clearUserSslPrefTable();
+break;
+case TOUCH_UP:
+TouchUpData touchUpData=(TouchUpData)msg.obj;
+nativeTouchUp(touchUpData.mMoveGeneration,touchUpData.mBuildGeneration,touchUpData.mFrame,touchUpData.mNode,touchUpData.mX,touchUpData.mY,touchUpData.mSize,touchUpData.mIsClick,touchUpData.mRetry);
+break;
+case ADD_JS_INTERFACE:
+HashMap map=(HashMap)msg.obj;
+Object obj=map.get("object");
+String interfaceName=(String)map.get("interfaceName");
+mBrowserFrame.addJavascriptInterface(obj,interfaceName);
+break;
+case REQUEST_EXT_REPRESENTATION:
+mBrowserFrame.externalRepresentation((Message)msg.obj);
+break;
+case REQUEST_DOC_AS_TEXT:
+mBrowserFrame.documentAsText((Message)msg.obj);
+break;
+case SET_FINAL_FOCUS:
+FocusData finalData=(FocusData)msg.obj;
+nativeSetFinalFocus(finalData.mFrame,finalData.mNode,finalData.mX,finalData.mY,msg.arg1 != EventHub.NO_FOCUS_CHANGE_BLOCK);
+break;
+case UNBLOCK_FOCUS:
+nativeUnblockFocus();
+break;
+case SET_KIT_FOCUS:
+FocusData focusData=(FocusData)msg.obj;
+nativeSetKitFocus(focusData.mMoveGeneration,focusData.mBuildGeneration,focusData.mFrame,focusData.mNode,focusData.mX,focusData.mY,focusData.mIgnoreNullFocus);
+break;
+case REQUEST_FOCUS_HREF:
+{
+Message hrefMsg=(Message)msg.obj;
+String res=nativeRetrieveHref(msg.arg1,msg.arg2);
+Bundle data=hrefMsg.getData();
+data.putString("url",res);
+hrefMsg.setData(data);
+hrefMsg.sendToTarget();
+break;
+}
+case REQUEST_IMAGE_HREF:
+{
+Message refMsg=(Message)msg.obj;
+String ref=nativeRetrieveImageRef(msg.arg1,msg.arg2);
+Bundle data=refMsg.getData();
+data.putString("url",ref);
+refMsg.setData(data);
+refMsg.sendToTarget();
+break;
+}
+case UPDATE_CACHE_AND_TEXT_ENTRY:
+nativeUpdateFrameCache();
+sendViewInvalidate();
+sendUpdateTextEntry();
+break;
+case DOC_HAS_IMAGES:
+Message imageResult=(Message)msg.obj;
+imageResult.arg1=mBrowserFrame.documentHasImages() ? 1 : 0;
+imageResult.sendToTarget();
+break;
+case SET_SNAP_ANCHOR:
+nativeSetSnapAnchor(msg.arg1,msg.arg2);
+break;
+case DELETE_SELECTION:
+FocusData delData=(FocusData)msg.obj;
+nativeDeleteSelection(delData.mFrame,delData.mNode,delData.mX,delData.mY,msg.arg1,msg.arg2);
+break;
+case SET_SELECTION:
+FocusData selData=(FocusData)msg.obj;
+nativeSetSelection(selData.mFrame,selData.mNode,selData.mX,selData.mY,msg.arg1,msg.arg2);
+break;
+case LISTBOX_CHOICES:
+SparseBooleanArray choices=(SparseBooleanArray)msg.obj;
+int choicesSize=msg.arg1;
+boolean[] choicesArray=new boolean[choicesSize];
+for (int c=0; c < choicesSize; c++) {
+choicesArray[c]=choices.get(c);
+}
+nativeSendListBoxChoices(choicesArray,choicesSize);
+break;
+case SINGLE_LISTBOX_CHOICE:
+nativeSendListBoxChoice(msg.arg1);
+break;
+case SET_BACKGROUND_COLOR:
+nativeSetBackgroundColor(msg.arg1);
+break;
+case GET_SELECTION:
+String str=nativeGetSelection((Region)msg.obj);
+Message.obtain(mWebView.mPrivateHandler,WebView.UPDATE_CLIPBOARD,str).sendToTarget();
+break;
+case DUMP_WEBKIT:
+nativeDump();
+break;
+case SYNC_SCROLL:
+mWebkitScrollX=msg.arg1;
+mWebkitScrollY=msg.arg2;
+break;
+case REFRESH_PLUGINS:
+nativeRefreshPlugins(msg.arg1 != 0);
+break;
+}
+}
+}
+;
+synchronized (this) {
+int size=mMessages.size();
+for (int i=0; i < size; i++) {
+mHandler.sendMessage(mMessages.get(i));
+}
+mMessages=null;
+}
+}

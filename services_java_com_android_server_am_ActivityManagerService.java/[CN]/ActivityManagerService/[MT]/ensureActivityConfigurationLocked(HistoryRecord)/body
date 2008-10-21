@@ -1,0 +1,58 @@
+{
+  if (DEBUG_SWITCH)   Log.i(TAG,"Ensuring correct configuration: " + r);
+  Configuration newConfig=mConfiguration;
+  if (r.configuration == newConfig) {
+    if (DEBUG_SWITCH)     Log.i(TAG,"Configuration unchanged in " + r);
+    return true;
+  }
+  if (r.finishing) {
+    if (DEBUG_SWITCH)     Log.i(TAG,"Configuration doesn't matter in finishing " + r);
+    r.stopFreezingScreenLocked(false);
+    return true;
+  }
+  Configuration oldConfig=r.configuration;
+  r.configuration=newConfig;
+  if (r.app == null || r.app.thread == null) {
+    if (DEBUG_SWITCH)     Log.i(TAG,"Configuration doesn't matter not running " + r);
+    r.stopFreezingScreenLocked(false);
+    return true;
+  }
+  if (!r.persistent) {
+    int changes=oldConfig.diff(newConfig);
+    if (DEBUG_SWITCH) {
+      Log.i(TAG,"Checking to restart " + r.info.name + ": changed=0x"+ Integer.toHexString(changes)+ ", handles=0x"+ Integer.toHexString(r.info.configChanges));
+    }
+    if ((changes & (~r.info.configChanges)) != 0) {
+      r.configChangeFlags|=changes;
+      r.startFreezingScreenLocked(r.app,changes);
+      if (r.app == null || r.app.thread == null) {
+        if (DEBUG_SWITCH)         Log.i(TAG,"Switch is destroying non-running " + r);
+        destroyActivityLocked(r,true);
+      }
+ else       if (r.state == ActivityState.PAUSING) {
+        r.configDestroy=true;
+        return true;
+      }
+ else       if (r.state == ActivityState.RESUMED) {
+        if (DEBUG_SWITCH)         Log.i(TAG,"Switch is restarting resumed " + r);
+        relaunchActivityLocked(r,r.configChangeFlags,true);
+        r.configChangeFlags=0;
+      }
+ else {
+        if (DEBUG_SWITCH)         Log.i(TAG,"Switch is restarting non-resumed " + r);
+        relaunchActivityLocked(r,r.configChangeFlags,false);
+        r.configChangeFlags=0;
+      }
+      return false;
+    }
+  }
+  if (r.app != null && r.app.thread != null) {
+    try {
+      r.app.thread.scheduleActivityConfigurationChanged(r);
+    }
+ catch (    RemoteException e) {
+    }
+  }
+  r.stopFreezingScreenLocked(false);
+  return true;
+}

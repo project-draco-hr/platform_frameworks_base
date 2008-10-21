@@ -1,0 +1,103 @@
+{
+  if (index >= 0) {
+    mLRUProcesses.remove(index);
+  }
+  if (app.crashDialog != null) {
+    app.crashDialog.dismiss();
+    app.crashDialog=null;
+  }
+  if (app.anrDialog != null) {
+    app.anrDialog.dismiss();
+    app.anrDialog=null;
+  }
+  if (app.waitDialog != null) {
+    app.waitDialog.dismiss();
+    app.waitDialog=null;
+  }
+  app.crashing=false;
+  app.notResponding=false;
+  app.uniquePackage=app.info.packageName;
+  app.thread=null;
+  app.forcingToForeground=null;
+  app.foregroundServices=false;
+  killServicesLocked(app,true);
+  boolean restart=false;
+  int NL=mLaunchingProviders.size();
+  if (!app.pubProviders.isEmpty()) {
+    Iterator it=app.pubProviders.values().iterator();
+    while (it.hasNext()) {
+      ContentProviderRecord cpr=(ContentProviderRecord)it.next();
+      cpr.provider=null;
+      cpr.app=null;
+      int i=0;
+      if (!app.bad) {
+        for (; i < NL; i++) {
+          if (mLaunchingProviders.get(i) == cpr) {
+            restart=true;
+            break;
+          }
+        }
+      }
+      if (i >= NL) {
+        removeDyingProviderLocked(app,cpr);
+        NL=mLaunchingProviders.size();
+      }
+    }
+    app.pubProviders.clear();
+  }
+  for (int i=0; i < NL; i++) {
+    ContentProviderRecord cpr=(ContentProviderRecord)mLaunchingProviders.get(i);
+    if (cpr.launchingApp == app) {
+      if (!app.bad) {
+        restart=true;
+      }
+ else {
+        removeDyingProviderLocked(app,cpr);
+        NL=mLaunchingProviders.size();
+      }
+    }
+  }
+  if (!app.conProviders.isEmpty()) {
+    Iterator it=app.conProviders.iterator();
+    while (it.hasNext()) {
+      ContentProviderRecord cpr=(ContentProviderRecord)it.next();
+      cpr.clients.remove(app);
+    }
+    app.conProviders.clear();
+  }
+  skipCurrentReceiverLocked(app);
+  if (app.receivers.size() > 0) {
+    Iterator<ReceiverList> it=app.receivers.iterator();
+    while (it.hasNext()) {
+      removeReceiverLocked(it.next());
+    }
+    app.receivers.clear();
+  }
+  if (restarting) {
+    return;
+  }
+  if (!app.persistent) {
+    if (DEBUG_PROCESSES)     Log.v(TAG,"Removing non-persistent process during cleanup: " + app);
+    mProcessNames.remove(app.processName,app.info.uid);
+  }
+ else   if (!app.removed) {
+    app.thread=null;
+    app.forcingToForeground=null;
+    app.foregroundServices=false;
+    if (mPersistentStartingProcesses.indexOf(app) < 0) {
+      mPersistentStartingProcesses.add(app);
+      restart=true;
+    }
+  }
+  mProcessesOnHold.remove(app);
+  if (restart) {
+    mProcessNames.put(app.processName,app.info.uid,app);
+    startProcessLocked(app,"restart",app.processName);
+  }
+ else   if (app.pid > 0 && app.pid != MY_PID) {
+synchronized (mPidsSelfLocked) {
+      mPidsSelfLocked.remove(app.pid);
+    }
+    app.pid=0;
+  }
+}

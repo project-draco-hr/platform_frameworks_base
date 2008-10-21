@@ -1,0 +1,179 @@
+{
+switch (msg.what) {
+case REMEMBER_PASSWORD:
+{
+      mDatabase.setUsernamePassword(msg.getData().getString("host"),msg.getData().getString("username"),msg.getData().getString("password"));
+      ((Message)msg.obj).sendToTarget();
+      break;
+    }
+case NEVER_REMEMBER_PASSWORD:
+{
+    mDatabase.setUsernamePassword(msg.getData().getString("host"),null,null);
+    ((Message)msg.obj).sendToTarget();
+    break;
+  }
+case SWITCH_TO_SHORTPRESS:
+{
+  if (mTouchMode == TOUCH_INIT_MODE) {
+    mTouchMode=TOUCH_SHORTPRESS_START_MODE;
+    updateSelection();
+  }
+  break;
+}
+case SWITCH_TO_LONGPRESS:
+{
+mTouchMode=TOUCH_DONE_MODE;
+performLongClick();
+updateTextEntry();
+break;
+}
+case RELEASE_SINGLE_TAP:
+{
+mTouchMode=TOUCH_DONE_MODE;
+doShortPress();
+break;
+}
+case SWITCH_TO_ENTER:
+if (LOGV_ENABLED) Log.v(LOGTAG,"SWITCH_TO_ENTER");
+mTouchMode=TOUCH_DONE_MODE;
+onKeyUp(KeyEvent.KEYCODE_ENTER,new KeyEvent(KeyEvent.ACTION_UP,KeyEvent.KEYCODE_ENTER));
+break;
+case SCROLL_BY_MSG_ID:
+setContentScrollBy(msg.arg1,msg.arg2);
+break;
+case SYNC_SCROLL_TO_MSG_ID:
+if (mUserScroll) {
+mUserScroll=false;
+break;
+}
+case SCROLL_TO_MSG_ID:
+if (setContentScrollTo(msg.arg1,msg.arg2)) {
+mUserScroll=false;
+mWebViewCore.sendMessage(EventHub.SYNC_SCROLL,msg.arg1,msg.arg2);
+}
+break;
+case SPAWN_SCROLL_TO_MSG_ID:
+spawnContentScrollTo(msg.arg1,msg.arg2);
+break;
+case NEW_PICTURE_MSG_ID:
+final Point viewSize=(Point)msg.obj;
+if (mZoomScale > 0) {
+if (Math.abs(mZoomScale * viewSize.x - getViewWidth()) < 1) {
+mZoomScale=0;
+mWebViewCore.sendMessage(EventHub.SET_SNAP_ANCHOR,0,0);
+}
+}
+final boolean updateLayout=viewSize.x == mLastWidthSent && viewSize.y == mLastHeightSent;
+recordNewContentSize(msg.arg1,msg.arg2,updateLayout);
+invalidate();
+if (mPictureListener != null) {
+mPictureListener.onNewPicture(WebView.this,capturePicture());
+}
+break;
+case WEBCORE_INITIALIZED_MSG_ID:
+nativeCreate(msg.arg1);
+break;
+case UPDATE_TEXTFIELD_TEXT_MSG_ID:
+if (inEditingMode() && mTextEntry.isSameTextField(msg.arg1)) {
+if (msg.getData().getBoolean("password")) {
+Spannable text=(Spannable)mTextEntry.getText();
+int start=Selection.getSelectionStart(text);
+int end=Selection.getSelectionEnd(text);
+mTextEntry.setInPassword(true);
+Spannable pword=(Spannable)mTextEntry.getText();
+Selection.setSelection(pword,start,end);
+}
+ else if (msg.arg2 == mTextGeneration) {
+mTextEntry.setTextAndKeepSelection((String)msg.obj);
+}
+}
+break;
+case DID_FIRST_LAYOUT_MSG_ID:
+if (mNativeClass == 0) {
+break;
+}
+HashMap scaleLimit=(HashMap)msg.obj;
+int minScale=(Integer)scaleLimit.get("minScale");
+if (minScale == 0) {
+mMinZoomScale=DEFAULT_MIN_ZOOM_SCALE;
+}
+ else {
+mMinZoomScale=(float)(minScale / 100.0);
+}
+int maxScale=(Integer)scaleLimit.get("maxScale");
+if (maxScale == 0) {
+mMaxZoomScale=DEFAULT_MAX_ZOOM_SCALE;
+}
+ else {
+mMaxZoomScale=(float)(maxScale / 100.0);
+}
+if (mDrawHistory) {
+break;
+}
+int width=getViewWidth();
+if (width == 0) {
+break;
+}
+int initialScale=msg.arg1;
+int viewportWidth=msg.arg2;
+float scale=1.0f;
+if (mInitialScale > 0) {
+scale=mInitialScale / 100.0f;
+}
+ else {
+if (mWebViewCore.getSettings().getUseWideViewPort()) {
+mLastWidthSent=0;
+}
+scale=initialScale == 0 ? (viewportWidth > 0 ? ((float)width / viewportWidth) : 1.0f) : initialScale / 100.0f;
+}
+setNewZoomScale(scale,false);
+break;
+case MARK_NODE_INVALID_ID:
+nativeMarkNodeInvalid(msg.arg1);
+break;
+case NOTIFY_FOCUS_SET_MSG_ID:
+if (mNativeClass != 0) {
+nativeNotifyFocusSet(inEditingMode());
+}
+break;
+case UPDATE_TEXT_ENTRY_MSG_ID:
+updateTextEntry();
+break;
+case RECOMPUTE_FOCUS_MSG_ID:
+if (mNativeClass != 0) {
+nativeRecomputeFocus();
+}
+break;
+case UPDATE_TEXT_ENTRY_ADAPTER:
+HashMap data=(HashMap)msg.obj;
+if (mTextEntry.isSameTextField(msg.arg1)) {
+ArrayAdapter<String> adapter=(ArrayAdapter<String>)data.get("adapter");
+mTextEntry.setAdapter(adapter);
+}
+break;
+case UPDATE_CLIPBOARD:
+String str=(String)msg.obj;
+if (LOGV_ENABLED) {
+Log.v(LOGTAG,"UPDATE_CLIPBOARD " + str);
+}
+try {
+IClipboard clip=IClipboard.Stub.asInterface(ServiceManager.getService("clipboard"));
+clip.setClipboardText(str);
+}
+ catch (android.os.RemoteException e) {
+Log.e(LOGTAG,"Clipboard failed",e);
+}
+break;
+case RESUME_WEBCORE_UPDATE:
+WebViewCore.resumeUpdate(mWebViewCore);
+break;
+case LONG_PRESS_TRACKBALL:
+mTrackTrackball=false;
+mTrackballDown=false;
+performLongClick();
+break;
+default :
+super.handleMessage(msg);
+break;
+}
+}

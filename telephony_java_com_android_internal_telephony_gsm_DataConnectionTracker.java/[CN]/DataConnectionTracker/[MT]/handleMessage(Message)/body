@@ -1,0 +1,150 @@
+{
+  AsyncResult ar;
+  String reason=null;
+switch (msg.what) {
+case EVENT_RECORDS_LOADED:
+    createAllApnList();
+  if (state == State.FAILED) {
+    cleanUpConnection(false,null);
+  }
+sendMessage(obtainMessage(EVENT_TRY_SETUP_DATA));
+break;
+case EVENT_ENABLE_NEW_APN:
+reason=Phone.REASON_APN_SWITCHED;
+cleanUpConnection(true,reason);
+case EVENT_TRY_SETUP_DATA:
+trySetupData(reason);
+break;
+case EVENT_RESTORE_DEFAULT_APN:
+if (DBG) Log.d(LOG_TAG,"Restore default APN");
+setEnabled(Phone.APN_TYPE_MMS,false);
+if (!isApnTypeActive(Phone.APN_TYPE_DEFAULT)) {
+cleanUpConnection(true,Phone.REASON_RESTORE_DEFAULT_APN);
+mRequestedApnType=Phone.APN_TYPE_DEFAULT;
+trySetupData(Phone.REASON_RESTORE_DEFAULT_APN);
+}
+break;
+case EVENT_ROAMING_OFF:
+trySetupData(Phone.REASON_ROAMING_OFF);
+break;
+case EVENT_GPRS_DETACHED:
+onGprsDetached();
+break;
+case EVENT_GPRS_ATTACHED:
+onGprsAttached();
+break;
+case EVENT_ROAMING_ON:
+if (getDataOnRoamingEnabled()) {
+trySetupData(Phone.REASON_ROAMING_ON);
+}
+ else {
+if (DBG) log("Tear down data connection on roaming.");
+cleanUpConnection(true,Phone.REASON_ROAMING_ON);
+}
+break;
+case EVENT_RADIO_AVAILABLE:
+if (phone.getSimulatedRadioControl() != null) {
+setState(State.CONNECTED);
+phone.notifyDataConnection(null);
+Log.i(LOG_TAG,"We're on the simulator; assuming data is connected");
+}
+if (state != State.IDLE) {
+cleanUpConnection(true,null);
+}
+break;
+case EVENT_RADIO_OFF_OR_NOT_AVAILABLE:
+nextReconnectDelay=RECONNECT_DELAY_INITIAL_MILLIS;
+if (phone.getSimulatedRadioControl() != null) {
+Log.i(LOG_TAG,"We're on the simulator; assuming radio off is meaningless");
+}
+ else {
+if (DBG) log("Radio is off and clean up all connection");
+cleanUpConnection(false,Phone.REASON_RADIO_TURNED_OFF);
+}
+break;
+case EVENT_DATA_SETUP_COMPLETE:
+ar=(AsyncResult)msg.obj;
+if (ar.exception == null) {
+cidActive=msg.arg1;
+if (dataEnabled[APN_MMS_ID]) {
+removeMessages(EVENT_RESTORE_DEFAULT_APN);
+sendMessageDelayed(obtainMessage(EVENT_RESTORE_DEFAULT_APN),getRestoreDefaultApnDelay());
+}
+if (isApnTypeActive(Phone.APN_TYPE_DEFAULT)) {
+SystemProperties.set("gsm.defaultpdpcontext.active","true");
+}
+ else {
+SystemProperties.set("gsm.defaultpdpcontext.active","false");
+}
+notifyDefaultData();
+}
+ else {
+PdpConnection.PdpFailCause cause;
+cause=(PdpConnection.PdpFailCause)(ar.result);
+if (DBG) log("PDP setup failed " + cause);
+if (cause.isPermanentFail()) {
+notifyNoData(cause);
+}
+if (tryNextApn(cause)) {
+waitingApns.remove(0);
+if (waitingApns.isEmpty()) {
+notifyNoData(cause);
+reconnectAfterFail(cause);
+}
+ else {
+setState(State.SCANNING);
+trySetupData(null);
+}
+}
+ else {
+notifyNoData(cause);
+reconnectAfterFail(cause);
+}
+}
+break;
+case EVENT_DISCONNECT_DONE:
+if (DBG) log("EVENT_DISCONNECT_DONE");
+trySetupData(null);
+break;
+case EVENT_PDP_STATE_CHANGED:
+ar=(AsyncResult)msg.obj;
+onPdpStateChanged(ar,false);
+break;
+case EVENT_GET_PDP_LIST_COMPLETE:
+ar=(AsyncResult)msg.obj;
+onPdpStateChanged(ar,true);
+break;
+case EVENT_POLL_PDP:
+ar=(AsyncResult)msg.obj;
+if (!(state == State.CONNECTED)) {
+break;
+}
+phone.mCM.getPDPContextList(this.obtainMessage(EVENT_GET_PDP_LIST_COMPLETE));
+sendMessageDelayed(obtainMessage(EVENT_POLL_PDP),POLL_PDP_MILLIS);
+break;
+case EVENT_VOICE_CALL_STARTED:
+if (state == State.CONNECTED && !phone.mSST.isConcurrentVoiceAndData()) {
+stopNetStatPoll();
+phone.notifyDataConnection(Phone.REASON_VOICE_CALL_STARTED);
+}
+break;
+case EVENT_VOICE_CALL_ENDED:
+trySetupData(Phone.REASON_VOICE_CALL_ENDED);
+if (state == State.CONNECTED && !phone.mSST.isConcurrentVoiceAndData()) {
+startNetStatPoll();
+phone.notifyDataConnection(Phone.REASON_VOICE_CALL_ENDED);
+}
+ else {
+resetPollStats();
+}
+break;
+case EVENT_START_NETSTAT_POLL:
+mPingTestActive=false;
+startNetStatPoll();
+break;
+case EVENT_START_RECOVERY:
+mPingTestActive=false;
+doRecovery();
+break;
+}
+}

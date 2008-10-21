@@ -1,0 +1,146 @@
+{
+synchronized (this) {
+    BroadcastRecord r;
+    if (DEBUG_BROADCAST)     Log.v(TAG,"processNextBroadcast: " + mParallelBroadcasts.size() + " broadcasts, "+ mOrderedBroadcasts.size()+ " serialized broadcasts");
+    updateCpuStats();
+    if (fromMsg) {
+      mBroadcastsScheduled=false;
+    }
+    while (mParallelBroadcasts.size() > 0) {
+      r=mParallelBroadcasts.remove(0);
+      final int N=r.receivers.size();
+      for (int i=0; i < N; i++) {
+        Object target=r.receivers.get(i);
+        if (DEBUG_BROADCAST)         Log.v(TAG,"Delivering non-serialized to registered " + target + ": "+ r);
+        deliverToRegisteredReceiver(r,(BroadcastFilter)target,false);
+      }
+    }
+    if (mPendingBroadcast != null) {
+      Log.i(TAG,"processNextBroadcast: waiting for " + mPendingBroadcast.curApp);
+      boolean isDead;
+synchronized (mPidsSelfLocked) {
+        isDead=(mPidsSelfLocked.get(mPendingBroadcast.curApp.pid) == null);
+      }
+      if (!isDead) {
+        return;
+      }
+ else {
+        Log.w(TAG,"pending app " + mPendingBroadcast.curApp + " died before responding to broadcast");
+        mPendingBroadcast=null;
+      }
+    }
+    do {
+      if (mOrderedBroadcasts.size() == 0) {
+        scheduleAppGcsLocked();
+        return;
+      }
+      r=mOrderedBroadcasts.get(0);
+      boolean forceReceive=false;
+      int numReceivers=(r.receivers != null) ? r.receivers.size() : 0;
+      long now=SystemClock.uptimeMillis();
+      if (r.dispatchTime > 0) {
+        if ((numReceivers > 0) && (now > r.dispatchTime + (2 * BROADCAST_TIMEOUT * numReceivers))) {
+          Log.w(TAG,"Hung broadcast discarded after timeout failure:" + " now=" + now + " dispatchTime="+ r.dispatchTime+ " startTime="+ r.startTime+ " intent="+ r.intent+ " numReceivers="+ numReceivers+ " nextReceiver="+ r.nextReceiver+ " state="+ r.state);
+          broadcastTimeout();
+          forceReceive=true;
+          r.state=BroadcastRecord.IDLE;
+        }
+      }
+      if (r.state != BroadcastRecord.IDLE) {
+        if (DEBUG_BROADCAST)         Log.d(TAG,"processNextBroadcast() called when not idle (state=" + r.state + ")");
+        return;
+      }
+      if (r.receivers == null || r.nextReceiver >= numReceivers || r.resultAbort || forceReceive) {
+        if (r.resultTo != null) {
+          try {
+            if (DEBUG_BROADCAST) {
+              int seq=r.intent.getIntExtra("seq",-1);
+              Log.i(TAG,"Finishing broadcast " + r.intent.getAction() + " seq="+ seq+ " app="+ r.callerApp);
+            }
+            performReceive(r.callerApp,r.resultTo,new Intent(r.intent),r.resultCode,r.resultData,r.resultExtras,false);
+          }
+ catch (          RemoteException e) {
+            Log.w(TAG,"Failure sending broadcast result of " + r.intent,e);
+          }
+        }
+        if (DEBUG_BROADCAST)         Log.v(TAG,"Cancelling BROADCAST_TIMEOUT_MSG");
+        mHandler.removeMessages(BROADCAST_TIMEOUT_MSG);
+        mOrderedBroadcasts.remove(0);
+        r=null;
+        continue;
+      }
+    }
+ while (r == null);
+    int recIdx=r.nextReceiver++;
+    r.startTime=SystemClock.uptimeMillis();
+    if (recIdx == 0) {
+      r.dispatchTime=r.startTime;
+      if (DEBUG_BROADCAST)       Log.v(TAG,"Submitting BROADCAST_TIMEOUT_MSG for " + (r.startTime + BROADCAST_TIMEOUT));
+      Message msg=mHandler.obtainMessage(BROADCAST_TIMEOUT_MSG);
+      mHandler.sendMessageAtTime(msg,r.startTime + BROADCAST_TIMEOUT);
+    }
+    Object nextReceiver=r.receivers.get(recIdx);
+    if (nextReceiver instanceof BroadcastFilter) {
+      BroadcastFilter filter=(BroadcastFilter)nextReceiver;
+      if (DEBUG_BROADCAST)       Log.v(TAG,"Delivering serialized to registered " + filter + ": "+ r);
+      deliverToRegisteredReceiver(r,filter,r.ordered);
+      if (r.receiver == null || !r.ordered) {
+        r.state=BroadcastRecord.IDLE;
+        scheduleBroadcastsLocked();
+      }
+      return;
+    }
+    ResolveInfo info=(ResolveInfo)nextReceiver;
+    boolean skip=false;
+    int perm=checkComponentPermission(info.activityInfo.permission,r.callingPid,r.callingUid,info.activityInfo.exported ? -1 : info.activityInfo.applicationInfo.uid);
+    if (perm != PackageManager.PERMISSION_GRANTED) {
+      Log.w(TAG,"Permission Denial: broadcasting " + r.intent.toString() + " from "+ r.callerPackage+ " (pid="+ r.callingPid+ ", uid="+ r.callingUid+ ")"+ " requires "+ info.activityInfo.permission+ " due to receiver "+ info.activityInfo.packageName+ "/"+ info.activityInfo.name);
+      skip=true;
+    }
+    if (r.callingUid != Process.SYSTEM_UID && r.requiredPermission != null) {
+      try {
+        perm=ActivityThread.getPackageManager().checkPermission(r.requiredPermission,info.activityInfo.applicationInfo.packageName);
+      }
+ catch (      RemoteException e) {
+        perm=PackageManager.PERMISSION_DENIED;
+      }
+      if (perm != PackageManager.PERMISSION_GRANTED) {
+        Log.w(TAG,"Permission Denial: receiving " + r.intent + " to "+ info.activityInfo.applicationInfo.packageName+ " requires "+ r.requiredPermission+ " due to sender "+ r.callerPackage+ " (uid "+ r.callingUid+ ")");
+        skip=true;
+      }
+    }
+    if (r.curApp != null && r.curApp.crashing) {
+      skip=true;
+    }
+    if (skip) {
+      r.receiver=null;
+      r.curFilter=null;
+      r.state=BroadcastRecord.IDLE;
+      scheduleBroadcastsLocked();
+      return;
+    }
+    r.state=BroadcastRecord.APP_RECEIVE;
+    String targetProcess=info.activityInfo.processName;
+    r.curComponent=new ComponentName(info.activityInfo.applicationInfo.packageName,info.activityInfo.name);
+    r.curReceiver=info.activityInfo;
+    ProcessRecord app=getProcessRecordLocked(targetProcess,info.activityInfo.applicationInfo.uid);
+    if (app != null && app.thread != null) {
+      try {
+        processCurBroadcastLocked(r,app);
+        return;
+      }
+ catch (      RemoteException e) {
+        Log.w(TAG,"Exception when sending broadcast to " + r.curComponent,e);
+      }
+    }
+    if ((r.curApp=startProcessLocked(targetProcess,info.activityInfo.applicationInfo,true,r.intent.getFlags() | Intent.FLAG_FROM_BACKGROUND,"broadcast",r.curComponent)) == null) {
+      Log.w(TAG,"Unable to launch app " + info.activityInfo.applicationInfo.packageName + "/"+ info.activityInfo.applicationInfo.uid+ " for broadcast "+ r.intent+ ": process is bad");
+      logBroadcastReceiverDiscard(r);
+      finishReceiverLocked(r.receiver,r.resultCode,r.resultData,r.resultExtras,r.resultAbort,true);
+      scheduleBroadcastsLocked();
+      r.state=BroadcastRecord.IDLE;
+      return;
+    }
+    mPendingBroadcast=r;
+  }
+}

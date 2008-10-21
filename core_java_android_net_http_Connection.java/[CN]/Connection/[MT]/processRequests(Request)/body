@@ -1,0 +1,127 @@
+{
+  Request req=null;
+  boolean empty;
+  int error=EventHandler.OK;
+  Exception exception=null;
+  LinkedList<Request> pipe=new LinkedList<Request>();
+  int minPipe=MIN_PIPE, maxPipe=MAX_PIPE;
+  int state=SEND;
+  while (state != DONE) {
+    if (HttpLog.LOGV)     HttpLog.v(states[state] + " pipe " + pipe.size());
+    if (mActive == STATE_CANCEL_REQUESTED) {
+      try {
+        Thread.sleep(100);
+      }
+ catch (      InterruptedException x) {
+      }
+      mActive=STATE_NORMAL;
+    }
+switch (state) {
+case SEND:
+{
+        if (pipe.size() == maxPipe) {
+          state=READ;
+          break;
+        }
+        if (firstRequest == null) {
+          req=mRequestFeeder.getRequest(mHost);
+        }
+ else {
+          req=firstRequest;
+          firstRequest=null;
+        }
+        if (req == null) {
+          state=DRAIN;
+          break;
+        }
+        req.setConnection(this);
+        if (req.mCancelled) {
+          if (HttpLog.LOGV)           HttpLog.v("processRequests(): skipping cancelled request " + req);
+          req.complete();
+          break;
+        }
+        if (mHttpClientConnection == null || !mHttpClientConnection.isOpen()) {
+          if (!openHttpConnection(req)) {
+            state=DONE;
+            break;
+          }
+        }
+        try {
+          req.sendRequest(mHttpClientConnection);
+        }
+ catch (        HttpException e) {
+          exception=e;
+          error=EventHandler.ERROR;
+        }
+catch (        IOException e) {
+          exception=e;
+          error=EventHandler.ERROR_IO;
+        }
+catch (        IllegalStateException e) {
+          exception=e;
+          error=EventHandler.ERROR_IO;
+        }
+        if (exception != null) {
+          if (httpFailure(req,error,exception) && !req.mCancelled) {
+            pipe.addLast(req);
+          }
+          exception=null;
+          state=(clearPipe(pipe) || !mConnectionManager.isNetworkConnected()) ? DONE : SEND;
+          minPipe=maxPipe=1;
+          break;
+        }
+        pipe.addLast(req);
+        if (!mCanPersist)         state=READ;
+        break;
+      }
+case DRAIN:
+case READ:
+{
+      empty=!mRequestFeeder.haveRequest(mHost);
+      int pipeSize=pipe.size();
+      if (state != DRAIN && pipeSize < minPipe && !empty && mCanPersist) {
+        state=SEND;
+        break;
+      }
+ else       if (pipeSize == 0) {
+        state=empty ? DONE : SEND;
+        break;
+      }
+      req=(Request)pipe.removeFirst();
+      if (HttpLog.LOGV)       HttpLog.v("processRequests() reading " + req);
+      try {
+        req.readResponse(mHttpClientConnection);
+      }
+ catch (      ParseException e) {
+        exception=e;
+        error=EventHandler.ERROR_IO;
+      }
+catch (      IOException e) {
+        exception=e;
+        error=EventHandler.ERROR_IO;
+      }
+catch (      IllegalStateException e) {
+        exception=e;
+        error=EventHandler.ERROR_IO;
+      }
+      if (exception != null) {
+        if (httpFailure(req,error,exception) && !req.mCancelled) {
+          req.reset();
+          pipe.addFirst(req);
+        }
+        exception=null;
+        mCanPersist=false;
+      }
+      if (!mCanPersist) {
+        if (HttpLog.LOGV)         HttpLog.v("processRequests(): no persist, closing " + mHost);
+        closeConnection();
+        mHttpContext.removeAttribute(HTTP_CONNECTION);
+        clearPipe(pipe);
+        minPipe=maxPipe=1;
+        state=mConnectionManager.isNetworkConnected() ? SEND : DONE;
+      }
+      break;
+    }
+}
+}
+}

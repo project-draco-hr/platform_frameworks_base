@@ -1,0 +1,116 @@
+{
+  AttributeSet attrs=parser;
+  String pkgName=parsePackageName(parser,attrs,flags,outError);
+  if (pkgName == null) {
+    mParseError=PackageManager.INSTALL_PARSE_FAILED_BAD_PACKAGE_NAME;
+    return null;
+  }
+  int type;
+  final Package pkg=new Package(pkgName);
+  pkg.mSystem=(flags & PARSE_IS_SYSTEM) != 0;
+  boolean foundApp=false;
+  TypedArray sa=res.obtainAttributes(attrs,com.android.internal.R.styleable.AndroidManifest);
+  pkg.mVersionCode=sa.getInteger(com.android.internal.R.styleable.AndroidManifest_versionCode,0);
+  pkg.mVersionName=sa.getNonResourceString(com.android.internal.R.styleable.AndroidManifest_versionName);
+  if (pkg.mVersionName != null) {
+    pkg.mVersionName=pkg.mVersionName.intern();
+  }
+  String str=sa.getNonResourceString(com.android.internal.R.styleable.AndroidManifest_sharedUserId);
+  if (str != null) {
+    String nameError=validateName(str,true);
+    if (nameError != null && !"android".equals(pkgName)) {
+      outError[0]="<manifest> specifies bad sharedUserId name \"" + str + "\": "+ nameError;
+      mParseError=PackageManager.INSTALL_PARSE_FAILED_BAD_SHARED_USER_ID;
+      return null;
+    }
+    pkg.mSharedUserId=str.intern();
+  }
+  sa.recycle();
+  final int innerDepth=parser.getDepth();
+  int outerDepth=parser.getDepth();
+  while ((type=parser.next()) != parser.END_DOCUMENT && (type != parser.END_TAG || parser.getDepth() > outerDepth)) {
+    if (type == parser.END_TAG || type == parser.TEXT) {
+      continue;
+    }
+    String tagName=parser.getName();
+    if (tagName.equals("application")) {
+      if (foundApp) {
+        if (RIGID_PARSER) {
+          outError[0]="<manifest> has more than one <application>";
+          mParseError=PackageManager.INSTALL_PARSE_FAILED_MANIFEST_MALFORMED;
+          return null;
+        }
+ else {
+          Log.w(TAG,"<manifest> has more than one <application>");
+          XmlUtils.skipCurrentTag(parser);
+          continue;
+        }
+      }
+      foundApp=true;
+      if (!parseApplication(pkg,res,parser,attrs,flags,outError)) {
+        return null;
+      }
+    }
+ else     if (tagName.equals("permission-group")) {
+      if (parsePermissionGroup(pkg,res,parser,attrs,outError) == null) {
+        return null;
+      }
+    }
+ else     if (tagName.equals("permission")) {
+      if (parsePermission(pkg,res,parser,attrs,outError) == null) {
+        return null;
+      }
+    }
+ else     if (tagName.equals("permission-tree")) {
+      if (parsePermissionTree(pkg,res,parser,attrs,outError) == null) {
+        return null;
+      }
+    }
+ else     if (tagName.equals("uses-permission")) {
+      sa=res.obtainAttributes(attrs,com.android.internal.R.styleable.AndroidManifestUsesPermission);
+      String name=sa.getNonResourceString(com.android.internal.R.styleable.AndroidManifestUsesPermission_name);
+      sa.recycle();
+      if (name != null && !pkg.requestedPermissions.contains(name)) {
+        pkg.requestedPermissions.add(name);
+      }
+      XmlUtils.skipCurrentTag(parser);
+    }
+ else     if (tagName.equals("uses-sdk")) {
+      if (mSdkVersion > 0) {
+        sa=res.obtainAttributes(attrs,com.android.internal.R.styleable.AndroidManifestUsesSdk);
+        int vers=sa.getInt(com.android.internal.R.styleable.AndroidManifestUsesSdk_minSdkVersion,0);
+        sa.recycle();
+        if (vers > mSdkVersion) {
+          outError[0]="Requires newer sdk version #" + vers + " (current version is #"+ mSdkVersion+ ")";
+          mParseError=PackageManager.INSTALL_FAILED_OLDER_SDK;
+          return null;
+        }
+      }
+      XmlUtils.skipCurrentTag(parser);
+    }
+ else     if (tagName.equals("instrumentation")) {
+      if (parseInstrumentation(pkg,res,parser,attrs,outError) == null) {
+        return null;
+      }
+    }
+ else     if (RIGID_PARSER) {
+      outError[0]="Bad element under <manifest>: " + parser.getName();
+      mParseError=PackageManager.INSTALL_PARSE_FAILED_MANIFEST_MALFORMED;
+      return null;
+    }
+ else {
+      Log.w(TAG,"Bad element under <manifest>: " + parser.getName());
+      XmlUtils.skipCurrentTag(parser);
+      continue;
+    }
+  }
+  if (!foundApp && pkg.instrumentation.size() == 0) {
+    outError[0]="<manifest> does not contain an <application> or <instrumentation>";
+    mParseError=PackageManager.INSTALL_PARSE_FAILED_MANIFEST_EMPTY;
+  }
+  if (pkg.usesLibraries.size() > 0) {
+    pkg.usesLibraryFiles=new String[pkg.usesLibraries.size()];
+    pkg.usesLibraries.toArray(pkg.usesLibraryFiles);
+  }
+  return pkg;
+}

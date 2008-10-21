@@ -1,0 +1,152 @@
+{
+switch (msg.what) {
+case DO_TRAVERSAL:
+    if (mProfile) {
+      Debug.startMethodTracing("ViewRoot");
+    }
+  performTraversals();
+if (mProfile) {
+  Debug.stopMethodTracing();
+  mProfile=false;
+}
+break;
+case DISPATCH_KEY:
+if (LOCAL_LOGV) Log.v("ViewRoot","Dispatching key " + msg.obj + " to "+ mView);
+deliverKeyEvent((KeyEvent)msg.obj,true);
+break;
+case DISPATCH_POINTER:
+MotionEvent event=(MotionEvent)msg.obj;
+boolean didFinish;
+if (event == null) {
+try {
+event=sWindowSession.getPendingPointerMove(mWindow);
+}
+ catch (RemoteException e) {
+}
+didFinish=true;
+}
+ else {
+didFinish=false;
+}
+try {
+boolean handled;
+if (mView != null && mAdded && event != null) {
+boolean isDown=event.getAction() == MotionEvent.ACTION_DOWN;
+if (isDown) {
+ensureTouchMode(true);
+}
+handled=mView.dispatchTouchEvent(event);
+if (!handled && isDown) {
+int edgeSlop=ViewConfiguration.getEdgeSlop();
+final int edgeFlags=event.getEdgeFlags();
+int direction=View.FOCUS_UP;
+int x=(int)event.getX();
+int y=(int)event.getY();
+final int[] deltas=new int[2];
+if ((edgeFlags & MotionEvent.EDGE_TOP) != 0) {
+direction=View.FOCUS_DOWN;
+if ((edgeFlags & MotionEvent.EDGE_LEFT) != 0) {
+deltas[0]=edgeSlop;
+x+=edgeSlop;
+}
+ else if ((edgeFlags & MotionEvent.EDGE_RIGHT) != 0) {
+deltas[0]=-edgeSlop;
+x-=edgeSlop;
+}
+}
+ else if ((edgeFlags & MotionEvent.EDGE_BOTTOM) != 0) {
+direction=View.FOCUS_UP;
+if ((edgeFlags & MotionEvent.EDGE_LEFT) != 0) {
+deltas[0]=edgeSlop;
+x+=edgeSlop;
+}
+ else if ((edgeFlags & MotionEvent.EDGE_RIGHT) != 0) {
+deltas[0]=-edgeSlop;
+x-=edgeSlop;
+}
+}
+ else if ((edgeFlags & MotionEvent.EDGE_LEFT) != 0) {
+direction=View.FOCUS_RIGHT;
+}
+ else if ((edgeFlags & MotionEvent.EDGE_RIGHT) != 0) {
+direction=View.FOCUS_LEFT;
+}
+if (edgeFlags != 0 && mView instanceof ViewGroup) {
+View nearest=FocusFinder.getInstance().findNearestTouchable(((ViewGroup)mView),x,y,direction,deltas);
+if (nearest != null) {
+event.offsetLocation(deltas[0],deltas[1]);
+event.setEdgeFlags(0);
+mView.dispatchTouchEvent(event);
+}
+}
+}
+}
+}
+  finally {
+if (!didFinish) {
+try {
+sWindowSession.finishKey(mWindow);
+}
+ catch (RemoteException e) {
+}
+}
+if (event != null) {
+event.recycle();
+}
+if (LOCAL_LOGV || WATCH_POINTER) Log.i(TAG,"Done dispatching!");
+}
+break;
+case DISPATCH_TRACKBALL:
+deliverTrackballEvent((MotionEvent)msg.obj);
+break;
+case DISPATCH_APP_VISIBILITY:
+handleAppVisibility(msg.arg1 != 0);
+break;
+case DISPATCH_GET_NEW_SURFACE:
+handleGetNewSurface();
+break;
+case RESIZED:
+if (mWinFrame.width() == msg.arg1 && mWinFrame.height() == msg.arg2) {
+break;
+}
+case RESIZED_REPORT:
+if (mAdded) {
+mWinFrame.left=0;
+mWinFrame.right=msg.arg1;
+mWinFrame.top=0;
+mWinFrame.bottom=msg.arg2;
+if (msg.what == RESIZED_REPORT) {
+mReportNextDraw=true;
+}
+requestLayout();
+}
+break;
+case WINDOW_FOCUS_CHANGED:
+{
+if (mAdded) {
+boolean hasWindowFocus=msg.arg1 != 0;
+mAttachInfo.mHasWindowFocus=hasWindowFocus;
+if (hasWindowFocus) {
+boolean inTouchMode=msg.arg2 != 0;
+ensureTouchModeLocally(inTouchMode);
+if (mGlWanted) {
+checkEglErrors();
+if (mGlWanted && !mUseGL) {
+initializeGL();
+if (mGlCanvas != null) {
+mGlCanvas.setViewport(mWidth,mHeight);
+}
+}
+}
+}
+if (mView != null) {
+mView.dispatchWindowFocusChanged(hasWindowFocus);
+}
+}
+}
+break;
+case DIE:
+dispatchDetachedFromWindow();
+break;
+}
+}

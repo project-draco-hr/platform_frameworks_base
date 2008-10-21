@@ -1,0 +1,75 @@
+{
+  if (!isCollectionEnabled()) {
+    return;
+  }
+  long now=SystemClock.elapsedRealtime();
+  if (mLastKnownLocation == null) {
+    mLastKnownLocation=new Location(location);
+  }
+ else {
+    mLastKnownLocation.set(location);
+  }
+  mLastKnownLocationTime=now;
+  long restTime=BURST_REST_TIME_ON_BATTERY;
+  if (mBatteryChargedAndPlugged) {
+    restTime=BURST_REST_TIME_PLUGGED;
+  }
+  int trigger;
+  if (mLastBurstEndTime == 0 || (now - mLastBurstEndTime > restTime)) {
+    if (now - mLastUploadedLocationTime < BURST_MEASUREMENT_INTERVAL) {
+      return;
+    }
+    int distanceFromLastBurst=-1;
+    if (mLastBurstLocation != null) {
+      distanceFromLastBurst=(int)mLastBurstLocation.distanceTo(location);
+      if (distanceFromLastBurst < MIN_DISTANCE_BETWEEN_BURSTS && mNumBurstsFromLastLocation >= MAX_BURSTS_FROM_SAME_LOCATION) {
+        log("NO UPLOAD: Too many bursts from same location.");
+        return;
+      }
+    }
+    if (mCurrentBurstStartTime == 0) {
+      mCurrentBurstStartTime=now;
+      mCurrentBurstNumSamples=1;
+      trigger=GDebugProfile.TRIGGER_COLLECTION_START_BURST;
+    }
+ else     if (now - mCurrentBurstStartTime > restTime) {
+      mCurrentBurstStartTime=now;
+      mCurrentBurstNumSamples=1;
+      trigger=GDebugProfile.TRIGGER_COLLECTION_RESTART_BURST;
+    }
+ else     if (mCurrentBurstNumSamples == BURST_NUM_SAMPLES - 1) {
+      mLastBurstEndTime=now;
+      mCurrentBurstStartTime=0;
+      mCurrentBurstNumSamples=0;
+      if (mLastBurstLocation == null) {
+        mLastBurstLocation=new Location(location);
+        mNumBurstsFromLastLocation=1;
+        trigger=GDebugProfile.TRIGGER_COLLECTION_END_BURST;
+      }
+ else {
+        if (distanceFromLastBurst != -1 && distanceFromLastBurst < MIN_DISTANCE_BETWEEN_BURSTS) {
+          mNumBurstsFromLastLocation++;
+          trigger=GDebugProfile.TRIGGER_COLLECTION_END_BURST_AT_SAME_LOCATION;
+        }
+ else {
+          mLastBurstLocation.set(location);
+          mNumBurstsFromLastLocation=1;
+          trigger=GDebugProfile.TRIGGER_COLLECTION_END_BURST;
+        }
+      }
+    }
+ else {
+      mCurrentBurstNumSamples++;
+      trigger=GDebugProfile.TRIGGER_COLLECTION_CONTINUE_BURST;
+    }
+  }
+ else   if (mLastUploadedLocation != null && (mLastUploadedLocation.distanceTo(location) > MIN_DISTANCE_BETWEEN_REPORTS)) {
+    trigger=GDebugProfile.TRIGGER_COLLECTION_MOVED_DISTANCE;
+  }
+ else {
+    log("NO UPLOAD: Not in burst or moving mode. Resting for " + restTime + " ms");
+    return;
+  }
+  log("updateLocation(): Updated location with trigger " + trigger);
+  addToQueue(trigger);
+}

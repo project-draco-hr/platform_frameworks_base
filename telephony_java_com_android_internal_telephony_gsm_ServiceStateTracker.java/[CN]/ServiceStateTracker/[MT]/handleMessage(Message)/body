@@ -1,0 +1,117 @@
+{
+  AsyncResult ar;
+  int[] ints;
+  String[] strings;
+  Message message;
+switch (msg.what) {
+case EVENT_RADIO_AVAILABLE:
+    break;
+case EVENT_SIM_READY:
+  if (mNeedToRegForSimLoaded) {
+    phone.mSIMRecords.registerForRecordsLoaded(this,EVENT_SIM_RECORDS_LOADED,null);
+    mNeedToRegForSimLoaded=false;
+  }
+phone.restoreSavedNetworkSelection(null);
+pollState();
+queueNextSignalStrengthPoll();
+break;
+case EVENT_RADIO_STATE_CHANGED:
+setPowerStateToDesired();
+pollState();
+break;
+case EVENT_NETWORK_STATE_CHANGED:
+pollState();
+break;
+case EVENT_GET_SIGNAL_STRENGTH:
+if (!(cm.getRadioState().isOn())) {
+return;
+}
+ar=(AsyncResult)msg.obj;
+onSignalStrengthResult(ar);
+queueNextSignalStrengthPoll();
+break;
+case EVENT_GET_LOC_DONE:
+ar=(AsyncResult)msg.obj;
+if (ar.exception == null) {
+String states[]=(String[])ar.result;
+int lac=-1;
+int cid=-1;
+if (states.length == 3) {
+try {
+if (states[1] != null && states[1].length() > 0) {
+lac=Integer.parseInt(states[1],16);
+}
+if (states[2] != null && states[2].length() > 0) {
+cid=Integer.parseInt(states[2],16);
+}
+}
+ catch (NumberFormatException ex) {
+Log.w(LOG_TAG,"error parsing location: " + ex);
+}
+}
+if (cellLoc.getCid() != cid || cellLoc.getLac() != lac) {
+cellLoc.setLacAndCid(lac,cid);
+phone.notifyLocationChanged();
+}
+}
+if (ar.userObj != null) {
+AsyncResult.forMessage(((Message)ar.userObj)).exception=ar.exception;
+((Message)ar.userObj).sendToTarget();
+}
+break;
+case EVENT_POLL_STATE_REGISTRATION:
+case EVENT_POLL_STATE_GPRS:
+case EVENT_POLL_STATE_OPERATOR:
+case EVENT_POLL_STATE_NETWORK_SELECTION_MODE:
+ar=(AsyncResult)msg.obj;
+handlePollStateResult(msg.what,ar);
+break;
+case EVENT_POLL_SIGNAL_STRENGTH:
+cm.getSignalStrength(obtainMessage(EVENT_GET_SIGNAL_STRENGTH));
+break;
+case EVENT_NITZ_TIME:
+ar=(AsyncResult)msg.obj;
+String nitzString=(String)((Object[])ar.result)[0];
+int nitzReceiveTime=((Integer)((Object[])ar.result)[1]).intValue();
+setTimeFromNITZString(nitzString,nitzReceiveTime);
+break;
+case EVENT_SIGNAL_STRENGTH_UPDATE:
+ar=(AsyncResult)msg.obj;
+dontPollSignalStrength=true;
+onSignalStrengthResult(ar);
+break;
+case EVENT_SIM_RECORDS_LOADED:
+updateSpnDisplay();
+break;
+case EVENT_LOCATION_UPDATES_ENABLED:
+ar=(AsyncResult)msg.obj;
+if (ar.exception == null) {
+getLacAndCid(null);
+}
+break;
+case EVENT_SET_PREFERRED_NETWORK_TYPE:
+ar=(AsyncResult)msg.obj;
+message=obtainMessage(EVENT_RESET_PREFERRED_NETWORK_TYPE,ar.userObj);
+cm.setPreferredNetworkType(mPreferredNetworkType,message);
+break;
+case EVENT_RESET_PREFERRED_NETWORK_TYPE:
+ar=(AsyncResult)msg.obj;
+if (ar.userObj != null) {
+AsyncResult.forMessage(((Message)ar.userObj)).exception=ar.exception;
+((Message)ar.userObj).sendToTarget();
+}
+break;
+case EVENT_GET_PREFERRED_NETWORK_TYPE:
+ar=(AsyncResult)msg.obj;
+if (ar.exception == null) {
+mPreferredNetworkType=((int[])ar.result)[0];
+}
+ else {
+mPreferredNetworkType=Phone.NT_AUTO_TYPE;
+}
+message=obtainMessage(EVENT_SET_PREFERRED_NETWORK_TYPE,ar.userObj);
+int toggledNetworkType=(mPreferredNetworkType == Phone.NT_AUTO_TYPE) ? Phone.NT_GSM_TYPE : Phone.NT_AUTO_TYPE;
+cm.setPreferredNetworkType(toggledNetworkType,message);
+break;
+}
+}

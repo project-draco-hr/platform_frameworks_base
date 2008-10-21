@@ -1,0 +1,53 @@
+{
+  if (r.finishing) {
+    Log.w(TAG,"Duplicate finish request for " + r);
+    return false;
+  }
+  r.finishing=true;
+  EventLog.writeEvent(LOG_AM_FINISH_ACTIVITY,System.identityHashCode(r),r.task.taskId,r.shortComponentName,reason);
+  r.task.numActivities--;
+  if (r.frontOfTask && index < (mHistory.size() - 1)) {
+    HistoryRecord next=(HistoryRecord)mHistory.get(index + 1);
+    if (next.task == r.task) {
+      next.frontOfTask=true;
+    }
+  }
+  r.pauseKeyDispatchingLocked();
+  if (mFocusedActivity == r) {
+    setFocusedActivityLocked(topRunningActivityLocked(null));
+  }
+  HistoryRecord resultTo=r.resultTo;
+  if (resultTo != null) {
+    if (localLOGV)     Log.v(TAG,"Adding result to " + resultTo);
+    if (r.info.applicationInfo.uid > 0) {
+      grantUriPermissionFromIntentLocked(r.info.applicationInfo.uid,r.packageName,resultData,r);
+    }
+    resultTo.addResultLocked(r,r.resultWho,r.requestCode,resultCode,resultData);
+    r.resultTo=null;
+  }
+  r.results=null;
+  r.pendingResults=null;
+  r.newIntents=null;
+  r.icicle=null;
+  if (mPendingThumbnails.size() > 0) {
+    mCancelledThumbnails.add(r);
+  }
+  if (mResumedActivity == r) {
+    boolean endTask=index <= 0 || ((HistoryRecord)mHistory.get(index - 1)).task != r.task;
+    if (DEBUG_TRANSITION)     Log.v(TAG,"Prepare close transition: finishing " + r);
+    mWindowManager.prepareAppTransition(endTask ? WindowManagerPolicy.TRANSIT_TASK_CLOSE : WindowManagerPolicy.TRANSIT_ACTIVITY_CLOSE);
+    mWindowManager.setAppVisibility(r,false);
+    if (mPausingActivity == null) {
+      if (DEBUG_PAUSE)       Log.v(TAG,"Finish needs to pause: " + r);
+      startPausingLocked();
+    }
+  }
+ else   if (r.state != ActivityState.PAUSING) {
+    if (DEBUG_PAUSE)     Log.v(TAG,"Finish not pausing: " + r);
+    return finishCurrentActivityLocked(r,index,FINISH_AFTER_PAUSE) == null;
+  }
+ else {
+    if (DEBUG_PAUSE)     Log.v(TAG,"Finish waiting for pause of: " + r);
+  }
+  return false;
+}

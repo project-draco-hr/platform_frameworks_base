@@ -1,0 +1,65 @@
+{
+  SQLiteDatabase db=mOpenHelper.getWritableDatabase();
+  db.beginTransaction();
+  try {
+    ContentValues values=new ContentValues();
+    values.put(Sync.History.ELAPSED_TIME,elapsedTime);
+    values.put(Sync.History.EVENT,Sync.History.EVENT_STOP);
+    values.put(Sync.History.MESG,resultMessage);
+    values.put(Sync.History.DOWNSTREAM_ACTIVITY,downstreamActivity);
+    values.put(Sync.History.UPSTREAM_ACTIVITY,upstreamActivity);
+    int count=db.update("history",values,"_id=?",new String[]{Long.toString(historyId)});
+    if (count > 0) {
+      int source=(int)DatabaseUtils.longForQuery(db,"SELECT source FROM history WHERE _id=" + historyId,null);
+      long eventTime=DatabaseUtils.longForQuery(db,"SELECT eventTime FROM history WHERE _id=" + historyId,null);
+      long statsId=DatabaseUtils.longForQuery(db,"SELECT stats_id FROM history WHERE _id=" + historyId,null);
+      createStatusRowIfNecessary(statsId);
+      StringBuilder sb=new StringBuilder();
+      ArrayList<String> bindArgs=new ArrayList<String>();
+      sb.append("UPDATE status SET");
+      sb.append(" numSyncs=numSyncs+1");
+      sb.append(", totalElapsedTime=totalElapsedTime+" + elapsedTime);
+switch (source) {
+case Sync.History.SOURCE_LOCAL:
+        sb.append(", numSourceLocal=numSourceLocal+1");
+      break;
+case Sync.History.SOURCE_POLL:
+    sb.append(", numSourcePoll=numSourcePoll+1");
+  break;
+case Sync.History.SOURCE_USER:
+sb.append(", numSourceUser=numSourceUser+1");
+break;
+case Sync.History.SOURCE_SERVER:
+sb.append(", numSourceServer=numSourceServer+1");
+break;
+}
+final String statsIdString=String.valueOf(statsId);
+final long lastSyncTime=(eventTime + elapsedTime);
+if (Sync.History.MESG_SUCCESS.equals(resultMessage)) {
+sb.append(", lastSuccessTime=" + lastSyncTime);
+sb.append(", lastSuccessSource=" + source);
+sb.append(", lastFailureTime=null");
+sb.append(", lastFailureSource=null");
+sb.append(", lastFailureMesg=null");
+sb.append(", initialFailureTime=null");
+}
+ else if (!Sync.History.MESG_CANCELED.equals(resultMessage)) {
+sb.append(", lastFailureTime=" + lastSyncTime);
+sb.append(", lastFailureSource=" + source);
+sb.append(", lastFailureMesg=?");
+bindArgs.add(resultMessage);
+long initialFailureTime=DatabaseUtils.longForQuery(db,SELECT_INITIAL_FAILURE_TIME_QUERY_STRING,new String[]{statsIdString,String.valueOf(lastSyncTime)});
+sb.append(", initialFailureTime=" + initialFailureTime);
+}
+sb.append(" WHERE stats_id=?");
+bindArgs.add(statsIdString);
+db.execSQL(sb.toString(),bindArgs.toArray());
+db.setTransactionSuccessful();
+mContext.getContentResolver().notifyChange(Sync.History.CONTENT_URI,null);
+mContext.getContentResolver().notifyChange(Sync.Status.CONTENT_URI,null);
+}
+}
+  finally {
+db.endTransaction();
+}
+}

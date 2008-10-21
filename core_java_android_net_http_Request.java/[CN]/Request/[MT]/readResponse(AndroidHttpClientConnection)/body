@@ -1,0 +1,63 @@
+{
+  if (mCancelled)   return;
+  StatusLine statusLine=null;
+  boolean hasBody=false;
+  boolean reuse=false;
+  httpClientConnection.flush();
+  int statusCode=0;
+  Headers header=new Headers();
+  do {
+    statusLine=httpClientConnection.parseResponseHeader(header);
+    statusCode=statusLine.getStatusCode();
+  }
+ while (statusCode < HttpStatus.SC_OK);
+  if (HttpLog.LOGV)   HttpLog.v("Request.readResponseStatus() " + statusLine.toString().length() + " "+ statusLine);
+  ProtocolVersion v=statusLine.getProtocolVersion();
+  mEventHandler.status(v.getMajor(),v.getMinor(),statusCode,statusLine.getReasonPhrase());
+  mEventHandler.headers(header);
+  HttpEntity entity=null;
+  hasBody=canResponseHaveBody(mHttpRequest,statusCode);
+  if (hasBody)   entity=httpClientConnection.receiveResponseEntity(header);
+  if (entity != null) {
+    InputStream is=entity.getContent();
+    Header contentEncoding=entity.getContentEncoding();
+    InputStream nis=null;
+    try {
+      if (contentEncoding != null && contentEncoding.getValue().equals("gzip")) {
+        nis=new GZIPInputStream(is);
+      }
+ else {
+        nis=is;
+      }
+      byte[] buf=mConnection.getBuf();
+      int len=0;
+      int count=0;
+      int lowWater=buf.length / 2;
+      while (len != -1) {
+        len=nis.read(buf,count,buf.length - count);
+        if (len != -1) {
+          count+=len;
+        }
+        if (len == -1 || count >= lowWater) {
+          if (HttpLog.LOGV)           HttpLog.v("Request.readResponse() " + count);
+          mEventHandler.data(buf,count);
+          count=0;
+        }
+      }
+    }
+ catch (    IOException e) {
+      if (statusCode == HttpStatus.SC_OK) {
+        throw e;
+      }
+    }
+ finally {
+      if (nis != null) {
+        nis.close();
+      }
+    }
+  }
+  mConnection.setCanPersist(entity,statusLine.getProtocolVersion(),header.getConnectionType());
+  mEventHandler.endData();
+  complete();
+  if (HttpLog.LOGV)   HttpLog.v("Request.readResponse(): done " + mHost.getSchemeName() + "://"+ getHostPort()+ mPath);
+}

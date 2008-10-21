@@ -1,0 +1,54 @@
+{
+  boolean tryIdle=true;
+  while (true) {
+    long now;
+    Object[] idlers=null;
+synchronized (this) {
+      now=SystemClock.uptimeMillis();
+      Message msg=pullNextLocked(now);
+      if (msg != null)       return msg;
+      if (tryIdle && mIdleHandlers.size() > 0) {
+        idlers=mIdleHandlers.toArray();
+      }
+    }
+    boolean didIdle=false;
+    if (idlers != null) {
+      for (      Object idler : idlers) {
+        boolean keep=false;
+        try {
+          didIdle=true;
+          keep=((IdleHandler)idler).queueIdle();
+        }
+ catch (        Throwable t) {
+          Log.e("MessageQueue","IdleHandler threw exception",t);
+          RuntimeInit.crash("MessageQueue",t);
+        }
+        if (!keep) {
+synchronized (this) {
+            mIdleHandlers.remove(idler);
+          }
+        }
+      }
+    }
+    if (didIdle) {
+      tryIdle=false;
+      continue;
+    }
+synchronized (this) {
+      try {
+        if (mMessages != null) {
+          if (mMessages.when - now > 0) {
+            Binder.flushPendingCommands();
+            this.wait(mMessages.when - now);
+          }
+        }
+ else {
+          Binder.flushPendingCommands();
+          this.wait();
+        }
+      }
+ catch (      InterruptedException e) {
+      }
+    }
+  }
+}

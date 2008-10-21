@@ -1,0 +1,51 @@
+{
+  if (mPausingActivity != null) {
+    RuntimeException e=new RuntimeException();
+    Log.e(TAG,"Trying to pause when pause is already pending for " + mPausingActivity,e);
+  }
+  HistoryRecord prev=mResumedActivity;
+  if (prev == null) {
+    RuntimeException e=new RuntimeException();
+    Log.e(TAG,"Trying to pause when nothing is resumed",e);
+    resumeTopActivityLocked(null);
+    return;
+  }
+  if (DEBUG_PAUSE)   Log.v(TAG,"Start pausing: " + prev);
+  mResumedActivity=null;
+  mPausingActivity=prev;
+  prev.state=ActivityState.PAUSING;
+  prev.task.touchActiveTime();
+  updateCpuStats();
+  if (prev.app != null && prev.app.thread != null) {
+    if (DEBUG_PAUSE)     Log.v(TAG,"Enqueueing pending pause: " + prev);
+    try {
+      EventLog.writeEvent(LOG_AM_PAUSE_ACTIVITY,System.identityHashCode(prev),prev.shortComponentName);
+      prev.app.thread.schedulePauseActivity(prev,prev.finishing,prev.configChangeFlags);
+    }
+ catch (    Exception e) {
+      Log.w(TAG,"Exception thrown during pause",e);
+      mPausingActivity=null;
+    }
+  }
+ else {
+    mPausingActivity=null;
+  }
+  if (!mSleeping) {
+    mLaunchingActivity.acquire();
+    if (!mHandler.hasMessages(LAUNCH_TIMEOUT_MSG)) {
+      Message msg=mHandler.obtainMessage(LAUNCH_TIMEOUT_MSG);
+      mHandler.sendMessageDelayed(msg,LAUNCH_TIMEOUT);
+    }
+  }
+  if (mPausingActivity != null) {
+    prev.pauseKeyDispatchingLocked();
+    Message msg=mHandler.obtainMessage(PAUSE_TIMEOUT_MSG);
+    msg.obj=prev;
+    mHandler.sendMessageDelayed(msg,PAUSE_TIMEOUT);
+    if (DEBUG_PAUSE)     Log.v(TAG,"Waiting for pause to complete...");
+  }
+ else {
+    if (DEBUG_PAUSE)     Log.v(TAG,"Activity not running, resuming next.");
+    resumeTopActivityLocked(null);
+  }
+}

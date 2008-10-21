@@ -1,0 +1,82 @@
+{
+  Log.i(TAG,"Extracting " + filename + " to "+ path);
+  if (!path.endsWith(File.separator)) {
+    Log.e(TAG,"Path missing trailing separator: " + path);
+    return false;
+  }
+  boolean result=false;
+  ZipInputStream zipStream=null;
+  long uncompressedSize=0;
+  try {
+    ZipFile zipFile=new ZipFile(filename);
+    try {
+      Enumeration entries=zipFile.entries();
+      while (entries.hasMoreElements()) {
+        ZipEntry entry=(ZipEntry)entries.nextElement();
+        uncompressedSize+=entry.getSize();
+        if (entry.getName().indexOf(PATH_NAVIGATION_COMPONENT) >= 0) {
+          throw new IOException("Illegal entry name: " + entry.getName());
+        }
+        File file=new File(path + entry.getName());
+        if (file.exists()) {
+          throw new IOException("A file or directory with the same name already exists.");
+        }
+      }
+    }
+  finally {
+      zipFile.close();
+    }
+    Log.i(TAG,"Determined uncompressed size: " + uncompressedSize);
+    if (freeSpace() <= uncompressedSize * SIZE_MULTIPLIER) {
+      throw new IOException("Not enough space to unpack this archive.");
+    }
+    zipStream=new ZipInputStream(new BufferedInputStream(new FileInputStream(filename)));
+    ZipEntry entry;
+    int counter;
+    byte buffer[]=new byte[BUFFER_SIZE_BYTES];
+    while ((entry=zipStream.getNextEntry()) != null) {
+      File file=new File(path + entry.getName());
+      if (entry.isDirectory()) {
+        file.mkdirs();
+      }
+ else {
+        CRC32 checksum=new CRC32();
+        BufferedOutputStream output=new BufferedOutputStream(new FileOutputStream(file),BUFFER_SIZE_BYTES);
+        try {
+          while ((counter=zipStream.read(buffer,0,BUFFER_SIZE_BYTES)) != -1) {
+            output.write(buffer,0,counter);
+            checksum.update(buffer,0,counter);
+          }
+          output.flush();
+        }
+  finally {
+          output.close();
+        }
+        if (checksum.getValue() != entry.getCrc()) {
+          throw new IOException("Integrity check failed for: " + entry.getName());
+        }
+      }
+      zipStream.closeEntry();
+    }
+    result=true;
+  }
+ catch (  FileNotFoundException ex) {
+    Log.e(TAG,"The zip file could not be found. " + ex);
+  }
+catch (  IOException ex) {
+    Log.e(TAG,"Could not read or write an entry. " + ex);
+  }
+catch (  IllegalArgumentException ex) {
+    Log.e(TAG,"Could not create the BufferedOutputStream. " + ex);
+  }
+ finally {
+    if (zipStream != null) {
+      try {
+        zipStream.close();
+      }
+ catch (      IOException ex) {
+      }
+    }
+    return result;
+  }
+}

@@ -1,0 +1,246 @@
+{
+  final View host=mView;
+  if (DBG) {
+    System.out.println("======================================");
+    System.out.println("performTraversals");
+    host.debug();
+  }
+  if (host == null || !mAdded)   return;
+  mTraversalScheduled=false;
+  mWillDrawSoon=true;
+  boolean windowResizesToFitContent=false;
+  boolean fullRedrawNeeded=mFullRedrawNeeded;
+  boolean newSurface=false;
+  WindowManager.LayoutParams lp=(WindowManager.LayoutParams)host.getLayoutParams();
+  int desiredWindowWidth;
+  int desiredWindowHeight;
+  int childWidthMeasureSpec;
+  int childHeightMeasureSpec;
+  final View.AttachInfo attachInfo=mAttachInfo;
+  final int viewVisibility=getHostVisibility();
+  boolean viewVisibilityChanged=mViewVisibility != viewVisibility || mNewSurfaceNeeded;
+  WindowManager.LayoutParams params=null;
+  if (mWindowAttributesChanged) {
+    mWindowAttributesChanged=false;
+    params=mWindowAttributes;
+  }
+  if (mFirst) {
+    fullRedrawNeeded=true;
+    mLayoutRequested=true;
+    Display d=new Display(0);
+    desiredWindowWidth=d.getWidth();
+    desiredWindowHeight=d.getHeight();
+    attachInfo.mWindowToken=mWindow.asBinder();
+    attachInfo.mSurface=mSurface;
+    attachInfo.mSession=sWindowSession;
+    attachInfo.mHasWindowFocus=false;
+    attachInfo.mWindowVisibility=viewVisibility;
+    attachInfo.mRecomputeGlobalAttributes=false;
+    attachInfo.mKeepScreenOn=false;
+    viewVisibilityChanged=false;
+    host.dispatchAttachedToWindow(attachInfo,0);
+    sRunQueue.executeActions(attachInfo.mHandler);
+  }
+ else {
+    desiredWindowWidth=mWinFrame.width();
+    desiredWindowHeight=mWinFrame.height();
+    if (desiredWindowWidth != mWidth || desiredWindowHeight != mHeight) {
+      if (DEBUG_ORIENTATION)       Log.v("ViewRoot","View " + host + " resized to: "+ mWinFrame);
+      fullRedrawNeeded=true;
+      mLayoutRequested=true;
+      windowResizesToFitContent=true;
+    }
+  }
+  if (viewVisibilityChanged) {
+    attachInfo.mWindowVisibility=viewVisibility;
+    host.dispatchWindowVisibilityChanged(viewVisibility);
+    if (viewVisibility != View.VISIBLE || mNewSurfaceNeeded) {
+      if (mUseGL) {
+        destroyGL();
+      }
+    }
+  }
+  if (mLayoutRequested) {
+    if (mFirst) {
+      host.fitSystemWindows(mCoveredInsets);
+      mAttachInfo.mInTouchMode=!mAddedTouchMode;
+      ensureTouchModeLocally(mAddedTouchMode);
+    }
+ else {
+      if (lp.width == ViewGroup.LayoutParams.WRAP_CONTENT || lp.height == ViewGroup.LayoutParams.WRAP_CONTENT) {
+        windowResizesToFitContent=true;
+        Display d=new Display(0);
+        desiredWindowWidth=d.getWidth();
+        desiredWindowHeight=d.getHeight();
+      }
+    }
+    childWidthMeasureSpec=getRootMeasureSpec(desiredWindowWidth,lp.width);
+    childHeightMeasureSpec=getRootMeasureSpec(desiredWindowHeight,lp.height);
+    if (DEBUG_ORIENTATION)     Log.v("ViewRoot","Measuring " + host + " in display "+ desiredWindowWidth+ "x"+ desiredWindowHeight+ "...");
+    host.measure(childWidthMeasureSpec,childHeightMeasureSpec);
+    if (DBG) {
+      System.out.println("======================================");
+      System.out.println("performTraversals -- after measure");
+      host.debug();
+    }
+  }
+  if (attachInfo.mRecomputeGlobalAttributes) {
+    attachInfo.mRecomputeGlobalAttributes=false;
+    boolean oldVal=attachInfo.mKeepScreenOn;
+    attachInfo.mKeepScreenOn=false;
+    host.dispatchCollectViewAttributes(0);
+    if (attachInfo.mKeepScreenOn != oldVal) {
+      params=mWindowAttributes;
+    }
+  }
+  if (params != null && (host.mPrivateFlags & View.REQUEST_TRANSPARENT_REGIONS) != 0) {
+    if (!PixelFormat.formatHasAlpha(params.format)) {
+      params.format=PixelFormat.TRANSLUCENT;
+    }
+  }
+  boolean windowShouldResize=mLayoutRequested && windowResizesToFitContent && (mWidth != host.mMeasuredWidth || mHeight != host.mMeasuredHeight);
+  int relayoutResult=0;
+  if (mFirst || windowShouldResize || viewVisibilityChanged|| params != null) {
+    if (viewVisibility == View.VISIBLE) {
+      if (mWindowAttributes.memoryType == WindowManager.LayoutParams.MEMORY_TYPE_GPU) {
+        if (params == null) {
+          params=mWindowAttributes;
+        }
+        mGlWanted=true;
+      }
+    }
+    final Rect frame=mWinFrame;
+    boolean initialized=false;
+    boolean coveredInsetsChanged=false;
+    try {
+      boolean hadSurface=mSurface.isValid();
+      int fl=0;
+      if (params != null) {
+        fl=params.flags;
+        if (attachInfo.mKeepScreenOn) {
+          params.flags|=WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON;
+        }
+      }
+      relayoutResult=sWindowSession.relayout(mWindow,params,host.mMeasuredWidth,host.mMeasuredHeight,viewVisibility,frame,mNewCoveredInsets,mSurface);
+      if (params != null) {
+        params.flags=fl;
+      }
+      coveredInsetsChanged=!mNewCoveredInsets.equals(mCoveredInsets);
+      if (coveredInsetsChanged) {
+        mCoveredInsets.set(mNewCoveredInsets);
+        host.fitSystemWindows(mCoveredInsets);
+      }
+      if (!hadSurface && mSurface.isValid()) {
+        newSurface=true;
+        fullRedrawNeeded=true;
+        if (mGlWanted && !mUseGL) {
+          initializeGL();
+          initialized=mGlCanvas != null;
+        }
+      }
+    }
+ catch (    RemoteException e) {
+    }
+    if (DEBUG_ORIENTATION)     Log.v("ViewRoot","Relayout returned: frame=" + mWinFrame + ", surface="+ mSurface);
+    attachInfo.mWindowLeft=frame.left;
+    attachInfo.mWindowTop=frame.top;
+    mWidth=frame.width();
+    mHeight=frame.height();
+    if (initialized) {
+      mGlCanvas.setViewport(mWidth,mHeight);
+    }
+    boolean focusChangedDueToTouchMode=ensureTouchModeLocally((relayoutResult & WindowManagerImpl.RELAYOUT_IN_TOUCH_MODE) != 0);
+    if (focusChangedDueToTouchMode || mWidth != host.mMeasuredWidth || mHeight != host.mMeasuredHeight || coveredInsetsChanged) {
+      childWidthMeasureSpec=getRootMeasureSpec(mWidth,lp.width);
+      childHeightMeasureSpec=getRootMeasureSpec(mHeight,lp.height);
+      host.measure(childWidthMeasureSpec,childHeightMeasureSpec);
+      int width=host.mMeasuredWidth;
+      int height=host.mMeasuredHeight;
+      boolean measureAgain=false;
+      if (lp.horizontalWeight > 0.0f) {
+        width+=(int)((mWidth - width) * lp.horizontalWeight);
+        childWidthMeasureSpec=MeasureSpec.makeMeasureSpec(width,MeasureSpec.EXACTLY);
+        measureAgain=true;
+      }
+      if (lp.verticalWeight > 0.0f) {
+        height+=(int)((mHeight - height) * lp.verticalWeight);
+        childHeightMeasureSpec=MeasureSpec.makeMeasureSpec(height,MeasureSpec.EXACTLY);
+        measureAgain=true;
+      }
+      if (measureAgain) {
+        host.measure(childWidthMeasureSpec,childHeightMeasureSpec);
+      }
+      mLayoutRequested=true;
+    }
+  }
+  boolean triggerGlobalLayoutListener=mLayoutRequested || attachInfo.mRecomputeGlobalAttributes;
+  if (mLayoutRequested) {
+    mLayoutRequested=false;
+    if (DEBUG_ORIENTATION)     Log.v("ViewRoot","Setting frame " + host + " to ("+ host.mMeasuredWidth+ ", "+ host.mMeasuredHeight+ ")");
+    long startTime;
+    if (PROFILE_LAYOUT) {
+      startTime=SystemClock.elapsedRealtime();
+    }
+    host.layout(0,0,host.mMeasuredWidth,host.mMeasuredHeight);
+    if (PROFILE_LAYOUT) {
+      EventLog.writeEvent(60001,SystemClock.elapsedRealtime() - startTime);
+    }
+    if ((host.mPrivateFlags & View.REQUEST_TRANSPARENT_REGIONS) != 0) {
+      host.getLocationInWindow(host.mLocation);
+      mTransparentRegion.set(host.mLocation[0],host.mLocation[1],host.mLocation[0] + host.mRight - host.mLeft,host.mLocation[1] + host.mBottom - host.mTop);
+      host.gatherTransparentRegion(mTransparentRegion);
+      if (!mTransparentRegion.equals(mPreviousTransparentRegion)) {
+        mPreviousTransparentRegion.set(mTransparentRegion);
+        try {
+          sWindowSession.setTransparentRegion(mWindow,mTransparentRegion);
+        }
+ catch (        RemoteException e) {
+        }
+      }
+    }
+    if (DBG) {
+      System.out.println("======================================");
+      System.out.println("performTraversals -- after setFrame");
+      host.debug();
+    }
+  }
+  if (triggerGlobalLayoutListener) {
+    attachInfo.mRecomputeGlobalAttributes=false;
+    attachInfo.mTreeObserver.dispatchOnGlobalLayout();
+  }
+  if (mFirst) {
+    if (mView != null && !mView.hasFocus()) {
+      mView.requestFocus(View.FOCUS_FORWARD);
+      mFocusedView=mView.findFocus();
+    }
+  }
+  mFirst=false;
+  mWillDrawSoon=false;
+  mNewSurfaceNeeded=false;
+  mViewVisibility=viewVisibility;
+  boolean cancelDraw=attachInfo.mTreeObserver.dispatchOnPreDraw();
+  if (!cancelDraw && !newSurface) {
+    mFullRedrawNeeded=false;
+    draw(fullRedrawNeeded);
+    if ((relayoutResult & WindowManagerImpl.RELAYOUT_FIRST_TIME) != 0 || mReportNextDraw) {
+      if (LOCAL_LOGV) {
+        Log.v("ViewRoot","FINISHED DRAWING: " + mWindowAttributes.getTitle());
+      }
+      mReportNextDraw=false;
+      try {
+        sWindowSession.finishDrawing(mWindow);
+      }
+ catch (      RemoteException e) {
+      }
+    }
+  }
+ else {
+    if ((relayoutResult & WindowManagerImpl.RELAYOUT_FIRST_TIME) != 0) {
+      mReportNextDraw=true;
+    }
+    if (fullRedrawNeeded) {
+      mFullRedrawNeeded=true;
+    }
+    scheduleTraversals();
+  }
+}

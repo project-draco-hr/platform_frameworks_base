@@ -1,0 +1,160 @@
+{
+  ArrayList<Cookie> ret=new ArrayList<Cookie>();
+  if (host.indexOf(PERIOD) == host.lastIndexOf(PERIOD)) {
+    host=PERIOD + host;
+  }
+  int index=0;
+  int length=cookieString.length();
+  while (true) {
+    Cookie cookie=null;
+    if (index < 0 || index >= length) {
+      break;
+    }
+    if (cookieString.charAt(index) == WHITE_SPACE) {
+      index++;
+      continue;
+    }
+    int equalIndex=cookieString.indexOf(EQUAL,index);
+    if (equalIndex == -1) {
+      break;
+    }
+    cookie=new Cookie(host,path);
+    cookie.name=cookieString.substring(index,equalIndex);
+    if (cookieString.charAt(equalIndex + 1) == QUOTATION) {
+      index=cookieString.indexOf(QUOTATION,equalIndex + 2);
+      if (index == -1) {
+        break;
+      }
+    }
+    int semicolonIndex=cookieString.indexOf(SEMICOLON,index);
+    if (semicolonIndex == -1) {
+      semicolonIndex=length;
+    }
+    if (semicolonIndex - equalIndex > MAX_COOKIE_LENGTH) {
+      cookie.value=cookieString.substring(equalIndex + 1,equalIndex + MAX_COOKIE_LENGTH);
+    }
+ else     if (equalIndex + 1 == semicolonIndex || semicolonIndex < equalIndex) {
+      cookie.value="";
+    }
+ else {
+      cookie.value=cookieString.substring(equalIndex + 1,semicolonIndex);
+    }
+    index=semicolonIndex;
+    while (true) {
+      if (index < 0 || index >= length) {
+        break;
+      }
+      if (cookieString.charAt(index) == WHITE_SPACE || cookieString.charAt(index) == SEMICOLON) {
+        index++;
+        continue;
+      }
+      if (cookieString.charAt(index) == COMMA) {
+        index++;
+        break;
+      }
+      if (length - index > SECURE_LENGTH && cookieString.substring(index,index + SECURE_LENGTH).equalsIgnoreCase(SECURE)) {
+        index+=SECURE_LENGTH;
+        cookie.secure=true;
+        if (cookieString.charAt(index) == EQUAL)         index++;
+        continue;
+      }
+      if (length - index > HTTP_ONLY_LENGTH && cookieString.substring(index,index + HTTP_ONLY_LENGTH).equalsIgnoreCase(HTTP_ONLY)) {
+        index+=HTTP_ONLY_LENGTH;
+        if (cookieString.charAt(index) == EQUAL)         index++;
+        continue;
+      }
+      equalIndex=cookieString.indexOf(EQUAL,index);
+      if (equalIndex > 0) {
+        String name=cookieString.substring(index,equalIndex).toLowerCase();
+        if (name.equals(EXPIRES)) {
+          int comaIndex=cookieString.indexOf(COMMA,equalIndex);
+          if ((comaIndex != -1) && (comaIndex - equalIndex <= 10)) {
+            index=comaIndex + 1;
+          }
+        }
+        semicolonIndex=cookieString.indexOf(SEMICOLON,index);
+        int commaIndex=cookieString.indexOf(COMMA,index);
+        if (semicolonIndex == -1 && commaIndex == -1) {
+          index=length;
+        }
+ else         if (semicolonIndex == -1) {
+          index=commaIndex;
+        }
+ else         if (commaIndex == -1) {
+          index=semicolonIndex;
+        }
+ else {
+          index=Math.min(semicolonIndex,commaIndex);
+        }
+        String value=cookieString.substring(equalIndex + 1,index);
+        if (value.length() > 2 && value.charAt(0) == QUOTATION) {
+          int endQuote=value.indexOf(QUOTATION,1);
+          if (endQuote > 0) {
+            value=value.substring(1,endQuote);
+          }
+        }
+        if (name.equals(EXPIRES)) {
+          try {
+            cookie.expires=HttpDateTime.parse(value);
+          }
+ catch (          IllegalArgumentException ex) {
+            Log.e(LOGTAG,"illegal format for expires: " + value);
+          }
+        }
+ else         if (name.equals(MAX_AGE)) {
+          try {
+            cookie.expires=System.currentTimeMillis() + 1000 * Long.parseLong(value);
+          }
+ catch (          NumberFormatException ex) {
+            Log.e(LOGTAG,"illegal format for max-age: " + value);
+          }
+        }
+ else         if (name.equals(PATH)) {
+          if (value.length() > 1 && value.charAt(value.length() - 1) != PATH_DELIM) {
+            cookie.path=value + PATH_DELIM;
+          }
+ else {
+            cookie.path=value;
+          }
+        }
+ else         if (name.equals(DOMAIN)) {
+          int lastPeriod=value.lastIndexOf(PERIOD);
+          try {
+            Integer.parseInt(value.substring(lastPeriod + 1));
+            if (!value.equals(host)) {
+              cookie.domain=null;
+            }
+            continue;
+          }
+ catch (          NumberFormatException ex) {
+          }
+          value=value.toLowerCase();
+          if (value.endsWith(host) || host.endsWith(value)) {
+            if (value.indexOf(PERIOD) == lastPeriod) {
+              value=PERIOD + value;
+            }
+            int len=value.length();
+            if ((value.charAt(0) == PERIOD) && (len == lastPeriod + 3) && (len >= 6 && len <= 8)) {
+              String s=value.substring(1,lastPeriod);
+              if (Arrays.binarySearch(BAD_COUNTRY_2LDS,s) >= 0) {
+                cookie.domain=null;
+                continue;
+              }
+            }
+            cookie.domain=value;
+          }
+ else {
+            cookie.domain=null;
+          }
+        }
+      }
+ else {
+        index=length;
+      }
+    }
+    if (cookie != null && cookie.domain != null) {
+      ret.add(cookie);
+    }
+  }
+  return ret;
+}

@@ -1,0 +1,76 @@
+{
+  if (loc.getProvider().equals(LocationManager.GPS_PROVIDER)) {
+    isGpsAvailable=true;
+  }
+  if (isGpsAvailable && loc.getProvider().equals(LocationManager.NETWORK_PROVIDER)) {
+    return;
+  }
+  long now=System.currentTimeMillis();
+  double latitude=loc.getLatitude();
+  double longitude=loc.getLongitude();
+  ArrayList<PendingIntent> intentsToRemove=null;
+  for (  ProximityAlert alert : mProximityAlerts.values()) {
+    PendingIntent intent=alert.getIntent();
+    long expiration=alert.getExpiration();
+    if ((expiration == -1) || (now <= expiration)) {
+      boolean entered=mProximitiesEntered.contains(alert);
+      boolean inProximity=alert.isInProximity(latitude,longitude);
+      if (!entered && inProximity) {
+        if (Config.LOGD) {
+          Log.i(TAG,"Entered alert");
+        }
+        mProximitiesEntered.add(alert);
+        Intent enteredIntent=new Intent();
+        enteredIntent.putExtra(LocationManager.KEY_PROXIMITY_ENTERING,true);
+        try {
+          intent.send(mContext,0,enteredIntent,null,null);
+        }
+ catch (        PendingIntent.CanceledException e) {
+          if (Config.LOGD) {
+            Log.i(TAG,"Canceled proximity alert: " + alert,e);
+          }
+          if (intentsToRemove == null) {
+            intentsToRemove=new ArrayList<PendingIntent>();
+          }
+          intentsToRemove.add(intent);
+        }
+      }
+ else       if (entered && !inProximity) {
+        if (Config.LOGD) {
+          Log.i(TAG,"Exited alert");
+        }
+        mProximitiesEntered.remove(alert);
+        Intent exitedIntent=new Intent();
+        exitedIntent.putExtra(LocationManager.KEY_PROXIMITY_ENTERING,false);
+        try {
+          intent.send(mContext,0,exitedIntent,null,null);
+        }
+ catch (        PendingIntent.CanceledException e) {
+          if (Config.LOGD) {
+            Log.i(TAG,"Canceled proximity alert: " + alert,e);
+          }
+          if (intentsToRemove == null) {
+            intentsToRemove=new ArrayList<PendingIntent>();
+          }
+          intentsToRemove.add(intent);
+        }
+      }
+    }
+ else {
+      if (Config.LOGD) {
+        Log.i(TAG,"Expiring proximity alert: " + alert);
+      }
+      if (intentsToRemove == null) {
+        intentsToRemove=new ArrayList<PendingIntent>();
+      }
+      intentsToRemove.add(alert.getIntent());
+    }
+  }
+  if (intentsToRemove != null) {
+    for (    PendingIntent i : intentsToRemove) {
+      mProximityAlerts.remove(i);
+      ProximityAlert alert=mProximityAlerts.get(i);
+      mProximitiesEntered.remove(alert);
+    }
+  }
+}

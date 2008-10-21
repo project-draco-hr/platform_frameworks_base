@@ -1,0 +1,122 @@
+{
+  long startTime=SystemClock.uptimeMillis();
+  long keyDispatchingTimeout=5 * 1000;
+  long waitedFor=0;
+  while (true) {
+    WindowState targetWin=mLastWin;
+    boolean targetIsNew=targetWin == null;
+    if (DEBUG_INPUT)     Log.v(TAG,"waitForLastKey: mFinished=" + mFinished + ", mLastWin="+ mLastWin);
+    if (targetIsNew) {
+      Object target=findTargetWindow(nextKey,qev,nextMotion,isPointerEvent);
+      if (target == SKIP_TARGET_TOKEN) {
+        if (DEBUG_INPUT)         Log.v(TAG,"Skipping: " + nextKey + " "+ nextMotion);
+        return null;
+      }
+      if (target == CONSUMED_EVENT_TOKEN) {
+        if (DEBUG_INPUT)         Log.v(TAG,"Consumed: " + nextKey + " "+ nextMotion);
+        return target;
+      }
+      targetWin=(WindowState)target;
+    }
+    AppWindowToken targetApp=null;
+synchronized (this) {
+      if (!targetIsNew && mLastWin == null) {
+        continue;
+      }
+      if (mFinished && !mDisplayFrozen) {
+        if (!mEventDispatching) {
+          if (DEBUG_INPUT)           Log.v(TAG,"Skipping event; dispatching disabled: " + nextKey + " "+ nextMotion);
+          return null;
+        }
+        if (targetWin != null) {
+          if (targetIsNew && !targetWin.mToken.paused) {
+            return targetWin;
+          }
+        }
+ else         if (mFocusedApp == null) {
+          if (DEBUG_INPUT)           Log.v(TAG,"Skipping event; no focused app: " + nextKey + " "+ nextMotion);
+          return null;
+        }
+      }
+      if (DEBUG_INPUT)       Log.v(TAG,"Waiting for last key in " + mLastBinder + " target="+ targetWin+ " mFinished="+ mFinished+ " mDisplayFrozen="+ mDisplayFrozen+ " targetIsNew="+ targetIsNew+ " paused="+ (targetWin != null ? targetWin.mToken.paused : false)+ " mFocusedApp="+ mFocusedApp);
+      targetApp=targetWin != null ? targetWin.mAppToken : mFocusedApp;
+      long curTimeout=keyDispatchingTimeout;
+      if (mTimeToSwitch != 0) {
+        long now=SystemClock.uptimeMillis();
+        if (mTimeToSwitch <= now) {
+          doFinishedKeyLocked(true);
+          continue;
+        }
+        long switchTimeout=mTimeToSwitch - now;
+        if (curTimeout > switchTimeout) {
+          curTimeout=switchTimeout;
+        }
+      }
+      try {
+        if (DEBUG_INPUT)         Log.v(TAG,"Waiting for key dispatch: " + curTimeout);
+        wait(curTimeout);
+        if (DEBUG_INPUT)         Log.v(TAG,"Finished waiting @" + SystemClock.uptimeMillis() + " startTime="+ startTime+ " switchTime="+ mTimeToSwitch);
+      }
+ catch (      InterruptedException e) {
+      }
+    }
+    if (mWasFrozen) {
+      waitedFor=0;
+      mWasFrozen=false;
+    }
+ else {
+      waitedFor=SystemClock.uptimeMillis() - startTime;
+    }
+    if (waitedFor >= keyDispatchingTimeout && mTimeToSwitch == 0) {
+      IApplicationToken at=null;
+synchronized (this) {
+        Log.w(TAG,"Key dispatching timed out sending to " + (targetWin != null ? targetWin.mAttrs.getTitle() : "<null>"));
+        if (targetWin != null) {
+          at=targetWin.getAppToken();
+        }
+ else         if (targetApp != null) {
+          at=targetApp.appToken;
+        }
+      }
+      boolean abort=true;
+      if (at != null) {
+        try {
+          long timeout=at.getKeyDispatchingTimeout();
+          if (timeout > waitedFor) {
+            keyDispatchingTimeout=timeout - waitedFor;
+            continue;
+          }
+ else {
+            abort=at.keyDispatchingTimedOut();
+          }
+        }
+ catch (        RemoteException ex) {
+        }
+      }
+synchronized (this) {
+        if (abort && (mLastWin == targetWin || targetWin == null)) {
+          mFinished=true;
+          if (mLastWin != null) {
+            if (DEBUG_INPUT)             Log.v(TAG,"Window " + mLastWin + " timed out on key input");
+            if (mLastWin.mToken.paused) {
+              Log.w(TAG,"Un-pausing dispatching to this window");
+              mLastWin.mToken.paused=false;
+            }
+          }
+          if (mMotionTarget == targetWin) {
+            mMotionTarget=null;
+          }
+          mLastWin=null;
+          mLastBinder=null;
+          if (failIfTimeout || targetWin == null) {
+            return null;
+          }
+        }
+ else {
+          Log.w(TAG,"Continuing to wait for key to be dispatched");
+          startTime=SystemClock.uptimeMillis();
+        }
+      }
+    }
+  }
+}

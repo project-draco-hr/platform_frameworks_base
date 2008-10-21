@@ -1,0 +1,57 @@
+{
+  if (mCurrentCollectionRequest == null || mCurrentCollectionRequest.getCount(GLocRequest.REQUEST_ELEMENTS) == 0) {
+    return;
+  }
+  ByteArrayOutputStream payload=new ByteArrayOutputStream();
+  try {
+    mCurrentCollectionRequest.outputTo(payload);
+  }
+ catch (  IOException e) {
+    Log.e(TAG,"uploadCollectionReport(): unable to write request to payload");
+    return;
+  }
+  mLastCollectionUploadTime=SystemClock.elapsedRealtime();
+  int count=mCurrentCollectionRequest.getCount(GLocRequest.REQUEST_ELEMENTS);
+  while (count > 0) {
+    mCurrentCollectionRequest.remove(GLocRequest.REQUEST_ELEMENTS,count - 1);
+    count--;
+  }
+  ProtoBuf reply=new ProtoBuf(LocserverMessageTypes.GLOC_REPLY);
+  Request plainRequest=new PlainRequest(REQUEST_UPLOAD_LOC,(short)0,payload.toByteArray());
+  ProtoRequestListener listener=new ProtoRequestListener(reply,new ServiceCallback(){
+    public void onRequestComplete(    Object result){
+      ProtoBuf response=(ProtoBuf)result;
+      if (response == null) {
+        Log.e(TAG,"uploadCollectionReport(): response is null");
+        return;
+      }
+      int status1=response.getInt(GLocReply.STATUS);
+      if (status1 != ResponseCodes.STATUS_STATUS_SUCCESS) {
+        Log.w(TAG,"uploadCollectionReport(): RPC failed with status " + status1);
+        return;
+      }
+      if (response.has(GLocReply.PLATFORM_KEY)) {
+        String platformKey=response.getString(GLocReply.PLATFORM_KEY);
+        if (!TextUtils.isEmpty(platformKey)) {
+          setPlatformKey(platformKey);
+        }
+      }
+      if (!response.has(GLocReply.REPLY_ELEMENTS)) {
+        Log.w(TAG,"uploadCollectionReport(): no ReplyElement");
+        return;
+      }
+      int count=response.getCount(GLocReply.REPLY_ELEMENTS);
+      for (int i=0; i < count; i++) {
+        ProtoBuf replyElement=response.getProtoBuf(GLocReply.REPLY_ELEMENTS,i);
+        int status2=replyElement.getInt(GLocReplyElement.STATUS);
+        if (status2 != ResponseCodes.STATUS_STATUS_SUCCESS) {
+          Log.w(TAG,"uploadCollectionReport(): GLS failed with " + status2);
+        }
+      }
+    }
+  }
+);
+  plainRequest.setListener(listener);
+  MobileServiceMux serviceMux=MobileServiceMux.getSingleton();
+  serviceMux.submitRequest(plainRequest,immediate);
+}

@@ -1,0 +1,42 @@
+{
+  mContext=context;
+  mWifiStateTracker=tracker;
+  mIsHiddenNetworkPresent=new HashMap<Integer,Boolean>();
+  mNumHiddenNetworkPresent=0;
+  ContentResolver contentResolver=context.getContentResolver();
+  mIdleMillis=Gservices.getLong(contentResolver,Gservices.WIFI_IDLE_MS,mIdleMillis);
+  mWakelockTimeout=Gservices.getInt(contentResolver,Gservices.WIFI_MOBILE_DATA_TRANSITION_WAKELOCK_TIMEOUT_MS,mWakelockTimeout);
+  mScanResultCache=new LinkedHashMap<String,ScanResult>(SCAN_RESULT_CACHE_SIZE,0.75f,true){
+    public boolean removeEldestEntry(    Map.Entry eldest){
+      return SCAN_RESULT_CACHE_SIZE < this.size();
+    }
+  }
+;
+  mScanResultBuffer=new char[SCAN_RESULT_BUFFER_SIZE];
+  HandlerThread wifiThread=new HandlerThread("WifiService");
+  wifiThread.start();
+  mWifiHandler=new WifiHandler(wifiThread.getLooper());
+  mWifiState=WIFI_STATE_DISABLED;
+  boolean wifiEnabled=getPersistedWifiEnabled();
+  mAlarmManager=(AlarmManager)mContext.getSystemService(Context.ALARM_SERVICE);
+  Intent idleIntent=new Intent(ACTION_DEVICE_IDLE,null);
+  mIdleIntent=PendingIntent.getBroadcast(mContext,IDLE_REQUEST,idleIntent,0);
+  PowerManager powerManager=(PowerManager)mContext.getSystemService(Context.POWER_SERVICE);
+  mWakeLock=powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,WAKELOCK_TAG);
+  mDriverStopWakeLock=powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,WAKELOCK_TAG);
+  mWifiStateTracker.setReleaseWakeLockCallback(new Runnable(){
+    public void run(){
+      mWifiHandler.removeMessages(MESSAGE_RELEASE_WAKELOCK);
+synchronized (mDriverStopWakeLock) {
+        if (mDriverStopWakeLock.isHeld()) {
+          if (DBG)           Log.d(TAG,"Releasing driver-stop wakelock " + mDriverStopWakeLock);
+          mDriverStopWakeLock.release();
+        }
+      }
+    }
+  }
+);
+  Log.d(TAG,"WifiService starting up with Wi-Fi " + (wifiEnabled ? "enabled" : "disabled"));
+  registerForBroadcasts();
+  setWifiEnabledBlocking(wifiEnabled);
+}

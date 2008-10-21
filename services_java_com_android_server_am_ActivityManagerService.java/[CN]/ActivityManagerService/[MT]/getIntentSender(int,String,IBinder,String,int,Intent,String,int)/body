@@ -1,0 +1,58 @@
+{
+  if (intent != null && intent.hasFileDescriptors() == true) {
+    throw new IllegalArgumentException("File descriptors passed in Intent");
+  }
+synchronized (this) {
+    int callingUid=Binder.getCallingUid();
+    try {
+      if (callingUid != 0 && callingUid != Process.SYSTEM_UID && Process.supportsProcesses()) {
+        int uid=ActivityThread.getPackageManager().getPackageUid(packageName);
+        if (uid != Binder.getCallingUid()) {
+          String msg="Permission Denial: getIntentSender() from pid=" + Binder.getCallingPid() + ", uid="+ Binder.getCallingUid()+ " is not allowed to send as package "+ packageName;
+          Log.w(TAG,msg);
+          throw new SecurityException(msg);
+        }
+      }
+    }
+ catch (    RemoteException e) {
+      throw new SecurityException(e);
+    }
+    HistoryRecord activity=null;
+    if (type == INTENT_SENDER_ACTIVITY_RESULT) {
+      int index=indexOfTokenLocked(token,false);
+      if (index < 0) {
+        return null;
+      }
+      activity=(HistoryRecord)mHistory.get(index);
+      if (activity.finishing) {
+        return null;
+      }
+    }
+    final boolean noCreate=(flags & PendingIntent.FLAG_NO_CREATE) != 0;
+    final boolean cancelCurrent=(flags & PendingIntent.FLAG_CANCEL_CURRENT) != 0;
+    flags&=~(PendingIntent.FLAG_NO_CREATE | PendingIntent.FLAG_CANCEL_CURRENT);
+    PendingIntentRecord.Key key=new PendingIntentRecord.Key(type,packageName,activity,resultWho,requestCode,intent,resolvedType,flags);
+    WeakReference<PendingIntentRecord> ref;
+    ref=mIntentSenderRecords.get(key);
+    PendingIntentRecord rec=ref != null ? ref.get() : null;
+    if (rec != null) {
+      if (!cancelCurrent) {
+        return rec;
+      }
+      rec.canceled=true;
+      mIntentSenderRecords.remove(key);
+    }
+    if (noCreate) {
+      return rec;
+    }
+    rec=new PendingIntentRecord(this,key,callingUid);
+    mIntentSenderRecords.put(key,rec.ref);
+    if (type == INTENT_SENDER_ACTIVITY_RESULT) {
+      if (activity.pendingResults == null) {
+        activity.pendingResults=new HashSet<WeakReference<PendingIntentRecord>>();
+      }
+      activity.pendingResults.add(rec.ref);
+    }
+    return rec;
+  }
+}
