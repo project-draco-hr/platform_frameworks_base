@@ -1,87 +1,77 @@
 {
-  if (mTouchMode >= FIRST_SCROLL_ZOOM && mTouchMode <= LAST_SCROLL_ZOOM) {
+  if (LOGV_ENABLED) {
+    Log.v(LOGTAG,"keyDown at " + System.currentTimeMillis() + ", "+ event);
+  }
+  if (mNativeClass == 0) {
     return false;
   }
-  if (keyCode != KeyEvent.KEYCODE_DPAD_CENTER && keyCode != KeyEvent.KEYCODE_ENTER) {
-    mGotDown=false;
+  if (AUTO_REDRAW_HACK && (keyCode == KeyEvent.KEYCODE_CALL)) {
+    mAutoRedraw=!mAutoRedraw;
+    if (mAutoRedraw) {
+      invalidate();
+    }
+    return true;
   }
-  if (mAltIsPressed == false && (keyCode == KeyEvent.KEYCODE_ALT_LEFT || keyCode == KeyEvent.KEYCODE_ALT_RIGHT)) {
-    mAltIsPressed=true;
+  if (event.isSystem() || mCallbackProxy.uiOverrideKeyEvent(event) || (mTouchMode >= FIRST_SCROLL_ZOOM && mTouchMode <= LAST_SCROLL_ZOOM)) {
+    return false;
   }
   if (ENABLE_COPY_PASTE && mShiftIsPressed == false && (keyCode == KeyEvent.KEYCODE_SHIFT_LEFT || keyCode == KeyEvent.KEYCODE_SHIFT_RIGHT)) {
     mExtendSelection=false;
     mShiftIsPressed=true;
-    if (mNativeClass != 0 && nativeUpdateFocusNode()) {
+    if (nativeUpdateFocusNode()) {
       FocusNode node=mFocusNode;
-      mSelectX=node.mBounds.left;
-      mSelectY=node.mBounds.top;
+      mSelectX=contentToView(node.mBounds.left);
+      mSelectY=contentToView(node.mBounds.top);
     }
  else {
-      mSelectX=mScrollX + SELECT_CURSOR_OFFSET;
-      mSelectY=mScrollY + SELECT_CURSOR_OFFSET;
+      mSelectX=mScrollX + (int)mLastTouchX;
+      mSelectY=mScrollY + (int)mLastTouchY;
     }
   }
-  if (keyCode == KeyEvent.KEYCODE_CALL) {
-    if (mNativeClass != 0 && nativeUpdateFocusNode()) {
-      FocusNode node=mFocusNode;
-      String text=node.mText;
-      if (!node.mIsTextField && !node.mIsTextArea && text != null && text.startsWith(SCHEME_TEL)) {
-        Intent intent=new Intent(Intent.ACTION_DIAL,Uri.parse(text));
-        getContext().startActivity(intent);
-        return true;
-      }
+  if (keyCode >= KeyEvent.KEYCODE_DPAD_UP && keyCode <= KeyEvent.KEYCODE_DPAD_RIGHT) {
+    switchOutDrawHistory();
+    if (navHandledKey(keyCode,1,false,event.getEventTime())) {
+      playSoundEffect(keyCodeToSoundsEffect(keyCode));
+      return true;
     }
     return false;
   }
-  if (event.isSystem() || mCallbackProxy.uiOverrideKeyEvent(event)) {
+  if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER) {
+    switchOutDrawHistory();
+    if (event.getRepeatCount() == 0) {
+      mGotEnterDown=true;
+      mPrivateHandler.sendMessageDelayed(mPrivateHandler.obtainMessage(LONG_PRESS_ENTER),LONG_PRESS_TIMEOUT);
+      nativeRecordButtons(true,true);
+      mWebViewCore.sendMessage(EventHub.KEY_DOWN,keyCode,EventHub.KEYEVENT_UNHANDLED_TYPE,event);
+      return true;
+    }
     return false;
   }
-  if (LOGV_ENABLED) {
-    Log.v(LOGTAG,"keyDown at " + System.currentTimeMillis() + ", "+ event);
-  }
-  boolean isArrowKey=keyCode == KeyEvent.KEYCODE_DPAD_UP || keyCode == KeyEvent.KEYCODE_DPAD_DOWN || keyCode == KeyEvent.KEYCODE_DPAD_LEFT || keyCode == KeyEvent.KEYCODE_DPAD_RIGHT;
-  if (isArrowKey && event.getEventTime() - mTrackballLastTime <= TRACKBALL_KEY_TIMEOUT) {
-    if (LOGV_ENABLED)     Log.v(LOGTAG,"ignore arrow");
-    return false;
-  }
-  boolean weHandledTheKey=false;
-  if (event.getMetaState() == 0) {
+  if (getSettings().getNavDump()) {
 switch (keyCode) {
-case KeyEvent.KEYCODE_DPAD_UP:
-case KeyEvent.KEYCODE_DPAD_DOWN:
-case KeyEvent.KEYCODE_DPAD_RIGHT:
-case KeyEvent.KEYCODE_DPAD_LEFT:
-      switchOutDrawHistory();
-    weHandledTheKey=navHandledKey(keyCode,1,false,event.getEventTime());
-  if (weHandledTheKey) {
-    playSoundEffect(keyCodeToSoundsEffect(keyCode));
-  }
+case KeyEvent.KEYCODE_4:
+      nativeDumpDisplayTree(getUrl());
+    break;
+case KeyEvent.KEYCODE_5:
+case KeyEvent.KEYCODE_6:
+  mWebViewCore.sendMessage(EventHub.DUMP_DOMTREE,(keyCode == KeyEvent.KEYCODE_5) ? 1 : 0,0);
 break;
-case KeyEvent.KEYCODE_DPAD_CENTER:
-case KeyEvent.KEYCODE_ENTER:
-if (event.getRepeatCount() == 0) {
-switchOutDrawHistory();
-mDownTime=event.getEventTime();
-mGotDown=true;
-return true;
-}
-if (mGotDown && event.getEventTime() - mDownTime > ViewConfiguration.getLongPressTimeout()) {
-performLongClick();
-mGotDown=false;
-return true;
-}
+case KeyEvent.KEYCODE_7:
+case KeyEvent.KEYCODE_8:
+mWebViewCore.sendMessage(EventHub.DUMP_RENDERTREE,(keyCode == KeyEvent.KEYCODE_7) ? 1 : 0,0);
 break;
 case KeyEvent.KEYCODE_9:
-if (mNativeClass != 0 && getSettings().getNavDump()) {
 debugDump();
-}
-break;
-default :
 break;
 }
 }
-if (!weHandledTheKey && !isArrowKey) {
-mWebViewCore.sendMessage(EventHub.KEY_DOWN,keyCode,0,event);
+if (nativeFocusNodeWantsKeyEvents()) {
+mWebViewCore.sendMessage(EventHub.KEY_DOWN,keyCode,EventHub.KEYEVENT_FOCUS_NODE_TYPE,event);
+return true;
 }
-return weHandledTheKey;
+ else if (false) {
+mWebViewCore.sendMessage(EventHub.KEY_DOWN,keyCode,EventHub.KEYEVENT_UNHANDLED_TYPE,event);
+return true;
+}
+return false;
 }

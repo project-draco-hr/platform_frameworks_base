@@ -1,0 +1,81 @@
+{
+  String dataDir="/data/data";
+  StatFs st=new StatFs(dataDir);
+  int blkSize=st.getBlockSize();
+  int totBlks=st.getBlockCount();
+  long availableBlks=st.getFreeBlocks();
+  long thresholdBlks=(totBlks * THRESHOLD) / 100;
+  String testDirName="testdir";
+  File testDir=new File(mContext.getCacheDir(),testDirName);
+  testDir.mkdirs();
+  byte[] buffer=getBuffer();
+  int i=1;
+  if (localLOGV)   Log.i(TAG,"availableBlks=" + availableBlks + ", thresholdBlks="+ thresholdBlks);
+  long createdFileBlks=0;
+  int imax=300;
+  while ((availableBlks > thresholdBlks) && (i < imax)) {
+    File testFile=new File(testDir,"testFile" + i + ".txt");
+    if (localLOGV)     Log.i(TAG,"Creating " + i + "th test file "+ testFile);
+    int jmax=i;
+    i++;
+    FileOutputStream fos;
+    try {
+      fos=new FileOutputStream(testFile);
+    }
+ catch (    FileNotFoundException e) {
+      Log.i(TAG,"Failed creating test file:" + testFile);
+      continue;
+    }
+    boolean err=false;
+    for (int j=1; j <= jmax; j++) {
+      try {
+        fos.write(buffer);
+      }
+ catch (      IOException e) {
+        Log.i(TAG,"Failed to write to file:" + testFile);
+        err=true;
+      }
+    }
+    try {
+      fos.close();
+    }
+ catch (    IOException e) {
+      Log.i(TAG,"Failed closing file:" + testFile);
+    }
+    if (err) {
+      continue;
+    }
+    createdFileBlks+=getFileNumBlocks(testFile.length(),blkSize);
+    st.restat(dataDir);
+    availableBlks=st.getFreeBlocks();
+  }
+  st.restat(dataDir);
+  long availableBytes=st.getFreeBlocks() * blkSize;
+  long shouldFree=(ACTUAL_THRESHOLD - THRESHOLD) * totBlks;
+  try {
+    Log.i(TAG,"Sleeping for 2 minutes...");
+    Thread.sleep(2 * 60 * 1000);
+  }
+ catch (  InterruptedException e) {
+    fail("Exception when sleeping " + e);
+  }
+  boolean removedFlag=false;
+  long existingFileBlks=0;
+  for (int k=1; k < i; k++) {
+    File testFile=new File(testDir,"testFile" + k + ".txt");
+    if (!testFile.exists()) {
+      removedFlag=true;
+      if (localLOGV)       Log.i(TAG,testFile + " removed");
+    }
+ else {
+      existingFileBlks+=getFileNumBlocks(testFile.length(),blkSize);
+    }
+  }
+  if (localLOGV)   Log.i(TAG,"createdFileBlks=" + createdFileBlks + ", existingFileBlks="+ existingFileBlks);
+  long fileSize=createdFileBlks - existingFileBlks;
+  if (localLOGV)   Log.i(TAG,"deletedFileBlks=" + fileSize + " shouldFreeBlks="+ shouldFree);
+  if ((fileSize > (shouldFree - blkSize) && (fileSize < (shouldFree + blkSize)))) {
+    Log.i(TAG,"passed");
+  }
+  assertTrue(removedFlag);
+}

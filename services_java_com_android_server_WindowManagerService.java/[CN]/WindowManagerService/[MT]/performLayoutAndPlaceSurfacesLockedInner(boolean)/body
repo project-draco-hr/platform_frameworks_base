@@ -9,7 +9,10 @@
     mFxSession=new SurfaceSession();
   }
   if (SHOW_TRANSACTIONS)   Log.i(TAG,">>> OPEN TRANSACTION");
-  for (i=0; i < mExitingAppTokens.size(); i++) {
+  for (i=mExitingTokens.size() - 1; i >= 0; i--) {
+    mExitingTokens.get(i).hasVisible=false;
+  }
+  for (i=mExitingAppTokens.size() - 1; i >= 0; i--) {
     mExitingAppTokens.get(i).hasVisible=false;
   }
   boolean orientationChangeComplete=true;
@@ -25,6 +28,12 @@
       final int NAT=mAppTokens.size();
       for (i=0; i < NAT; i++) {
         if (mAppTokens.get(i).stepAnimationLocked(currentTime,dw,dh)) {
+          tokensAnimating=true;
+        }
+      }
+      final int NEAT=mExitingAppTokens.size();
+      for (i=0; i < NEAT; i++) {
+        if (mExitingAppTokens.get(i).stepAnimationLocked(currentTime,dw,dh)) {
           tokensAnimating=true;
         }
       }
@@ -156,7 +165,7 @@
           mClosingApps.clear();
           mLayoutNeeded=true;
           performLayoutLockedInner();
-          updateFocusedWindowLocked();
+          updateFocusedWindowLocked(UPDATE_FOCUS_PLACING_SURFACES);
           restart=true;
         }
       }
@@ -222,8 +231,12 @@
           }
         }
         if (!w.mAppFreezing) {
-          if (!w.mLastFrame.equals(w.mFrame)) {
+          w.mContentInsetsChanged=!w.mLastContentInsets.equals(w.mContentInsets);
+          w.mVisibleInsetsChanged=!w.mLastVisibleInsets.equals(w.mVisibleInsets);
+          if (!w.mLastFrame.equals(w.mFrame) || w.mContentInsetsChanged || w.mVisibleInsetsChanged) {
             w.mLastFrame.set(w.mFrame);
+            w.mLastContentInsets.set(w.mContentInsets);
+            w.mLastVisibleInsets.set(w.mVisibleInsets);
             if (w.mOrientationChanging) {
               if (DEBUG_ORIENTATION)               Log.v(TAG,"Orientation start waiting for draw in " + w + ", surface "+ w.mSurface);
               w.mDrawPending=true;
@@ -316,8 +329,8 @@
               w.mOrientationChanging=false;
             }
           }
-          if (w.mAppToken != null && w.mSurface != null) {
-            w.mAppToken.hasVisible=true;
+          if (w.mSurface != null) {
+            w.mToken.hasVisible=true;
           }
         }
  else {
@@ -339,9 +352,7 @@
               if (DEBUG_ORIENTATION)               Log.v(TAG,"Orientation change complete in " + w);
             }
           }
-          if (w.mAppToken != null) {
-            w.mAppToken.hasVisible=true;
-          }
+          w.mToken.hasVisible=true;
         }
       }
  else       if (w.mOrientationChanging) {
@@ -361,69 +372,114 @@
         }
  else         if (canBeSeen && !obscured && (attrFlags & FLAG_BLUR_BEHIND | FLAG_DIM_BEHIND) != 0) {
           if (localLOGV)           Log.v(TAG,"Win " + w + ": blurring="+ blurring+ " obscured="+ obscured+ " displayed="+ displayed);
-          if (!dimming && (attrFlags & FLAG_DIM_BEHIND) != 0) {
-            dimming=true;
-            mDimShown=true;
-            if (mDimSurface == null) {
-              if (SHOW_TRANSACTIONS)               Log.i(TAG,"  DIM " + mDimSurface + ": CREATE");
-              try {
-                mDimSurface=new Surface(mFxSession,0,-1,16,16,PixelFormat.OPAQUE,Surface.FX_SURFACE_DIM);
+          if ((attrFlags & FLAG_DIM_BEHIND) != 0) {
+            if (!dimming) {
+              dimming=true;
+              mDimShown=true;
+              if (mDimSurface == null) {
+                if (SHOW_TRANSACTIONS)                 Log.i(TAG,"  DIM " + mDimSurface + ": CREATE");
+                try {
+                  mDimSurface=new Surface(mFxSession,0,-1,16,16,PixelFormat.OPAQUE,Surface.FX_SURFACE_DIM);
+                }
+ catch (                Exception e) {
+                  Log.e(TAG,"Exception creating Dim surface",e);
+                }
               }
- catch (              Exception e) {
-                Log.e(TAG,"Exception creating Dim surface",e);
+              if (SHOW_TRANSACTIONS)               Log.i(TAG,"  DIM " + mDimSurface + ": SHOW pos=(0,0) ("+ dw+ "x"+ dh+ "), layer="+ (w.mAnimLayer - 1));
+              if (mDimSurface != null) {
+                try {
+                  mDimSurface.setPosition(0,0);
+                  mDimSurface.setSize(dw,dh);
+                  mDimSurface.show();
+                }
+ catch (                RuntimeException e) {
+                  Log.w(TAG,"Failure showing dim surface",e);
+                }
               }
             }
-            if (SHOW_TRANSACTIONS)             Log.i(TAG,"  DIM " + mDimSurface + ": SHOW pos=(0,0) ("+ dw+ "x"+ dh+ "), layer="+ (w.mAnimLayer - 1));
-            if (mDimSurface != null) {
-              try {
-                mDimSurface.setPosition(0,0);
-                mDimSurface.setSize(dw,dh);
-                mDimSurface.setLayer(w.mAnimLayer - 1);
-                mDimSurface.setAlpha(attrs.dimAmount);
-                mDimSurface.show();
-              }
- catch (              RuntimeException e) {
-                Log.w(TAG,"Failure showing dim surface",e);
-              }
+            mDimSurface.setLayer(w.mAnimLayer - 1);
+            final float target=w.mExiting ? 0 : attrs.dimAmount;
+            if (mDimTargetAlpha != target) {
+              mLastDimAnimTime=currentTime;
+              long duration=(w.mAnimating && w.mAnimation != null) ? w.mAnimation.computeDurationHint() : DEFAULT_DIM_DURATION;
+              mDimTargetAlpha=target;
+              mDimDeltaPerMs=(mDimTargetAlpha - mDimCurrentAlpha) / duration;
             }
           }
-          if (!blurring && (attrFlags & FLAG_BLUR_BEHIND) != 0) {
-            blurring=true;
-            mBlurShown=true;
-            if (mBlurSurface == null) {
-              if (SHOW_TRANSACTIONS)               Log.i(TAG,"  BLUR " + mBlurSurface + ": CREATE");
-              try {
-                mBlurSurface=new Surface(mFxSession,0,-1,16,16,PixelFormat.OPAQUE,Surface.FX_SURFACE_BLUR);
+          if ((attrFlags & FLAG_BLUR_BEHIND) != 0) {
+            if (!blurring) {
+              blurring=true;
+              mBlurShown=true;
+              if (mBlurSurface == null) {
+                if (SHOW_TRANSACTIONS)                 Log.i(TAG,"  BLUR " + mBlurSurface + ": CREATE");
+                try {
+                  mBlurSurface=new Surface(mFxSession,0,-1,16,16,PixelFormat.OPAQUE,Surface.FX_SURFACE_BLUR);
+                }
+ catch (                Exception e) {
+                  Log.e(TAG,"Exception creating Blur surface",e);
+                }
               }
- catch (              Exception e) {
-                Log.e(TAG,"Exception creating Blur surface",e);
+              if (SHOW_TRANSACTIONS)               Log.i(TAG,"  BLUR " + mBlurSurface + ": SHOW pos=(0,0) ("+ dw+ "x"+ dh+ "), layer="+ (w.mAnimLayer - 1));
+              if (mBlurSurface != null) {
+                mBlurSurface.setPosition(0,0);
+                mBlurSurface.setSize(dw,dh);
+                try {
+                  mBlurSurface.show();
+                }
+ catch (                RuntimeException e) {
+                  Log.w(TAG,"Failure showing blur surface",e);
+                }
               }
             }
-            if (SHOW_TRANSACTIONS)             Log.i(TAG,"  BLUR " + mBlurSurface + ": SHOW pos=(0,0) ("+ dw+ "x"+ dh+ "), layer="+ (w.mAnimLayer - 1));
-            if (mBlurSurface != null) {
-              mBlurSurface.setPosition(0,0);
-              mBlurSurface.setSize(dw,dh);
-              mBlurSurface.setLayer(w.mAnimLayer - 2);
-              try {
-                mBlurSurface.show();
-              }
- catch (              RuntimeException e) {
-                Log.w(TAG,"Failure showing blur surface",e);
-              }
-            }
+            mBlurSurface.setLayer(w.mAnimLayer - 2);
           }
         }
       }
     }
     if (!dimming && mDimShown) {
-      if (SHOW_TRANSACTIONS)       Log.i(TAG,"  DIM " + mDimSurface + ": HIDE");
-      try {
-        mDimSurface.hide();
+      if (mDimTargetAlpha != 0) {
+        mLastDimAnimTime=currentTime;
+        mDimTargetAlpha=0;
+        mDimDeltaPerMs=(-mDimCurrentAlpha) / DEFAULT_DIM_DURATION;
       }
- catch (      RuntimeException e) {
-        Log.w(TAG,"Illegal argument exception hiding dim surface");
+    }
+    if (mDimShown && mLastDimAnimTime != 0) {
+      mDimCurrentAlpha+=mDimDeltaPerMs * (currentTime - mLastDimAnimTime);
+      boolean more=true;
+      if (mDimDeltaPerMs > 0) {
+        if (mDimCurrentAlpha > mDimTargetAlpha) {
+          more=false;
+        }
       }
-      mDimShown=false;
+ else       if (mDimDeltaPerMs < 0) {
+        if (mDimCurrentAlpha < mDimTargetAlpha) {
+          more=false;
+        }
+      }
+ else {
+        more=false;
+      }
+      if (more) {
+        if (SHOW_TRANSACTIONS)         Log.i(TAG,"  DIM " + mDimSurface + ": alpha="+ mDimCurrentAlpha);
+        mDimSurface.setAlpha(mDimCurrentAlpha);
+        animating=true;
+      }
+ else {
+        mDimCurrentAlpha=mDimTargetAlpha;
+        mLastDimAnimTime=0;
+        if (SHOW_TRANSACTIONS)         Log.i(TAG,"  DIM " + mDimSurface + ": final alpha="+ mDimCurrentAlpha);
+        mDimSurface.setAlpha(mDimCurrentAlpha);
+        if (!dimming) {
+          if (SHOW_TRANSACTIONS)           Log.i(TAG,"  DIM " + mDimSurface + ": HIDE");
+          try {
+            mDimSurface.hide();
+          }
+ catch (          RuntimeException e) {
+            Log.w(TAG,"Illegal argument exception hiding dim surface");
+          }
+          mDimShown=false;
+        }
+      }
     }
     if (!blurring && mBlurShown) {
       if (SHOW_TRANSACTIONS)       Log.i(TAG,"  BLUR " + mBlurSurface + ": HIDE");
@@ -457,7 +513,9 @@
       i--;
       WindowState win=mResizingWindows.get(i);
       try {
-        win.mClient.resized(win.mFrame.width(),win.mFrame.height(),win.mDrawPending);
+        win.mClient.resized(win.mFrame.width(),win.mFrame.height(),win.mLastContentInsets,win.mLastVisibleInsets,win.mDrawPending);
+        win.mContentInsetsChanged=false;
+        win.mVisibleInsetsChanged=false;
       }
  catch (      RemoteException e) {
         win.mOrientationChanging=false;
@@ -477,12 +535,17 @@
  while (i > 0);
     mDestroySurface.clear();
   }
-  for (i=0; i < mExitingAppTokens.size(); i++) {
+  for (i=mExitingTokens.size() - 1; i >= 0; i--) {
+    WindowToken token=mExitingTokens.get(i);
+    if (!token.hasVisible) {
+      mExitingTokens.remove(i);
+    }
+  }
+  for (i=mExitingAppTokens.size() - 1; i >= 0; i--) {
     AppWindowToken token=mExitingAppTokens.get(i);
     if (!token.hasVisible && !mClosingApps.contains(token)) {
       mAppTokens.remove(token);
       mExitingAppTokens.remove(i);
-      i--;
     }
   }
   if (focusDisplayed) {

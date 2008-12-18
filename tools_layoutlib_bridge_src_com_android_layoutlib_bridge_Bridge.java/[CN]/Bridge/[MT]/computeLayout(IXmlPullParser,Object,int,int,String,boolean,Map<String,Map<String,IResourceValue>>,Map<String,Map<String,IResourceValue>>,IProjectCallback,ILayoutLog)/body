@@ -1,0 +1,54 @@
+{
+  if (logger == null) {
+    logger=sDefaultLogger;
+  }
+  sLogger=logger;
+  Map<IStyleResourceValue,IStyleResourceValue> styleParentMap=new HashMap<IStyleResourceValue,IStyleResourceValue>();
+  IStyleResourceValue currentTheme=computeStyleMaps(themeName,isProjectTheme,projectResources.get(BridgeConstants.RES_STYLE),frameworkResources.get(BridgeConstants.RES_STYLE),styleParentMap);
+  BridgeContext context=new BridgeContext(projectKey,currentTheme,projectResources,frameworkResources,styleParentMap,customViewLoader,logger);
+  BridgeInflater inflater=new BridgeInflater(context,customViewLoader);
+  context.setBridgeInflater(inflater);
+  IResourceValue windowBackground=null;
+  int screenOffset=0;
+  if (currentTheme != null) {
+    windowBackground=context.findItemInStyle(currentTheme,"windowBackground");
+    windowBackground=context.resolveResValue(windowBackground);
+    screenOffset=getScreenOffset(currentTheme,context);
+  }
+  if (Looper.myLooper() == null) {
+    Looper.prepare();
+  }
+  BridgeXmlBlockParser parser=new BridgeXmlBlockParser(layoutDescription,context,false);
+  ViewGroup root=new FrameLayout(context);
+  try {
+    View view=inflater.inflate(parser,root);
+    AttachInfo info=new AttachInfo(new WindowSession(),new Window(),new Handler(),null);
+    info.mHasWindowFocus=true;
+    info.mWindowVisibility=View.VISIBLE;
+    info.mInTouchMode=false;
+    root.dispatchAttachedToWindow(info,0);
+    if (windowBackground != null) {
+      Drawable d=ResourceHelper.getDrawable(windowBackground.getValue(),context,true);
+      root.setBackgroundDrawable(d);
+    }
+    int w_spec=MeasureSpec.makeMeasureSpec(screenWidth,MeasureSpec.EXACTLY);
+    int h_spec=MeasureSpec.makeMeasureSpec(screenHeight - screenOffset,MeasureSpec.EXACTLY);
+    view.measure(w_spec,h_spec);
+    view.layout(0,screenOffset,screenWidth,screenHeight);
+    BridgeCanvas canvas=new BridgeCanvas(screenWidth,screenHeight - screenOffset,logger);
+    root.draw(canvas);
+    canvas.dispose();
+    return new LayoutResult(visit(((ViewGroup)view).getChildAt(0),context),canvas.getImage());
+  }
+ catch (  Throwable e) {
+    Throwable t=e;
+    while (t.getCause() != null) {
+      t=t.getCause();
+    }
+    logger.error(t);
+    return new LayoutResult(ILayoutResult.ERROR,t.getClass().getSimpleName() + ": " + t.getMessage());
+  }
+ finally {
+    sLogger=sDefaultLogger;
+  }
+}

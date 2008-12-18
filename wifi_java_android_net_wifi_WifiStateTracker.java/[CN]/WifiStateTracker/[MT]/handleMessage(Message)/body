@@ -36,10 +36,20 @@ setDetailedState(WifiInfo.getDetailedStateOf(supplState));
 }
 break;
 case EVENT_SUPPLICANT_DISCONNECT:
+int wifiState=mWM.getWifiState();
+boolean died=wifiState != WifiManager.WIFI_STATE_DISABLED && wifiState != WifiManager.WIFI_STATE_DISABLING;
+if (died) {
+if (LOCAL_LOGD) Log.v(TAG,"Supplicant died unexpectedly");
+}
+ else {
 if (LOCAL_LOGD) Log.v(TAG,"Connection to supplicant lost");
-EventLog.writeEvent(EVENTLOG_SUPPLICANT_CONNECTION_STATE_CHANGED,0);
+}
+EventLog.writeEvent(EVENTLOG_SUPPLICANT_CONNECTION_STATE_CHANGED,died ? 2 : 0);
 synchronized (this) {
 WifiNative.closeSupplicantConnection();
+}
+if (died) {
+resetInterface();
 }
 if (mDhcpTarget != null) {
 mDhcpTarget.getLooper().quit();
@@ -101,6 +111,7 @@ setDetailedState(WifiInfo.getDetailedStateOf(newState));
 intent=new Intent(WifiManager.SUPPLICANT_STATE_CHANGED_ACTION);
 intent.putExtra(WifiManager.EXTRA_NEW_STATE,(Parcelable)newState);
 if (failedToAuthenticate) {
+if (LOCAL_LOGD) Log.d(TAG,"Failed to authenticate, disabling network " + networkId);
 wifiManagerDisableNetwork(networkId);
 intent.putExtra(WifiManager.EXTRA_SUPPLICANT_ERROR,WifiManager.ERROR_AUTHENTICATING);
 }
@@ -171,7 +182,7 @@ handleDisconnectedState(DetailedState.DISCONNECTED);
 break;
 case EVENT_DEFERRED_RECONNECT:
 if (mWifiInfo.getSupplicantState() != SupplicantState.UNINITIALIZED) {
-if (++mReconnectCount > mMaxReconnectAttempts) {
+if (++mReconnectCount > getMaxDhcpRetries()) {
 mWM.disableNetwork(mLastNetworkId);
 }
 WifiNative.reconnectCommand();
@@ -188,12 +199,10 @@ mWifiInfo.setIpAddress(mDhcpInfo.ipAddress);
 mLastSignalLevel=-1;
 if (mNetworkInfo.getDetailedState() != DetailedState.CONNECTED) {
 setDetailedState(DetailedState.CONNECTED);
-intent=new Intent(WifiManager.NETWORK_STATE_CHANGED_ACTION);
-intent.putExtra(WifiManager.EXTRA_NETWORK_INFO,mNetworkInfo);
-mContext.sendStickyBroadcast(intent);
+sendNetworkStateChangeBroadcast();
 }
  else {
-Message.obtain(mTarget,EVENT_CONFIGURATION_CHANGED).sendToTarget();
+mTarget.sendEmptyMessage(EVENT_CONFIGURATION_CHANGED);
 }
 if (LOCAL_LOGD) Log.v(TAG,"IP configuration: " + mDhcpInfo);
 EventLog.writeEvent(EVENTLOG_INTERFACE_CONFIGURATION_STATE_CHANGED,1);
@@ -209,10 +218,11 @@ WifiNative.disconnectCommand();
 }
 break;
 case EVENT_DRIVER_STATE_CHANGED:
-boolean driverStarted=Boolean.TRUE.equals(msg.obj);
+boolean driverStarted=msg.arg1 != 0;
 eventLogParam=driverStarted ? 1 : 0;
 EventLog.writeEvent(EVENTLOG_DRIVER_STATE_CHANGED,eventLogParam);
 if (driverStarted) {
+setNumAllowedChannels();
 synchronized (this) {
 WifiNative.scanCommand();
 }

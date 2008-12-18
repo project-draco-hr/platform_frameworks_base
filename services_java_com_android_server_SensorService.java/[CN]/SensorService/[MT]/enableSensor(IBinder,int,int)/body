@@ -1,24 +1,30 @@
 {
   if (localLOGV)   Log.d(TAG,"enableSensor " + sensor + " "+ enable);
-  if (listener == null)   throw new NullPointerException("listener is null in enableSensor");
+  int uid=Binder.getCallingUid();
+  long identity=Binder.clearCallingIdentity();
+  if (enable == SENSOR_DISABLE) {
+    mBatteryStats.noteStopSensor(uid,sensor);
+  }
+ else {
+    mBatteryStats.noteStartSensor(uid,sensor);
+  }
+  Binder.restoreCallingIdentity(identity);
+  if (binder == null)   throw new NullPointerException("listener is null in enableSensor");
 synchronized (mListeners) {
     if (enable != SENSOR_DISABLE && !_sensors_control_activate(sensor,true)) {
       Log.w(TAG,"could not enable sensor " + sensor);
       return false;
     }
-    IBinder binder=listener;
     Listener l=null;
     int minDelay=enable;
-    int size=mListeners.size();
-    for (int i=0; i < size; i++) {
-      Listener test=mListeners.get(i);
-      if (binder.equals(test.mListener)) {
-        l=test;
+    for (    Listener listener : mListeners) {
+      if (binder == listener.mToken) {
+        l=listener;
       }
-      if (minDelay > test.mDelay)       minDelay=test.mDelay;
+      if (minDelay > listener.mDelay)       minDelay=listener.mDelay;
     }
     if (l == null && enable != SENSOR_DISABLE) {
-      l=new Listener(listener);
+      l=new Listener(binder);
       binder.linkToDeath(l,0);
       mListeners.add(l);
       mListeners.notify();
@@ -40,6 +46,9 @@ synchronized (mListeners) {
         binder.unlinkToDeath(l,0);
         mListeners.notify();
       }
+    }
+    if (mListeners.size() == 0) {
+      _sensors_control_wake();
     }
   }
   return true;
