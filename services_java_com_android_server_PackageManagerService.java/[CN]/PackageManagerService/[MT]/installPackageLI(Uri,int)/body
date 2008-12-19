@@ -1,43 +1,41 @@
 {
-  int returnCode=PackageManager.INSTALL_SUCCEEDED;
-  String installedPackageName=null;
-  int installedPackageUid=-1;
-  PackageParser.Package installedPackage=null;
   File tmpPackageFile=null;
-  boolean wroteSettings=false;
   String pkgName=null;
-  PackageParser.Package newPackage=null;
-  boolean dataDirExists=false;
-  PackageParser.Package deletedPackage=null;
-  PackageRemovedInfo removedInfo=new PackageRemovedInfo();
+  boolean forwardLocked=false;
+  boolean replacingExistingPackage=false;
+  PackageInstalledInfo res=new PackageInstalledInfo();
+  res.returnCode=PackageManager.INSTALL_SUCCEEDED;
+  res.uid=-1;
+  res.pkg=null;
+  res.removedInfo=new PackageRemovedInfo();
   main_flow:   try {
     tmpPackageFile=createTempPackageFile();
     if (tmpPackageFile == null) {
-      returnCode=PackageManager.INSTALL_FAILED_INSUFFICIENT_STORAGE;
+      res.returnCode=PackageManager.INSTALL_FAILED_INSUFFICIENT_STORAGE;
       break main_flow;
     }
     tmpPackageFile.deleteOnExit();
-    if (packageURI.getScheme().equals("file")) {
-      final File srcPackageFile=new File(packageURI.getPath());
+    if (pPackageURI.getScheme().equals("file")) {
+      final File srcPackageFile=new File(pPackageURI.getPath());
       if (!FileUtils.copyFile(srcPackageFile,tmpPackageFile)) {
         Log.e(TAG,"Couldn't copy package file to temp file.");
-        returnCode=PackageManager.INSTALL_FAILED_INSUFFICIENT_STORAGE;
+        res.returnCode=PackageManager.INSTALL_FAILED_INSUFFICIENT_STORAGE;
         break main_flow;
       }
     }
- else     if (packageURI.getScheme().equals("content")) {
+ else     if (pPackageURI.getScheme().equals("content")) {
       ParcelFileDescriptor fd;
       try {
-        fd=mContext.getContentResolver().openFileDescriptor(packageURI,"r");
+        fd=mContext.getContentResolver().openFileDescriptor(pPackageURI,"r");
       }
  catch (      FileNotFoundException e) {
         Log.e(TAG,"Couldn't open file descriptor from download service.");
-        returnCode=PackageManager.INSTALL_FAILED_INSUFFICIENT_STORAGE;
+        res.returnCode=PackageManager.INSTALL_FAILED_INSUFFICIENT_STORAGE;
         break main_flow;
       }
       if (fd == null) {
         Log.e(TAG,"Couldn't open file descriptor from download service (null).");
-        returnCode=PackageManager.INSTALL_FAILED_INSUFFICIENT_STORAGE;
+        res.returnCode=PackageManager.INSTALL_FAILED_INSUFFICIENT_STORAGE;
         break main_flow;
       }
       if (Config.LOGV) {
@@ -46,29 +44,31 @@
       ParcelFileDescriptor.AutoCloseInputStream dlStream=new ParcelFileDescriptor.AutoCloseInputStream(fd);
       if (!FileUtils.copyToFile(dlStream,tmpPackageFile)) {
         Log.e(TAG,"Couldn't copy package stream to temp file.");
-        returnCode=PackageManager.INSTALL_FAILED_INSUFFICIENT_STORAGE;
+        res.returnCode=PackageManager.INSTALL_FAILED_INSUFFICIENT_STORAGE;
         break main_flow;
       }
     }
  else {
-      Log.e(TAG,"Package URI is not 'file:' or 'content:' - " + packageURI);
-      returnCode=PackageManager.INSTALL_FAILED_INVALID_URI;
+      Log.e(TAG,"Package URI is not 'file:' or 'content:' - " + pPackageURI);
+      res.returnCode=PackageManager.INSTALL_FAILED_INVALID_URI;
       break main_flow;
     }
     pkgName=PackageParser.parsePackageName(tmpPackageFile.getAbsolutePath(),0);
     if (pkgName == null) {
       Log.e(TAG,"Couldn't find a package name in : " + tmpPackageFile);
-      returnCode=PackageManager.INSTALL_FAILED_INVALID_APK;
+      res.returnCode=PackageManager.INSTALL_FAILED_INVALID_APK;
       break main_flow;
     }
+    res.name=pkgName;
     final String pkgFileName=pkgName + ".apk";
-    final File destDir=((flags & PackageManager.FORWARD_LOCK_PACKAGE) != 0) ? mDrmAppPrivateInstallDir : mAppInstallDir;
+    final File destDir=((pFlags & PackageManager.FORWARD_LOCK_PACKAGE) != 0) ? mDrmAppPrivateInstallDir : mAppInstallDir;
     final File destPackageFile=new File(destDir,pkgFileName);
     final String destFilePath=destPackageFile.getAbsolutePath();
     File destResourceFile;
-    if ((flags & PackageManager.FORWARD_LOCK_PACKAGE) != 0) {
+    if ((pFlags & PackageManager.FORWARD_LOCK_PACKAGE) != 0) {
       final String publicZipFileName=pkgName + ".zip";
       destResourceFile=new File(mAppInstallDir,publicZipFileName);
+      forwardLocked=true;
     }
  else {
       destResourceFile=destPackageFile;
@@ -80,147 +80,29 @@
     pp.setSdkVersion(mSdkVersion);
     final PackageParser.Package pkg=pp.parsePackage(tmpPackageFile,destPackageFile.getAbsolutePath(),mMetrics,parseFlags);
     if (pkg == null) {
-      returnCode=pp.getParseError();
+      res.returnCode=pp.getParseError();
       break main_flow;
     }
     if (GET_CERTIFICATES && !pp.collectCertificates(pkg,parseFlags)) {
-      returnCode=pp.getParseError();
+      res.returnCode=pp.getParseError();
       break main_flow;
     }
-    boolean replacingExistingPackage=false;
 synchronized (mPackages) {
-      if ((flags & PackageManager.REPLACE_EXISTING_PACKAGE) != 0 && mPackages.containsKey(pkgName)) {
+      if ((pFlags & PackageManager.REPLACE_EXISTING_PACKAGE) != 0 && mPackages.containsKey(pkgName)) {
         replacingExistingPackage=true;
-        deletedPackage=mPackages.get(pkgName);
-        if (checkSignaturesLP(pkg,deletedPackage) != PackageManager.SIGNATURE_MATCH) {
-          returnCode=PackageManager.INSTALL_PARSE_FAILED_INCONSISTENT_CERTIFICATES;
-          break main_flow;
-        }
       }
     }
     if (replacingExistingPackage) {
-      if (!deletePackageLI(pkgName,false,PackageManager.DONT_DELETE_DATA,removedInfo)) {
-        returnCode=PackageManager.INSTALL_FAILED_REPLACE_COULDNT_DELETE;
-        break main_flow;
-      }
+      replacePackageLI(pkgName,pFlags,tmpPackageFile,destFilePath,destPackageFile,destResourceFile,pkg,forwardLocked,res);
     }
  else {
-      if (mPackages.containsKey(pkgName) || mAppDirs.containsKey(destFilePath)) {
-        Log.w(TAG,"Attempt to re-install " + pkgName + " without first uninstalling.");
-        returnCode=PackageManager.INSTALL_FAILED_ALREADY_EXISTS;
-        break main_flow;
-      }
-      if (destPackageFile.exists()) {
-        destPackageFile.delete();
-      }
-    }
-    dataDirExists=(new File(mAppDataDir,pkgName)).exists();
-    mLastScanError=PackageManager.INSTALL_SUCCEEDED;
-    newPackage=scanPackageLI(tmpPackageFile,destPackageFile,destResourceFile,pkg,parseFlags,SCAN_MONITOR | SCAN_FORCE_DEX | (!replacingExistingPackage ? SCAN_UPDATE_SIGNATURE : 0)| ((flags & PackageManager.FORWARD_LOCK_PACKAGE) != 0 ? SCAN_FORWARD_LOCKED : 0));
-    if (newPackage == null) {
-      if (Config.LOGD) {
-        Log.w(TAG,"Package couldn't be installed in " + destPackageFile);
-      }
-      if ((returnCode=mLastScanError) == PackageManager.INSTALL_SUCCEEDED) {
-        returnCode=PackageManager.INSTALL_FAILED_INVALID_APK;
-      }
-      break main_flow;
-    }
-synchronized (mPackages) {
-      mSettings.setInstallStatus(pkgName,PKG_INSTALL_INCOMPLETE);
-      mSettings.writeLP();
-      wroteSettings=true;
-    }
-    int retCode=0;
-    if ((pkg.applicationInfo.flags & ApplicationInfo.FLAG_HAS_CODE) != 0) {
-      retCode=mInstaller.movedex(tmpPackageFile.toString(),destPackageFile.toString());
-      if (retCode != 0) {
-        Log.e(TAG,"Couldn't rename dex file: " + destPackageFile);
-        returnCode=PackageManager.INSTALL_FAILED_INSUFFICIENT_STORAGE;
-        break main_flow;
-      }
-    }
-    if (tmpPackageFile.renameTo(destPackageFile)) {
-      if ((flags & PackageManager.FORWARD_LOCK_PACKAGE) != 0) {
-        try {
-          extractPublicFiles(newPackage,destResourceFile);
-        }
- catch (        IOException e) {
-          Log.e(TAG,"Couldn't create a new zip file for the public parts of a" + " forward-locked app.");
-          returnCode=PackageManager.INSTALL_FAILED_INSUFFICIENT_STORAGE;
-          break main_flow;
-        }
-        if (mInstaller != null) {
-          retCode=mInstaller.setForwardLockPerm(pkgName,newPackage.applicationInfo.uid);
-        }
- else {
-          final int filePermissions=FileUtils.S_IRUSR | FileUtils.S_IWUSR | FileUtils.S_IRGRP;
-          retCode=FileUtils.setPermissions(destFilePath,filePermissions,-1,newPackage.applicationInfo.uid);
-        }
-      }
- else {
-        final int filePermissions=FileUtils.S_IRUSR | FileUtils.S_IWUSR | FileUtils.S_IRGRP| FileUtils.S_IROTH;
-        retCode=FileUtils.setPermissions(destFilePath,filePermissions,-1,-1);
-      }
-      if (retCode != 0) {
-        Log.e(TAG,"Couldn't set new package file permissions for " + destFilePath + ". The return code was: "+ retCode);
-      }
-      if (Config.LOGD) {
-        Log.d(TAG,"New package installed in " + destPackageFile);
-      }
-synchronized (mPackages) {
-        grantPermissionsLP(newPackage,true);
-        installedPackageName=pkgName;
-        installedPackageUid=newPackage.applicationInfo.uid;
-        installedPackage=newPackage;
-        if (replacingExistingPackage) {
-          verifySignaturesLP(mSettings.mPackages.get(pkgName),pkg,parseFlags,true);
-        }
-        mSettings.setInstallStatus(pkgName,PKG_INSTALL_COMPLETE);
-        returnCode=PackageManager.INSTALL_SUCCEEDED;
-        mSettings.writeLP();
-        break main_flow;
-      }
-    }
- else {
-      Log.e(TAG,"Couldn't move package file to: " + destPackageFile);
-      returnCode=PackageManager.INSTALL_FAILED_INSUFFICIENT_STORAGE;
-      break main_flow;
+      installNewPackageLI(pkgName,pFlags,tmpPackageFile,destFilePath,destPackageFile,destResourceFile,pkg,forwardLocked,res);
     }
   }
   finally {
     if (tmpPackageFile != null && tmpPackageFile.exists()) {
       tmpPackageFile.delete();
     }
-    if (returnCode == PackageManager.INSTALL_SUCCEEDED) {
-      if (deletedPackage != null) {
-        final ApplicationInfo deletedPackageAppInfo=deletedPackage.applicationInfo;
-        final ApplicationInfo installedPackageAppInfo=installedPackage.applicationInfo;
-        if (!deletedPackageAppInfo.sourceDir.equals(installedPackageAppInfo.sourceDir)) {
-          new File(deletedPackageAppInfo.sourceDir).delete();
-        }
-        if (!deletedPackageAppInfo.publicSourceDir.equals(installedPackageAppInfo.publicSourceDir)) {
-          new File(deletedPackageAppInfo.publicSourceDir).delete();
-        }
-      }
-    }
- else {
-      if (mInstaller != null) {
-        mInstaller.rmdex(tmpPackageFile.getPath());
-      }
-      if (wroteSettings) {
-        deletePackageLI(pkgName,true,dataDirExists ? PackageManager.DONT_DELETE_DATA : 0,new PackageRemovedInfo());
-        if (deletedPackage != null) {
-          installPackageLI(Uri.fromFile(new File(deletedPackage.mPath)),isForwardLocked(deletedPackage) ? PackageManager.FORWARD_LOCK_PACKAGE : 0);
-        }
-      }
-    }
+    return res;
   }
-  PackageInstalledInfo res=new PackageInstalledInfo();
-  res.name=installedPackageName;
-  res.uid=installedPackageUid;
-  res.pkg=installedPackage;
-  res.returnCode=returnCode;
-  res.removedInfo=removedInfo;
-  return res;
 }

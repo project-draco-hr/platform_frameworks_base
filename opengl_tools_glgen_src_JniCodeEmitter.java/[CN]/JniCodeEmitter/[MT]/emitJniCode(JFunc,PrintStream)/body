@@ -1,0 +1,265 @@
+{
+  CFunc cfunc=jfunc.getCFunc();
+  out.println("/* " + cfunc.getOriginal() + " */");
+  String outName="android_" + jfunc.getName();
+  boolean isPointerFunc=outName.endsWith("Pointer") && jfunc.getCFunc().hasPointerArg();
+  boolean isVBOPointerFunc=(outName.endsWith("Pointer") || outName.endsWith("DrawElements")) && !jfunc.getCFunc().hasPointerArg();
+  if (isPointerFunc) {
+    outName+="Bounds";
+  }
+  out.print("static ");
+  out.println(getJniType(jfunc.getType()));
+  out.print(outName);
+  String rsignature=getJniName(jfunc.getType());
+  String signature="";
+  int numArgs=jfunc.getNumArgs();
+  for (int i=0; i < numArgs; i++) {
+    JType argType=jfunc.getArgType(i);
+    signature+=getJniName(argType);
+  }
+  if (isPointerFunc) {
+    signature+="I";
+  }
+  String sig=getJniMangledName(signature).replace('.','_');
+  out.print("__" + sig);
+  outName+="__" + sig;
+  signature=signature.replace('.','/');
+  rsignature=rsignature.replace('.','/');
+  out.println();
+  if (rsignature.length() == 0) {
+    rsignature="V";
+  }
+  String s="{\"" + jfunc.getName() + (isPointerFunc ? "Bounds" : "")+ "\", \"("+ signature+ ")"+ rsignature+ "\", (void *) "+ outName+ " },";
+  nativeRegistrations.add(s);
+  List<Integer> nonPrimitiveArgs=new ArrayList<Integer>();
+  int numBufferArgs=0;
+  List<String> bufferArgNames=new ArrayList<String>();
+  out.print("  (JNIEnv *_env, jobject _this");
+  for (int i=0; i < numArgs; i++) {
+    out.print(", ");
+    JType argType=jfunc.getArgType(i);
+    String suffix;
+    if (!argType.isPrimitive()) {
+      if (argType.isArray()) {
+        suffix="_ref";
+      }
+ else {
+        suffix="_buf";
+      }
+      nonPrimitiveArgs.add(new Integer(i));
+      if (jfunc.getArgType(i).isBuffer()) {
+        int cIndex=jfunc.getArgCIndex(i);
+        String cname=cfunc.getArgName(cIndex);
+        bufferArgNames.add(cname);
+        numBufferArgs++;
+      }
+    }
+ else {
+      suffix="";
+    }
+    out.print(getJniType(argType) + " " + jfunc.getArgName(i)+ suffix);
+  }
+  if (isPointerFunc) {
+    out.print(", jint remaining");
+  }
+  out.println(") {");
+  int numArrays=0;
+  int numBuffers=0;
+  for (int i=0; i < nonPrimitiveArgs.size(); i++) {
+    int idx=nonPrimitiveArgs.get(i).intValue();
+    int cIndex=jfunc.getArgCIndex(idx);
+    String cname=cfunc.getArgName(cIndex);
+    if (jfunc.getArgType(idx).isArray()) {
+      ++numArrays;
+    }
+    if (jfunc.getArgType(idx).isBuffer()) {
+      ++numBuffers;
+    }
+  }
+  CType returnType=cfunc.getType();
+  boolean isVoid=returnType.isVoid();
+  boolean isUnsupported=isUnsupportedFunc(cfunc);
+  if (isUnsupported) {
+    out.println(indent + "_env->ThrowNew(UOEClass,");
+    out.println(indent + "    \"" + cfunc.getName()+ "\");");
+    if (!isVoid) {
+      String retval=getErrorReturnValue(cfunc);
+      out.println(indent + "return " + retval+ ";");
+    }
+    out.println("}");
+    out.println();
+    return;
+  }
+  if (mUseContextPointer) {
+    out.println(indent + "android::gl::ogles_context_t *ctx = getContext(_env, _this);");
+  }
+  boolean emitExceptionCheck=(numArrays > 0 || numBuffers > 0) && hasNonConstArg(jfunc,cfunc,nonPrimitiveArgs);
+  if (emitExceptionCheck) {
+    out.println(indent + "jint _exception = 0;");
+  }
+  if (numBufferArgs == 1) {
+    out.println(indent + "jarray _array = (jarray) 0;");
+  }
+ else {
+    for (int i=0; i < numBufferArgs; i++) {
+      out.println(indent + "jarray _" + bufferArgNames.get(i)+ "Array = (jarray) 0;");
+    }
+  }
+  if (!isVoid) {
+    String retval=getErrorReturnValue(cfunc);
+    if (retval != null) {
+      out.println(indent + returnType.getDeclaration() + " _returnValue = "+ retval+ ";");
+    }
+ else {
+      out.println(indent + returnType.getDeclaration() + " _returnValue;");
+    }
+  }
+  String offset="offset";
+  String remaining="_remaining";
+  if (nonPrimitiveArgs.size() > 0) {
+    for (int i=0; i < nonPrimitiveArgs.size(); i++) {
+      int idx=nonPrimitiveArgs.get(i).intValue();
+      int cIndex=jfunc.getArgCIndex(idx);
+      String cname=cfunc.getArgName(cIndex);
+      CType type=cfunc.getArgType(jfunc.getArgCIndex(idx));
+      String decl=type.getDeclaration();
+      if (jfunc.getArgType(idx).isArray()) {
+        out.println(indent + decl + (decl.endsWith("*") ? "" : " ")+ jfunc.getArgName(idx)+ "_base = ("+ decl+ ") 0;");
+      }
+      remaining=(numArrays <= 1 && numBuffers <= 1) ? "_remaining" : "_" + cname + "Remaining";
+      out.println(indent + "jint " + remaining+ ";");
+      out.println(indent + decl + (decl.endsWith("*") ? "" : " ")+ jfunc.getArgName(idx)+ " = ("+ decl+ ") 0;");
+    }
+    out.println();
+  }
+  String retval=isVoid ? "" : " _returnValue";
+  int bufArgIdx=0;
+  if (nonPrimitiveArgs.size() > 0) {
+    for (int i=0; i < nonPrimitiveArgs.size(); i++) {
+      int idx=nonPrimitiveArgs.get(i).intValue();
+      int cIndex=jfunc.getArgCIndex(idx);
+      String cname=cfunc.getArgName(cIndex);
+      offset=numArrays <= 1 ? "offset" : cname + "Offset";
+      remaining=(numArrays <= 1 && numBuffers <= 1) ? "_remaining" : "_" + cname + "Remaining";
+      if (jfunc.getArgType(idx).isArray()) {
+        out.println(indent + "if (!" + cname+ "_ref) {");
+        if (emitExceptionCheck) {
+          out.println(indent + indent + "_exception = 1;");
+        }
+        out.println(indent + "    " + (mUseCPlusPlus ? "_env" : "(*_env)")+ "->ThrowNew("+ (mUseCPlusPlus ? "" : "_env, ")+ "IAEClass, "+ "\""+ cname+ " == null\");");
+        out.println(indent + "    goto exit;");
+        needsExit=true;
+        out.println(indent + "}");
+        out.println(indent + "if (" + offset+ " < 0) {");
+        if (emitExceptionCheck) {
+          out.println(indent + indent + "_exception = 1;");
+        }
+        out.println(indent + "    " + (mUseCPlusPlus ? "_env" : "(*_env)")+ "->ThrowNew("+ (mUseCPlusPlus ? "" : "_env, ")+ "IAEClass, "+ "\""+ offset+ " < 0\");");
+        out.println(indent + "    goto exit;");
+        needsExit=true;
+        out.println(indent + "}");
+        out.println(indent + remaining + " = "+ (mUseCPlusPlus ? "_env" : "(*_env)")+ "->GetArrayLength("+ (mUseCPlusPlus ? "" : "_env, ")+ cname+ "_ref) - "+ offset+ ";");
+        emitNativeBoundsChecks(cfunc,cname,out,false,emitExceptionCheck,offset,remaining,"    ");
+        out.println(indent + cname + "_base = ("+ cfunc.getArgType(cIndex).getDeclaration()+ ")");
+        out.println(indent + "    " + (mUseCPlusPlus ? "_env" : "(*_env)")+ "->GetPrimitiveArrayCritical("+ (mUseCPlusPlus ? "" : "_env, ")+ jfunc.getArgName(idx)+ "_ref, (jboolean *)0);");
+        out.println(indent + cname + " = "+ cname+ "_base + "+ offset+ ";");
+        out.println();
+      }
+ else {
+        String array=numBufferArgs <= 1 ? "_array" : "_" + bufferArgNames.get(bufArgIdx++) + "Array";
+        boolean nullAllowed=isNullAllowed(cfunc);
+        if (nullAllowed) {
+          out.println(indent + "if (" + cname+ "_buf) {");
+          out.print(indent);
+        }
+        out.println(indent + cname + " = ("+ cfunc.getArgType(cIndex).getDeclaration()+ ")getPointer(_env, "+ cname+ "_buf, &"+ array+ ", &"+ remaining+ ");");
+        if (nullAllowed) {
+          out.println(indent + "}");
+        }
+        emitNativeBoundsChecks(cfunc,cname,out,true,emitExceptionCheck,offset,remaining,"    ");
+      }
+    }
+  }
+  if (!isVoid) {
+    out.print(indent + "_returnValue = ");
+  }
+ else {
+    out.print(indent);
+  }
+  String name=cfunc.getName();
+  if (mUseContextPointer) {
+    name=name.substring(2,name.length());
+    name=name.substring(0,1).toLowerCase() + name.substring(1,name.length());
+    out.print("ctx->procs.");
+  }
+  out.print(name + (isPointerFunc ? "Bounds" : "") + "(");
+  numArgs=cfunc.getNumArgs();
+  if (numArgs == 0) {
+    if (mUseContextPointer) {
+      out.println("ctx);");
+    }
+ else {
+      out.println(");");
+    }
+  }
+ else {
+    if (mUseContextPointer) {
+      out.println("ctx,");
+    }
+ else {
+      out.println();
+    }
+    for (int i=0; i < numArgs; i++) {
+      String typecast;
+      if (i == numArgs - 1 && isVBOPointerFunc) {
+        typecast="const GLvoid *";
+      }
+ else {
+        typecast=cfunc.getArgType(i).getDeclaration();
+      }
+      out.print(indent + indent + "("+ typecast+ ")"+ cfunc.getArgName(i));
+      if (i == numArgs - 1) {
+        if (isPointerFunc) {
+          out.println(",");
+          out.println(indent + indent + "(GLsizei)remaining");
+        }
+ else {
+          out.println();
+        }
+      }
+ else {
+        out.println(",");
+      }
+    }
+    out.println(indent + ");");
+  }
+  if (needsExit) {
+    out.println();
+    out.println("exit:");
+    needsExit=false;
+  }
+  bufArgIdx=0;
+  if (nonPrimitiveArgs.size() > 0) {
+    for (int i=nonPrimitiveArgs.size() - 1; i >= 0; i--) {
+      int idx=nonPrimitiveArgs.get(i).intValue();
+      int cIndex=jfunc.getArgCIndex(idx);
+      if (jfunc.getArgType(idx).isArray()) {
+        out.println(indent + "if (" + jfunc.getArgName(idx)+ "_base) {");
+        out.println(indent + indent + (mUseCPlusPlus ? "_env" : "(*_env)")+ "->ReleasePrimitiveArrayCritical("+ (mUseCPlusPlus ? "" : "_env, ")+ jfunc.getArgName(idx)+ "_ref, "+ cfunc.getArgName(cIndex)+ "_base,");
+        out.println(indent + indent + indent+ (cfunc.getArgType(cIndex).isConst() ? "JNI_ABORT" : "_exception ? JNI_ABORT: 0")+ ");");
+        out.println(indent + "}");
+      }
+ else       if (jfunc.getArgType(idx).isBuffer()) {
+        String array=numBufferArgs <= 1 ? "_array" : "_" + bufferArgNames.get(bufArgIdx++) + "Array";
+        out.println(indent + "if (" + array+ ") {");
+        out.println(indent + indent + "releasePointer(_env, "+ array+ ", "+ cfunc.getArgName(cIndex)+ ", "+ (cfunc.getArgType(cIndex).isConst() ? "JNI_FALSE" : "_exception ? JNI_FALSE : JNI_TRUE")+ ");");
+        out.println(indent + "}");
+      }
+    }
+  }
+  if (!isVoid) {
+    out.println(indent + "return _returnValue;");
+  }
+  out.println("}");
+  out.println();
+}

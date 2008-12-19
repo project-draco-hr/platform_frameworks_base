@@ -1,0 +1,64 @@
+{
+  mContext=context;
+  mHandler=new Handler(this);
+  mIWindowManager=IWindowManager.Stub.asInterface(ServiceManager.getService(Context.WINDOW_SERVICE));
+  mCaller=new HandlerCaller(context,new HandlerCaller.Callback(){
+    public void executeMessage(    Message msg){
+      handleMessage(msg);
+    }
+  }
+);
+  IntentFilter packageFilt=new IntentFilter();
+  packageFilt.addAction(Intent.ACTION_PACKAGE_ADDED);
+  packageFilt.addAction(Intent.ACTION_PACKAGE_CHANGED);
+  packageFilt.addAction(Intent.ACTION_PACKAGE_REMOVED);
+  packageFilt.addAction(Intent.ACTION_PACKAGE_RESTARTED);
+  packageFilt.addDataScheme("package");
+  mContext.registerReceiver(new PackageReceiver(),packageFilt);
+  IntentFilter screenOnOffFilt=new IntentFilter();
+  screenOnOffFilt.addAction(Intent.ACTION_SCREEN_ON);
+  screenOnOffFilt.addAction(Intent.ACTION_SCREEN_OFF);
+  mContext.registerReceiver(new ScreenOnOffReceiver(),screenOnOffFilt);
+  buildInputMethodListLocked(mMethodList,mMethodMap);
+  final String enabledStr=Settings.Secure.getString(mContext.getContentResolver(),Settings.Secure.ENABLED_INPUT_METHODS);
+  Log.i(TAG,"Enabled input methods: " + enabledStr);
+  if (enabledStr == null) {
+    Log.i(TAG,"Enabled input methods has not been set, enabling all");
+    InputMethodInfo defIm=null;
+    StringBuilder sb=new StringBuilder(256);
+    final int N=mMethodList.size();
+    for (int i=0; i < N; i++) {
+      InputMethodInfo imi=mMethodList.get(i);
+      Log.i(TAG,"Adding: " + imi.getId());
+      if (i > 0)       sb.append(':');
+      sb.append(imi.getId());
+      if (defIm == null && imi.getIsDefaultResourceId() != 0) {
+        try {
+          Resources res=mContext.createPackageContext(imi.getPackageName(),0).getResources();
+          if (res.getBoolean(imi.getIsDefaultResourceId())) {
+            defIm=imi;
+            Log.i(TAG,"Selected default: " + imi.getId());
+          }
+        }
+ catch (        PackageManager.NameNotFoundException ex) {
+        }
+catch (        Resources.NotFoundException ex) {
+        }
+      }
+    }
+    if (defIm == null && N > 0) {
+      defIm=mMethodList.get(0);
+      Log.i(TAG,"No default found, using " + defIm.getId());
+    }
+    Settings.Secure.putString(mContext.getContentResolver(),Settings.Secure.ENABLED_INPUT_METHODS,sb.toString());
+    if (defIm != null) {
+      Settings.Secure.putString(mContext.getContentResolver(),Settings.Secure.DEFAULT_INPUT_METHOD,defIm.getId());
+    }
+  }
+  mStatusBar=statusBar;
+  mInputMethodData=IconData.makeIcon("ime",null,0,0,0);
+  mInputMethodIcon=statusBar.addIcon(mInputMethodData,null);
+  statusBar.setIconVisibility(mInputMethodIcon,false);
+  mSettingsObserver=new SettingsObserver(mHandler);
+  updateFromSettingsLocked();
+}

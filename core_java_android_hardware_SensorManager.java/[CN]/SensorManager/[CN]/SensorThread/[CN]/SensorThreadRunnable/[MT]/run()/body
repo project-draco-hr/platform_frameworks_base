@@ -1,56 +1,41 @@
 {
-  int sensors_of_interest;
-  float[] values=new float[6];
+  final float[] values=new float[3];
+  final int[] status=new int[1];
+  final long timestamp[]=new long[1];
   Process.setThreadPriority(Process.THREAD_PRIORITY_DISPLAY);
-synchronized (sListeners) {
-    _sensors_data_open(mSensorDataFd.getFileDescriptor());
-    try {
-      mSensorDataFd.close();
-    }
- catch (    IOException e) {
-      Log.e(TAG,"IOException: ",e);
-    }
-    mSensorDataFd=null;
-    sensors_of_interest=0;
-    final int size=sListeners.size();
-    for (int i=0; i < size; i++) {
-      sensors_of_interest|=sListeners.get(i).mSensors;
-      if ((sensors_of_interest & SENSOR_ALL) == SENSOR_ALL)       break;
-    }
+  if (mSensorDataFd == null) {
+    Log.e(TAG,"mSensorDataFd == NULL, exiting");
+    return;
   }
+  sensors_data_open(mSensorDataFd.getFileDescriptor());
+  try {
+    mSensorDataFd.close();
+  }
+ catch (  IOException e) {
+    Log.e(TAG,"IOException: ",e);
+  }
+  mSensorDataFd=null;
   while (true) {
-    final int sensor_result=_sensors_data_poll(values,sensors_of_interest);
-    final int sensor_order=sensor_result & SENSOR_ORDER_MASK;
-    final int sensor=1 << sensor_result;
-    int accuracy=sensor_result >>> SENSOR_STATUS_SHIFT;
-    if ((sensors_of_interest & sensor) != 0) {
-      if (accuracy != mAccuracies[sensor_order]) {
-        try {
-          mSensorService.reportAccuracy(sensor,accuracy);
-          mAccuracies[sensor_order]=(byte)accuracy;
-        }
- catch (        RemoteException e) {
-          Log.e(TAG,"RemoteException in reportAccuracy: ",e);
-        }
-      }
- else {
-        accuracy=-1;
-      }
+    final int sensor=sensors_data_poll(values,status,timestamp);
+    if (sensor == -1) {
+      Log.d(TAG,"_sensors_data_poll() failed, we bail out.");
+      break;
     }
+    int accuracy=status[0];
 synchronized (sListeners) {
       if (sListeners.isEmpty()) {
-        _sensors_data_close();
+        sensors_data_close();
         mThread=null;
         break;
       }
-      mapSensorDataToWindow(sensor,values,SensorManager.getRotation());
-      sensors_of_interest=0;
-      final int size=sListeners.size();
-      for (int i=0; i < size; i++) {
-        ListenerDelegate listener=sListeners.get(i);
-        sensors_of_interest|=listener.mSensors;
-        if (listener.hasSensor(sensor)) {
-          listener.onSensorChanged(sensor,values,accuracy);
+      final Sensor sensorObject=sHandleToSensor.get(sensor);
+      if (sensorObject != null) {
+        final int size=sListeners.size();
+        for (int i=0; i < size; i++) {
+          ListenerDelegate listener=sListeners.get(i);
+          if (listener.hasSensor(sensorObject)) {
+            listener.onSensorChangedLocked(sensorObject,values,timestamp,accuracy);
+          }
         }
       }
     }

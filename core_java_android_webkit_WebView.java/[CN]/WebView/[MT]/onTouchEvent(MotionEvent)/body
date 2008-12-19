@@ -1,5 +1,5 @@
 {
-  if (mNativeClass == 0 || !isClickable() || !isLongClickable() || !hasFocus()) {
+  if (mNativeClass == 0 || !isClickable() || !isLongClickable()) {
     return false;
   }
   if (LOGV_ENABLED) {
@@ -9,6 +9,21 @@
   float x=ev.getX();
   float y=ev.getY();
   long eventTime=ev.getEventTime();
+  if (x > getViewWidth() - 1) {
+    x=getViewWidth() - 1;
+  }
+  if (y > getViewHeight() - 1) {
+    y=getViewHeight() - 1;
+  }
+  if (mForwardTouchEvents && mTouchMode != SCROLL_ZOOM_OUT && mTouchMode != SCROLL_ZOOM_ANIMATION_IN && mTouchMode != SCROLL_ZOOM_ANIMATION_OUT && (action != MotionEvent.ACTION_MOVE || eventTime - mLastSentTouchTime > TOUCH_SENT_INTERVAL)) {
+    WebViewCore.TouchEventData ted=new WebViewCore.TouchEventData();
+    ted.mAction=action;
+    ted.mX=viewToContent((int)x + mScrollX);
+    ted.mY=viewToContent((int)y + mScrollY);
+    ;
+    mWebViewCore.sendMessage(EventHub.TOUCH_EVENT,ted);
+    mLastSentTouchTime=eventTime;
+  }
 switch (action) {
 case MotionEvent.ACTION_DOWN:
 {
@@ -23,6 +38,16 @@ case MotionEvent.ACTION_DOWN:
         mScroller.abortAnimation();
         mTouchMode=TOUCH_DRAG_START_MODE;
         mPrivateHandler.removeMessages(RESUME_WEBCORE_UPDATE);
+      }
+ else       if (mShiftIsPressed) {
+        mSelectX=mScrollX + (int)x;
+        mSelectY=mScrollY + (int)y;
+        mTouchMode=TOUCH_SELECT_MODE;
+        if (LOGV_ENABLED) {
+          Log.v(LOGTAG,"select=" + mSelectX + ","+ mSelectY);
+        }
+        nativeMoveSelection(viewToContent(mSelectX),viewToContent(mSelectY),false);
+        mTouchSelection=mExtendSelection=true;
       }
  else {
         mTouchMode=TOUCH_INIT_MODE;
@@ -50,6 +75,16 @@ case MotionEvent.ACTION_MOVE:
     int deltaX=(int)(mLastTouchX - x);
     int deltaY=(int)(mLastTouchY - y);
     if (mTouchMode != TOUCH_DRAG_MODE) {
+      if (mTouchMode == TOUCH_SELECT_MODE) {
+        mSelectX=mScrollX + (int)x;
+        mSelectY=mScrollY + (int)y;
+        if (LOGV_ENABLED) {
+          Log.v(LOGTAG,"xtend=" + mSelectX + ","+ mSelectY);
+        }
+        nativeMoveSelection(viewToContent(mSelectX),viewToContent(mSelectY),true);
+        invalidate();
+        break;
+      }
       if ((deltaX * deltaX + deltaY * deltaY) < TOUCH_SLOP_SQUARE) {
         break;
       }
@@ -126,12 +161,14 @@ case MotionEvent.ACTION_MOVE:
       mLastTouchTime=eventTime;
       mUserScroll=true;
     }
-    if (mZoomControls != null && mMinZoomScale < mMaxZoomScale) {
+    boolean showPlusMinus=mMinZoomScale < mMaxZoomScale;
+    boolean showMagnify=canZoomScrollOut();
+    if (mZoomControls != null && (showPlusMinus || showMagnify)) {
       if (mZoomControls.getVisibility() == View.VISIBLE) {
         mPrivateHandler.removeCallbacks(mZoomControlRunnable);
       }
  else {
-        mZoomControls.show(canZoomScrollOut());
+        mZoomControls.show(showPlusMinus,showMagnify);
       }
       mPrivateHandler.postDelayed(mZoomControlRunnable,ZOOM_CONTROLS_TIMEOUT);
     }
@@ -152,6 +189,10 @@ case TOUCH_INIT_MODE:
     mTouchMode=TOUCH_DONE_MODE;
     doShortPress();
   }
+break;
+case TOUCH_SELECT_MODE:
+commitCopy();
+mTouchSelection=mExtendSelection=false;
 break;
 case SCROLL_ZOOM_ANIMATION_IN:
 case SCROLL_ZOOM_ANIMATION_OUT:

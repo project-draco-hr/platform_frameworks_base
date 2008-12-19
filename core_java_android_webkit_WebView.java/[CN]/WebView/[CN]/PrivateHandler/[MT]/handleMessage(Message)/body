@@ -56,16 +56,21 @@ case SPAWN_SCROLL_TO_MSG_ID:
 spawnContentScrollTo(msg.arg1,msg.arg2);
 break;
 case NEW_PICTURE_MSG_ID:
-final Point viewSize=(Point)msg.obj;
+final WebViewCore.DrawData draw=(WebViewCore.DrawData)msg.obj;
+final Point viewSize=draw.mViewPoint;
 if (mZoomScale > 0) {
-if (Math.abs(mZoomScale * viewSize.x - getViewWidth()) < 1) {
+if (Math.round(getViewWidth() / mZoomScale) == viewSize.x) {
 mZoomScale=0;
 mWebViewCore.sendMessage(EventHub.SET_SNAP_ANCHOR,0,0);
 }
 }
 final boolean updateLayout=viewSize.x == mLastWidthSent && viewSize.y == mLastHeightSent;
-recordNewContentSize(msg.arg1,msg.arg2,updateLayout);
-invalidate();
+recordNewContentSize(draw.mWidthHeight.x,draw.mWidthHeight.y,updateLayout);
+if (LOGV_ENABLED) {
+Rect b=draw.mInvalRegion.getBounds();
+Log.v(LOGTAG,"NEW_PICTURE_MSG_ID {" + b.left + ","+ b.top+ ","+ b.right+ ","+ b.bottom+ "}");
+}
+invalidate(contentToView(draw.mInvalRegion.getBounds()));
 if (mPictureListener != null) {
 mPictureListener.onNewPicture(WebView.this,capturePicture());
 }
@@ -124,7 +129,14 @@ scale=mInitialScale / 100.0f;
 if (mWebViewCore.getSettings().getUseWideViewPort()) {
 mLastWidthSent=0;
 }
-scale=initialScale == 0 ? (viewportWidth > 0 ? ((float)width / viewportWidth) : 1.0f) : initialScale / 100.0f;
+if (initialScale == 0) {
+if (viewportWidth > 0 && viewportWidth < width) {
+scale=(float)width / viewportWidth;
+}
+}
+ else {
+scale=initialScale / 100.0f;
+}
 }
 setNewZoomScale(scale,false);
 break;
@@ -167,10 +179,22 @@ break;
 case RESUME_WEBCORE_UPDATE:
 WebViewCore.resumeUpdate(mWebViewCore);
 break;
-case LONG_PRESS_TRACKBALL:
+case LONG_PRESS_ENTER:
+mGotEnterDown=false;
 mTrackTrackball=false;
 mTrackballDown=false;
+if (getParent() != null) {
 performLongClick();
+}
+break;
+case WEBCORE_NEED_TOUCH_EVENTS:
+mForwardTouchEvents=(msg.arg1 != 0);
+break;
+case PREVENT_TOUCH_ID:
+if (mTouchMode == TOUCH_DRAG_MODE) {
+WebViewCore.resumeUpdate(mWebViewCore);
+}
+mTouchMode=TOUCH_DONE_MODE;
 break;
 default :
 super.handleMessage(msg);

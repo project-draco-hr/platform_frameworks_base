@@ -5,7 +5,7 @@
   long now=System.currentTimeMillis();
   mCellCentroid.reset();
   mWifiCentroid.reset();
-  if (cellState != null) {
+  if (cellState != null && cellState.isValid()) {
     String primaryCellKey=getCellCacheKey(cellState.getMcc(),cellState.getMnc(),cellState.getLac(),cellState.getCid());
     Record record=mCellCache.lookup(primaryCellKey);
     if (record == null) {
@@ -63,7 +63,21 @@
   if (Log.isLoggable(TAG,Log.VERBOSE)) {
     Log.d(TAG,"cellAccuracy:" + cellAccuracy + ", wifiAccuracy:"+ wifiAccuracy);
   }
-  if (mCellCentroid.getNumber() != 0 && cellAccuracy <= MAX_ACCURACY_ALLOWED && (mWifiCentroid.getNumber() == 0 || cellConfidence >= wifiConfidence || cellAccuracy < wifiAccuracy)) {
+  if ((mCellCentroid.getNumber() == 0 || cellAccuracy > MAX_ACCURACY_ALLOWED) && (mWifiCentroid.getNumber() == 0 || wifiAccuracy > MAX_ACCURACY_ALLOWED)) {
+    result.setAccuracy(-1);
+    return true;
+  }
+  float[] distance=new float[1];
+  Location.distanceBetween(mCellCentroid.getCentroidLat(),mCellCentroid.getCentroidLng(),mWifiCentroid.getCentroidLat(),mWifiCentroid.getCentroidLng(),distance);
+  boolean consistent=distance[0] <= (cellAccuracy + wifiAccuracy);
+  boolean useCell=true;
+  if (consistent) {
+    useCell=(cellAccuracy <= wifiAccuracy);
+  }
+ else {
+    useCell=(cellConfidence >= wifiConfidence);
+  }
+  if (useCell) {
     result.setAccuracy(cellAccuracy);
     result.setLatitude(mCellCentroid.getCentroidLat());
     result.setLongitude(mCellCentroid.getCentroidLng());
@@ -72,7 +86,7 @@
     extras.putString(EXTRA_KEY_LOCATION_TYPE,EXTRA_VALUE_LOCATION_TYPE_CELL);
     result.setExtras(extras);
   }
- else   if (mWifiCentroid.getNumber() != 0 && wifiAccuracy <= MAX_ACCURACY_ALLOWED) {
+ else {
     result.setAccuracy(wifiAccuracy);
     result.setLatitude(mWifiCentroid.getCentroidLat());
     result.setLongitude(mWifiCentroid.getCentroidLng());
@@ -80,9 +94,6 @@
     Bundle extras=result.getExtras() == null ? new Bundle() : result.getExtras();
     extras.putString(EXTRA_KEY_LOCATION_TYPE,EXTRA_VALUE_LOCATION_TYPE_WIFI);
     result.setExtras(extras);
-  }
- else {
-    result.setAccuracy(-1);
   }
   return true;
 }

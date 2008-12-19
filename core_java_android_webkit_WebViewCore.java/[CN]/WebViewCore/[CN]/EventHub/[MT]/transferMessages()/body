@@ -17,11 +17,21 @@ loadUrl((String)msg.obj);
 break;
 case LOAD_DATA:
 HashMap loadParams=(HashMap)msg.obj;
-mBrowserFrame.loadData((String)loadParams.get("baseUrl"),(String)loadParams.get("data"),(String)loadParams.get("mimeType"),(String)loadParams.get("encoding"),(String)loadParams.get("failUrl"));
+String baseUrl=(String)loadParams.get("baseUrl");
+if (baseUrl != null) {
+int i=baseUrl.indexOf(':');
+if (i > 0) {
+String scheme=baseUrl.substring(0,i);
+if (!scheme.startsWith("http") && !scheme.startsWith("ftp") && !scheme.startsWith("about")&& !scheme.startsWith("javascript")) {
+nativeRegisterURLSchemeAsLocal(scheme);
+}
+}
+}
+mBrowserFrame.loadData(baseUrl,(String)loadParams.get("data"),(String)loadParams.get("mimeType"),(String)loadParams.get("encoding"),(String)loadParams.get("failUrl"));
 break;
 case STOP_LOADING:
 if (mBrowserFrame.committed() && !mBrowserFrame.firstLayoutDone()) {
-mBrowserFrame.didFirstLayout(mBrowserFrame.currentUrl());
+mBrowserFrame.didFirstLayout();
 }
 stopLoading();
 break;
@@ -29,17 +39,20 @@ case RELOAD:
 mBrowserFrame.reload(false);
 break;
 case KEY_DOWN:
-keyDown(msg.arg1,(KeyEvent)msg.obj);
+keyDown(msg.arg1,msg.arg2,(KeyEvent)msg.obj);
 break;
 case KEY_UP:
-keyUp(msg.arg1,(KeyEvent)msg.obj);
+keyUp(msg.arg1,msg.arg2,(KeyEvent)msg.obj);
 break;
 case VIEW_SIZE_CHANGED:
 viewSizeChanged(msg.arg1,msg.arg2,((Float)msg.obj).floatValue());
 break;
-case SET_VISIBLE_RECT:
+case SET_SCROLL_OFFSET:
+nativeSetScrollOffset(msg.arg1,msg.arg2);
+break;
+case SET_GLOBAL_BOUNDS:
 Rect r=(Rect)msg.obj;
-nativeSetVisibleRect(r.left,r.top,r.width(),r.height());
+nativeSetGlobalBounds(r.left,r.top,r.width(),r.height());
 break;
 case GO_BACK_FORWARD:
 if (!mBrowserFrame.committed() && msg.arg1 == -1 && (mBrowserFrame.loadType() == BrowserFrame.FRAME_LOADTYPE_STANDARD)) {
@@ -104,21 +117,6 @@ FocusData fDat=(FocusData)msg.obj;
 nativeSaveDocumentState(fDat.mFrame,fDat.mNode,fDat.mX,fDat.mY);
 break;
 }
-case FIND:
-Message response=(Message)msg.obj;
-boolean find=nativeFind(msg.getData().getString("find"),msg.arg1 != -1,msg.arg1 != 0);
-response.arg1=find ? 1 : 0;
-response.sendToTarget();
-break;
-case FIND_ALL:
-int found=nativeFindAll(msg.getData().getString("find"));
-Message resAll=(Message)msg.obj;
-resAll.arg1=found;
-resAll.sendToTarget();
-break;
-case CLEAR_MATCHES:
-nativeClearMatches();
-break;
 case CLEAR_SSL_PREF_TABLE:
 Network.getInstance(mContext).clearUserSslPrefTable();
 break;
@@ -126,6 +124,14 @@ case TOUCH_UP:
 TouchUpData touchUpData=(TouchUpData)msg.obj;
 nativeTouchUp(touchUpData.mMoveGeneration,touchUpData.mBuildGeneration,touchUpData.mFrame,touchUpData.mNode,touchUpData.mX,touchUpData.mY,touchUpData.mSize,touchUpData.mIsClick,touchUpData.mRetry);
 break;
+case TOUCH_EVENT:
+{
+TouchEventData ted=(TouchEventData)msg.obj;
+if (nativeHandleTouchEvent(ted.mAction,ted.mX,ted.mY)) {
+Message.obtain(mWebView.mPrivateHandler,WebView.PREVENT_TOUCH_ID).sendToTarget();
+}
+break;
+}
 case ADD_JS_INTERFACE:
 HashMap map=(HashMap)msg.obj;
 Object obj=map.get("object");
@@ -153,25 +159,15 @@ case REQUEST_FOCUS_HREF:
 {
 Message hrefMsg=(Message)msg.obj;
 String res=nativeRetrieveHref(msg.arg1,msg.arg2);
-Bundle data=hrefMsg.getData();
-data.putString("url",res);
-hrefMsg.setData(data);
+hrefMsg.getData().putString("url",res);
 hrefMsg.sendToTarget();
-break;
-}
-case REQUEST_IMAGE_HREF:
-{
-Message refMsg=(Message)msg.obj;
-String ref=nativeRetrieveImageRef(msg.arg1,msg.arg2);
-Bundle data=refMsg.getData();
-data.putString("url",ref);
-refMsg.setData(data);
-refMsg.sendToTarget();
 break;
 }
 case UPDATE_CACHE_AND_TEXT_ENTRY:
 nativeUpdateFrameCache();
-sendViewInvalidate();
+if (mWebView != null) {
+mWebView.postInvalidate();
+}
 sendUpdateTextEntry();
 break;
 case DOC_HAS_IMAGES:
@@ -209,8 +205,14 @@ case GET_SELECTION:
 String str=nativeGetSelection((Region)msg.obj);
 Message.obtain(mWebView.mPrivateHandler,WebView.UPDATE_CLIPBOARD,str).sendToTarget();
 break;
-case DUMP_WEBKIT:
-nativeDump();
+case DUMP_DOMTREE:
+nativeDumpDomTree(msg.arg1 == 1);
+break;
+case DUMP_RENDERTREE:
+nativeDumpRenderTree(msg.arg1 == 1);
+break;
+case DUMP_NAVTREE:
+nativeDumpNavTree();
 break;
 case SYNC_SCROLL:
 mWebkitScrollX=msg.arg1;
@@ -218,6 +220,13 @@ mWebkitScrollY=msg.arg2;
 break;
 case REFRESH_PLUGINS:
 nativeRefreshPlugins(msg.arg1 != 0);
+break;
+case SPLIT_PICTURE_SET:
+nativeSplitContent();
+mSplitPictureIsScheduled=false;
+break;
+case CLEAR_CONTENT:
+nativeClearContent();
 break;
 }
 }

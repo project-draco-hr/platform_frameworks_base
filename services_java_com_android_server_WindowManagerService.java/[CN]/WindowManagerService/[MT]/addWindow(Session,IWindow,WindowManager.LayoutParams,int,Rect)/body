@@ -18,7 +18,7 @@ synchronized (mWindowMap) {
       return WindowManagerImpl.ADD_DUPLICATE_ADD;
     }
     if (attrs.type >= FIRST_SUB_WINDOW && attrs.type <= LAST_SUB_WINDOW) {
-      attachedWindow=windowForClientLocked(session,attrs.token);
+      attachedWindow=windowForClientLocked(null,attrs.token);
       if (attachedWindow == null) {
         Log.w(TAG,"Attempted to add window with token that is not a window: " + attrs.token + ".  Aborting.");
         return WindowManagerImpl.ADD_BAD_SUBWINDOW_TOKEN;
@@ -35,7 +35,11 @@ synchronized (mWindowMap) {
         Log.w(TAG,"Attempted to add application window with unknown token " + attrs.token + ".  Aborting.");
         return WindowManagerImpl.ADD_BAD_APP_TOKEN;
       }
-      token=new WindowToken(attrs.token);
+      if (attrs.type == TYPE_INPUT_METHOD) {
+        Log.w(TAG,"Attempted to add input method window with unknown token " + attrs.token + ".  Aborting.");
+        return WindowManagerImpl.ADD_BAD_APP_TOKEN;
+      }
+      token=new WindowToken(attrs.token,-1);
       addToken=true;
     }
  else     if (attrs.type >= FIRST_APPLICATION_WINDOW && attrs.type <= LAST_APPLICATION_WINDOW) {
@@ -51,6 +55,12 @@ synchronized (mWindowMap) {
       if (attrs.type == TYPE_APPLICATION_STARTING && atoken.firstWindowDrawn) {
         if (localLOGV)         Log.v(TAG,"**** NO NEED TO START: " + attrs.getTitle());
         return WindowManagerImpl.ADD_STARTING_NOT_NEEDED;
+      }
+    }
+ else     if (attrs.type == TYPE_INPUT_METHOD) {
+      if (token.windowType != TYPE_INPUT_METHOD) {
+        Log.w(TAG,"Attempted to add input method window with bad token " + attrs.token + ".  Aborting.");
+        return WindowManagerImpl.ADD_BAD_APP_TOKEN;
       }
     }
     win=new WindowState(session,client,token,attachedWindow,attrs,viewVisibility);
@@ -74,11 +84,23 @@ synchronized (mWindowMap) {
     if (attrs.type == TYPE_APPLICATION_STARTING && token.appWindowToken != null) {
       token.appWindowToken.startingWindow=win;
     }
-    addWindowToListInOrderLocked(win);
-    assignLayersLocked();
+    boolean imMayMove=true;
+    if (attrs.type == TYPE_INPUT_METHOD) {
+      mInputMethodWindow=win;
+      addInputMethodWindowToListLocked(win);
+      imMayMove=false;
+    }
+ else     if (attrs.type == TYPE_INPUT_METHOD_DIALOG) {
+      mInputMethodDialogs.add(win);
+      adjustInputMethodDialogsLocked();
+      imMayMove=false;
+    }
+ else {
+      addWindowToListInOrderLocked(win);
+    }
     Binder.restoreCallingIdentity(origId);
     win.mEnterAnimationPending=true;
-    mPolicy.getCoveredInsetHintLw(attrs,outCoveredInsets);
+    mPolicy.getContentInsetHintLw(attrs,outContentInsets);
     if (mInTouchMode) {
       res|=WindowManagerImpl.ADD_FLAG_IN_TOUCH_MODE;
     }
@@ -86,8 +108,14 @@ synchronized (mWindowMap) {
       res|=WindowManagerImpl.ADD_FLAG_APP_VISIBLE;
     }
     if (win.canReceiveKeys()) {
-      updateFocusedWindowLocked();
+      if (updateFocusedWindowLocked(UPDATE_FOCUS_WILL_ASSIGN_LAYERS)) {
+        imMayMove=false;
+      }
     }
+    if (imMayMove) {
+      moveInputMethodWindowsIfNeededLocked(false);
+    }
+    assignLayersLocked();
     if (localLOGV)     Log.v(TAG,"New client " + client.asBinder() + ": window="+ win);
   }
   if (reportNewConfig) {
