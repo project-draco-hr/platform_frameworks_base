@@ -2,11 +2,13 @@
   Intent intent;
 switch (msg.what) {
 case EVENT_SUPPLICANT_CONNECTION:
-    checkUseStaticIp();
-  HandlerThread dhcpThread=new HandlerThread("DHCP Handler Thread");
+    mRunState=RUN_STATE_RUNNING;
+  checkUseStaticIp();
+HandlerThread dhcpThread=new HandlerThread("DHCP Handler Thread");
 dhcpThread.start();
 mDhcpTarget=new DhcpHandler(dhcpThread.getLooper(),this);
 mIsScanModeActive=true;
+mTornDownByConnMgr=false;
 mLastBssid=null;
 mLastSsid=null;
 requestConnectionInfo();
@@ -90,9 +92,28 @@ resetSupplicantLoopState();
  else if (newState != currentState || (newState == SupplicantState.DISCONNECTED && isDriverStopped())) {
 setSupplicantState(newState);
 if (newState == SupplicantState.DORMANT) {
-handleDisconnectedState(DetailedState.FAILED);
+DetailedState newDetailedState;
+if (!mIsScanOnly) {
+newDetailedState=DetailedState.FAILED;
+}
+ else {
+newDetailedState=DetailedState.IDLE;
+}
+handleDisconnectedState(newDetailedState);
 sendNetworkStateChangeBroadcast();
+if (mRunState == RUN_STATE_RUNNING && !mIsScanOnly) {
 sendEmptyMessageDelayed(EVENT_DEFERRED_RECONNECT,RECONNECT_DELAY_MSECS);
+}
+ else if (mRunState == RUN_STATE_STOPPING) {
+synchronized (this) {
+WifiNative.stopDriverCommand();
+}
+}
+ else if (mRunState == RUN_STATE_STARTING && !mIsScanOnly) {
+synchronized (this) {
+WifiNative.reconnectCommand();
+}
+}
 }
  else if (newState == SupplicantState.DISCONNECTED) {
 if (isDriverStopped()) {
@@ -123,6 +144,10 @@ NetworkStateChangeResult result=(NetworkStateChangeResult)msg.obj;
 eventLogParam=(result.state.ordinal() & 0x3f);
 EventLog.writeEvent(EVENTLOG_NETWORK_STATE_CHANGED,eventLogParam);
 if (LOCAL_LOGD) Log.v(TAG,"New network state is " + result.state);
+if (mIsScanOnly) {
+if (LOCAL_LOGD) Log.v(TAG,"Dropping event in scan-only mode");
+break;
+}
 if (result.state != DetailedState.SCANNING) {
 mNumScansSinceNetworkStateChange=0;
 }
@@ -185,7 +210,9 @@ if (mWifiInfo.getSupplicantState() != SupplicantState.UNINITIALIZED) {
 if (++mReconnectCount > getMaxDhcpRetries()) {
 mWM.disableNetwork(mLastNetworkId);
 }
+synchronized (this) {
 WifiNative.reconnectCommand();
+}
 }
 break;
 case EVENT_INTERFACE_CONFIGURATION_SUCCEEDED:
@@ -214,7 +241,9 @@ EventLog.writeEvent(EVENTLOG_INTERFACE_CONFIGURATION_STATE_CHANGED,0);
 mHaveIPAddress=false;
 mWifiInfo.setIpAddress(0);
 mObtainingIPAddress=false;
+synchronized (this) {
 WifiNative.disconnectCommand();
+}
 }
 break;
 case EVENT_DRIVER_STATE_CHANGED:
@@ -224,7 +253,15 @@ EventLog.writeEvent(EVENTLOG_DRIVER_STATE_CHANGED,eventLogParam);
 if (driverStarted) {
 setNumAllowedChannels();
 synchronized (this) {
+if (mRunState == RUN_STATE_STARTING) {
+mRunState=RUN_STATE_RUNNING;
+if (!mIsScanOnly) {
+WifiNative.reconnectCommand();
+}
+ else {
 WifiNative.scanCommand();
+}
+}
 }
 }
 break;
