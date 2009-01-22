@@ -1,69 +1,7 @@
 {
-  if (Config.LOGD)   Log.d(TAG,"NetworkThread starting");
-  SntpClient client=new SntpClient();
-  GpsXtraDownloader xtraDownloader=null;
-  if (native_supports_xtra()) {
-    xtraDownloader=new GpsXtraDownloader(mContext,mProperties);
-  }
-  while (mEnabled) {
-    long waitTime=getWaitTime();
-    do {
-synchronized (this) {
-        try {
-          if (!mNetworkAvailable) {
-            if (Config.LOGD)             Log.d(TAG,"NetworkThread wait for network");
-            wait();
-          }
- else           if (waitTime > 0) {
-            if (Config.LOGD) {
-              Log.d(TAG,"NetworkThread wait for " + waitTime + "ms");
-            }
-            wait(waitTime);
-          }
-        }
- catch (        InterruptedException e) {
-          if (Config.LOGD) {
-            Log.d(TAG,"InterruptedException in GpsNetworkThread");
-          }
-        }
-      }
-      waitTime=getWaitTime();
-    }
- while (mEnabled && ((!mXtraDownloadRequested && waitTime > 0) || !mNetworkAvailable));
-    if (Config.LOGD)     Log.d(TAG,"NetworkThread out of wake loop");
-    if (mEnabled) {
-      if (mNtpServer != null && mNextNtpTime <= System.currentTimeMillis()) {
-        if (Config.LOGD) {
-          Log.d(TAG,"Requesting time from NTP server " + mNtpServer);
-        }
-        if (client.requestTime(mNtpServer,10000)) {
-          long time=client.getNtpTime();
-          long timeReference=client.getNtpTimeReference();
-          int certainty=(int)(client.getRoundTripTime() / 2);
-          if (Config.LOGD)           Log.d(TAG,"calling native_inject_time: " + time + " reference: "+ timeReference+ " certainty: "+ certainty);
-          native_inject_time(time,timeReference,certainty);
-          mNextNtpTime=System.currentTimeMillis() + NTP_INTERVAL;
-        }
- else {
-          if (Config.LOGD)           Log.d(TAG,"requestTime failed");
-          mNextNtpTime=System.currentTimeMillis() + RETRY_INTERVAL;
-        }
-      }
-      if ((mXtraDownloadRequested || (mNextXtraTime > 0 && mNextXtraTime <= System.currentTimeMillis())) && xtraDownloader != null) {
-        byte[] data=xtraDownloader.downloadXtraData();
-        if (data != null) {
-          if (Config.LOGD) {
-            Log.d(TAG,"calling native_inject_xtra_data");
-          }
-          native_inject_xtra_data(data,data.length);
-          mNextXtraTime=0;
-          mXtraDownloadRequested=false;
-        }
- else {
-          mNextXtraTime=System.currentTimeMillis() + RETRY_INTERVAL;
-        }
-      }
+synchronized (mNetworkThreadLock) {
+    if (!mDone) {
+      runLocked();
     }
   }
-  if (Config.LOGD)   Log.d(TAG,"NetworkThread exiting");
 }
