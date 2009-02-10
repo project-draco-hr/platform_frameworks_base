@@ -1,0 +1,78 @@
+{
+  long uSecTime=SystemClock.elapsedRealtime() * 1000;
+  final long uSecNow=getBatteryUptime(uSecTime);
+  StringBuilder sb=new StringBuilder(128);
+  long batteryUptime=computeBatteryUptime(uSecNow,which);
+  long batteryRealtime=computeBatteryRealtime(getBatteryRealtime(uSecTime),which);
+  long elapsedRealtime=computeRealtime(uSecTime,which);
+  long uptime=computeUptime(SystemClock.uptimeMillis() * 1000,which);
+  String category=STAT_NAMES[which];
+  dumpLine(pw,0,category,BATTERY_DATA,which == STATS_TOTAL ? getStartCount() : "N/A",batteryUptime / 1000,formatRatioLocked(batteryUptime,elapsedRealtime),batteryRealtime / 1000,formatRatioLocked(batteryRealtime,elapsedRealtime),uptime / 1000,elapsedRealtime / 1000);
+  SparseArray<? extends Uid> uidStats=getUidStats();
+  final int NU=uidStats.size();
+  for (int iu=0; iu < NU; iu++) {
+    final int uid=uidStats.keyAt(iu);
+    Uid u=uidStats.valueAt(iu);
+    long rx=u.getTcpBytesReceived(which);
+    long tx=u.getTcpBytesSent(which);
+    if (rx > 0 || tx > 0)     dumpLine(pw,uid,category,NETWORK_DATA,rx,tx);
+    Map<String,? extends BatteryStats.Uid.Wakelock> wakelocks=u.getWakelockStats();
+    if (wakelocks.size() > 0) {
+      for (      Map.Entry<String,? extends BatteryStats.Uid.Wakelock> ent : wakelocks.entrySet()) {
+        Uid.Wakelock wl=ent.getValue();
+        String linePrefix="";
+        sb.setLength(0);
+        linePrefix=printWakeLockCheckin(sb,wl.getWakeTime(WAKE_TYPE_FULL),uSecNow,"full",which,linePrefix);
+        linePrefix=printWakeLockCheckin(sb,wl.getWakeTime(WAKE_TYPE_PARTIAL),uSecNow,"partial",which,linePrefix);
+        linePrefix=printWakeLockCheckin(sb,wl.getWakeTime(WAKE_TYPE_WINDOW),uSecNow,"window",which,linePrefix);
+        if (sb.length() > 0) {
+          dumpLine(pw,uid,category,WAKELOCK_DATA,ent.getKey(),sb.toString());
+        }
+      }
+    }
+    Map<Integer,? extends BatteryStats.Uid.Sensor> sensors=u.getSensorStats();
+    if (sensors.size() > 0) {
+      for (      Map.Entry<Integer,? extends BatteryStats.Uid.Sensor> ent : sensors.entrySet()) {
+        Uid.Sensor se=ent.getValue();
+        int sensorNumber=ent.getKey();
+        Timer timer=se.getSensorTime();
+        if (timer != null) {
+          long totalTime=(timer.getTotalTime(uSecNow,which) + 500) / 1000;
+          int count=timer.getCount(which);
+          if (totalTime != 0) {
+            dumpLine(pw,uid,category,SENSOR_DATA,sensorNumber,totalTime,count);
+          }
+        }
+      }
+    }
+    Map<String,? extends BatteryStats.Uid.Proc> processStats=u.getProcessStats();
+    if (processStats.size() > 0) {
+      for (      Map.Entry<String,? extends BatteryStats.Uid.Proc> ent : processStats.entrySet()) {
+        Uid.Proc ps=ent.getValue();
+        long userTime=ps.getUserTime(which);
+        long systemTime=ps.getSystemTime(which);
+        int starts=ps.getStarts(which);
+        if (userTime != 0 || systemTime != 0 || starts != 0) {
+          dumpLine(pw,uid,category,PROCESS_DATA,ent.getKey(),userTime * 10,systemTime * 10,starts);
+        }
+      }
+    }
+    Map<String,? extends BatteryStats.Uid.Pkg> packageStats=u.getPackageStats();
+    if (packageStats.size() > 0) {
+      for (      Map.Entry<String,? extends BatteryStats.Uid.Pkg> ent : packageStats.entrySet()) {
+        Uid.Pkg ps=ent.getValue();
+        int wakeups=ps.getWakeups(which);
+        Map<String,? extends Uid.Pkg.Serv> serviceStats=ps.getServiceStats();
+        for (        Map.Entry<String,? extends BatteryStats.Uid.Pkg.Serv> sent : serviceStats.entrySet()) {
+          BatteryStats.Uid.Pkg.Serv ss=sent.getValue();
+          long startTime=ss.getStartTime(uSecNow,which);
+          int starts=ss.getStarts(which);
+          int launches=ss.getLaunches(which);
+          if (startTime != 0 || starts != 0 || launches != 0) {
+            dumpLine(pw,uid,category,APK_DATA,wakeups,ent.getKey(),sent.getKey(),startTime / 1000,starts,launches);
+          }
+        }
+      }
+    }
+  }
+}

@@ -5,6 +5,18 @@
   if (LOGV_ENABLED) {
     Log.v(LOGTAG,ev + " at " + ev.getEventTime()+ " mTouchMode="+ mTouchMode);
   }
+  if (mZoomRingController.isVisible()) {
+    if (mInZoomTapDragMode) {
+      mZoomRingController.handleDoubleTapEvent(ev);
+      if (ev.getAction() == MotionEvent.ACTION_UP) {
+        mInZoomTapDragMode=false;
+      }
+      return true;
+    }
+ else {
+      post(mRemoveReleaseSingleTap);
+    }
+  }
   int action=ev.getAction();
   float x=ev.getX();
   float y=ev.getY();
@@ -49,8 +61,17 @@ case MotionEvent.ACTION_DOWN:
         nativeMoveSelection(viewToContent(mSelectX),viewToContent(mSelectY),false);
         mTouchSelection=mExtendSelection=true;
       }
+ else       if (!ZoomRingController.useOldZoom(mContext) && eventTime - mPreviousUpTime < DOUBLE_TAP_TIMEOUT && getSettings().supportZoom() && mMinZoomScale < mMaxZoomScale) {
+        mPrivateHandler.removeMessages(SWITCH_TO_LONGPRESS);
+        mPrivateHandler.removeMessages(SWITCH_TO_SHORTPRESS);
+        mPrivateHandler.removeMessages(RELEASE_SINGLE_TAP);
+        mZoomRingController.setVisible(true);
+        mInZoomTapDragMode=true;
+        mZoomRingController.handleDoubleTapEvent(ev);
+      }
  else {
         mTouchMode=TOUCH_INIT_MODE;
+        mPreventDrag=mForwardTouchEvents;
       }
       if (mTouchMode == TOUCH_INIT_MODE) {
         mPrivateHandler.sendMessageDelayed(mPrivateHandler.obtainMessage(SWITCH_TO_SHORTPRESS),TAP_TIMEOUT);
@@ -85,7 +106,7 @@ case MotionEvent.ACTION_MOVE:
         invalidate();
         break;
       }
-      if ((deltaX * deltaX + deltaY * deltaY) < TOUCH_SLOP_SQUARE) {
+      if (mPreventDrag || (deltaX * deltaX + deltaY * deltaY) < mTouchSlopSquare) {
         break;
       }
       if (mTouchMode == TOUCH_SHORTPRESS_MODE || mTouchMode == TOUCH_SHORTPRESS_START_MODE) {
@@ -94,6 +115,7 @@ case MotionEvent.ACTION_MOVE:
  else       if (mTouchMode == TOUCH_INIT_MODE) {
         mPrivateHandler.removeMessages(SWITCH_TO_SHORTPRESS);
       }
+      mPreviousUpTime=0;
       int ax=Math.abs(deltaX);
       int ay=Math.abs(deltaY);
       if (ax > MAX_SLOPE_FOR_DIAG * ay) {
@@ -132,7 +154,7 @@ case MotionEvent.ACTION_MOVE:
           if (ay > MAX_SLOPE_FOR_DIAG * ax && ay > MIN_BREAK_SNAP_CROSS_DISTANCE) {
             mSnapScrollMode=SNAP_NONE;
           }
-          if ((ax > MAX_SLOPE_FOR_DIAG * ay) && ((mSnapPositive && deltaX < -MIN_LOCK_SNAP_REVERSE_DISTANCE) || (!mSnapPositive && deltaX > MIN_LOCK_SNAP_REVERSE_DISTANCE))) {
+          if ((ax > MAX_SLOPE_FOR_DIAG * ay) && ((mSnapPositive && deltaX < -mMinLockSnapReverseDistance) || (!mSnapPositive && deltaX > mMinLockSnapReverseDistance))) {
             mSnapScrollMode=SNAP_X_LOCK;
           }
         }
@@ -140,7 +162,7 @@ case MotionEvent.ACTION_MOVE:
           if ((ax > MAX_SLOPE_FOR_DIAG * ay) && ax > MIN_BREAK_SNAP_CROSS_DISTANCE) {
             mSnapScrollMode=SNAP_NONE;
           }
-          if ((ay > MAX_SLOPE_FOR_DIAG * ax) && ((mSnapPositive && deltaY < -MIN_LOCK_SNAP_REVERSE_DISTANCE) || (!mSnapPositive && deltaY > MIN_LOCK_SNAP_REVERSE_DISTANCE))) {
+          if ((ay > MAX_SLOPE_FOR_DIAG * ax) && ((mSnapPositive && deltaY < -mMinLockSnapReverseDistance) || (!mSnapPositive && deltaY > mMinLockSnapReverseDistance))) {
             mSnapScrollMode=SNAP_Y_LOCK;
           }
         }
@@ -161,16 +183,18 @@ case MotionEvent.ACTION_MOVE:
       mLastTouchTime=eventTime;
       mUserScroll=true;
     }
-    boolean showPlusMinus=mMinZoomScale < mMaxZoomScale;
-    boolean showMagnify=canZoomScrollOut();
-    if (mZoomControls != null && (showPlusMinus || showMagnify)) {
-      if (mZoomControls.getVisibility() == View.VISIBLE) {
-        mPrivateHandler.removeCallbacks(mZoomControlRunnable);
-      }
+    if (ZoomRingController.useOldZoom(mContext)) {
+      boolean showPlusMinus=mMinZoomScale < mMaxZoomScale;
+      boolean showMagnify=canZoomScrollOut();
+      if (mZoomControls != null && (showPlusMinus || showMagnify)) {
+        if (mZoomControls.getVisibility() == View.VISIBLE) {
+          mPrivateHandler.removeCallbacks(mZoomControlRunnable);
+        }
  else {
-        mZoomControls.show(showPlusMinus,showMagnify);
+          mZoomControls.show(showPlusMinus,showMagnify);
+        }
+        mPrivateHandler.postDelayed(mZoomControlRunnable,ZOOM_CONTROLS_TIMEOUT);
       }
-      mPrivateHandler.postDelayed(mZoomControlRunnable,ZOOM_CONTROLS_TIMEOUT);
     }
     if (done) {
       return false;
@@ -182,7 +206,7 @@ case MotionEvent.ACTION_UP:
 switch (mTouchMode) {
 case TOUCH_INIT_MODE:
     mPrivateHandler.removeMessages(SWITCH_TO_SHORTPRESS);
-  if (getSettings().supportZoom()) {
+  if (getSettings().supportZoom() && (mMinZoomScale < mMaxZoomScale)) {
     mPrivateHandler.sendMessageDelayed(mPrivateHandler.obtainMessage(RELEASE_SINGLE_TAP),DOUBLE_TAP_TIMEOUT);
   }
  else {
@@ -240,6 +264,7 @@ if (mVelocityTracker != null) {
 mVelocityTracker.recycle();
 mVelocityTracker=null;
 }
+mPreviousUpTime=eventTime;
 break;
 }
 case MotionEvent.ACTION_CANCEL:
