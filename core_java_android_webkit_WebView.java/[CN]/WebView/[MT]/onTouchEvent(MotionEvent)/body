@@ -5,17 +5,11 @@
   if (LOGV_ENABLED) {
     Log.v(LOGTAG,ev + " at " + ev.getEventTime()+ " mTouchMode="+ mTouchMode);
   }
-  if (mZoomRingController.isVisible()) {
-    if (mInZoomTapDragMode) {
-      mZoomRingController.handleDoubleTapEvent(ev);
-      if (ev.getAction() == MotionEvent.ACTION_UP) {
-        mInZoomTapDragMode=false;
-      }
-      return true;
+  if (mZoomRingController.isVisible() && mInZoomTapDragMode) {
+    if (ev.getAction() == MotionEvent.ACTION_UP) {
+      mInZoomTapDragMode=false;
     }
- else {
-      post(mRemoveReleaseSingleTap);
-    }
+    return mZoomRingController.handleDoubleTapEvent(ev);
   }
   int action=ev.getAction();
   float x=ev.getX();
@@ -61,19 +55,17 @@ case MotionEvent.ACTION_DOWN:
         nativeMoveSelection(viewToContent(mSelectX),viewToContent(mSelectY),false);
         mTouchSelection=mExtendSelection=true;
       }
- else       if (!ZoomRingController.useOldZoom(mContext) && eventTime - mPreviousUpTime < DOUBLE_TAP_TIMEOUT && getSettings().supportZoom() && mMinZoomScale < mMaxZoomScale) {
-        mPrivateHandler.removeMessages(SWITCH_TO_LONGPRESS);
-        mPrivateHandler.removeMessages(SWITCH_TO_SHORTPRESS);
+ else       if (!ZoomRingController.useOldZoom(mContext) && mPrivateHandler.hasMessages(RELEASE_SINGLE_TAP)) {
         mPrivateHandler.removeMessages(RELEASE_SINGLE_TAP);
         mZoomRingController.setVisible(true);
         mInZoomTapDragMode=true;
-        mZoomRingController.handleDoubleTapEvent(ev);
+        return mZoomRingController.handleDoubleTapEvent(ev);
       }
  else {
         mTouchMode=TOUCH_INIT_MODE;
         mPreventDrag=mForwardTouchEvents;
       }
-      if (mTouchMode == TOUCH_INIT_MODE) {
+      if (mTouchMode == TOUCH_INIT_MODE && !mZoomRingController.isVisible()) {
         mPrivateHandler.sendMessageDelayed(mPrivateHandler.obtainMessage(SWITCH_TO_SHORTPRESS),TAP_TIMEOUT);
       }
       mLastTouchX=x;
@@ -115,7 +107,6 @@ case MotionEvent.ACTION_MOVE:
  else       if (mTouchMode == TOUCH_INIT_MODE) {
         mPrivateHandler.removeMessages(SWITCH_TO_SHORTPRESS);
       }
-      mPreviousUpTime=0;
       int ax=Math.abs(deltaX);
       int ay=Math.abs(deltaY);
       if (ax > MAX_SLOPE_FOR_DIAG * ay) {
@@ -205,18 +196,21 @@ case MotionEvent.ACTION_UP:
 {
 switch (mTouchMode) {
 case TOUCH_INIT_MODE:
-    mPrivateHandler.removeMessages(SWITCH_TO_SHORTPRESS);
-  if (getSettings().supportZoom() && (mMinZoomScale < mMaxZoomScale)) {
-    mPrivateHandler.sendMessageDelayed(mPrivateHandler.obtainMessage(RELEASE_SINGLE_TAP),DOUBLE_TAP_TIMEOUT);
-  }
+    if (mZoomRingController.isVisible()) {
+      break;
+    }
+  mPrivateHandler.removeMessages(SWITCH_TO_SHORTPRESS);
+if (getSettings().supportZoom() && (mMinZoomScale < mMaxZoomScale)) {
+  mPrivateHandler.sendMessageDelayed(mPrivateHandler.obtainMessage(RELEASE_SINGLE_TAP),DOUBLE_TAP_TIMEOUT);
+}
  else {
-    mTouchMode=TOUCH_DONE_MODE;
-    doShortPress();
-  }
+  mTouchMode=TOUCH_DONE_MODE;
+  doShortPress();
+}
 break;
 case TOUCH_SELECT_MODE:
 commitCopy();
-mTouchSelection=mExtendSelection=false;
+mTouchSelection=false;
 break;
 case SCROLL_ZOOM_ANIMATION_IN:
 case SCROLL_ZOOM_ANIMATION_OUT:
@@ -264,7 +258,6 @@ if (mVelocityTracker != null) {
 mVelocityTracker.recycle();
 mVelocityTracker=null;
 }
-mPreviousUpTime=eventTime;
 break;
 }
 case MotionEvent.ACTION_CANCEL:

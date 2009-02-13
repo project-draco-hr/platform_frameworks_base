@@ -1,21 +1,49 @@
 {
   HashSet<String> keep=new HashSet();
-  Intent intent=new Intent(GadgetManager.GADGET_UPDATE_ACTION);
+  Intent intent=new Intent(GadgetManager.ACTION_GADGET_UPDATE);
   List<ResolveInfo> broadcastReceivers=mPackageManager.queryBroadcastReceivers(intent,PackageManager.GET_META_DATA);
   int N=broadcastReceivers.size();
   for (int i=0; i < N; i++) {
     ResolveInfo ri=broadcastReceivers.get(i);
     ActivityInfo ai=ri.activityInfo;
     if (pkgName.equals(ai.packageName)) {
-      Provider p=lookupProviderLocked(new ComponentName(ai.packageName,ai.name));
+      ComponentName component=new ComponentName(ai.packageName,ai.name);
+      Provider p=lookupProviderLocked(component);
       if (p == null) {
-        addProviderLocked(ri);
+        if (addProviderLocked(ri)) {
+          keep.add(ai.name);
+        }
       }
-      keep.add(ai.name);
+ else {
+        Provider parsed=parseProviderInfoXml(component,ri);
+        if (parsed != null) {
+          keep.add(ai.name);
+          GadgetProviderInfo oldInfo=p.info;
+          p.info=parsed.info;
+          final int M=p.instances.size();
+          if (M > 0) {
+            int[] gadgetIds=getGadgetIds(p);
+            cancelBroadcasts(p);
+            registerForBroadcastsLocked(p,gadgetIds);
+            for (int j=0; j < M; j++) {
+              GadgetId id=p.instances.get(j);
+              if (id.host != null && id.host.callbacks != null) {
+                try {
+                  id.host.callbacks.providerChanged(id.gadgetId,p.info);
+                }
+ catch (                RemoteException ex) {
+                  id.host.callbacks=null;
+                }
+              }
+            }
+            sendUpdateIntentLocked(p,gadgetIds);
+          }
+        }
+      }
     }
   }
   N=mInstalledProviders.size();
-  for (int i=0; i < N; i++) {
+  for (int i=N - 1; i >= 0; i--) {
     Provider p=mInstalledProviders.get(i);
     if (pkgName.equals(p.info.provider.getPackageName()) && !keep.contains(p.info.provider.getClassName())) {
       removeProviderLocked(i,p);

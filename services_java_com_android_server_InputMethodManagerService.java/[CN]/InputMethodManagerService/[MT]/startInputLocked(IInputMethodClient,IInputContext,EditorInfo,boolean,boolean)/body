@@ -36,17 +36,29 @@
       return attachNewInputLocked(initial,needResult);
     }
     if (mHaveConnection) {
-      if (mCurMethod != null && !cs.sessionRequested) {
-        cs.sessionRequested=true;
-        if (DEBUG)         Log.v(TAG,"Creating new session for client " + cs);
-        executeOrSendMessage(mCurMethod,mCaller.obtainMessageOO(MSG_CREATE_SESSION,mCurMethod,new MethodCallback(mCurMethod)));
+      if (mCurMethod != null) {
+        if (!cs.sessionRequested) {
+          cs.sessionRequested=true;
+          if (DEBUG)           Log.v(TAG,"Creating new session for client " + cs);
+          executeOrSendMessage(mCurMethod,mCaller.obtainMessageOO(MSG_CREATE_SESSION,mCurMethod,new MethodCallback(mCurMethod)));
+        }
+        return new InputBindResult(null,mCurId,mCurSeq);
       }
-      return new InputBindResult(null,mCurId,mCurSeq);
+ else       if (SystemClock.uptimeMillis() < (mLastBindTime + TIME_TO_RECONNECT)) {
+        return new InputBindResult(null,mCurId,mCurSeq);
+      }
+ else {
+        EventLog.writeEvent(LOG_IMF_FORCE_RECONNECT_IME,mCurMethodId,SystemClock.uptimeMillis() - mLastBindTime,0);
+      }
     }
   }
   InputMethodInfo info=mMethodMap.get(mCurMethodId);
   if (info == null) {
     throw new IllegalArgumentException("Unknown id: " + mCurMethodId);
+  }
+  if (mHaveConnection) {
+    mContext.unbindService(this);
+    mHaveConnection=false;
   }
   if (mCurToken != null) {
     try {
@@ -57,14 +69,11 @@
     }
     mCurToken=null;
   }
-  if (mHaveConnection) {
-    mContext.unbindService(this);
-    mHaveConnection=false;
-  }
   clearCurMethod();
   mCurIntent=new Intent(InputMethod.SERVICE_INTERFACE);
   mCurIntent.setComponent(info.getComponent());
   if (mContext.bindService(mCurIntent,this,Context.BIND_AUTO_CREATE)) {
+    mLastBindTime=SystemClock.uptimeMillis();
     mHaveConnection=true;
     mCurId=info.getId();
     mCurToken=new Binder();
