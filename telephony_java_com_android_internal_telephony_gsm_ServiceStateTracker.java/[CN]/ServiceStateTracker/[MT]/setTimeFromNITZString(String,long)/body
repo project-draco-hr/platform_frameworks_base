@@ -55,25 +55,32 @@
       Log.i(LOG_TAG,"NITZ: Not setting clock because gsm.ignore-nitz is set");
       return;
     }
-    if (getAutoTime()) {
-      long millisSinceNitzReceived=SystemClock.elapsedRealtime() - nitzReceiveTime;
-      if (millisSinceNitzReceived < 0) {
-        Log.i(LOG_TAG,"NITZ: not setting time, clock has rolled " + "backwards since NITZ time was received, " + nitz);
-        return;
+    try {
+      mWakeLock.acquire();
+      if (getAutoTime()) {
+        long millisSinceNitzReceived=SystemClock.elapsedRealtime() - nitzReceiveTime;
+        if (millisSinceNitzReceived < 0) {
+          Log.i(LOG_TAG,"NITZ: not setting time, clock has rolled " + "backwards since NITZ time was received, " + nitz);
+          return;
+        }
+        if (millisSinceNitzReceived > Integer.MAX_VALUE) {
+          Log.i(LOG_TAG,"NITZ: not setting time, processing has taken " + (millisSinceNitzReceived / (1000 * 60 * 60* 24)) + " days");
+          return;
+        }
+        c.add(Calendar.MILLISECOND,(int)millisSinceNitzReceived);
+        Log.i(LOG_TAG,"NITZ: Setting time of day to " + c.getTime() + " NITZ receive delay(ms): "+ millisSinceNitzReceived+ " gained(ms): "+ (c.getTimeInMillis() - System.currentTimeMillis())+ " from "+ nitz);
+        SystemClock.setCurrentTimeMillis(c.getTimeInMillis());
+        Log.i(LOG_TAG,"NITZ: after Setting time of day");
       }
-      if (millisSinceNitzReceived > Integer.MAX_VALUE) {
-        Log.i(LOG_TAG,"NITZ: not setting time, processing has taken " + (millisSinceNitzReceived / (1000 * 60 * 60* 24)) + " days");
-        return;
+      SystemProperties.set("gsm.nitz.time",String.valueOf(c.getTimeInMillis()));
+      saveNitzTime(c.getTimeInMillis());
+      if (Config.LOGV) {
+        long end=SystemClock.elapsedRealtime();
+        Log.v(LOG_TAG,"NITZ: end=" + end + " dur="+ (end - start));
       }
-      c.add(Calendar.MILLISECOND,(int)millisSinceNitzReceived);
-      Log.i(LOG_TAG,"NITZ: Setting time of day to " + c.getTime() + " NITZ receive delay(ms): "+ millisSinceNitzReceived+ " gained(ms): "+ (c.getTimeInMillis() - System.currentTimeMillis())+ " from "+ nitz);
-      setAndBroadcastNetworkSetTime(c.getTimeInMillis());
     }
-    SystemProperties.set("gsm.nitz.time",String.valueOf(c.getTimeInMillis()));
-    saveNitzTime(c.getTimeInMillis());
-    if (Config.LOGV) {
-      long end=SystemClock.elapsedRealtime();
-      Log.v(LOG_TAG,"NITZ: end=" + end + " dur="+ (end - start));
+  finally {
+      mWakeLock.release();
     }
   }
  catch (  RuntimeException ex) {
