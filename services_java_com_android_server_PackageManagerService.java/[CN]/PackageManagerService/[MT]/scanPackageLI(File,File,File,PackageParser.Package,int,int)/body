@@ -71,14 +71,16 @@ synchronized (mPackages) {
         Log.d(TAG,"Shared UserID " + pkg.mSharedUserId + " (uid="+ suid.userId+ "): packages="+ suid.packages);
       }
     }
-    pkgSetting=mSettings.getPackageLP(pkg,suid,destCodeFile,destResourceFile,pkg.applicationInfo.flags,true,false);
+    pkgSetting=mSettings.getPackageLP(pkg,suid,destCodeFile,destResourceFile,pkg.applicationInfo.flags,true);
     if (pkgSetting == null) {
       Log.w(TAG,"Creating application package " + pkgName + " failed");
       mLastScanError=PackageManager.INSTALL_FAILED_INSUFFICIENT_STORAGE;
       return null;
     }
-    if (mSettings.mDisabledSysPackages.get(pkg.packageName) != null) {
-      pkg.applicationInfo.flags|=ApplicationInfo.FLAG_UPDATED_SYSTEM_APP;
+synchronized (mPackages) {
+      if (mSettings.mDisabledSysPackages.get(pkg.packageName) != null) {
+        pkg.applicationInfo.flags|=ApplicationInfo.FLAG_UPDATED_SYSTEM_APP;
+      }
     }
     pkg.applicationInfo.uid=pkgSetting.userId;
     pkg.mExtras=pkgSetting;
@@ -113,8 +115,15 @@ synchronized (mPackages) {
   long scanFileTime=scanFile.lastModified();
   final boolean forceDex=(scanMode & SCAN_FORCE_DEX) != 0;
   final boolean scanFileNewer=forceDex || scanFileTime != pkgSetting.getTimeStamp();
+  if ((scanMode & SCAN_MONITOR) != 0) {
+    pkg.mPath=destCodeFile.getAbsolutePath();
+    mAppDirs.put(pkg.mPath,pkg);
+  }
   pkg.applicationInfo.processName=fixProcessName(pkg.applicationInfo.packageName,pkg.applicationInfo.processName,pkg.applicationInfo.uid);
   pkg.applicationInfo.publicSourceDir=pkgSetting.resourcePathString;
+synchronized (mPackages) {
+    mPackages.put(pkg.applicationInfo.packageName,pkg);
+  }
   File dataPath;
   if (mPlatformPackage == pkg) {
     dataPath=new File(Environment.getDataDirectory(),"system");
@@ -231,13 +240,7 @@ catch (      IOException e) {
   if (mFactoryTest && pkg.requestedPermissions.contains(android.Manifest.permission.FACTORY_TEST)) {
     pkg.applicationInfo.flags|=ApplicationInfo.FLAG_FACTORY_TEST;
   }
-  if ((scanMode & SCAN_MONITOR) != 0) {
-    pkg.mPath=destCodeFile.getAbsolutePath();
-    mAppDirs.put(pkg.mPath,pkg);
-  }
 synchronized (mPackages) {
-    mSettings.insertPackageSettingLP(pkgSetting,pkg.packageName,suid);
-    mPackages.put(pkg.applicationInfo.packageName,pkg);
     int N=pkg.providers.size();
     StringBuilder r=null;
     int i;
