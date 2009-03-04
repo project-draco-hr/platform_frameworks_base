@@ -1,0 +1,347 @@
+{
+  mLineCount=0;
+  int v=0;
+  boolean needMultiply=(spacingmult != 1 || spacingadd != 0);
+  Paint.FontMetricsInt fm=mFontMetricsInt;
+  int[] choosehtv=null;
+  int end=TextUtils.indexOf(source,'\n',bufstart,bufend);
+  int bufsiz=end >= 0 ? end - bufstart : bufend - bufstart;
+  boolean first=true;
+  if (mChdirs == null) {
+    mChdirs=new byte[ArrayUtils.idealByteArraySize(bufsiz + 1)];
+    mChs=new char[ArrayUtils.idealCharArraySize(bufsiz + 1)];
+    mWidths=new float[ArrayUtils.idealIntArraySize((bufsiz + 1) * 2)];
+  }
+  byte[] chdirs=mChdirs;
+  char[] chs=mChs;
+  float[] widths=mWidths;
+  AlteredCharSequence alter=null;
+  Spanned spanned=null;
+  if (source instanceof Spanned)   spanned=(Spanned)source;
+  int DEFAULT_DIR=DIR_LEFT_TO_RIGHT;
+  for (int start=bufstart; start <= bufend; start=end) {
+    if (first)     first=false;
+ else     end=TextUtils.indexOf(source,'\n',start,bufend);
+    if (end < 0)     end=bufend;
+ else     end++;
+    int firstwidth=outerwidth;
+    int restwidth=outerwidth;
+    LineHeightSpan[] chooseht=null;
+    if (spanned != null) {
+      LeadingMarginSpan[] sp;
+      sp=spanned.getSpans(start,end,LeadingMarginSpan.class);
+      for (int i=0; i < sp.length; i++) {
+        firstwidth-=sp[i].getLeadingMargin(true);
+        restwidth-=sp[i].getLeadingMargin(false);
+      }
+      chooseht=spanned.getSpans(start,end,LineHeightSpan.class);
+      if (chooseht.length != 0) {
+        if (choosehtv == null || choosehtv.length < chooseht.length) {
+          choosehtv=new int[ArrayUtils.idealIntArraySize(chooseht.length)];
+        }
+        for (int i=0; i < chooseht.length; i++) {
+          int o=spanned.getSpanStart(chooseht[i]);
+          if (o < start) {
+            choosehtv[i]=getLineTop(getLineForOffset(o));
+          }
+ else {
+            choosehtv[i]=v;
+          }
+        }
+      }
+    }
+    if (end - start > chdirs.length) {
+      chdirs=new byte[ArrayUtils.idealByteArraySize(end - start)];
+      mChdirs=chdirs;
+    }
+    if (end - start > chs.length) {
+      chs=new char[ArrayUtils.idealCharArraySize(end - start)];
+      mChs=chs;
+    }
+    if ((end - start) * 2 > widths.length) {
+      widths=new float[ArrayUtils.idealIntArraySize((end - start) * 2)];
+      mWidths=widths;
+    }
+    TextUtils.getChars(source,start,end,chs,0);
+    final int n=end - start;
+    boolean easy=true;
+    boolean altered=false;
+    int dir=DEFAULT_DIR;
+    for (int i=0; i < n; i++) {
+      if (chs[i] >= FIRST_RIGHT_TO_LEFT) {
+        easy=false;
+        break;
+      }
+    }
+    if (!easy) {
+      AndroidCharacter.getDirectionalities(chs,chdirs,end - start);
+      for (int j=start; j < end; j++) {
+        int d=chdirs[j - start];
+        if (d == Character.DIRECTIONALITY_LEFT_TO_RIGHT) {
+          dir=DIR_LEFT_TO_RIGHT;
+          break;
+        }
+        if (d == Character.DIRECTIONALITY_RIGHT_TO_LEFT) {
+          dir=DIR_RIGHT_TO_LEFT;
+          break;
+        }
+      }
+      final byte SOR=dir == DIR_LEFT_TO_RIGHT ? Character.DIRECTIONALITY_LEFT_TO_RIGHT : Character.DIRECTIONALITY_RIGHT_TO_LEFT;
+      for (int j=0; j < n; j++) {
+        if (chdirs[j] == Character.NON_SPACING_MARK) {
+          if (j == 0)           chdirs[j]=SOR;
+ else           chdirs[j]=chdirs[j - 1];
+        }
+      }
+      byte cur=SOR;
+      for (int j=0; j < n; j++) {
+        byte d=chdirs[j];
+        if (d == Character.DIRECTIONALITY_LEFT_TO_RIGHT || d == Character.DIRECTIONALITY_RIGHT_TO_LEFT || d == Character.DIRECTIONALITY_RIGHT_TO_LEFT_ARABIC)         cur=d;
+ else         if (d == Character.DIRECTIONALITY_EUROPEAN_NUMBER) {
+          if (cur == Character.DIRECTIONALITY_RIGHT_TO_LEFT_ARABIC)           chdirs[j]=Character.DIRECTIONALITY_ARABIC_NUMBER;
+        }
+      }
+      for (int j=0; j < n; j++) {
+        if (chdirs[j] == Character.DIRECTIONALITY_RIGHT_TO_LEFT_ARABIC)         chdirs[j]=Character.DIRECTIONALITY_RIGHT_TO_LEFT;
+      }
+      for (int j=1; j < n - 1; j++) {
+        byte d=chdirs[j];
+        byte prev=chdirs[j - 1];
+        byte next=chdirs[j + 1];
+        if (d == Character.DIRECTIONALITY_EUROPEAN_NUMBER_SEPARATOR) {
+          if (prev == Character.DIRECTIONALITY_EUROPEAN_NUMBER && next == Character.DIRECTIONALITY_EUROPEAN_NUMBER)           chdirs[j]=Character.DIRECTIONALITY_EUROPEAN_NUMBER;
+        }
+ else         if (d == Character.DIRECTIONALITY_COMMON_NUMBER_SEPARATOR) {
+          if (prev == Character.DIRECTIONALITY_EUROPEAN_NUMBER && next == Character.DIRECTIONALITY_EUROPEAN_NUMBER)           chdirs[j]=Character.DIRECTIONALITY_EUROPEAN_NUMBER;
+          if (prev == Character.DIRECTIONALITY_ARABIC_NUMBER && next == Character.DIRECTIONALITY_ARABIC_NUMBER)           chdirs[j]=Character.DIRECTIONALITY_ARABIC_NUMBER;
+        }
+      }
+      boolean adjacent=false;
+      for (int j=0; j < n; j++) {
+        byte d=chdirs[j];
+        if (d == Character.DIRECTIONALITY_EUROPEAN_NUMBER)         adjacent=true;
+ else         if (d == Character.DIRECTIONALITY_EUROPEAN_NUMBER_TERMINATOR && adjacent)         chdirs[j]=Character.DIRECTIONALITY_EUROPEAN_NUMBER;
+ else         adjacent=false;
+      }
+      adjacent=false;
+      for (int j=n - 1; j >= 0; j--) {
+        byte d=chdirs[j];
+        if (d == Character.DIRECTIONALITY_EUROPEAN_NUMBER)         adjacent=true;
+ else         if (d == Character.DIRECTIONALITY_EUROPEAN_NUMBER_TERMINATOR) {
+          if (adjacent)           chdirs[j]=Character.DIRECTIONALITY_EUROPEAN_NUMBER;
+ else           chdirs[j]=Character.DIRECTIONALITY_OTHER_NEUTRALS;
+        }
+ else {
+          adjacent=false;
+          if (d == Character.DIRECTIONALITY_EUROPEAN_NUMBER_SEPARATOR || d == Character.DIRECTIONALITY_COMMON_NUMBER_SEPARATOR || d == Character.DIRECTIONALITY_PARAGRAPH_SEPARATOR || d == Character.DIRECTIONALITY_SEGMENT_SEPARATOR)           chdirs[j]=Character.DIRECTIONALITY_OTHER_NEUTRALS;
+        }
+      }
+      cur=SOR;
+      for (int j=0; j < n; j++) {
+        byte d=chdirs[j];
+        if (d == SOR || d == Character.DIRECTIONALITY_LEFT_TO_RIGHT || d == Character.DIRECTIONALITY_RIGHT_TO_LEFT)         cur=d;
+        if (d == Character.DIRECTIONALITY_EUROPEAN_NUMBER)         chdirs[j]=cur;
+      }
+      cur=SOR;
+      for (int j=0; j < n; j++) {
+        byte d=chdirs[j];
+        if (d == Character.DIRECTIONALITY_LEFT_TO_RIGHT || d == Character.DIRECTIONALITY_RIGHT_TO_LEFT) {
+          cur=d;
+        }
+ else         if (d == Character.DIRECTIONALITY_EUROPEAN_NUMBER || d == Character.DIRECTIONALITY_ARABIC_NUMBER) {
+          cur=Character.DIRECTIONALITY_RIGHT_TO_LEFT;
+        }
+ else {
+          byte dd=SOR;
+          int k;
+          for (k=j + 1; k < n; k++) {
+            dd=chdirs[k];
+            if (dd == Character.DIRECTIONALITY_LEFT_TO_RIGHT || dd == Character.DIRECTIONALITY_RIGHT_TO_LEFT) {
+              break;
+            }
+            if (dd == Character.DIRECTIONALITY_EUROPEAN_NUMBER || dd == Character.DIRECTIONALITY_ARABIC_NUMBER) {
+              dd=Character.DIRECTIONALITY_RIGHT_TO_LEFT;
+              break;
+            }
+          }
+          for (int y=j; y < k; y++) {
+            if (dd == cur)             chdirs[y]=cur;
+ else             chdirs[y]=SOR;
+          }
+          j=k - 1;
+        }
+      }
+      for (int j=0; j < n; j++) {
+        if (chs[j] == '\t')         chdirs[j]=SOR;
+      }
+      if (source instanceof Spanned) {
+        Spanned sp=(Spanned)source;
+        ReplacementSpan[] spans=sp.getSpans(start,end,ReplacementSpan.class);
+        for (int y=0; y < spans.length; y++) {
+          int a=sp.getSpanStart(spans[y]);
+          int b=sp.getSpanEnd(spans[y]);
+          for (int x=a; x < b; x++) {
+            chdirs[x - start]=SOR;
+            chs[x - start]='\uFFFC';
+          }
+        }
+      }
+      for (int i=0; i < n; i++) {
+        if (chdirs[i] == Character.DIRECTIONALITY_RIGHT_TO_LEFT) {
+          int j;
+          for (j=i; j < n; j++) {
+            if (chdirs[j] != Character.DIRECTIONALITY_RIGHT_TO_LEFT)             break;
+          }
+          if (AndroidCharacter.mirror(chs,i,j - i))           altered=true;
+          i=j - 1;
+        }
+      }
+    }
+    CharSequence sub;
+    if (altered) {
+      if (alter == null)       alter=AlteredCharSequence.make(source,chs,start,end);
+ else       alter.update(chs,start,end);
+      sub=alter;
+    }
+ else {
+      sub=source;
+    }
+    int width=firstwidth;
+    float w=0;
+    int here=start;
+    int ok=start;
+    float okwidth=w;
+    int okascent=0, okdescent=0, oktop=0, okbottom=0;
+    int fit=start;
+    float fitwidth=w;
+    int fitascent=0, fitdescent=0, fittop=0, fitbottom=0;
+    boolean tab=false;
+    int next;
+    for (int i=start; i < end; i=next) {
+      if (spanned == null)       next=end;
+ else       next=spanned.nextSpanTransition(i,end,MetricAffectingSpan.class);
+      if (spanned == null) {
+        paint.getTextWidths(sub,i,next,widths);
+        System.arraycopy(widths,0,widths,end - start + (i - start),next - i);
+        paint.getFontMetricsInt(fm);
+      }
+ else {
+        mWorkPaint.baselineShift=0;
+        Styled.getTextWidths(paint,mWorkPaint,spanned,i,next,widths,fm);
+        System.arraycopy(widths,0,widths,end - start + (i - start),next - i);
+        if (mWorkPaint.baselineShift < 0) {
+          fm.ascent+=mWorkPaint.baselineShift;
+          fm.top+=mWorkPaint.baselineShift;
+        }
+ else {
+          fm.descent+=mWorkPaint.baselineShift;
+          fm.bottom+=mWorkPaint.baselineShift;
+        }
+      }
+      int fmtop=fm.top;
+      int fmbottom=fm.bottom;
+      int fmascent=fm.ascent;
+      int fmdescent=fm.descent;
+      if (false) {
+        StringBuilder sb=new StringBuilder();
+        for (int j=i; j < next; j++) {
+          sb.append(widths[j - start + (end - start)]);
+          sb.append(' ');
+        }
+        Log.e("text",sb.toString());
+      }
+      for (int j=i; j < next; j++) {
+        char c=chs[j - start];
+        float before=w;
+switch (c) {
+case '\n':
+          break;
+case '\t':
+        w=Layout.nextTab(sub,start,end,w,null);
+      tab=true;
+    break;
+default :
+  w+=widths[j - start + (end - start)];
+}
+if (w <= width) {
+fitwidth=w;
+fit=j + 1;
+if (fmtop < fittop) fittop=fmtop;
+if (fmascent < fitascent) fitascent=fmascent;
+if (fmdescent > fitdescent) fitdescent=fmdescent;
+if (fmbottom > fitbottom) fitbottom=fmbottom;
+if (c == ' ' || c == '\t' || ((c == '.' || c == ',' || c == ':' || c == ';') && (j - 1 < here || !Character.isDigit(chs[j - 1 - start])) && (j + 1 >= next || !Character.isDigit(chs[j + 1 - start]))) || ((c == '/' || c == '-') && (j + 1 >= next || !Character.isDigit(chs[j + 1 - start]))) || (c >= FIRST_CJK && isIdeographic(c) && j + 1 < next && isIdeographic(chs[j + 1 - start]))) {
+  okwidth=w;
+  ok=j + 1;
+  if (fittop < oktop)   oktop=fittop;
+  if (fitascent < okascent)   okascent=fitascent;
+  if (fitdescent > okdescent)   okdescent=fitdescent;
+  if (fitbottom > okbottom)   okbottom=fitbottom;
+}
+}
+ else if (breakOnlyAtSpaces) {
+if (ok != here) {
+  while (ok < next && chs[ok - start] == ' ') {
+    ok++;
+  }
+  v=out(source,here,ok,okascent,okdescent,oktop,okbottom,v,spacingmult,spacingadd,chooseht,choosehtv,fm,tab,needMultiply,start,chdirs,dir,easy,ok == bufend,includepad,trackpad,widths,start,end - start,where,ellipsizedWidth,okwidth,paint);
+  here=ok;
+}
+ else {
+  fitwidth=w;
+  fit=j + 1;
+  if (fmtop < fittop)   fittop=fmtop;
+  if (fmascent < fitascent)   fitascent=fmascent;
+  if (fmdescent > fitdescent)   fitdescent=fmdescent;
+  if (fmbottom > fitbottom)   fitbottom=fmbottom;
+}
+}
+ else {
+if (ok != here) {
+  while (ok < next && chs[ok - start] == ' ') {
+    ok++;
+  }
+  v=out(source,here,ok,okascent,okdescent,oktop,okbottom,v,spacingmult,spacingadd,chooseht,choosehtv,fm,tab,needMultiply,start,chdirs,dir,easy,ok == bufend,includepad,trackpad,widths,start,end - start,where,ellipsizedWidth,okwidth,paint);
+  here=ok;
+}
+ else if (fit != here) {
+  v=out(source,here,fit,fitascent,fitdescent,fittop,fitbottom,v,spacingmult,spacingadd,chooseht,choosehtv,fm,tab,needMultiply,start,chdirs,dir,easy,fit == bufend,includepad,trackpad,widths,start,end - start,where,ellipsizedWidth,fitwidth,paint);
+  here=fit;
+}
+ else {
+  measureText(paint,mWorkPaint,source,here,here + 1,fm,tab,null);
+  v=out(source,here,here + 1,fm.ascent,fm.descent,fm.top,fm.bottom,v,spacingmult,spacingadd,chooseht,choosehtv,fm,tab,needMultiply,start,chdirs,dir,easy,here + 1 == bufend,includepad,trackpad,widths,start,end - start,where,ellipsizedWidth,widths[here - start],paint);
+  here=here + 1;
+}
+if (here < i) {
+  j=next=here;
+}
+ else {
+  j=here - 1;
+}
+ok=fit=here;
+w=0;
+fitascent=fitdescent=fittop=fitbottom=0;
+okascent=okdescent=oktop=okbottom=0;
+width=restwidth;
+}
+}
+}
+if (end != here) {
+if ((fittop | fitbottom | fitdescent| fitascent) == 0) {
+paint.getFontMetricsInt(fm);
+fittop=fm.top;
+fitbottom=fm.bottom;
+fitascent=fm.ascent;
+fitdescent=fm.descent;
+}
+v=out(source,here,end,fitascent,fitdescent,fittop,fitbottom,v,spacingmult,spacingadd,chooseht,choosehtv,fm,tab,needMultiply,start,chdirs,dir,easy,end == bufend,includepad,trackpad,widths,start,end - start,where,ellipsizedWidth,w,paint);
+}
+start=end;
+if (end == bufend) break;
+}
+if (bufend == bufstart || source.charAt(bufend - 1) == '\n') {
+paint.getFontMetricsInt(fm);
+v=out(source,bufend,bufend,fm.ascent,fm.descent,fm.top,fm.bottom,v,spacingmult,spacingadd,null,null,fm,false,needMultiply,bufend,chdirs,DEFAULT_DIR,true,true,includepad,trackpad,widths,bufstart,0,where,ellipsizedWidth,0,paint);
+}
+}

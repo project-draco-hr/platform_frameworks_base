@@ -1,0 +1,43 @@
+{
+  if (intent != null && intent.hasFileDescriptors() == true) {
+    throw new IllegalArgumentException("File descriptors passed in Intent");
+  }
+synchronized (this) {
+    if (!(token instanceof ServiceRecord)) {
+      throw new IllegalArgumentException("Invalid service token");
+    }
+    ServiceRecord r=(ServiceRecord)token;
+    final long origId=Binder.clearCallingIdentity();
+    if (DEBUG_SERVICE)     Log.v(TAG,"PUBLISHING SERVICE " + r.name + " "+ intent+ ": "+ service);
+    if (r != null) {
+      Intent.FilterComparison filter=new Intent.FilterComparison(intent);
+      IntentBindRecord b=r.bindings.get(filter);
+      if (b != null && !b.received) {
+        b.binder=service;
+        b.requested=true;
+        b.received=true;
+        if (r.connections.size() > 0) {
+          Iterator<ConnectionRecord> it=r.connections.values().iterator();
+          while (it.hasNext()) {
+            ConnectionRecord c=it.next();
+            if (!filter.equals(c.binding.intent.intent)) {
+              if (DEBUG_SERVICE)               Log.v(TAG,"Not publishing to: " + c);
+              if (DEBUG_SERVICE)               Log.v(TAG,"Bound intent: " + c.binding.intent.intent);
+              if (DEBUG_SERVICE)               Log.v(TAG,"Published intent: " + intent);
+              continue;
+            }
+            if (DEBUG_SERVICE)             Log.v(TAG,"Publishing to: " + c);
+            try {
+              c.conn.connected(r.name,service);
+            }
+ catch (            Exception e) {
+              Log.w(TAG,"Failure sending service " + r.name + " to connection "+ c.conn.asBinder()+ " (in "+ c.binding.client.processName+ ")",e);
+            }
+          }
+        }
+      }
+      serviceDoneExecutingLocked(r,mStoppingServices.contains(r));
+      Binder.restoreCallingIdentity(origId);
+    }
+  }
+}

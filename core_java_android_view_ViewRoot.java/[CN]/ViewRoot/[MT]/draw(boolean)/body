@@ -1,0 +1,110 @@
+{
+  Surface surface=mSurface;
+  if (surface == null || !surface.isValid()) {
+    return;
+  }
+  scrollToRectOrFocus(null,false);
+  if (mAttachInfo.mViewScrollChanged) {
+    mAttachInfo.mViewScrollChanged=false;
+    mAttachInfo.mTreeObserver.dispatchOnScrollChanged();
+  }
+  int yoff;
+  final boolean scrolling=mScroller != null && mScroller.computeScrollOffset();
+  if (scrolling) {
+    yoff=mScroller.getCurrY();
+  }
+ else {
+    yoff=mScrollY;
+  }
+  if (mCurScrollY != yoff) {
+    mCurScrollY=yoff;
+    fullRedrawNeeded=true;
+  }
+  Rect dirty=mDirty;
+  if (mUseGL) {
+    if (!dirty.isEmpty()) {
+      Canvas canvas=mGlCanvas;
+      if (mGL != null && canvas != null) {
+        mGL.glDisable(GL_SCISSOR_TEST);
+        mGL.glClearColor(0,0,0,0);
+        mGL.glClear(GL_COLOR_BUFFER_BIT);
+        mGL.glEnable(GL_SCISSOR_TEST);
+        mAttachInfo.mDrawingTime=SystemClock.uptimeMillis();
+        canvas.translate(0,-yoff);
+        mView.mPrivateFlags|=View.DRAWN;
+        mView.draw(canvas);
+        canvas.translate(0,yoff);
+        mEgl.eglSwapBuffers(mEglDisplay,mEglSurface);
+        checkEglErrors();
+        if (SHOW_FPS) {
+          int now=(int)SystemClock.elapsedRealtime();
+          if (sDrawTime != 0) {
+            nativeShowFPS(canvas,now - sDrawTime);
+          }
+          sDrawTime=now;
+        }
+      }
+    }
+    if (scrolling) {
+      mFullRedrawNeeded=true;
+      scheduleTraversals();
+    }
+    return;
+  }
+  if (fullRedrawNeeded)   dirty.union(0,0,mWidth,mHeight);
+  if (DEBUG_ORIENTATION || DEBUG_DRAW) {
+    Log.v("ViewRoot","Draw " + mView + "/"+ mWindowAttributes.getTitle()+ ": dirty={"+ dirty.left+ ","+ dirty.top+ ","+ dirty.right+ ","+ dirty.bottom+ "} surface="+ surface+ " surface.isValid()="+ surface.isValid());
+  }
+  Canvas canvas;
+  try {
+    canvas=surface.lockCanvas(dirty);
+    canvas.setDensityScale(mDensity);
+  }
+ catch (  Surface.OutOfResourcesException e) {
+    Log.e("ViewRoot","OutOfResourcesException locking surface",e);
+    return;
+  }
+  try {
+    if (!dirty.isEmpty()) {
+      long startTime;
+      if (DEBUG_ORIENTATION || DEBUG_DRAW) {
+        Log.v("ViewRoot","Surface " + surface + " drawing to bitmap w="+ canvas.getWidth()+ ", h="+ canvas.getHeight());
+      }
+      if (PROFILE_DRAWING) {
+        startTime=SystemClock.elapsedRealtime();
+      }
+      if (!canvas.isOpaque()) {
+        canvas.drawColor(0x00000000,PorterDuff.Mode.CLEAR);
+      }
+ else       if (yoff != 0) {
+        canvas.drawColor(0,PorterDuff.Mode.CLEAR);
+      }
+      dirty.setEmpty();
+      mAttachInfo.mDrawingTime=SystemClock.uptimeMillis();
+      canvas.translate(0,-yoff);
+      mView.mPrivateFlags|=View.DRAWN;
+      mView.draw(canvas);
+      canvas.translate(0,yoff);
+      if (SHOW_FPS) {
+        int now=(int)SystemClock.elapsedRealtime();
+        if (sDrawTime != 0) {
+          nativeShowFPS(canvas,now - sDrawTime);
+        }
+        sDrawTime=now;
+      }
+      if (PROFILE_DRAWING) {
+        EventLog.writeEvent(60000,SystemClock.elapsedRealtime() - startTime);
+      }
+    }
+  }
+  finally {
+    surface.unlockCanvasAndPost(canvas);
+  }
+  if (LOCAL_LOGV) {
+    Log.v("ViewRoot","Surface " + surface + " unlockCanvasAndPost");
+  }
+  if (scrolling) {
+    mFullRedrawNeeded=true;
+    scheduleTraversals();
+  }
+}

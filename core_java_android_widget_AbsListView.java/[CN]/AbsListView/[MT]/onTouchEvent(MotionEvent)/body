@@ -1,0 +1,201 @@
+{
+  if (mFastScroller != null) {
+    boolean intercepted=mFastScroller.onTouchEvent(ev);
+    if (intercepted) {
+      return true;
+    }
+  }
+  final int action=ev.getAction();
+  final int x=(int)ev.getX();
+  final int y=(int)ev.getY();
+  View v;
+  int deltaY;
+  if (mVelocityTracker == null) {
+    mVelocityTracker=VelocityTracker.obtain();
+  }
+  mVelocityTracker.addMovement(ev);
+switch (action) {
+case MotionEvent.ACTION_DOWN:
+{
+      int motionPosition=pointToPosition(x,y);
+      if (!mDataChanged) {
+        if ((mTouchMode != TOUCH_MODE_FLING) && (motionPosition >= 0) && (getAdapter().isEnabled(motionPosition))) {
+          mTouchMode=TOUCH_MODE_DOWN;
+          if (mPendingCheckForTap == null) {
+            mPendingCheckForTap=new CheckForTap();
+          }
+          postDelayed(mPendingCheckForTap,ViewConfiguration.getTapTimeout());
+        }
+ else {
+          if (ev.getEdgeFlags() != 0 && motionPosition < 0) {
+            return false;
+          }
+          createScrollingCache();
+          mTouchMode=TOUCH_MODE_SCROLL;
+          motionPosition=findMotionRow(y);
+          reportScrollStateChange(OnScrollListener.SCROLL_STATE_TOUCH_SCROLL);
+        }
+      }
+      if (motionPosition >= 0) {
+        v=getChildAt(motionPosition - mFirstPosition);
+        mMotionViewOriginalTop=v.getTop();
+        mMotionX=x;
+        mMotionY=y;
+        mMotionPosition=motionPosition;
+      }
+      mLastY=Integer.MIN_VALUE;
+      break;
+    }
+case MotionEvent.ACTION_MOVE:
+{
+    deltaY=y - mMotionY;
+switch (mTouchMode) {
+case TOUCH_MODE_DOWN:
+case TOUCH_MODE_TAP:
+case TOUCH_MODE_DONE_WAITING:
+      startScrollIfNeeded(deltaY);
+    break;
+case TOUCH_MODE_SCROLL:
+  if (PROFILE_SCROLLING) {
+    if (!mScrollProfilingStarted) {
+      Debug.startMethodTracing("AbsListViewScroll");
+      mScrollProfilingStarted=true;
+    }
+  }
+if (y != mLastY) {
+  deltaY-=mMotionCorrection;
+  int incrementalDeltaY=mLastY != Integer.MIN_VALUE ? y - mLastY : deltaY;
+  trackMotionScroll(deltaY,incrementalDeltaY);
+  View motionView=this.getChildAt(mMotionPosition - mFirstPosition);
+  if (motionView != null) {
+    if (motionView.getTop() != mMotionViewNewTop) {
+      final int motionPosition=findMotionRow(y);
+      mMotionCorrection=0;
+      motionView=getChildAt(motionPosition - mFirstPosition);
+      mMotionViewOriginalTop=motionView.getTop();
+      mMotionY=y;
+      mMotionPosition=motionPosition;
+    }
+  }
+  mLastY=y;
+}
+break;
+}
+break;
+}
+case MotionEvent.ACTION_UP:
+{
+switch (mTouchMode) {
+case TOUCH_MODE_DOWN:
+case TOUCH_MODE_TAP:
+case TOUCH_MODE_DONE_WAITING:
+final int motionPosition=mMotionPosition;
+final View child=getChildAt(motionPosition - mFirstPosition);
+if (child != null && !child.hasFocusable()) {
+if (mTouchMode != TOUCH_MODE_DOWN) {
+child.setPressed(false);
+}
+if (mPerformClick == null) {
+mPerformClick=new PerformClick();
+}
+final AbsListView.PerformClick performClick=mPerformClick;
+performClick.mChild=child;
+performClick.mClickMotionPosition=motionPosition;
+performClick.rememberWindowAttachCount();
+mResurrectToPosition=motionPosition;
+if (mTouchMode == TOUCH_MODE_DOWN || mTouchMode == TOUCH_MODE_TAP) {
+final Handler handler=getHandler();
+if (handler != null) {
+handler.removeCallbacks(mTouchMode == TOUCH_MODE_DOWN ? mPendingCheckForTap : mPendingCheckForLongPress);
+}
+mLayoutMode=LAYOUT_NORMAL;
+mTouchMode=TOUCH_MODE_TAP;
+if (!mDataChanged) {
+setSelectedPositionInt(mMotionPosition);
+layoutChildren();
+child.setPressed(true);
+positionSelector(child);
+setPressed(true);
+if (mSelector != null) {
+Drawable d=mSelector.getCurrent();
+if (d != null && d instanceof TransitionDrawable) {
+((TransitionDrawable)d).resetTransition();
+}
+}
+postDelayed(new Runnable(){
+public void run(){
+child.setPressed(false);
+setPressed(false);
+if (!mDataChanged) {
+  post(performClick);
+}
+mTouchMode=TOUCH_MODE_REST;
+}
+}
+,ViewConfiguration.getPressedStateDuration());
+}
+return true;
+}
+ else {
+if (!mDataChanged) {
+post(performClick);
+}
+}
+}
+mTouchMode=TOUCH_MODE_REST;
+break;
+case TOUCH_MODE_SCROLL:
+final VelocityTracker velocityTracker=mVelocityTracker;
+velocityTracker.computeCurrentVelocity(1000);
+int initialVelocity=(int)velocityTracker.getYVelocity();
+if ((Math.abs(initialVelocity) > ViewConfiguration.get(mContext).getScaledMinimumFlingVelocity()) && (getChildCount() > 0)) {
+if (mFlingRunnable == null) {
+mFlingRunnable=new FlingRunnable();
+}
+reportScrollStateChange(OnScrollListener.SCROLL_STATE_FLING);
+mFlingRunnable.start(-initialVelocity);
+}
+ else {
+mTouchMode=TOUCH_MODE_REST;
+reportScrollStateChange(OnScrollListener.SCROLL_STATE_IDLE);
+}
+}
+setPressed(false);
+invalidate();
+final Handler handler=getHandler();
+if (handler != null) {
+handler.removeCallbacks(mPendingCheckForLongPress);
+}
+if (mVelocityTracker != null) {
+mVelocityTracker.recycle();
+mVelocityTracker=null;
+}
+if (PROFILE_SCROLLING) {
+if (mScrollProfilingStarted) {
+Debug.stopMethodTracing();
+mScrollProfilingStarted=false;
+}
+}
+break;
+}
+case MotionEvent.ACTION_CANCEL:
+{
+mTouchMode=TOUCH_MODE_REST;
+setPressed(false);
+View motionView=this.getChildAt(mMotionPosition - mFirstPosition);
+if (motionView != null) {
+motionView.setPressed(false);
+}
+clearScrollingCache();
+final Handler handler=getHandler();
+if (handler != null) {
+handler.removeCallbacks(mPendingCheckForLongPress);
+}
+if (mVelocityTracker != null) {
+mVelocityTracker.recycle();
+mVelocityTracker=null;
+}
+}
+}
+return true;
+}

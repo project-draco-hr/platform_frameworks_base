@@ -1,0 +1,93 @@
+{
+  if (mCurMethodId == null) {
+    return mNoBinding;
+  }
+  ClientState cs=mClients.get(client.asBinder());
+  if (cs == null) {
+    throw new IllegalArgumentException("unknown client " + client.asBinder());
+  }
+  try {
+    if (!mIWindowManager.inputMethodClientHasFocus(cs.client)) {
+      Log.w(TAG,"Starting input on non-focused client " + cs.client + " (uid="+ cs.uid+ " pid="+ cs.pid+ ")");
+      return null;
+    }
+  }
+ catch (  RemoteException e) {
+  }
+  if (mCurClient != cs) {
+    unbindCurrentInputLocked();
+    if (DEBUG)     Log.v(TAG,"switching to client: client = " + cs.client.asBinder());
+    if (mScreenOn) {
+      try {
+        cs.client.setActive(mScreenOn);
+      }
+ catch (      RemoteException e) {
+        Log.w(TAG,"Got RemoteException sending setActive notification to pid " + cs.pid + " uid "+ cs.uid);
+      }
+    }
+  }
+  mCurSeq++;
+  if (mCurSeq <= 0)   mCurSeq=1;
+  mCurClient=cs;
+  mCurInputContext=inputContext;
+  mCurAttribute=attribute;
+  if (mCurId != null && mCurId.equals(mCurMethodId)) {
+    if (cs.curSession != null) {
+      return attachNewInputLocked(initial,needResult);
+    }
+    if (mHaveConnection) {
+      if (mCurMethod != null) {
+        if (!cs.sessionRequested) {
+          cs.sessionRequested=true;
+          if (DEBUG)           Log.v(TAG,"Creating new session for client " + cs);
+          executeOrSendMessage(mCurMethod,mCaller.obtainMessageOO(MSG_CREATE_SESSION,mCurMethod,new MethodCallback(mCurMethod)));
+        }
+        return new InputBindResult(null,mCurId,mCurSeq);
+      }
+ else       if (SystemClock.uptimeMillis() < (mLastBindTime + TIME_TO_RECONNECT)) {
+        return new InputBindResult(null,mCurId,mCurSeq);
+      }
+ else {
+        EventLog.writeEvent(LOG_IMF_FORCE_RECONNECT_IME,mCurMethodId,SystemClock.uptimeMillis() - mLastBindTime,0);
+      }
+    }
+  }
+  InputMethodInfo info=mMethodMap.get(mCurMethodId);
+  if (info == null) {
+    throw new IllegalArgumentException("Unknown id: " + mCurMethodId);
+  }
+  if (mHaveConnection) {
+    mContext.unbindService(this);
+    mHaveConnection=false;
+  }
+  if (mCurToken != null) {
+    try {
+      if (DEBUG)       Log.v(TAG,"Removing window token: " + mCurToken);
+      mIWindowManager.removeWindowToken(mCurToken);
+    }
+ catch (    RemoteException e) {
+    }
+    mCurToken=null;
+  }
+  clearCurMethod();
+  mCurIntent=new Intent(InputMethod.SERVICE_INTERFACE);
+  mCurIntent.setComponent(info.getComponent());
+  if (mContext.bindService(mCurIntent,this,Context.BIND_AUTO_CREATE)) {
+    mLastBindTime=SystemClock.uptimeMillis();
+    mHaveConnection=true;
+    mCurId=info.getId();
+    mCurToken=new Binder();
+    try {
+      if (DEBUG)       Log.v(TAG,"Adding window token: " + mCurToken);
+      mIWindowManager.addWindowToken(mCurToken,WindowManager.LayoutParams.TYPE_INPUT_METHOD);
+    }
+ catch (    RemoteException e) {
+    }
+    return new InputBindResult(null,mCurId,mCurSeq);
+  }
+ else {
+    mCurIntent=null;
+    Log.w(TAG,"Failure connecting to input method service: " + mCurIntent);
+  }
+  return null;
+}

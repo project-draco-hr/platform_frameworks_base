@@ -1,0 +1,113 @@
+{
+  HttpResponse response=null;
+  int status=500;
+  int redirectsLeft=MAX_REDIRECTS;
+  URI uri;
+  try {
+    uri=new URI(uriString);
+  }
+ catch (  URISyntaxException use) {
+    Log.w(TAG,"Unable to parse " + uriString + " as URI.",use);
+    throw new IOException("Unable to parse " + uriString + " as URI: "+ use.getMessage());
+  }
+  while (redirectsLeft > 0) {
+    HttpUriRequest request=creator.createRequest(uri);
+    AndroidHttpClient.modifyRequestToAcceptGzipResponse(request);
+    if (!TextUtils.isEmpty(authToken)) {
+      request.addHeader("Authorization","GoogleLogin auth=" + authToken);
+    }
+    if (LOCAL_LOGV) {
+      for (      Header h : request.getAllHeaders()) {
+        Log.v(TAG,h.getName() + ": " + h.getValue());
+      }
+    }
+    if (Log.isLoggable(TAG,Log.DEBUG)) {
+      Log.d(TAG,"Executing " + request.getRequestLine().toString());
+    }
+    response=null;
+    try {
+      response=mHttpClient.execute(request);
+    }
+ catch (    IOException ioe) {
+      Log.w(TAG,"Unable to execute HTTP request." + ioe);
+      throw ioe;
+    }
+    StatusLine statusLine=response.getStatusLine();
+    if (statusLine == null) {
+      Log.w(TAG,"StatusLine is null.");
+      throw new NullPointerException("StatusLine is null -- should not happen.");
+    }
+    if (Log.isLoggable(TAG,Log.DEBUG)) {
+      Log.d(TAG,response.getStatusLine().toString());
+      for (      Header h : response.getAllHeaders()) {
+        Log.d(TAG,h.getName() + ": " + h.getValue());
+      }
+    }
+    status=statusLine.getStatusCode();
+    HttpEntity entity=response.getEntity();
+    if ((status >= 200) && (status < 300) && entity != null) {
+      InputStream in=AndroidHttpClient.getUngzippedContent(entity);
+      if (Log.isLoggable(TAG,Log.DEBUG)) {
+        in=logInputStreamContents(in);
+      }
+      return in;
+    }
+    if (status == 302) {
+      entity.consumeContent();
+      Header location=response.getFirstHeader("Location");
+      if (location == null) {
+        if (Log.isLoggable(TAG,Log.DEBUG)) {
+          Log.d(TAG,"Redirect requested but no Location " + "specified.");
+        }
+        break;
+      }
+      if (Log.isLoggable(TAG,Log.DEBUG)) {
+        Log.d(TAG,"Following redirect to " + location.getValue());
+      }
+      try {
+        uri=new URI(location.getValue());
+      }
+ catch (      URISyntaxException use) {
+        if (Log.isLoggable(TAG,Log.DEBUG)) {
+          Log.d(TAG,"Unable to parse " + location.getValue() + " as URI.",use);
+          throw new IOException("Unable to parse " + location.getValue() + " as URI.");
+        }
+        break;
+      }
+      --redirectsLeft;
+    }
+ else {
+      break;
+    }
+  }
+  if (Log.isLoggable(TAG,Log.VERBOSE)) {
+    Log.v(TAG,"Received " + status + " status code.");
+  }
+  String errorMessage=null;
+  HttpEntity entity=response.getEntity();
+  try {
+    if (response != null && entity != null) {
+      InputStream in=AndroidHttpClient.getUngzippedContent(entity);
+      ByteArrayOutputStream baos=new ByteArrayOutputStream();
+      byte[] buf=new byte[8192];
+      int bytesRead=-1;
+      while ((bytesRead=in.read(buf)) != -1) {
+        baos.write(buf,0,bytesRead);
+      }
+      errorMessage=new String(baos.toByteArray());
+      if (Log.isLoggable(TAG,Log.VERBOSE)) {
+        Log.v(TAG,errorMessage);
+      }
+    }
+  }
+  finally {
+    if (entity != null) {
+      entity.consumeContent();
+    }
+  }
+  String exceptionMessage="Received " + status + " status code";
+  if (errorMessage != null) {
+    exceptionMessage+=(": " + errorMessage);
+  }
+  throw new HttpException(exceptionMessage,status,null);
+}

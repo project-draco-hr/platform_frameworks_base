@@ -1,0 +1,250 @@
+{
+  Log.i(TAG,"Starting activity: " + intent);
+  HistoryRecord sourceRecord=null;
+  HistoryRecord resultRecord=null;
+  if (resultTo != null) {
+    int index=indexOfTokenLocked(resultTo,false);
+    if (localLOGV)     Log.v(TAG,"Sending result to " + resultTo + " (index "+ index+ ")");
+    if (index >= 0) {
+      sourceRecord=(HistoryRecord)mHistory.get(index);
+      if (requestCode >= 0 && !sourceRecord.finishing) {
+        resultRecord=sourceRecord;
+      }
+    }
+  }
+  int launchFlags=intent.getFlags();
+  if ((launchFlags & Intent.FLAG_ACTIVITY_FORWARD_RESULT) != 0 && sourceRecord != null) {
+    if (requestCode >= 0) {
+      return START_FORWARD_AND_REQUEST_CONFLICT;
+    }
+    resultRecord=sourceRecord.resultTo;
+    resultWho=sourceRecord.resultWho;
+    requestCode=sourceRecord.requestCode;
+    sourceRecord.resultTo=null;
+    if (resultRecord != null) {
+      resultRecord.removeResultsLocked(sourceRecord,resultWho,requestCode);
+    }
+  }
+  int err=START_SUCCESS;
+  if (intent.getComponent() == null) {
+    err=START_INTENT_NOT_RESOLVED;
+  }
+  if (err == START_SUCCESS && aInfo == null) {
+    err=START_CLASS_NOT_FOUND;
+  }
+  ProcessRecord callerApp=null;
+  if (err == START_SUCCESS && caller != null) {
+    callerApp=getRecordForAppLocked(caller);
+    if (callerApp != null) {
+      callingPid=callerApp.pid;
+      callingUid=callerApp.info.uid;
+    }
+ else {
+      Log.w(TAG,"Unable to find app for caller " + caller + " (pid="+ callingPid+ ") when starting: "+ intent.toString());
+      err=START_PERMISSION_DENIED;
+    }
+  }
+  if (err != START_SUCCESS) {
+    if (resultRecord != null) {
+      sendActivityResultLocked(-1,resultRecord,resultWho,requestCode,Activity.RESULT_CANCELED,null);
+    }
+    return err;
+  }
+  final int perm=checkComponentPermission(aInfo.permission,callingPid,callingUid,aInfo.exported ? -1 : aInfo.applicationInfo.uid);
+  if (perm != PackageManager.PERMISSION_GRANTED) {
+    if (resultRecord != null) {
+      sendActivityResultLocked(-1,resultRecord,resultWho,requestCode,Activity.RESULT_CANCELED,null);
+    }
+    String msg="Permission Denial: starting " + intent.toString() + " from "+ callerApp+ " (pid="+ callingPid+ ", uid="+ callingUid+ ")"+ " requires "+ aInfo.permission;
+    Log.w(TAG,msg);
+    throw new SecurityException(msg);
+  }
+  if (mWatcher != null) {
+    boolean abort=false;
+    try {
+      Intent watchIntent=intent.cloneFilter();
+      abort=!mWatcher.activityStarting(watchIntent,aInfo.applicationInfo.packageName);
+    }
+ catch (    RemoteException e) {
+      mWatcher=null;
+    }
+    if (abort) {
+      if (resultRecord != null) {
+        sendActivityResultLocked(-1,resultRecord,resultWho,requestCode,Activity.RESULT_CANCELED,null);
+      }
+      return START_SUCCESS;
+    }
+  }
+  HistoryRecord r=new HistoryRecord(this,callerApp,callingUid,intent,resolvedType,aInfo,mConfiguration,resultRecord,resultWho,requestCode);
+  r.startTime=SystemClock.uptimeMillis();
+  HistoryRecord notTop=(launchFlags & Intent.FLAG_ACTIVITY_PREVIOUS_IS_TOP) != 0 ? r : null;
+  mUserLeaving=(launchFlags & Intent.FLAG_ACTIVITY_NO_USER_ACTION) == 0;
+  if (DEBUG_USER_LEAVING)   Log.v(TAG,"startActivity() => mUserLeaving=" + mUserLeaving);
+  if (onlyIfNeeded) {
+    HistoryRecord checkedCaller=sourceRecord;
+    if (checkedCaller == null) {
+      checkedCaller=topRunningActivityLocked(notTop);
+    }
+    if (!checkedCaller.realActivity.equals(r.realActivity)) {
+      onlyIfNeeded=false;
+    }
+  }
+  if (grantedUriPermissions != null && callingUid > 0) {
+    for (int i=0; i < grantedUriPermissions.length; i++) {
+      grantUriPermissionLocked(callingUid,r.packageName,grantedUriPermissions[i],grantedMode,r);
+    }
+  }
+  grantUriPermissionFromIntentLocked(callingUid,r.packageName,intent,r);
+  if (sourceRecord == null) {
+    if ((launchFlags & Intent.FLAG_ACTIVITY_NEW_TASK) == 0) {
+      Log.w(TAG,"startActivity called from non-Activity context; forcing Intent.FLAG_ACTIVITY_NEW_TASK for: " + intent);
+      launchFlags|=Intent.FLAG_ACTIVITY_NEW_TASK;
+    }
+  }
+ else   if (sourceRecord.launchMode == ActivityInfo.LAUNCH_SINGLE_INSTANCE) {
+    launchFlags|=Intent.FLAG_ACTIVITY_NEW_TASK;
+  }
+ else   if (r.launchMode == ActivityInfo.LAUNCH_SINGLE_INSTANCE || r.launchMode == ActivityInfo.LAUNCH_SINGLE_TASK) {
+    launchFlags|=Intent.FLAG_ACTIVITY_NEW_TASK;
+  }
+  if (resultRecord != null && (launchFlags & Intent.FLAG_ACTIVITY_NEW_TASK) != 0) {
+    Log.w(TAG,"Activity is launching as a new task, so cancelling activity result.");
+    sendActivityResultLocked(-1,resultRecord,resultWho,requestCode,Activity.RESULT_CANCELED,null);
+    r.resultTo=null;
+    resultRecord=null;
+  }
+  boolean addingToTask=false;
+  if (((launchFlags & Intent.FLAG_ACTIVITY_NEW_TASK) != 0 && (launchFlags & Intent.FLAG_ACTIVITY_MULTIPLE_TASK) == 0) || r.launchMode == ActivityInfo.LAUNCH_SINGLE_TASK || r.launchMode == ActivityInfo.LAUNCH_SINGLE_INSTANCE) {
+    if (resultRecord == null) {
+      HistoryRecord taskTop=r.launchMode != ActivityInfo.LAUNCH_SINGLE_INSTANCE ? findTaskLocked(intent,r.info) : findActivityLocked(intent,r.info);
+      if (taskTop != null) {
+        if (taskTop.task.intent == null) {
+          taskTop.task.setIntent(intent,r.info);
+        }
+        HistoryRecord curTop=topRunningActivityLocked(notTop);
+        if (curTop.task != taskTop.task) {
+          r.intent.addFlags(Intent.FLAG_ACTIVITY_BROUGHT_TO_FRONT);
+          boolean callerAtFront=sourceRecord == null || curTop.task == sourceRecord.task;
+          if (callerAtFront) {
+            moveTaskToFrontLocked(taskTop.task);
+          }
+        }
+        if ((launchFlags & Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED) != 0) {
+          taskTop=resetTaskIfNeededLocked(taskTop,r);
+        }
+        if (onlyIfNeeded) {
+          resumeTopActivityLocked(null);
+          return START_RETURN_INTENT_TO_CALLER;
+        }
+        if ((launchFlags & Intent.FLAG_ACTIVITY_CLEAR_TOP) != 0 || r.launchMode == ActivityInfo.LAUNCH_SINGLE_TASK || r.launchMode == ActivityInfo.LAUNCH_SINGLE_INSTANCE) {
+          HistoryRecord top=performClearTopTaskLocked(taskTop.task.taskId,r,true);
+          if (top != null) {
+            if (top.frontOfTask) {
+              top.task.setIntent(r.intent,r.info);
+            }
+            logStartActivity(LOG_AM_NEW_INTENT,r,top.task);
+            deliverNewIntentLocked(top,r.intent);
+          }
+ else {
+            addingToTask=true;
+            sourceRecord=taskTop;
+          }
+        }
+ else         if (r.realActivity.equals(taskTop.task.realActivity)) {
+          if ((launchFlags & Intent.FLAG_ACTIVITY_SINGLE_TOP) != 0 && taskTop.realActivity.equals(r.realActivity)) {
+            logStartActivity(LOG_AM_NEW_INTENT,r,taskTop.task);
+            if (taskTop.frontOfTask) {
+              taskTop.task.setIntent(r.intent,r.info);
+            }
+            deliverNewIntentLocked(taskTop,r.intent);
+          }
+ else           if (!r.intent.filterEquals(taskTop.task.intent)) {
+            addingToTask=true;
+            sourceRecord=taskTop;
+          }
+        }
+ else         if ((launchFlags & Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED) == 0) {
+          addingToTask=true;
+          sourceRecord=taskTop;
+        }
+ else         if (!taskTop.task.rootWasReset) {
+          taskTop.task.setIntent(r.intent,r.info);
+        }
+        if (!addingToTask) {
+          resumeTopActivityLocked(null);
+          return START_TASK_TO_FRONT;
+        }
+      }
+    }
+  }
+  if (r.packageName != null) {
+    HistoryRecord top=topRunningActivityLocked(notTop);
+    if (top != null && resultRecord == null) {
+      if (top.realActivity.equals(r.realActivity)) {
+        if (top.app != null && top.app.thread != null) {
+          if ((launchFlags & Intent.FLAG_ACTIVITY_SINGLE_TOP) != 0 || r.launchMode == ActivityInfo.LAUNCH_SINGLE_TOP || r.launchMode == ActivityInfo.LAUNCH_SINGLE_TASK) {
+            logStartActivity(LOG_AM_NEW_INTENT,top,top.task);
+            resumeTopActivityLocked(null);
+            if (onlyIfNeeded) {
+              return START_RETURN_INTENT_TO_CALLER;
+            }
+            deliverNewIntentLocked(top,r.intent);
+            return START_DELIVERED_TO_TOP;
+          }
+        }
+      }
+    }
+  }
+ else {
+    if (resultRecord != null) {
+      sendActivityResultLocked(-1,resultRecord,resultWho,requestCode,Activity.RESULT_CANCELED,null);
+    }
+    return START_CLASS_NOT_FOUND;
+  }
+  boolean newTask=false;
+  if (resultRecord == null && !addingToTask && (launchFlags & Intent.FLAG_ACTIVITY_NEW_TASK) != 0) {
+    mCurTask++;
+    if (mCurTask <= 0) {
+      mCurTask=1;
+    }
+    r.task=new TaskRecord(mCurTask,r.info,intent,(r.info.flags & ActivityInfo.FLAG_CLEAR_TASK_ON_LAUNCH) != 0);
+    if (DEBUG_TASKS)     Log.v(TAG,"Starting new activity " + r + " in new task "+ r.task);
+    newTask=true;
+    addRecentTask(r.task);
+  }
+ else   if (sourceRecord != null) {
+    if (!addingToTask && (launchFlags & Intent.FLAG_ACTIVITY_CLEAR_TOP) != 0) {
+      HistoryRecord top=performClearTopTaskLocked(sourceRecord.task.taskId,r,true);
+      if (top != null) {
+        logStartActivity(LOG_AM_NEW_INTENT,r,top.task);
+        deliverNewIntentLocked(top,r.intent);
+        resumeTopActivityLocked(null);
+        return START_DELIVERED_TO_TOP;
+      }
+    }
+ else     if (!addingToTask && (launchFlags & Intent.FLAG_ACTIVITY_REORDER_TO_FRONT) != 0) {
+      int where=findActivityInHistoryLocked(r,sourceRecord.task.taskId);
+      if (where >= 0) {
+        HistoryRecord top=moveActivityToFrontLocked(where);
+        logStartActivity(LOG_AM_NEW_INTENT,r,top.task);
+        deliverNewIntentLocked(top,r.intent);
+        resumeTopActivityLocked(null);
+        return START_DELIVERED_TO_TOP;
+      }
+    }
+    r.task=sourceRecord.task;
+    if (DEBUG_TASKS)     Log.v(TAG,"Starting new activity " + r + " in existing task "+ r.task);
+  }
+ else {
+    final int N=mHistory.size();
+    HistoryRecord prev=N > 0 ? (HistoryRecord)mHistory.get(N - 1) : null;
+    r.task=prev != null ? prev.task : new TaskRecord(mCurTask,r.info,intent,(r.info.flags & ActivityInfo.FLAG_CLEAR_TASK_ON_LAUNCH) != 0);
+    if (DEBUG_TASKS)     Log.v(TAG,"Starting new activity " + r + " in new guessed "+ r.task);
+  }
+  if (newTask) {
+    EventLog.writeEvent(LOG_AM_CREATE_TASK,r.task.taskId);
+  }
+  logStartActivity(LOG_AM_CREATE_ACTIVITY,r,r.task);
+  startActivityLocked(r,newTask);
+  return START_SUCCESS;
+}

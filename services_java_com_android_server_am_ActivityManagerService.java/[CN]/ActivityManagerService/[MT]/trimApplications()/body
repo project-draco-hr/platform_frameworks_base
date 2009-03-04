@@ -1,0 +1,111 @@
+{
+synchronized (this) {
+    int i;
+    for (i=mRemovedProcesses.size() - 1; i >= 0; i--) {
+      final ProcessRecord app=mRemovedProcesses.get(i);
+      if (app.activities.size() == 0 && app.curReceiver == null && app.services.size() == 0) {
+        Log.i(TAG,"Exiting empty application process " + app.processName + " ("+ (app.thread != null ? app.thread.asBinder() : null)+ ")\n");
+        if (app.pid > 0 && app.pid != MY_PID) {
+          Process.killProcess(app.pid);
+        }
+ else {
+          try {
+            app.thread.scheduleExit();
+          }
+ catch (          Exception e) {
+          }
+        }
+        cleanUpApplicationRecordLocked(app,false,-1);
+        mRemovedProcesses.remove(i);
+        if (app.persistent) {
+          if (app.persistent) {
+            addAppLocked(app.info);
+          }
+        }
+      }
+    }
+    if (!updateOomAdjLocked()) {
+      int numServiceProcs=0;
+      for (i=mLRUProcesses.size() - 1; i >= 0; i--) {
+        final ProcessRecord app=mLRUProcesses.get(i);
+        if (app.persistent || app.services.size() != 0 || app.curReceiver != null || app.persistentActivities > 0) {
+          if (localLOGV)           Log.v(TAG,"Not trimming app " + app + " with services: "+ app.services);
+          numServiceProcs++;
+        }
+      }
+      int curMaxProcs=mProcessLimit;
+      if (curMaxProcs <= 0)       curMaxProcs=MAX_PROCESSES;
+      if (mAlwaysFinishActivities) {
+        curMaxProcs=1;
+      }
+      curMaxProcs+=numServiceProcs;
+      for (i=0; i < mLRUProcesses.size() && mLRUProcesses.size() > curMaxProcs; i++) {
+        final ProcessRecord app=mLRUProcesses.get(i);
+        if (!app.persistent && app.activities.size() == 0 && app.curReceiver == null && app.services.size() == 0) {
+          Log.i(TAG,"Exiting empty application process " + app.processName + " ("+ (app.thread != null ? app.thread.asBinder() : null)+ ")\n");
+          if (app.pid > 0 && app.pid != MY_PID) {
+            Process.killProcess(app.pid);
+          }
+ else {
+            try {
+              app.thread.scheduleExit();
+            }
+ catch (            Exception e) {
+            }
+          }
+          cleanUpApplicationRecordLocked(app,false,i);
+          i--;
+        }
+      }
+      if (Config.LOGV)       Log.v(TAG,"*** NOW HAVE " + mLRUProcesses.size() + " of "+ curMaxProcs+ " processes");
+      for (i=0; i < mLRUProcesses.size() && mLRUProcesses.size() > curMaxProcs; i++) {
+        final ProcessRecord app=mLRUProcesses.get(i);
+        boolean canQuit=!app.persistent && app.curReceiver == null && app.services.size() == 0 && app.persistentActivities == 0;
+        int NUMA=app.activities.size();
+        int j;
+        if (Config.LOGV)         Log.v(TAG,"Looking to quit " + app.processName);
+        for (j=0; j < NUMA && canQuit; j++) {
+          HistoryRecord r=(HistoryRecord)app.activities.get(j);
+          if (Config.LOGV)           Log.v(TAG,"  " + r.intent.getComponent().flattenToShortString() + ": frozen="+ r.haveState+ ", visible="+ r.visible);
+          canQuit=(r.haveState || !r.stateNotNeeded) && !r.visible && r.stopped;
+        }
+        if (canQuit) {
+          for (j=0; j < NUMA; j++) {
+            HistoryRecord r=(HistoryRecord)app.activities.get(j);
+            if (!r.finishing) {
+              destroyActivityLocked(r,false);
+            }
+            r.resultTo=null;
+          }
+          Log.i(TAG,"Exiting application process " + app.processName + " ("+ (app.thread != null ? app.thread.asBinder() : null)+ ")\n");
+          if (app.pid > 0 && app.pid != MY_PID) {
+            Process.killProcess(app.pid);
+          }
+ else {
+            try {
+              app.thread.scheduleExit();
+            }
+ catch (            Exception e) {
+            }
+          }
+          cleanUpApplicationRecordLocked(app,false,i);
+          i--;
+        }
+      }
+    }
+    int curMaxActivities=MAX_ACTIVITIES;
+    if (mAlwaysFinishActivities) {
+      curMaxActivities=1;
+    }
+    for (i=0; i < mLRUActivities.size() && mLRUActivities.size() > curMaxActivities; i++) {
+      final HistoryRecord r=(HistoryRecord)mLRUActivities.get(i);
+      if ((r.haveState || !r.stateNotNeeded) && !r.visible && r.stopped&& !r.persistent&& !r.finishing) {
+        final int origSize=mLRUActivities.size();
+        destroyActivityLocked(r,true);
+        if (origSize > mLRUActivities.size()) {
+          i--;
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,55 @@
+{
+  final int eventualWifiState=enable ? WIFI_STATE_ENABLED : WIFI_STATE_DISABLED;
+  if (mWifiState == eventualWifiState) {
+    return true;
+  }
+  if (enable && isAirplaneModeOn()) {
+    return false;
+  }
+  setWifiEnabledState(enable ? WIFI_STATE_ENABLING : WIFI_STATE_DISABLING);
+  if (enable) {
+    if (!WifiNative.loadDriver()) {
+      Log.e(TAG,"Failed to load Wi-Fi driver.");
+      setWifiEnabledState(WIFI_STATE_UNKNOWN);
+      return false;
+    }
+    if (!WifiNative.startSupplicant()) {
+      WifiNative.unloadDriver();
+      Log.e(TAG,"Failed to start supplicant daemon.");
+      setWifiEnabledState(WIFI_STATE_UNKNOWN);
+      return false;
+    }
+    registerForBroadcasts();
+    mWifiStateTracker.startEventLoop();
+  }
+ else {
+    mContext.unregisterReceiver(mReceiver);
+    mWifiStateTracker.setNotificationVisible(false,0,false,0);
+    boolean failedToStopSupplicantOrUnloadDriver=false;
+    if (!WifiNative.stopSupplicant()) {
+      Log.e(TAG,"Failed to stop supplicant daemon.");
+      setWifiEnabledState(WIFI_STATE_UNKNOWN);
+      failedToStopSupplicantOrUnloadDriver=true;
+    }
+    mWifiStateTracker.resetInterface();
+    if (!WifiNative.unloadDriver()) {
+      Log.e(TAG,"Failed to unload Wi-Fi driver.");
+      if (!failedToStopSupplicantOrUnloadDriver) {
+        setWifiEnabledState(WIFI_STATE_UNKNOWN);
+        failedToStopSupplicantOrUnloadDriver=true;
+      }
+    }
+    if (failedToStopSupplicantOrUnloadDriver) {
+      return false;
+    }
+  }
+  if (persist) {
+    persistWifiEnabled(enable);
+  }
+  setWifiEnabledState(eventualWifiState);
+  if (enable) {
+    mWifiStateTracker.setNumAllowedChannels();
+    initializeHiddenNetworksState();
+  }
+  return true;
+}

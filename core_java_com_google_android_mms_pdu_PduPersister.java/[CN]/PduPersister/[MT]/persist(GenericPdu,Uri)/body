@@ -1,0 +1,110 @@
+{
+  if (uri == null) {
+    throw new MmsException("Uri may not be null.");
+  }
+  Integer msgBox=MESSAGE_BOX_MAP.get(uri);
+  if (msgBox == null) {
+    throw new MmsException("Bad destination, must be one of " + "content://mms/inbox, content://mms/sent, " + "content://mms/drafts, content://mms/outbox, "+ "content://mms/temp.");
+  }
+  PduHeaders header=pdu.getPduHeaders();
+  PduBody body=null;
+  ContentValues values=new ContentValues();
+  Set<Entry<Integer,String>> set;
+  set=ENCODED_STRING_COLUMN_NAME_MAP.entrySet();
+  for (  Entry<Integer,String> e : set) {
+    int field=e.getKey();
+    EncodedStringValue encodedString=header.getEncodedStringValue(field);
+    if (encodedString != null) {
+      String charsetColumn=CHARSET_COLUMN_NAME_MAP.get(field);
+      values.put(e.getValue(),toIsoString(encodedString.getTextString()));
+      values.put(charsetColumn,encodedString.getCharacterSet());
+    }
+  }
+  set=TEXT_STRING_COLUMN_NAME_MAP.entrySet();
+  for (  Entry<Integer,String> e : set) {
+    byte[] text=header.getTextString(e.getKey());
+    if (text != null) {
+      values.put(e.getValue(),toIsoString(text));
+    }
+  }
+  set=OCTET_COLUMN_NAME_MAP.entrySet();
+  for (  Entry<Integer,String> e : set) {
+    int b=header.getOctet(e.getKey());
+    if (b != 0) {
+      values.put(e.getValue(),b);
+    }
+  }
+  set=LONG_COLUMN_NAME_MAP.entrySet();
+  for (  Entry<Integer,String> e : set) {
+    long l=header.getLongInteger(e.getKey());
+    if (l != -1L) {
+      values.put(e.getValue(),l);
+    }
+  }
+  HashMap<Integer,EncodedStringValue[]> addressMap=new HashMap<Integer,EncodedStringValue[]>(ADDRESS_FIELDS.length);
+  for (  int addrType : ADDRESS_FIELDS) {
+    EncodedStringValue[] array=null;
+    if (addrType == PduHeaders.FROM) {
+      EncodedStringValue v=header.getEncodedStringValue(addrType);
+      if (v != null) {
+        array=new EncodedStringValue[1];
+        array[0]=v;
+      }
+    }
+ else {
+      array=header.getEncodedStringValues(addrType);
+    }
+    addressMap.put(addrType,array);
+  }
+  HashSet<String> recipients=new HashSet<String>();
+  long threadId=DUMMY_THREAD_ID;
+  int msgType=pdu.getMessageType();
+  if ((msgType == PduHeaders.MESSAGE_TYPE_NOTIFICATION_IND) || (msgType == PduHeaders.MESSAGE_TYPE_RETRIEVE_CONF) || (msgType == PduHeaders.MESSAGE_TYPE_SEND_REQ)) {
+    EncodedStringValue[] array=null;
+switch (msgType) {
+case PduHeaders.MESSAGE_TYPE_NOTIFICATION_IND:
+case PduHeaders.MESSAGE_TYPE_RETRIEVE_CONF:
+      array=addressMap.get(PduHeaders.FROM);
+    break;
+case PduHeaders.MESSAGE_TYPE_SEND_REQ:
+  array=addressMap.get(PduHeaders.TO);
+break;
+}
+if (array != null) {
+for (EncodedStringValue v : array) {
+if (v != null) {
+  recipients.add(v.getString());
+}
+}
+}
+threadId=Threads.getOrCreateThreadId(mContext,recipients);
+}
+values.put(Mms.THREAD_ID,threadId);
+long dummyId=System.currentTimeMillis();
+if (pdu instanceof MultimediaMessagePdu) {
+body=((MultimediaMessagePdu)pdu).getBody();
+if (body != null) {
+int partsNum=body.getPartsNum();
+for (int i=0; i < partsNum; i++) {
+PduPart part=body.getPart(i);
+persistPart(part,dummyId);
+}
+}
+}
+Uri res=SqliteWrapper.insert(mContext,mContentResolver,uri,values);
+if (res == null) {
+throw new MmsException("persist() failed: return null.");
+}
+long msgId=ContentUris.parseId(res);
+values=new ContentValues(1);
+values.put(Part.MSG_ID,msgId);
+SqliteWrapper.update(mContext,mContentResolver,Uri.parse("content://mms/" + dummyId + "/part"),values,null,null);
+res=Uri.parse(uri + "/" + msgId);
+for (int addrType : ADDRESS_FIELDS) {
+EncodedStringValue[] array=addressMap.get(addrType);
+if (array != null) {
+persistAddress(msgId,addrType,array);
+}
+}
+return res;
+}

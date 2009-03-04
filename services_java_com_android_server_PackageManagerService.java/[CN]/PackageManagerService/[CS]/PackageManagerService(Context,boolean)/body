@@ -1,0 +1,156 @@
+{
+  EventLog.writeEvent(LOG_BOOT_PROGRESS_PMS_START,SystemClock.uptimeMillis());
+  if (mSdkVersion <= 0) {
+    Log.w(TAG,"**** ro.build.version.sdk not set!");
+  }
+  mContext=context;
+  mFactoryTest=factoryTest;
+  mMetrics=new DisplayMetrics();
+  mSettings=new Settings();
+  mSettings.addSharedUserLP("android.uid.system",Process.SYSTEM_UID,ApplicationInfo.FLAG_SYSTEM);
+  mSettings.addSharedUserLP("android.uid.phone",MULTIPLE_APPLICATION_UIDS ? RADIO_UID : FIRST_APPLICATION_UID,ApplicationInfo.FLAG_SYSTEM);
+  String separateProcesses=SystemProperties.get("debug.separate_processes");
+  if (separateProcesses != null && separateProcesses.length() > 0) {
+    if ("*".equals(separateProcesses)) {
+      mDefParseFlags=PackageParser.PARSE_IGNORE_PROCESSES;
+      mSeparateProcesses=null;
+      Log.w(TAG,"Running with debug.separate_processes: * (ALL)");
+    }
+ else {
+      mDefParseFlags=0;
+      mSeparateProcesses=separateProcesses.split(",");
+      Log.w(TAG,"Running with debug.separate_processes: " + separateProcesses);
+    }
+  }
+ else {
+    mDefParseFlags=0;
+    mSeparateProcesses=null;
+  }
+  Installer installer=new Installer();
+  if (installer.ping() && Process.supportsProcesses()) {
+    mInstaller=installer;
+  }
+ else {
+    mInstaller=null;
+  }
+  WindowManager wm=(WindowManager)context.getSystemService(Context.WINDOW_SERVICE);
+  Display d=wm.getDefaultDisplay();
+  d.getMetrics(mMetrics);
+synchronized (mInstallLock) {
+synchronized (mPackages) {
+      mHandlerThread.start();
+      mHandler=new Handler(mHandlerThread.getLooper());
+      File dataDir=Environment.getDataDirectory();
+      mAppDataDir=new File(dataDir,"data");
+      mDrmAppPrivateInstallDir=new File(dataDir,"app-private");
+      if (mInstaller == null) {
+        File miscDir=new File(dataDir,"misc");
+        miscDir.mkdirs();
+        mAppDataDir.mkdirs();
+        mDrmAppPrivateInstallDir.mkdirs();
+      }
+      readPermissions();
+      mRestoredSettings=mSettings.readLP();
+      long startTime=SystemClock.uptimeMillis();
+      EventLog.writeEvent(LOG_BOOT_PROGRESS_PMS_SYSTEM_SCAN_START,startTime);
+      int scanMode=SCAN_MONITOR;
+      final HashSet<String> libFiles=new HashSet<String>();
+      mFrameworkDir=new File(Environment.getRootDirectory(),"framework");
+      if (mInstaller != null) {
+        String bootClassPath=System.getProperty("java.boot.class.path");
+        if (bootClassPath != null) {
+          String[] paths=splitString(bootClassPath,':');
+          for (int i=0; i < paths.length; i++) {
+            try {
+              if (dalvik.system.DexFile.isDexOptNeeded(paths[i])) {
+                libFiles.add(paths[i]);
+                mInstaller.dexopt(paths[i],Process.SYSTEM_UID,true);
+              }
+            }
+ catch (            FileNotFoundException e) {
+              Log.w(TAG,"Boot class path not found: " + paths[i]);
+            }
+catch (            IOException e) {
+              Log.w(TAG,"Exception reading boot class path: " + paths[i],e);
+            }
+          }
+        }
+ else {
+          Log.w(TAG,"No BOOTCLASSPATH found!");
+        }
+        if (mSharedLibraries.size() > 0) {
+          Iterator<String> libs=mSharedLibraries.values().iterator();
+          while (libs.hasNext()) {
+            String lib=libs.next();
+            try {
+              if (dalvik.system.DexFile.isDexOptNeeded(lib)) {
+                libFiles.add(lib);
+                mInstaller.dexopt(lib,Process.SYSTEM_UID,true);
+              }
+            }
+ catch (            FileNotFoundException e) {
+              Log.w(TAG,"Library not found: " + lib);
+            }
+catch (            IOException e) {
+              Log.w(TAG,"Exception reading library: " + lib,e);
+            }
+          }
+        }
+        libFiles.add(mFrameworkDir.getPath() + "/framework-res.apk");
+        String[] frameworkFiles=mFrameworkDir.list();
+        if (frameworkFiles != null && mInstaller != null) {
+          for (int i=0; i < frameworkFiles.length; i++) {
+            File libPath=new File(mFrameworkDir,frameworkFiles[i]);
+            String path=libPath.getPath();
+            if (libFiles.contains(path)) {
+              continue;
+            }
+            if (!path.endsWith(".apk") && !path.endsWith(".jar")) {
+              continue;
+            }
+            try {
+              if (dalvik.system.DexFile.isDexOptNeeded(path)) {
+                mInstaller.dexopt(path,Process.SYSTEM_UID,true);
+              }
+            }
+ catch (            FileNotFoundException e) {
+              Log.w(TAG,"Jar not found: " + path);
+            }
+catch (            IOException e) {
+              Log.w(TAG,"Exception reading jar: " + path,e);
+            }
+          }
+        }
+      }
+      mFrameworkInstallObserver=new AppDirObserver(mFrameworkDir.getPath(),OBSERVER_EVENTS,true);
+      mFrameworkInstallObserver.startWatching();
+      scanDirLI(mFrameworkDir,PackageParser.PARSE_IS_SYSTEM,scanMode | SCAN_NO_DEX);
+      mSystemAppDir=new File(Environment.getRootDirectory(),"app");
+      mSystemInstallObserver=new AppDirObserver(mSystemAppDir.getPath(),OBSERVER_EVENTS,true);
+      mSystemInstallObserver.startWatching();
+      scanDirLI(mSystemAppDir,PackageParser.PARSE_IS_SYSTEM,scanMode);
+      mAppInstallDir=new File(dataDir,"app");
+      if (mInstaller == null) {
+        mAppInstallDir.mkdirs();
+      }
+      ArrayList<String> deletePkgsList=mSettings.getListOfIncompleteInstallPackages();
+      for (int i=0; i < deletePkgsList.size(); i++) {
+        cleanupInstallFailedPackage(deletePkgsList.get(i));
+      }
+      deleteTempPackageFiles();
+      EventLog.writeEvent(LOG_BOOT_PROGRESS_PMS_DATA_SCAN_START,SystemClock.uptimeMillis());
+      mAppInstallObserver=new AppDirObserver(mAppInstallDir.getPath(),OBSERVER_EVENTS,false);
+      mAppInstallObserver.startWatching();
+      scanDirLI(mAppInstallDir,0,scanMode);
+      mDrmAppInstallObserver=new AppDirObserver(mDrmAppPrivateInstallDir.getPath(),OBSERVER_EVENTS,false);
+      mDrmAppInstallObserver.startWatching();
+      scanDirLI(mDrmAppPrivateInstallDir,0,scanMode);
+      EventLog.writeEvent(LOG_BOOT_PROGRESS_PMS_SCAN_END,SystemClock.uptimeMillis());
+      Log.i(TAG,"Time to scan packages: " + ((SystemClock.uptimeMillis() - startTime) / 1000f) + " seconds");
+      updatePermissionsLP();
+      mSettings.writeLP();
+      EventLog.writeEvent(LOG_BOOT_PROGRESS_PMS_READY,SystemClock.uptimeMillis());
+      Runtime.getRuntime().gc();
+    }
+  }
+}

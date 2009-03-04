@@ -1,0 +1,284 @@
+{
+  Intent intent;
+switch (msg.what) {
+case EVENT_SUPPLICANT_CONNECTION:
+    mRunState=RUN_STATE_RUNNING;
+  checkUseStaticIp();
+HandlerThread dhcpThread=new HandlerThread("DHCP Handler Thread");
+dhcpThread.start();
+mDhcpTarget=new DhcpHandler(dhcpThread.getLooper(),this);
+mIsScanModeActive=true;
+mTornDownByConnMgr=false;
+mLastBssid=null;
+mLastSsid=null;
+requestConnectionInfo();
+SupplicantState supplState=mWifiInfo.getSupplicantState();
+String macaddr;
+synchronized (this) {
+macaddr=WifiNative.getMacAddressCommand();
+}
+if (macaddr != null) {
+mWifiInfo.setMacAddress(macaddr);
+}
+if (LOCAL_LOGD) Log.v(TAG,"Connection to supplicant established, state=" + supplState);
+EventLog.writeEvent(EVENTLOG_SUPPLICANT_CONNECTION_STATE_CHANGED,1);
+if (supplState == SupplicantState.COMPLETED) {
+mLastBssid=mWifiInfo.getBSSID();
+mLastSsid=mWifiInfo.getSSID();
+configureInterface();
+}
+if (ActivityManagerNative.isSystemReady()) {
+intent=new Intent(WifiManager.SUPPLICANT_CONNECTION_CHANGE_ACTION);
+intent.putExtra(WifiManager.EXTRA_SUPPLICANT_CONNECTED,true);
+mContext.sendBroadcast(intent);
+}
+if (supplState == SupplicantState.COMPLETED && mHaveIPAddress) {
+setDetailedState(DetailedState.CONNECTED);
+}
+ else {
+setDetailedState(WifiInfo.getDetailedStateOf(supplState));
+}
+synchronized (this) {
+WifiNative.startPacketFiltering();
+}
+break;
+case EVENT_SUPPLICANT_DISCONNECT:
+int wifiState=mWM.getWifiState();
+boolean died=wifiState != WifiManager.WIFI_STATE_DISABLED && wifiState != WifiManager.WIFI_STATE_DISABLING;
+if (died) {
+if (LOCAL_LOGD) Log.v(TAG,"Supplicant died unexpectedly");
+}
+ else {
+if (LOCAL_LOGD) Log.v(TAG,"Connection to supplicant lost");
+}
+EventLog.writeEvent(EVENTLOG_SUPPLICANT_CONNECTION_STATE_CHANGED,died ? 2 : 0);
+synchronized (this) {
+WifiNative.closeSupplicantConnection();
+}
+if (died) {
+resetInterface();
+}
+if (mDhcpTarget != null) {
+mDhcpTarget.getLooper().quit();
+mDhcpTarget=null;
+}
+mContext.removeStickyBroadcast(new Intent(WifiManager.NETWORK_STATE_CHANGED_ACTION));
+if (ActivityManagerNative.isSystemReady()) {
+intent=new Intent(WifiManager.SUPPLICANT_CONNECTION_CHANGE_ACTION);
+intent.putExtra(WifiManager.EXTRA_SUPPLICANT_CONNECTED,false);
+mContext.sendBroadcast(intent);
+}
+setDetailedState(DetailedState.DISCONNECTED);
+setSupplicantState(SupplicantState.UNINITIALIZED);
+mHaveIPAddress=false;
+mObtainingIPAddress=false;
+if (died) {
+mWM.setWifiEnabled(false);
+}
+break;
+case EVENT_SUPPLICANT_STATE_CHANGED:
+SupplicantStateChangeResult supplicantStateResult=(SupplicantStateChangeResult)msg.obj;
+SupplicantState newState=supplicantStateResult.state;
+SupplicantState currentState=mWifiInfo.getSupplicantState();
+int eventLogParam=(newState.ordinal() & 0x3f);
+EventLog.writeEvent(EVENTLOG_SUPPLICANT_STATE_CHANGED,eventLogParam);
+if (LOCAL_LOGD) Log.v(TAG,"Changing supplicant state: " + currentState + " ==> "+ newState);
+int networkId=supplicantStateResult.networkId;
+boolean failedToAuthenticate=false;
+if (newState == SupplicantState.DISCONNECTED) {
+failedToAuthenticate=mPasswordKeyMayBeIncorrect;
+}
+mPasswordKeyMayBeIncorrect=false;
+boolean disabledNetwork=false;
+if (isSupplicantLooping(newState)) {
+if (LOCAL_LOGD) {
+Log.v(TAG,"Stop WPA supplicant loop and disable network");
+}
+disabledNetwork=wifiManagerDisableNetwork(networkId);
+}
+if (disabledNetwork) {
+resetSupplicantLoopState();
+}
+ else if (newState != currentState || (newState == SupplicantState.DISCONNECTED && isDriverStopped())) {
+setSupplicantState(newState);
+if (newState == SupplicantState.DORMANT) {
+DetailedState newDetailedState;
+if (mIsScanOnly || mRunState == RUN_STATE_STOPPING) {
+newDetailedState=DetailedState.IDLE;
+}
+ else {
+newDetailedState=DetailedState.FAILED;
+}
+handleDisconnectedState(newDetailedState);
+if (mRunState == RUN_STATE_RUNNING && !mIsScanOnly) {
+sendEmptyMessageDelayed(EVENT_DEFERRED_RECONNECT,RECONNECT_DELAY_MSECS);
+}
+ else if (mRunState == RUN_STATE_STOPPING) {
+synchronized (this) {
+WifiNative.stopDriverCommand();
+}
+}
+ else if (mRunState == RUN_STATE_STARTING && !mIsScanOnly) {
+synchronized (this) {
+WifiNative.reconnectCommand();
+}
+}
+}
+ else if (newState == SupplicantState.DISCONNECTED) {
+if (isDriverStopped() || mDisconnectExpected) {
+handleDisconnectedState(DetailedState.DISCONNECTED);
+}
+ else {
+scheduleDisconnect();
+}
+}
+ else if (newState != SupplicantState.COMPLETED && !mDisconnectPending) {
+if (!(currentState == SupplicantState.COMPLETED && (newState == SupplicantState.ASSOCIATING || newState == SupplicantState.ASSOCIATED || newState == SupplicantState.FOUR_WAY_HANDSHAKE || newState == SupplicantState.GROUP_HANDSHAKE))) {
+setDetailedState(WifiInfo.getDetailedStateOf(newState));
+}
+}
+mDisconnectExpected=false;
+intent=new Intent(WifiManager.SUPPLICANT_STATE_CHANGED_ACTION);
+intent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY_BEFORE_BOOT);
+intent.putExtra(WifiManager.EXTRA_NEW_STATE,(Parcelable)newState);
+if (failedToAuthenticate) {
+if (LOCAL_LOGD) Log.d(TAG,"Failed to authenticate, disabling network " + networkId);
+wifiManagerDisableNetwork(networkId);
+intent.putExtra(WifiManager.EXTRA_SUPPLICANT_ERROR,WifiManager.ERROR_AUTHENTICATING);
+}
+mContext.sendStickyBroadcast(intent);
+}
+break;
+case EVENT_NETWORK_STATE_CHANGED:
+NetworkStateChangeResult result=(NetworkStateChangeResult)msg.obj;
+eventLogParam=(result.state.ordinal() & 0x3f);
+EventLog.writeEvent(EVENTLOG_NETWORK_STATE_CHANGED,eventLogParam);
+if (LOCAL_LOGD) Log.v(TAG,"New network state is " + result.state);
+if (mIsScanOnly) {
+if (LOCAL_LOGD) Log.v(TAG,"Dropping event in scan-only mode");
+break;
+}
+if (result.state != DetailedState.SCANNING) {
+mNumScansSinceNetworkStateChange=0;
+}
+if (result.state == DetailedState.DISCONNECTED) {
+if (mWifiInfo.getSupplicantState() != SupplicantState.DORMANT) {
+scheduleDisconnect();
+}
+break;
+}
+requestConnectionStatus(mWifiInfo);
+if (!(result.state == DetailedState.CONNECTED && (!mHaveIPAddress || mDisconnectPending))) {
+setDetailedState(result.state);
+}
+if (result.state == DetailedState.CONNECTED) {
+setNotificationVisible(false,0,false,0);
+boolean wasDisconnectPending=mDisconnectPending;
+cancelDisconnect();
+if (!TextUtils.equals(mWifiInfo.getSSID(),mLastSsid)) {
+if (wasDisconnectPending) {
+DetailedState saveState=getNetworkInfo().getDetailedState();
+handleDisconnectedState(DetailedState.DISCONNECTED);
+setDetailedStateInternal(saveState);
+}
+configureInterface();
+}
+mLastBssid=result.BSSID;
+mLastSsid=mWifiInfo.getSSID();
+mLastNetworkId=result.networkId;
+if (mHaveIPAddress) {
+setDetailedState(DetailedState.CONNECTED);
+}
+ else {
+setDetailedState(DetailedState.OBTAINING_IPADDR);
+}
+}
+sendNetworkStateChangeBroadcast(mWifiInfo.getBSSID());
+break;
+case EVENT_SCAN_RESULTS_AVAILABLE:
+if (ActivityManagerNative.isSystemReady()) {
+mContext.sendBroadcast(new Intent(WifiManager.SCAN_RESULTS_AVAILABLE_ACTION));
+}
+sendScanResultsAvailable();
+if (!mIsScanModeSetDueToAHiddenNetwork) {
+setScanMode(false,false);
+}
+break;
+case EVENT_POLL_INTERVAL:
+if (mWifiInfo.getSupplicantState() != SupplicantState.UNINITIALIZED) {
+requestPolledInfo(mWifiInfo);
+if (mWifiInfo.getSupplicantState() == SupplicantState.COMPLETED) {
+setPollTimer();
+}
+}
+break;
+case EVENT_DEFERRED_DISCONNECT:
+if (mWifiInfo.getSupplicantState() != SupplicantState.UNINITIALIZED) {
+handleDisconnectedState(DetailedState.DISCONNECTED);
+}
+break;
+case EVENT_DEFERRED_RECONNECT:
+if (mWifiInfo.getSupplicantState() != SupplicantState.UNINITIALIZED) {
+if (++mReconnectCount > getMaxDhcpRetries()) {
+mWM.disableNetwork(mLastNetworkId);
+}
+synchronized (this) {
+WifiNative.reconnectCommand();
+}
+}
+break;
+case EVENT_INTERFACE_CONFIGURATION_SUCCEEDED:
+if (mWifiInfo.getSupplicantState() == SupplicantState.UNINITIALIZED) {
+break;
+}
+mReconnectCount=0;
+mHaveIPAddress=true;
+mObtainingIPAddress=false;
+mWifiInfo.setIpAddress(mDhcpInfo.ipAddress);
+mLastSignalLevel=-1;
+if (mNetworkInfo.getDetailedState() != DetailedState.CONNECTED) {
+setDetailedState(DetailedState.CONNECTED);
+sendNetworkStateChangeBroadcast(mWifiInfo.getBSSID());
+}
+ else {
+mTarget.sendEmptyMessage(EVENT_CONFIGURATION_CHANGED);
+}
+if (LOCAL_LOGD) Log.v(TAG,"IP configuration: " + mDhcpInfo);
+EventLog.writeEvent(EVENTLOG_INTERFACE_CONFIGURATION_STATE_CHANGED,1);
+resetNotificationTimer();
+break;
+case EVENT_INTERFACE_CONFIGURATION_FAILED:
+if (mWifiInfo.getSupplicantState() != SupplicantState.UNINITIALIZED) {
+EventLog.writeEvent(EVENTLOG_INTERFACE_CONFIGURATION_STATE_CHANGED,0);
+mHaveIPAddress=false;
+mWifiInfo.setIpAddress(0);
+mObtainingIPAddress=false;
+synchronized (this) {
+WifiNative.disconnectCommand();
+}
+}
+break;
+case EVENT_DRIVER_STATE_CHANGED:
+boolean driverStarted=msg.arg1 != 0;
+eventLogParam=driverStarted ? 1 : 0;
+EventLog.writeEvent(EVENTLOG_DRIVER_STATE_CHANGED,eventLogParam);
+if (driverStarted) {
+setNumAllowedChannels();
+synchronized (this) {
+if (mRunState == RUN_STATE_STARTING) {
+mRunState=RUN_STATE_RUNNING;
+if (!mIsScanOnly) {
+WifiNative.reconnectCommand();
+}
+ else {
+WifiNative.scanCommand();
+}
+}
+}
+}
+break;
+case EVENT_PASSWORD_KEY_MAY_BE_INCORRECT:
+mPasswordKeyMayBeIncorrect=true;
+break;
+}
+}

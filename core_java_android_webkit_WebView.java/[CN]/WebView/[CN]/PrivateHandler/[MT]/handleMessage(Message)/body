@@ -1,0 +1,234 @@
+{
+  if (LOGV_ENABLED) {
+    Log.v(LOGTAG,msg.what < REMEMBER_PASSWORD || msg.what > INVAL_RECT_MSG_ID ? Integer.toString(msg.what) : HandlerDebugString[msg.what - REMEMBER_PASSWORD]);
+  }
+switch (msg.what) {
+case REMEMBER_PASSWORD:
+{
+      mDatabase.setUsernamePassword(msg.getData().getString("host"),msg.getData().getString("username"),msg.getData().getString("password"));
+      ((Message)msg.obj).sendToTarget();
+      break;
+    }
+case NEVER_REMEMBER_PASSWORD:
+{
+    mDatabase.setUsernamePassword(msg.getData().getString("host"),null,null);
+    ((Message)msg.obj).sendToTarget();
+    break;
+  }
+case SWITCH_TO_SHORTPRESS:
+{
+  if (mTouchMode == TOUCH_INIT_MODE) {
+    mTouchMode=TOUCH_SHORTPRESS_START_MODE;
+    updateSelection();
+  }
+  break;
+}
+case SWITCH_TO_LONGPRESS:
+{
+mTouchMode=TOUCH_DONE_MODE;
+performLongClick();
+updateTextEntry();
+break;
+}
+case RELEASE_SINGLE_TAP:
+{
+mTouchMode=TOUCH_DONE_MODE;
+if ((Boolean)msg.obj) {
+doShortPress();
+}
+break;
+}
+case SWITCH_TO_ENTER:
+if (LOGV_ENABLED) Log.v(LOGTAG,"SWITCH_TO_ENTER");
+mTouchMode=TOUCH_DONE_MODE;
+onKeyUp(KeyEvent.KEYCODE_ENTER,new KeyEvent(KeyEvent.ACTION_UP,KeyEvent.KEYCODE_ENTER));
+break;
+case SCROLL_BY_MSG_ID:
+setContentScrollBy(msg.arg1,msg.arg2,(Boolean)msg.obj);
+break;
+case SYNC_SCROLL_TO_MSG_ID:
+if (mUserScroll) {
+mUserScroll=false;
+break;
+}
+case SCROLL_TO_MSG_ID:
+if (setContentScrollTo(msg.arg1,msg.arg2)) {
+mUserScroll=false;
+mWebViewCore.sendMessage(EventHub.SYNC_SCROLL,msg.arg1,msg.arg2);
+}
+break;
+case SPAWN_SCROLL_TO_MSG_ID:
+spawnContentScrollTo(msg.arg1,msg.arg2);
+break;
+case NEW_PICTURE_MSG_ID:
+final WebViewCore.DrawData draw=(WebViewCore.DrawData)msg.obj;
+final Point viewSize=draw.mViewPoint;
+if (mZoomScale > 0) {
+if (Math.round(getViewWidth() / mZoomScale) == viewSize.x) {
+mZoomScale=0;
+mWebViewCore.sendMessage(EventHub.SET_SNAP_ANCHOR,0,0);
+}
+}
+mMinContentWidth=msg.arg1;
+if (mMinContentWidth > MAX_FLOAT_CONTENT_WIDTH) {
+mMinZoomScale=(float)getViewWidth() / draw.mWidthHeight.x;
+}
+final boolean updateLayout=viewSize.x == mLastWidthSent && viewSize.y == mLastHeightSent;
+recordNewContentSize(draw.mWidthHeight.x,draw.mWidthHeight.y,updateLayout);
+if (LOGV_ENABLED) {
+Rect b=draw.mInvalRegion.getBounds();
+Log.v(LOGTAG,"NEW_PICTURE_MSG_ID {" + b.left + ","+ b.top+ ","+ b.right+ ","+ b.bottom+ "}");
+}
+invalidate(contentToView(draw.mInvalRegion.getBounds()));
+if (mPictureListener != null) {
+mPictureListener.onNewPicture(WebView.this,capturePicture());
+}
+break;
+case WEBCORE_INITIALIZED_MSG_ID:
+nativeCreate(msg.arg1);
+break;
+case UPDATE_TEXTFIELD_TEXT_MSG_ID:
+if (inEditingMode() && mTextEntry.isSameTextField(msg.arg1)) {
+if (msg.getData().getBoolean("password")) {
+Spannable text=(Spannable)mTextEntry.getText();
+int start=Selection.getSelectionStart(text);
+int end=Selection.getSelectionEnd(text);
+mTextEntry.setInPassword(true);
+Spannable pword=(Spannable)mTextEntry.getText();
+Selection.setSelection(pword,start,end);
+}
+ else if (msg.arg2 == mTextGeneration) {
+mTextEntry.setTextAndKeepSelection((String)msg.obj);
+}
+}
+break;
+case DID_FIRST_LAYOUT_MSG_ID:
+if (mNativeClass == 0) {
+break;
+}
+HashMap scaleLimit=(HashMap)msg.obj;
+int minScale=(Integer)scaleLimit.get("minScale");
+if (minScale == 0) {
+mMinZoomScale=DEFAULT_MIN_ZOOM_SCALE;
+}
+ else {
+mMinZoomScale=(float)(minScale / 100.0);
+}
+int maxScale=(Integer)scaleLimit.get("maxScale");
+if (maxScale == 0) {
+mMaxZoomScale=DEFAULT_MAX_ZOOM_SCALE;
+}
+ else {
+mMaxZoomScale=(float)(maxScale / 100.0);
+}
+if (mDrawHistory) {
+break;
+}
+int width=getViewWidth();
+if (width == 0) {
+break;
+}
+int initialScale=msg.arg1;
+int viewportWidth=msg.arg2;
+float scale=1.0f;
+if (mInitialScale > 0) {
+scale=mInitialScale / 100.0f;
+}
+ else {
+if (mWebViewCore.getSettings().getUseWideViewPort()) {
+mLastWidthSent=0;
+}
+if (initialScale == 0) {
+if (viewportWidth > 0 && viewportWidth < width) {
+scale=(float)width / viewportWidth;
+}
+}
+ else {
+scale=initialScale / 100.0f;
+}
+}
+setNewZoomScale(scale,false);
+break;
+case MARK_NODE_INVALID_ID:
+nativeMarkNodeInvalid(msg.arg1);
+break;
+case NOTIFY_FOCUS_SET_MSG_ID:
+if (mNativeClass != 0) {
+nativeNotifyFocusSet(inEditingMode());
+}
+break;
+case UPDATE_TEXT_ENTRY_MSG_ID:
+boolean alreadyThere=inEditingMode();
+if (alreadyThere && nativeUpdateFocusNode()) {
+FocusNode node=mFocusNode;
+if (node.mIsTextField || node.mIsTextArea) {
+mTextEntry.bringIntoView();
+}
+}
+updateTextEntry();
+break;
+case RECOMPUTE_FOCUS_MSG_ID:
+if (mNativeClass != 0) {
+nativeRecomputeFocus();
+}
+break;
+case INVAL_RECT_MSG_ID:
+{
+Rect r=(Rect)msg.obj;
+if (r == null) {
+invalidate();
+}
+ else {
+viewInvalidate(r.left,r.top,r.right,r.bottom);
+}
+break;
+}
+case UPDATE_TEXT_ENTRY_ADAPTER:
+HashMap data=(HashMap)msg.obj;
+if (mTextEntry.isSameTextField(msg.arg1)) {
+AutoCompleteAdapter adapter=(AutoCompleteAdapter)data.get("adapter");
+mTextEntry.setAdapterCustom(adapter);
+}
+break;
+case UPDATE_CLIPBOARD:
+String str=(String)msg.obj;
+if (LOGV_ENABLED) {
+Log.v(LOGTAG,"UPDATE_CLIPBOARD " + str);
+}
+try {
+IClipboard clip=IClipboard.Stub.asInterface(ServiceManager.getService("clipboard"));
+clip.setClipboardText(str);
+}
+ catch (android.os.RemoteException e) {
+Log.e(LOGTAG,"Clipboard failed",e);
+}
+break;
+case RESUME_WEBCORE_UPDATE:
+WebViewCore.resumeUpdate(mWebViewCore);
+break;
+case LONG_PRESS_ENTER:
+mGotEnterDown=false;
+mTrackballDown=false;
+if (getParent() != null) {
+performLongClick();
+}
+break;
+case WEBCORE_NEED_TOUCH_EVENTS:
+mForwardTouchEvents=(msg.arg1 != 0);
+break;
+case PREVENT_TOUCH_ID:
+if (msg.arg1 == MotionEvent.ACTION_DOWN) {
+mPreventDrag=msg.arg2 == 1;
+if (mPreventDrag) {
+mTouchMode=TOUCH_DONE_MODE;
+}
+}
+break;
+case DISMISS_ZOOM_RING_TUTORIAL:
+mZoomRingController.finishZoomTutorial();
+break;
+default :
+super.handleMessage(msg);
+break;
+}
+}

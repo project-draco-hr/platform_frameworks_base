@@ -1,0 +1,72 @@
+{
+  if (mCancelled)   return;
+  mHeaders=headers;
+  mMimeType="";
+  mEncoding="";
+  ArrayList<String> cookies=headers.getSetCookie();
+  for (int i=0; i < cookies.size(); ++i) {
+    CookieManager.getInstance().setCookie(mUri,cookies.get(i));
+  }
+  long contentLength=headers.getContentLength();
+  if (contentLength != Headers.NO_CONTENT_LENGTH) {
+    mContentLength=contentLength;
+  }
+ else {
+    mContentLength=0;
+  }
+  String contentType=headers.getContentType();
+  if (contentType != null) {
+    parseContentTypeHeader(contentType);
+    if (mMimeType.equalsIgnoreCase("text/plain") || mMimeType.equalsIgnoreCase("application/octet-stream")) {
+      String newMimeType=guessMimeTypeFromExtension();
+      if (newMimeType != null) {
+        mMimeType=newMimeType;
+      }
+    }
+ else     if (mMimeType.equalsIgnoreCase("text/vnd.wap.wml")) {
+      mMimeType="text/plain";
+    }
+ else {
+      if (mMimeType.equalsIgnoreCase("application/xhtml+xml") || mMimeType.equals("application/vnd.wap.xhtml+xml")) {
+        mMimeType="text/html";
+      }
+    }
+  }
+ else {
+    guessMimeType();
+  }
+  boolean mustAuthenticate=(mStatusCode == HTTP_AUTH || mStatusCode == HTTP_PROXY_AUTH);
+  boolean isProxyAuthRequest=(mStatusCode == HTTP_PROXY_AUTH);
+  mAuthFailed=false;
+  if (mAuthHeader != null) {
+    mAuthFailed=(mustAuthenticate && isProxyAuthRequest == mAuthHeader.isProxy());
+    if (!mAuthFailed && mAuthHeader.isProxy()) {
+      Network network=Network.getInstance(mContext);
+      if (network.isValidProxySet()) {
+synchronized (network) {
+          network.setProxyUsername(mAuthHeader.getUsername());
+          network.setProxyPassword(mAuthHeader.getPassword());
+        }
+      }
+    }
+  }
+  mAuthHeader=null;
+  if (mustAuthenticate) {
+    if (mStatusCode == HTTP_AUTH) {
+      mAuthHeader=parseAuthHeader(headers.getWwwAuthenticate());
+    }
+ else {
+      mAuthHeader=parseAuthHeader(headers.getProxyAuthenticate());
+      if (mAuthHeader != null) {
+        mAuthHeader.setProxy();
+      }
+    }
+  }
+  if ((mStatusCode == HTTP_OK || mStatusCode == HTTP_FOUND || mStatusCode == HTTP_MOVED_PERMANENTLY || mStatusCode == HTTP_TEMPORARY_REDIRECT) && mNativeLoader != 0) {
+    mCacheResult=CacheManager.createCacheFile(mUrl,mStatusCode,headers,mMimeType,false);
+    if (mCacheResult != null) {
+      mCacheResult.encoding=mEncoding;
+    }
+  }
+  commitHeadersCheckRedirect();
+}

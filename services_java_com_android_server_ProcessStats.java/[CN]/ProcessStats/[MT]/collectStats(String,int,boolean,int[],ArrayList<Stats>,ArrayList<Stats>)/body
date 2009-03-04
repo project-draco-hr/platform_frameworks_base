@@ -1,0 +1,104 @@
+{
+  workingProcs.clear();
+  int[] pids=Process.getPids(statsFile,curPids);
+  int NP=(pids == null) ? 0 : pids.length;
+  int NS=allProcs.size();
+  int curStatsIndex=0;
+  for (int i=0; i < NP; i++) {
+    int pid=pids[i];
+    if (pid < 0) {
+      NP=pid;
+      break;
+    }
+    Stats st=curStatsIndex < NS ? allProcs.get(curStatsIndex) : null;
+    if (st != null && st.pid == pid) {
+      st.added=false;
+      curStatsIndex++;
+      if (localLOGV)       Log.v(TAG,"Existing pid " + pid + ": "+ st);
+      final long[] procStats=mProcessStatsData;
+      if (!Process.readProcFile(st.statFile.toString(),PROCESS_STATS_FORMAT,null,procStats,null)) {
+        continue;
+      }
+      final long utime=procStats[0];
+      final long stime=procStats[1];
+      if (utime == st.base_utime && stime == st.base_stime) {
+        st.rel_utime=0;
+        st.rel_stime=0;
+        if (st.active) {
+          st.active=false;
+        }
+        continue;
+      }
+      if (!st.active) {
+        st.active=true;
+      }
+      if (parentPid < 0) {
+        getName(st,st.cmdlineFile);
+        if (st.threadStats != null) {
+          mCurThreadPids=collectStats(st.threadsDir,pid,false,mCurThreadPids,st.threadStats,st.workingThreads);
+        }
+      }
+      st.rel_utime=(int)(utime - st.base_utime);
+      st.rel_stime=(int)(stime - st.base_stime);
+      st.base_utime=utime;
+      st.base_stime=stime;
+      workingProcs.add(st);
+      continue;
+    }
+    if (st == null || st.pid > pid) {
+      st=new Stats(pid,parentPid,mIncludeThreads);
+      allProcs.add(curStatsIndex,st);
+      curStatsIndex++;
+      NS++;
+      if (localLOGV)       Log.v(TAG,"New pid " + pid + ": "+ st);
+      final String[] procStatsString=mProcessFullStatsStringData;
+      final long[] procStats=mProcessFullStatsData;
+      if (Process.readProcFile(st.statFile.toString(),PROCESS_FULL_STATS_FORMAT,procStatsString,procStats,null)) {
+        st.baseName=parentPid < 0 ? procStatsString[0] : Integer.toString(pid);
+        st.base_utime=procStats[1];
+        st.base_stime=procStats[2];
+      }
+ else {
+        st.baseName="<unknown>";
+        st.base_utime=st.base_stime=0;
+      }
+      if (parentPid < 0) {
+        getName(st,st.cmdlineFile);
+      }
+ else {
+        st.name=st.baseName;
+        st.nameWidth=onMeasureProcessName(st.name);
+        if (st.threadStats != null) {
+          mCurThreadPids=collectStats(st.threadsDir,pid,true,mCurThreadPids,st.threadStats,st.workingThreads);
+        }
+      }
+      st.rel_utime=0;
+      st.rel_stime=0;
+      st.added=true;
+      if (!first) {
+        workingProcs.add(st);
+      }
+      continue;
+    }
+    st.rel_utime=0;
+    st.rel_stime=0;
+    st.removed=true;
+    workingProcs.add(st);
+    allProcs.remove(curStatsIndex);
+    NS--;
+    if (localLOGV)     Log.v(TAG,"Removed pid " + st.pid + ": "+ st);
+    i--;
+    continue;
+  }
+  while (curStatsIndex < NS) {
+    final Stats st=allProcs.get(curStatsIndex);
+    st.rel_utime=0;
+    st.rel_stime=0;
+    st.removed=true;
+    workingProcs.add(st);
+    allProcs.remove(curStatsIndex);
+    NS--;
+    if (localLOGV)     Log.v(TAG,"Removed pid " + st.pid + ": "+ st);
+  }
+  return pids;
+}

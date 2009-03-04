@@ -1,0 +1,64 @@
+{
+  ContentProvider localProvider=null;
+  if (provider == null) {
+    if (noisy) {
+      Log.d(TAG,"Loading provider " + info.authority + ": "+ info.name);
+    }
+    Context c=null;
+    ApplicationInfo ai=info.applicationInfo;
+    if (context.getPackageName().equals(ai.packageName)) {
+      c=context;
+    }
+ else     if (mInitialApplication != null && mInitialApplication.getPackageName().equals(ai.packageName)) {
+      c=mInitialApplication;
+    }
+ else {
+      try {
+        c=context.createPackageContext(ai.packageName,Context.CONTEXT_INCLUDE_CODE);
+      }
+ catch (      PackageManager.NameNotFoundException e) {
+      }
+    }
+    if (c == null) {
+      Log.w(TAG,"Unable to get context for package " + ai.packageName + " while loading content provider "+ info.name);
+      return null;
+    }
+    try {
+      final java.lang.ClassLoader cl=c.getClassLoader();
+      localProvider=(ContentProvider)cl.loadClass(info.name).newInstance();
+      provider=localProvider.getIContentProvider();
+      if (provider == null) {
+        Log.e(TAG,"Failed to instantiate class " + info.name + " from sourceDir "+ info.applicationInfo.sourceDir);
+        return null;
+      }
+      if (Config.LOGV)       Log.v(TAG,"Instantiating local provider " + info.name);
+      localProvider.attachInfo(c,info);
+    }
+ catch (    java.lang.Exception e) {
+      if (!mInstrumentation.onException(null,e)) {
+        throw new RuntimeException("Unable to get provider " + info.name + ": "+ e.toString(),e);
+      }
+      return null;
+    }
+  }
+ else   if (localLOGV) {
+    Log.v(TAG,"Installing external provider " + info.authority + ": "+ info.name);
+  }
+synchronized (mProviderMap) {
+    String names[]=PATTERN_SEMICOLON.split(info.authority);
+    for (int i=0; i < names.length; i++) {
+      ProviderRecord pr=new ProviderRecord(names[i],provider,localProvider);
+      try {
+        provider.asBinder().linkToDeath(pr,0);
+        mProviderMap.put(names[i],pr);
+      }
+ catch (      RemoteException e) {
+        return null;
+      }
+    }
+    if (localProvider != null) {
+      mLocalProviders.put(provider.asBinder(),new ProviderRecord(null,provider,localProvider));
+    }
+  }
+  return provider;
+}

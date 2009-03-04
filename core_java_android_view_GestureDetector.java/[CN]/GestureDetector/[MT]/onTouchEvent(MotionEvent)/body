@@ -1,0 +1,114 @@
+{
+  final int action=ev.getAction();
+  final float y=ev.getY();
+  final float x=ev.getX();
+  if (mVelocityTracker == null) {
+    mVelocityTracker=VelocityTracker.obtain();
+  }
+  mVelocityTracker.addMovement(ev);
+  boolean handled=false;
+switch (action) {
+case MotionEvent.ACTION_DOWN:
+    if (mDoubleTapListener != null) {
+      boolean hadTapMessage=mHandler.hasMessages(TAP);
+      if (hadTapMessage)       mHandler.removeMessages(TAP);
+      if ((mCurrentDownEvent != null) && (mPreviousUpEvent != null) && hadTapMessage&& isConsideredDoubleTap(mCurrentDownEvent,mPreviousUpEvent,ev)) {
+        mIsDoubleTapping=true;
+        handled|=mDoubleTapListener.onDoubleTap(mCurrentDownEvent);
+        handled|=mDoubleTapListener.onDoubleTapEvent(ev);
+      }
+ else {
+        mHandler.sendEmptyMessageDelayed(TAP,DOUBLE_TAP_TIMEOUT);
+      }
+    }
+  mLastMotionX=x;
+mLastMotionY=y;
+mCurrentDownEvent=MotionEvent.obtain(ev);
+mAlwaysInTapRegion=true;
+mAlwaysInBiggerTapRegion=true;
+mStillDown=true;
+mInLongPress=false;
+if (mIsLongpressEnabled) {
+mHandler.removeMessages(LONG_PRESS);
+mHandler.sendEmptyMessageAtTime(LONG_PRESS,mCurrentDownEvent.getDownTime() + TAP_TIMEOUT + LONGPRESS_TIMEOUT);
+}
+mHandler.sendEmptyMessageAtTime(SHOW_PRESS,mCurrentDownEvent.getDownTime() + TAP_TIMEOUT);
+handled|=mListener.onDown(ev);
+break;
+case MotionEvent.ACTION_MOVE:
+if (mInLongPress) {
+break;
+}
+final float scrollX=mLastMotionX - x;
+final float scrollY=mLastMotionY - y;
+if (mIsDoubleTapping) {
+handled|=mDoubleTapListener.onDoubleTapEvent(ev);
+}
+ else if (mAlwaysInTapRegion) {
+final int deltaX=(int)(x - mCurrentDownEvent.getX());
+final int deltaY=(int)(y - mCurrentDownEvent.getY());
+int distance=(deltaX * deltaX) + (deltaY * deltaY);
+if (distance > mTouchSlopSquare) {
+handled=mListener.onScroll(mCurrentDownEvent,ev,scrollX,scrollY);
+mLastMotionX=x;
+mLastMotionY=y;
+mAlwaysInTapRegion=false;
+mHandler.removeMessages(TAP);
+mHandler.removeMessages(SHOW_PRESS);
+mHandler.removeMessages(LONG_PRESS);
+}
+if (distance > mBiggerTouchSlopSquare) {
+mAlwaysInBiggerTapRegion=false;
+}
+}
+ else if ((Math.abs(scrollX) >= 1) || (Math.abs(scrollY) >= 1)) {
+handled=mListener.onScroll(mCurrentDownEvent,ev,scrollX,scrollY);
+mLastMotionX=x;
+mLastMotionY=y;
+}
+break;
+case MotionEvent.ACTION_UP:
+mStillDown=false;
+MotionEvent currentUpEvent=MotionEvent.obtain(ev);
+if (mIsDoubleTapping) {
+handled|=mDoubleTapListener.onDoubleTapEvent(ev);
+mIsDoubleTapping=false;
+break;
+}
+ else if (mInLongPress) {
+mHandler.removeMessages(TAP);
+mInLongPress=false;
+break;
+}
+if (mAlwaysInTapRegion) {
+handled=mListener.onSingleTapUp(ev);
+}
+ else {
+final VelocityTracker velocityTracker=mVelocityTracker;
+velocityTracker.computeCurrentVelocity(1000);
+final float velocityY=velocityTracker.getYVelocity();
+final float velocityX=velocityTracker.getXVelocity();
+if ((Math.abs(velocityY) > mMinimumFlingVelocity) || (Math.abs(velocityX) > mMinimumFlingVelocity)) {
+handled=mListener.onFling(mCurrentDownEvent,currentUpEvent,velocityX,velocityY);
+}
+}
+mPreviousUpEvent=MotionEvent.obtain(ev);
+mVelocityTracker.recycle();
+mVelocityTracker=null;
+mHandler.removeMessages(SHOW_PRESS);
+mHandler.removeMessages(LONG_PRESS);
+break;
+case MotionEvent.ACTION_CANCEL:
+mHandler.removeMessages(SHOW_PRESS);
+mHandler.removeMessages(LONG_PRESS);
+mHandler.removeMessages(TAP);
+mVelocityTracker.recycle();
+mVelocityTracker=null;
+mStillDown=false;
+if (mInLongPress) {
+mInLongPress=false;
+break;
+}
+}
+return handled;
+}

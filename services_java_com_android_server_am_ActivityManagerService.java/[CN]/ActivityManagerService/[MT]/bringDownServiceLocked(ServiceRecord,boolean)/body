@@ -1,0 +1,87 @@
+{
+  if (!force && r.startRequested) {
+    return;
+  }
+  if (r.connections.size() > 0) {
+    if (!force) {
+      Iterator<ConnectionRecord> it=r.connections.values().iterator();
+      while (it.hasNext()) {
+        ConnectionRecord cr=it.next();
+        if ((cr.flags & Context.BIND_AUTO_CREATE) != 0) {
+          return;
+        }
+      }
+    }
+    Iterator<ConnectionRecord> it=r.connections.values().iterator();
+    while (it.hasNext()) {
+      ConnectionRecord c=it.next();
+      try {
+        c.conn.connected(r.name,null);
+      }
+ catch (      Exception e) {
+        Log.w(TAG,"Failure disconnecting service " + r.name + " to connection "+ c.conn.asBinder()+ " (in "+ c.binding.client.processName+ ")",e);
+      }
+    }
+  }
+  if (r.bindings.size() > 0 && r.app != null && r.app.thread != null) {
+    Iterator<IntentBindRecord> it=r.bindings.values().iterator();
+    while (it.hasNext()) {
+      IntentBindRecord ibr=it.next();
+      if (DEBUG_SERVICE)       Log.v(TAG,"Bringing down binding " + ibr + ": hasBound="+ ibr.hasBound);
+      if (r.app != null && r.app.thread != null && ibr.hasBound) {
+        try {
+          bumpServiceExecutingLocked(r);
+          updateOomAdjLocked(r.app);
+          ibr.hasBound=false;
+          r.app.thread.scheduleUnbindService(r,ibr.intent.getIntent());
+        }
+ catch (        Exception e) {
+          Log.w(TAG,"Exception when unbinding service " + r.shortName,e);
+          serviceDoneExecutingLocked(r,true);
+        }
+      }
+    }
+  }
+  if (DEBUG_SERVICE)   Log.v(TAG,"Bringing down service " + r.name + " "+ r.intent);
+  EventLog.writeEvent(LOG_AM_DESTROY_SERVICE,System.identityHashCode(r),r.shortName,(r.app != null) ? r.app.pid : -1);
+  mServices.remove(r.name);
+  mServicesByIntent.remove(r.intent);
+  if (localLOGV)   Log.v(TAG,"BRING DOWN SERVICE: " + r.shortName);
+  r.totalRestartCount=0;
+  unscheduleServiceRestartLocked(r);
+  int N=mPendingServices.size();
+  for (int i=0; i < N; i++) {
+    if (mPendingServices.get(i) == r) {
+      mPendingServices.remove(i);
+      if (DEBUG_SERVICE)       Log.v(TAG,"Removed pending service: " + r.shortName);
+      i--;
+      N--;
+    }
+  }
+  if (r.app != null) {
+synchronized (r.stats.getBatteryStats()) {
+      r.stats.stopLaunchedLocked();
+    }
+    r.app.services.remove(r);
+    if (r.app.thread != null) {
+      updateServiceForegroundLocked(r.app,false);
+      try {
+        Log.i(TAG,"Stopping service: " + r.shortName);
+        bumpServiceExecutingLocked(r);
+        mStoppingServices.add(r);
+        updateOomAdjLocked(r.app);
+        r.app.thread.scheduleStopService(r);
+      }
+ catch (      Exception e) {
+        Log.w(TAG,"Exception when stopping service " + r.shortName,e);
+        serviceDoneExecutingLocked(r,true);
+      }
+    }
+ else {
+      if (DEBUG_SERVICE)       Log.v(TAG,"Removed service that has no process: " + r.shortName);
+    }
+  }
+ else {
+    if (DEBUG_SERVICE)     Log.v(TAG,"Removed service that is not running: " + r.shortName);
+  }
+}

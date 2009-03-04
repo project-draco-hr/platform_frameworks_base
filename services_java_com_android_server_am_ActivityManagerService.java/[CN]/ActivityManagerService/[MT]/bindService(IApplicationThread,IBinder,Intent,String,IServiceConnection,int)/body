@@ -1,0 +1,72 @@
+{
+  if (service != null && service.hasFileDescriptors() == true) {
+    throw new IllegalArgumentException("File descriptors passed in Intent");
+  }
+synchronized (this) {
+    if (DEBUG_SERVICE)     Log.v(TAG,"bindService: " + service + " type="+ resolvedType+ " conn="+ connection.asBinder()+ " flags=0x"+ Integer.toHexString(flags));
+    final ProcessRecord callerApp=getRecordForAppLocked(caller);
+    if (callerApp == null) {
+      throw new SecurityException("Unable to find app for caller " + caller + " (pid="+ Binder.getCallingPid()+ ") when binding service "+ service);
+    }
+    HistoryRecord activity=null;
+    if (token != null) {
+      int aindex=indexOfTokenLocked(token,false);
+      if (aindex < 0) {
+        Log.w(TAG,"Binding with unknown activity: " + token);
+        return 0;
+      }
+      activity=(HistoryRecord)mHistory.get(aindex);
+    }
+    ServiceLookupResult res=retrieveServiceLocked(service,resolvedType,Binder.getCallingPid(),Binder.getCallingUid());
+    if (res == null) {
+      return 0;
+    }
+    if (res.record == null) {
+      return -1;
+    }
+    ServiceRecord s=res.record;
+    final long origId=Binder.clearCallingIdentity();
+    if (unscheduleServiceRestartLocked(s)) {
+      if (DEBUG_SERVICE)       Log.v(TAG,"BIND SERVICE WHILE RESTART PENDING: " + s.shortName);
+    }
+    AppBindRecord b=s.retrieveAppBindingLocked(service,callerApp);
+    ConnectionRecord c=new ConnectionRecord(b,activity,connection,flags);
+    IBinder binder=connection.asBinder();
+    s.connections.put(binder,c);
+    b.connections.add(c);
+    if (activity != null) {
+      if (activity.connections == null) {
+        activity.connections=new HashSet<ConnectionRecord>();
+      }
+      activity.connections.add(c);
+    }
+    b.client.connections.add(c);
+    mServiceConnections.put(binder,c);
+    if ((flags & Context.BIND_AUTO_CREATE) != 0) {
+      s.lastActivity=SystemClock.uptimeMillis();
+      if (!bringUpServiceLocked(s,service.getFlags(),false)) {
+        return 0;
+      }
+    }
+    if (s.app != null) {
+      updateOomAdjLocked(s.app);
+    }
+    if (DEBUG_SERVICE)     Log.v(TAG,"Bind " + s + " with "+ b+ ": received="+ b.intent.received+ " apps="+ b.intent.apps.size()+ " doRebind="+ b.intent.doRebind);
+    if (s.app != null && b.intent.received) {
+      try {
+        c.conn.connected(s.name,b.intent.binder);
+      }
+ catch (      Exception e) {
+        Log.w(TAG,"Failure sending service " + s.shortName + " to connection "+ c.conn.asBinder()+ " (in "+ c.binding.client.processName+ ")",e);
+      }
+      if (b.intent.apps.size() == 1 && b.intent.doRebind) {
+        requestServiceBindingLocked(s,b.intent,true);
+      }
+    }
+ else     if (!b.intent.requested) {
+      requestServiceBindingLocked(s,b.intent,false);
+    }
+    Binder.restoreCallingIdentity(origId);
+  }
+  return 1;
+}

@@ -1,0 +1,62 @@
+{
+  StringBuilder where=new StringBuilder("reference_number =");
+  where.append(referenceNumber);
+  where.append(" AND address = ?");
+  String[] whereArgs=new String[]{sms.getOriginatingAddress()};
+  byte[][] pdus=null;
+  Cursor cursor=null;
+  try {
+    cursor=mResolver.query(mRawUri,RAW_PROJECTION,where.toString(),whereArgs,null);
+    int cursorCount=cursor.getCount();
+    if (cursorCount != count - 1) {
+      ContentValues values=new ContentValues();
+      values.put("date",new Long(sms.getTimestampMillis()));
+      values.put("pdu",HexDump.toHexString(sms.getPdu()));
+      values.put("address",sms.getOriginatingAddress());
+      values.put("reference_number",referenceNumber);
+      values.put("count",count);
+      values.put("sequence",sequence);
+      if (destinationPort != -1) {
+        values.put("destination_port",destinationPort);
+      }
+      mResolver.insert(mRawUri,values);
+      return;
+    }
+    int pduColumn=cursor.getColumnIndex("pdu");
+    int sequenceColumn=cursor.getColumnIndex("sequence");
+    pdus=new byte[count][];
+    for (int i=0; i < cursorCount; i++) {
+      cursor.moveToNext();
+      int cursorSequence=(int)cursor.getLong(sequenceColumn);
+      pdus[cursorSequence - 1]=HexDump.hexStringToByteArray(cursor.getString(pduColumn));
+    }
+    pdus[sequence - 1]=sms.getPdu();
+    mResolver.delete(mRawUri,where.toString(),whereArgs);
+  }
+ catch (  SQLException e) {
+    Log.e(TAG,"Can't access multipart SMS database",e);
+    return;
+  }
+ finally {
+    if (cursor != null)     cursor.close();
+  }
+switch (destinationPort) {
+case SmsHeader.PORT_WAP_PUSH:
+{
+      ByteArrayOutputStream output=new ByteArrayOutputStream();
+      for (int i=0; i < count; i++) {
+        SmsMessage msg=SmsMessage.createFromPdu(pdus[i]);
+        byte[] data=msg.getUserData();
+        output.write(data,0,data.length);
+      }
+      mWapPush.dispatchWapPdu(output.toByteArray());
+      break;
+    }
+case -1:
+  dispatchPdus(pdus);
+break;
+default :
+dispatchPortAddressedPdus(pdus,destinationPort);
+break;
+}
+}

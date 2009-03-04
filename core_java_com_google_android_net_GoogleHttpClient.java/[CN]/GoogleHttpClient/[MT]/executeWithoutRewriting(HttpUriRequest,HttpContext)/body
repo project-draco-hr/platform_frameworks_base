@@ -1,0 +1,44 @@
+{
+  String code="Error";
+  long start=SystemClock.elapsedRealtime();
+  try {
+    HttpResponse response;
+    boolean logNetworkStats=NetworkStatsEntity.shouldLogNetworkStats();
+    if (logNetworkStats) {
+      int uid=android.os.Process.myUid();
+      long startTx=NetStat.getUidTxBytes(uid);
+      long startRx=NetStat.getUidRxBytes(uid);
+      response=mClient.execute(request,context);
+      code=Integer.toString(response.getStatusLine().getStatusCode());
+      HttpEntity origEntity=response == null ? null : response.getEntity();
+      if (origEntity != null) {
+        long now=SystemClock.elapsedRealtime();
+        long elapsed=now - start;
+        NetworkStatsEntity entity=new NetworkStatsEntity(origEntity,mUserAgent,uid,startTx,startRx,elapsed,now);
+        response.setEntity(entity);
+      }
+    }
+ else {
+      response=mClient.execute(request,context);
+      code=Integer.toString(response.getStatusLine().getStatusCode());
+    }
+    return response;
+  }
+ catch (  IOException e) {
+    code="IOException";
+    throw e;
+  }
+ finally {
+    try {
+      long elapsed=SystemClock.elapsedRealtime() - start;
+      ContentValues values=new ContentValues();
+      values.put(Checkin.Stats.TAG,Checkin.Stats.Tag.HTTP_STATUS + ":" + mUserAgent+ ":"+ code);
+      values.put(Checkin.Stats.COUNT,1);
+      values.put(Checkin.Stats.SUM,elapsed / 1000.0);
+      mResolver.insert(Checkin.Stats.CONTENT_URI,values);
+    }
+ catch (    Exception e) {
+      Log.e(TAG,"Error recording stats",e);
+    }
+  }
+}

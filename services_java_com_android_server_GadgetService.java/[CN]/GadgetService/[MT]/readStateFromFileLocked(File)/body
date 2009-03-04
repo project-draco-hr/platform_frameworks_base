@@ -1,0 +1,114 @@
+{
+  FileInputStream stream=null;
+  boolean success=false;
+  try {
+    stream=new FileInputStream(file);
+    XmlPullParser parser=Xml.newPullParser();
+    parser.setInput(stream,null);
+    int type;
+    int providerIndex=0;
+    HashMap<Integer,Provider> loadedProviders=new HashMap();
+    do {
+      type=parser.next();
+      if (type == XmlPullParser.START_TAG) {
+        String tag=parser.getName();
+        if ("p".equals(tag)) {
+          String pkg=parser.getAttributeValue(null,"pkg");
+          String cl=parser.getAttributeValue(null,"cl");
+          Provider p=lookupProviderLocked(new ComponentName(pkg,cl));
+          if (p == null && mSafeMode) {
+            p=new Provider();
+            p.info=new GadgetProviderInfo();
+            p.info.provider=new ComponentName(pkg,cl);
+            p.zombie=true;
+            mInstalledProviders.add(p);
+          }
+          if (p != null) {
+            loadedProviders.put(providerIndex,p);
+          }
+          providerIndex++;
+        }
+ else         if ("h".equals(tag)) {
+          Host host=new Host();
+          host.packageName=parser.getAttributeValue(null,"pkg");
+          try {
+            host.uid=getUidForPackage(host.packageName);
+          }
+ catch (          PackageManager.NameNotFoundException ex) {
+            host.zombie=true;
+          }
+          if (!host.zombie || mSafeMode) {
+            host.hostId=Integer.parseInt(parser.getAttributeValue(null,"id"),16);
+            mHosts.add(host);
+          }
+        }
+ else         if ("g".equals(tag)) {
+          GadgetId id=new GadgetId();
+          id.gadgetId=Integer.parseInt(parser.getAttributeValue(null,"id"),16);
+          if (id.gadgetId >= mNextGadgetId) {
+            mNextGadgetId=id.gadgetId + 1;
+          }
+          String providerString=parser.getAttributeValue(null,"p");
+          if (providerString != null) {
+            int pIndex=Integer.parseInt(providerString,16);
+            id.provider=loadedProviders.get(pIndex);
+            if (false) {
+              Log.d(TAG,"bound gadgetId=" + id.gadgetId + " to provider "+ pIndex+ " which is "+ id.provider);
+            }
+            if (id.provider == null) {
+              continue;
+            }
+          }
+          int hIndex=Integer.parseInt(parser.getAttributeValue(null,"h"),16);
+          id.host=mHosts.get(hIndex);
+          if (id.host == null) {
+            continue;
+          }
+          if (id.provider != null) {
+            id.provider.instances.add(id);
+          }
+          id.host.instances.add(id);
+          mGadgetIds.add(id);
+        }
+      }
+    }
+ while (type != XmlPullParser.END_DOCUMENT);
+    success=true;
+  }
+ catch (  NullPointerException e) {
+    Log.w(TAG,"failed parsing " + file,e);
+  }
+catch (  NumberFormatException e) {
+    Log.w(TAG,"failed parsing " + file,e);
+  }
+catch (  XmlPullParserException e) {
+    Log.w(TAG,"failed parsing " + file,e);
+  }
+catch (  IOException e) {
+    Log.w(TAG,"failed parsing " + file,e);
+  }
+catch (  IndexOutOfBoundsException e) {
+    Log.w(TAG,"failed parsing " + file,e);
+  }
+  try {
+    if (stream != null) {
+      stream.close();
+    }
+  }
+ catch (  IOException e) {
+  }
+  if (success) {
+    final int N=mHosts.size();
+    for (int i=0; i < N; i++) {
+      pruneHostLocked(mHosts.get(i));
+    }
+  }
+ else {
+    mGadgetIds.clear();
+    mHosts.clear();
+    final int N=mInstalledProviders.size();
+    for (int i=0; i < N; i++) {
+      mInstalledProviders.get(i).instances.clear();
+    }
+  }
+}

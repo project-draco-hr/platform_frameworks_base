@@ -1,0 +1,64 @@
+{
+  enforceAccessPermission();
+  String reply;
+synchronized (mWifiStateTracker) {
+    reply=WifiNative.scanResultsCommand();
+  }
+  if (reply == null) {
+    return null;
+  }
+  List<ScanResult> scanList=new ArrayList<ScanResult>();
+  int lineCount=0;
+  int replyLen=reply.length();
+  for (int lineBeg=0, lineEnd=0; lineEnd <= replyLen; ++lineEnd) {
+    if (lineEnd == replyLen || reply.charAt(lineEnd) == '\n') {
+      ++lineCount;
+      if (lineCount == 1) {
+        lineBeg=lineEnd + 1;
+        continue;
+      }
+      int lineLen=lineEnd - lineBeg;
+      if (0 < lineLen && lineLen <= SCAN_RESULT_BUFFER_SIZE) {
+        int scanResultLevel=0;
+synchronized (mScanResultBuffer) {
+          boolean parsingScanResultLevel=false;
+          for (int i=lineBeg; i < lineEnd; ++i) {
+            char ch=reply.charAt(i);
+            if (ch == '-') {
+              parsingScanResultLevel=(scanResultLevel == 0);
+            }
+ else             if (parsingScanResultLevel) {
+              int digit=Character.digit(ch,10);
+              if (0 <= digit) {
+                scanResultLevel=10 * scanResultLevel + digit;
+                ch='0';
+              }
+ else {
+                parsingScanResultLevel=false;
+              }
+            }
+            mScanResultBuffer[i - lineBeg]=ch;
+          }
+          if (scanResultLevel != 0) {
+            ScanResult scanResult=parseScanResult(new String(mScanResultBuffer,0,lineLen));
+            if (scanResult != null) {
+              scanResult.level=-scanResultLevel;
+              scanList.add(scanResult);
+            }
+          }
+ else           if (DBG) {
+            Log.w(TAG,"ScanResult.level=0: misformatted scan result?");
+          }
+        }
+      }
+ else       if (0 < lineLen) {
+        if (DBG) {
+          Log.w(TAG,"Scan result line is too long: " + (lineEnd - lineBeg) + ", skipping the line!");
+        }
+      }
+      lineBeg=lineEnd + 1;
+    }
+  }
+  mWifiStateTracker.setScanResultsList(scanList);
+  return scanList;
+}

@@ -1,0 +1,114 @@
+{
+  FileInputStream str=null;
+  if (mBackupSettingsFilename.exists()) {
+    try {
+      str=new FileInputStream(mBackupSettingsFilename);
+      mReadMessages.append("Reading from backup settings file\n");
+      Log.i(TAG,"Reading from backup settings file!");
+    }
+ catch (    java.io.IOException e) {
+    }
+  }
+  mPastSignatures.clear();
+  try {
+    if (str == null) {
+      if (!mSettingsFilename.exists()) {
+        mReadMessages.append("No settings file found\n");
+        Log.i(TAG,"No current settings file!");
+        return false;
+      }
+      str=new FileInputStream(mSettingsFilename);
+    }
+    XmlPullParser parser=Xml.newPullParser();
+    parser.setInput(str,null);
+    int type;
+    while ((type=parser.next()) != XmlPullParser.START_TAG && type != XmlPullParser.END_DOCUMENT) {
+      ;
+    }
+    if (type != XmlPullParser.START_TAG) {
+      mReadMessages.append("No start tag found in settings file\n");
+      Log.e(TAG,"No start tag found in package manager settings");
+      return false;
+    }
+    int outerDepth=parser.getDepth();
+    while ((type=parser.next()) != XmlPullParser.END_DOCUMENT && (type != XmlPullParser.END_TAG || parser.getDepth() > outerDepth)) {
+      if (type == XmlPullParser.END_TAG || type == XmlPullParser.TEXT) {
+        continue;
+      }
+      String tagName=parser.getName();
+      if (tagName.equals("package")) {
+        readPackageLP(parser);
+      }
+ else       if (tagName.equals("permissions")) {
+        readPermissionsLP(mPermissions,parser);
+      }
+ else       if (tagName.equals("permission-trees")) {
+        readPermissionsLP(mPermissionTrees,parser);
+      }
+ else       if (tagName.equals("shared-user")) {
+        readSharedUserLP(parser);
+      }
+ else       if (tagName.equals("preferred-packages")) {
+        readPreferredPackagesLP(parser);
+      }
+ else       if (tagName.equals("preferred-activities")) {
+        readPreferredActivitiesLP(parser);
+      }
+ else       if (tagName.equals("updated-package")) {
+        readDisabledSysPackageLP(parser);
+      }
+ else {
+        Log.w(TAG,"Unknown element under <packages>: " + parser.getName());
+        XmlUtils.skipCurrentTag(parser);
+      }
+    }
+    str.close();
+  }
+ catch (  XmlPullParserException e) {
+    mReadMessages.append("Error reading: " + e.toString());
+    Log.e(TAG,"Error reading package manager settings",e);
+  }
+catch (  java.io.IOException e) {
+    mReadMessages.append("Error reading: " + e.toString());
+    Log.e(TAG,"Error reading package manager settings",e);
+  }
+  int N=mPendingPackages.size();
+  for (int i=0; i < N; i++) {
+    final PendingPackage pp=mPendingPackages.get(i);
+    Object idObj=getUserIdLP(pp.sharedId);
+    if (idObj != null && idObj instanceof SharedUserSetting) {
+      PackageSetting p=getPackageLP(pp.name,(SharedUserSetting)idObj,pp.codePath,pp.resourcePath,pp.pkgFlags,true,true);
+      if (p == null) {
+        Log.w(TAG,"Unable to create application package for " + pp.name);
+        continue;
+      }
+      p.copyFrom(pp);
+    }
+ else     if (idObj != null) {
+      String msg="Bad package setting: package " + pp.name + " has shared uid "+ pp.sharedId+ " that is not a shared uid\n";
+      mReadMessages.append(msg);
+      Log.e(TAG,msg);
+    }
+ else {
+      String msg="Bad package setting: package " + pp.name + " has shared uid "+ pp.sharedId+ " that is not defined\n";
+      mReadMessages.append(msg);
+      Log.e(TAG,msg);
+    }
+  }
+  mPendingPackages.clear();
+  N=mPendingPreferredPackages.size();
+  mPreferredPackages.clear();
+  for (int i=0; i < N; i++) {
+    final String name=mPendingPreferredPackages.get(i);
+    final PackageSetting p=mPackages.get(name);
+    if (p != null) {
+      mPreferredPackages.add(p);
+    }
+ else {
+      Log.w(TAG,"Unknown preferred package: " + name);
+    }
+  }
+  mPendingPreferredPackages.clear();
+  mReadMessages.append("Read completed successfully: " + mPackages.size() + " packages, "+ mSharedUsers.size()+ " shared uids\n");
+  return true;
+}

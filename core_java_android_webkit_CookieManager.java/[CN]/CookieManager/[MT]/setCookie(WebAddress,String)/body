@@ -1,0 +1,81 @@
+{
+  if (value != null && value.length() > MAX_COOKIE_LENGTH) {
+    return;
+  }
+  if (!mAcceptCookie || uri == null) {
+    return;
+  }
+  if (Config.LOGV) {
+    Log.v(LOGTAG,"setCookie: uri: " + uri + " value: "+ value);
+  }
+  String[] hostAndPath=getHostAndPath(uri);
+  if (hostAndPath == null) {
+    return;
+  }
+  if (hostAndPath[1].length() > 1) {
+    int index=hostAndPath[1].lastIndexOf(PATH_DELIM);
+    hostAndPath[1]=hostAndPath[1].substring(0,index > 0 ? index : index + 1);
+  }
+  ArrayList<Cookie> cookies=null;
+  try {
+    cookies=parseCookie(hostAndPath[0],hostAndPath[1],value);
+  }
+ catch (  RuntimeException ex) {
+    Log.e(LOGTAG,"parse cookie failed for: " + value);
+  }
+  if (cookies == null || cookies.size() == 0) {
+    return;
+  }
+  String baseDomain=getBaseDomain(hostAndPath[0]);
+  ArrayList<Cookie> cookieList=mCookieMap.get(baseDomain);
+  if (cookieList == null) {
+    cookieList=CookieSyncManager.getInstance().getCookiesForDomain(baseDomain);
+    mCookieMap.put(baseDomain,cookieList);
+  }
+  long now=System.currentTimeMillis();
+  int size=cookies.size();
+  for (int i=0; i < size; i++) {
+    Cookie cookie=cookies.get(i);
+    boolean done=false;
+    Iterator<Cookie> iter=cookieList.iterator();
+    while (iter.hasNext()) {
+      Cookie cookieEntry=iter.next();
+      if (cookie.exactMatch(cookieEntry)) {
+        if (cookie.expires < 0 || cookie.expires > now) {
+          if (!cookieEntry.secure || HTTPS.equals(uri.mScheme)) {
+            cookieEntry.value=cookie.value;
+            cookieEntry.expires=cookie.expires;
+            cookieEntry.secure=cookie.secure;
+            cookieEntry.lastAcessTime=now;
+            cookieEntry.lastUpdateTime=now;
+            cookieEntry.mode=Cookie.MODE_REPLACED;
+          }
+        }
+ else {
+          cookieEntry.lastUpdateTime=now;
+          cookieEntry.mode=Cookie.MODE_DELETED;
+        }
+        done=true;
+        break;
+      }
+    }
+    if (!done && (cookie.expires < 0 || cookie.expires > now)) {
+      cookie.lastAcessTime=now;
+      cookie.lastUpdateTime=now;
+      cookie.mode=Cookie.MODE_NEW;
+      if (cookieList.size() > MAX_COOKIE_COUNT_PER_BASE_DOMAIN) {
+        Cookie toDelete=new Cookie();
+        toDelete.lastAcessTime=now;
+        Iterator<Cookie> iter2=cookieList.iterator();
+        while (iter2.hasNext()) {
+          Cookie cookieEntry2=iter2.next();
+          if ((cookieEntry2.lastAcessTime < toDelete.lastAcessTime) && cookieEntry2.mode != Cookie.MODE_DELETED) {
+            toDelete=cookieEntry2;
+          }
+        }
+        toDelete.mode=Cookie.MODE_DELETED;
+      }
+      cookieList.add(cookie);
+    }
+  }
+}

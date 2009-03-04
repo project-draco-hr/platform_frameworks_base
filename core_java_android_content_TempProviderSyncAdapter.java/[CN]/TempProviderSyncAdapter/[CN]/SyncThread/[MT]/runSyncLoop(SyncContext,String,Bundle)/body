@@ -1,0 +1,149 @@
+{
+  TimingLogger syncTimer=new TimingLogger(TAG + "Profiling","sync");
+  syncTimer.addSplit("start");
+  int loopCount=0;
+  boolean tooManyGetServerDiffsAttempts=false;
+  final boolean overrideTooManyDeletions=extras.getBoolean(ContentResolver.SYNC_EXTRAS_OVERRIDE_TOO_MANY_DELETIONS,false);
+  final boolean discardLocalDeletions=extras.getBoolean(ContentResolver.SYNC_EXTRAS_DISCARD_LOCAL_DELETIONS,false);
+  boolean uploadOnly=extras.getBoolean(ContentResolver.SYNC_EXTRAS_UPLOAD,false);
+  SyncableContentProvider serverDiffs=null;
+  TempProviderSyncResult result=new TempProviderSyncResult();
+  try {
+    if (!uploadOnly) {
+      while (!mIsCanceled) {
+        if (loopCount++ == MAX_GET_SERVER_DIFFS_LOOP_COUNT) {
+          Log.e(TAG,"runSyncLoop: Hit max loop count while getting server diffs " + getClass().getName());
+          tooManyGetServerDiffsAttempts=true;
+          break;
+        }
+        if (serverDiffs != null)         serverDiffs.close();
+        serverDiffs=mProvider.getTemporaryInstance();
+        initTempProvider(serverDiffs);
+        Object syncInfo=createSyncInfo();
+        SyncData syncData=readSyncData(serverDiffs);
+        if (syncData == null) {
+          mProvider.wipeAccount(account);
+          syncData=newSyncData();
+        }
+        mResult.clear();
+        if (Log.isLoggable(TAG,Log.VERBOSE)) {
+          Log.v(TAG,"runSyncLoop: running getServerDiffs using syncData " + syncData.toString());
+        }
+        getServerDiffs(syncContext,syncData,serverDiffs,extras,syncInfo,mResult);
+        if (mIsCanceled)         return;
+        if (Log.isLoggable(TAG,Log.VERBOSE)) {
+          Log.v(TAG,"runSyncLoop: result: " + mResult);
+        }
+        if (mResult.hasError())         return;
+        if (mResult.partialSyncUnavailable) {
+          if (Config.LOGD) {
+            Log.d(TAG,"partialSyncUnavailable is set, setting " + "ignoreSyncData and retrying");
+          }
+          mProvider.wipeAccount(account);
+          continue;
+        }
+        writeSyncData(syncData,serverDiffs);
+        if (Log.isLoggable(TAG,Log.VERBOSE)) {
+          Log.v(TAG,"runSyncLoop: running merge");
+        }
+        mProvider.merge(syncContext,serverDiffs,null,mResult);
+        if (mIsCanceled)         return;
+        if (Log.isLoggable(TAG,Log.VERBOSE)) {
+          Log.v(TAG,"runSyncLoop: result: " + mResult);
+        }
+        if (!mResult.moreRecordsToGet) {
+          if (Log.isLoggable(TAG,Log.VERBOSE)) {
+            Log.v(TAG,"runSyncLoop: fetched all data, moving on");
+          }
+          break;
+        }
+        if (Log.isLoggable(TAG,Log.VERBOSE)) {
+          Log.v(TAG,"runSyncLoop: more data to fetch, looping");
+        }
+      }
+    }
+    loopCount=0;
+    boolean readOnly=isReadOnly();
+    long previousNumModifications=0;
+    if (serverDiffs != null) {
+      serverDiffs.close();
+      serverDiffs=null;
+    }
+    if (discardLocalDeletions) {
+      serverDiffs=mProvider.getTemporaryInstance();
+      initTempProvider(serverDiffs);
+      writeSyncData(null,serverDiffs);
+    }
+    while (!mIsCanceled) {
+      if (Config.LOGV) {
+        Log.v(TAG,"runSyncLoop: Merging diffs from server to client");
+      }
+      if (result.tempContentProvider != null) {
+        result.tempContentProvider.close();
+        result.tempContentProvider=null;
+      }
+      mResult.clear();
+      mProvider.merge(syncContext,serverDiffs,readOnly ? null : result,mResult);
+      if (mIsCanceled)       return;
+      if (Log.isLoggable(TAG,Log.VERBOSE)) {
+        Log.v(TAG,"runSyncLoop: result: " + mResult);
+      }
+      SyncableContentProvider clientDiffs=readOnly ? null : result.tempContentProvider;
+      if (clientDiffs == null) {
+        if (Config.LOGV)         Log.v(TAG,"runSyncLoop: No client diffs");
+        break;
+      }
+      long numModifications=mResult.stats.numUpdates + mResult.stats.numDeletes + mResult.stats.numInserts;
+      if (numModifications < previousNumModifications) {
+        loopCount=0;
+      }
+      previousNumModifications=numModifications;
+      if (loopCount++ >= MAX_UPLOAD_CHANGES_LOOP_COUNT) {
+        Log.e(TAG,"runSyncLoop: Hit max loop count while syncing " + getClass().getName());
+        mResult.tooManyRetries=true;
+        break;
+      }
+      if (!overrideTooManyDeletions && !discardLocalDeletions && hasTooManyDeletions(mResult.stats)) {
+        if (Config.LOGD) {
+          Log.d(TAG,"runSyncLoop: Too many deletions were found in provider " + getClass().getName() + ", not doing any more updates");
+        }
+        long numDeletes=mResult.stats.numDeletes;
+        mResult.stats.clear();
+        mResult.tooManyDeletions=true;
+        mResult.stats.numDeletes=numDeletes;
+        break;
+      }
+      if (Config.LOGV)       Log.v(TAG,"runSyncLoop: Merging diffs from client to server");
+      if (serverDiffs != null)       serverDiffs.close();
+      serverDiffs=clientDiffs.getTemporaryInstance();
+      initTempProvider(serverDiffs);
+      mResult.clear();
+      sendClientDiffs(syncContext,clientDiffs,serverDiffs,mResult,discardLocalDeletions);
+      if (Log.isLoggable(TAG,Log.VERBOSE)) {
+        Log.v(TAG,"runSyncLoop: result: " + mResult);
+      }
+      if (!mResult.madeSomeProgress()) {
+        if (Log.isLoggable(TAG,Log.VERBOSE)) {
+          Log.v(TAG,"runSyncLoop: No data from client diffs merge");
+        }
+        break;
+      }
+      if (Log.isLoggable(TAG,Log.VERBOSE)) {
+        Log.v(TAG,"runSyncLoop: made some progress, looping");
+      }
+    }
+    mResult.tooManyRetries|=tooManyGetServerDiffsAttempts;
+    if (Log.isLoggable(TAG,Log.VERBOSE)) {
+      Log.v(TAG,"runSyncLoop: final result: " + mResult);
+    }
+  }
+  finally {
+    if (discardLocalDeletions) {
+      mResult.fullSyncRequested=true;
+    }
+    if (serverDiffs != null)     serverDiffs.close();
+    if (result.tempContentProvider != null)     result.tempContentProvider.close();
+    syncTimer.addSplit("stop");
+    syncTimer.dumpToLog();
+  }
+}

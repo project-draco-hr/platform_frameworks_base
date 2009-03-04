@@ -1,0 +1,135 @@
+{
+  ProcessRecord app;
+  if (pid != MY_PID && pid >= 0) {
+synchronized (mPidsSelfLocked) {
+      app=mPidsSelfLocked.get(pid);
+    }
+  }
+ else   if (mStartingProcesses.size() > 0) {
+    app=mStartingProcesses.remove(0);
+    app.pid=pid;
+  }
+ else {
+    app=null;
+  }
+  if (app == null) {
+    Log.w(TAG,"No pending application record for pid " + pid + " (IApplicationThread "+ thread+ "); dropping process");
+    EventLog.writeEvent(LOG_AM_DROP_PROCESS,pid);
+    if (pid > 0 && pid != MY_PID) {
+      Process.killProcess(pid);
+    }
+ else {
+      try {
+        thread.scheduleExit();
+      }
+ catch (      Exception e) {
+      }
+    }
+    return false;
+  }
+  if (app.thread != null) {
+    handleAppDiedLocked(app,true);
+  }
+  if (localLOGV)   Log.v(TAG,"Binding process pid " + pid + " to record "+ app);
+  String processName=app.processName;
+  try {
+    thread.asBinder().linkToDeath(new AppDeathRecipient(app,pid,thread),0);
+  }
+ catch (  RemoteException e) {
+    app.resetPackageList();
+    startProcessLocked(app,"link fail",processName);
+    return false;
+  }
+  EventLog.writeEvent(LOG_AM_PROCESS_BOUND,app.pid,app.processName);
+  app.thread=thread;
+  app.curAdj=app.setAdj=-100;
+  app.forcingToForeground=null;
+  app.foregroundServices=false;
+  app.debugging=false;
+  mHandler.removeMessages(PROC_START_TIMEOUT_MSG,app);
+  List providers=generateApplicationProvidersLocked(app);
+  if (localLOGV)   Log.v(TAG,"New app record " + app + " thread="+ thread.asBinder()+ " pid="+ pid);
+  try {
+    int testMode=IApplicationThread.DEBUG_OFF;
+    if (mDebugApp != null && mDebugApp.equals(processName)) {
+      testMode=mWaitForDebugger ? IApplicationThread.DEBUG_WAIT : IApplicationThread.DEBUG_ON;
+      app.debugging=true;
+      if (mDebugTransient) {
+        mDebugApp=mOrigDebugApp;
+        mWaitForDebugger=mOrigWaitForDebugger;
+      }
+    }
+    thread.bindApplication(processName,app.info,providers,app.instrumentationClass,app.instrumentationProfileFile,app.instrumentationArguments,app.instrumentationWatcher,testMode,mConfiguration,getCommonServicesLocked());
+    updateLRUListLocked(app,false);
+    app.lastRequestedGc=SystemClock.uptimeMillis();
+  }
+ catch (  Exception e) {
+    Log.w(TAG,"Exception thrown during bind!",e);
+    app.resetPackageList();
+    startProcessLocked(app,"bind fail",processName);
+    return false;
+  }
+  mPersistentStartingProcesses.remove(app);
+  mProcessesOnHold.remove(app);
+  boolean badApp=false;
+  boolean didSomething=false;
+  HistoryRecord hr=topRunningActivityLocked(null);
+  if (hr != null) {
+    if (hr.app == null && app.info.uid == hr.info.applicationInfo.uid && processName.equals(hr.processName)) {
+      try {
+        if (realStartActivityLocked(hr,app,true,true)) {
+          didSomething=true;
+        }
+      }
+ catch (      Exception e) {
+        Log.w(TAG,"Exception in new application when starting activity " + hr.intent.getComponent().flattenToShortString(),e);
+        badApp=true;
+      }
+    }
+ else {
+      ensureActivitiesVisibleLocked(hr,null,processName,0);
+    }
+  }
+  if (!badApp && mPendingServices.size() > 0) {
+    ServiceRecord sr=null;
+    try {
+      for (int i=0; i < mPendingServices.size(); i++) {
+        sr=mPendingServices.get(i);
+        if (app.info.uid != sr.appInfo.uid || !processName.equals(sr.processName)) {
+          continue;
+        }
+        mPendingServices.remove(i);
+        i--;
+        realStartServiceLocked(sr,app);
+        didSomething=true;
+      }
+    }
+ catch (    Exception e) {
+      Log.w(TAG,"Exception in new application when starting service " + sr.shortName,e);
+      badApp=true;
+    }
+  }
+  BroadcastRecord br=mPendingBroadcast;
+  if (!badApp && br != null && br.curApp == app) {
+    try {
+      mPendingBroadcast=null;
+      processCurBroadcastLocked(br,app);
+      didSomething=true;
+    }
+ catch (    Exception e) {
+      Log.w(TAG,"Exception in new application when starting receiver " + br.curComponent.flattenToShortString(),e);
+      badApp=true;
+      logBroadcastReceiverDiscard(br);
+      finishReceiverLocked(br.receiver,br.resultCode,br.resultData,br.resultExtras,br.resultAbort,true);
+      scheduleBroadcastsLocked();
+    }
+  }
+  if (badApp) {
+    handleAppDiedLocked(app,false);
+    return false;
+  }
+  if (!didSomething) {
+    updateOomAdjLocked();
+  }
+  return true;
+}

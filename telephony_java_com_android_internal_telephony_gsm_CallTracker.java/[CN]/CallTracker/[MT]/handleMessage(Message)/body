@@ -1,0 +1,64 @@
+{
+  AsyncResult ar;
+switch (msg.what) {
+case EVENT_POLL_CALLS_RESULT:
+    ar=(AsyncResult)msg.obj;
+  if (msg == lastRelevantPoll) {
+    if (DBG_POLL)     log("handle EVENT_POLL_CALL_RESULT: set needsPoll=F");
+    needsPoll=false;
+    lastRelevantPoll=null;
+    handlePollCalls((AsyncResult)msg.obj);
+  }
+break;
+case EVENT_OPERATION_COMPLETE:
+ar=(AsyncResult)msg.obj;
+operationComplete();
+break;
+case EVENT_SWITCH_RESULT:
+case EVENT_CONFERENCE_RESULT:
+case EVENT_SEPARATE_RESULT:
+case EVENT_ECT_RESULT:
+ar=(AsyncResult)msg.obj;
+if (ar.exception != null) {
+phone.notifySuppServiceFailed(getFailedService(msg.what));
+}
+operationComplete();
+break;
+case EVENT_GET_LAST_CALL_FAIL_CAUSE:
+int causeCode;
+ar=(AsyncResult)msg.obj;
+operationComplete();
+if (ar.exception != null) {
+causeCode=CallFailCause.NORMAL_CLEARING;
+Log.i(LOG_TAG,"Exception during getLastCallFailCause, assuming normal disconnect");
+}
+ else {
+causeCode=((int[])ar.result)[0];
+}
+if (causeCode == CallFailCause.NO_CIRCUIT_AVAIL || causeCode == CallFailCause.TEMPORARY_FAILURE || causeCode == CallFailCause.SWITCHING_CONGESTION || causeCode == CallFailCause.CHANNEL_NOT_AVAIL || causeCode == CallFailCause.QOS_NOT_AVAIL || causeCode == CallFailCause.BEARER_NOT_AVAIL || causeCode == CallFailCause.ERROR_UNSPECIFIED) {
+int cid=-1;
+GsmCellLocation loc=((GsmCellLocation)phone.getCellLocation());
+if (loc != null) cid=loc.getCid();
+EventLog.List val=new EventLog.List(causeCode,cid,TelephonyManager.getDefault().getNetworkType());
+EventLog.writeEvent(TelephonyEventLog.EVENT_LOG_CALL_DROP,val);
+}
+for (int i=0, s=droppedDuringPoll.size(); i < s; i++) {
+GSMConnection conn=droppedDuringPoll.get(i);
+conn.onRemoteDisconnect(causeCode);
+}
+updatePhoneState();
+phone.notifyCallStateChanged();
+droppedDuringPoll.clear();
+break;
+case EVENT_REPOLL_AFTER_DELAY:
+case EVENT_CALL_STATE_CHANGE:
+pollCallsWhenSafe();
+break;
+case EVENT_RADIO_AVAILABLE:
+handleRadioAvailable();
+break;
+case EVENT_RADIO_NOT_AVAILABLE:
+handleRadioNotAvailable();
+break;
+}
+}

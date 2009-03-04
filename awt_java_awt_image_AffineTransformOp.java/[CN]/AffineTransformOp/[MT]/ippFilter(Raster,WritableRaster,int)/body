@@ -1,0 +1,119 @@
+{
+  int srcStride, dstStride;
+  boolean skipChannel=false;
+  int channels;
+  int offsets[]=null;
+switch (imageType) {
+case BufferedImage.TYPE_INT_RGB:
+case BufferedImage.TYPE_INT_BGR:
+{
+      channels=4;
+      srcStride=src.getWidth() * 4;
+      dstStride=dst.getWidth() * 4;
+      skipChannel=true;
+      break;
+    }
+case BufferedImage.TYPE_INT_ARGB:
+case BufferedImage.TYPE_INT_ARGB_PRE:
+case BufferedImage.TYPE_4BYTE_ABGR:
+case BufferedImage.TYPE_4BYTE_ABGR_PRE:
+{
+    channels=4;
+    srcStride=src.getWidth() * 4;
+    dstStride=dst.getWidth() * 4;
+    break;
+  }
+case BufferedImage.TYPE_BYTE_GRAY:
+case BufferedImage.TYPE_BYTE_INDEXED:
+{
+  channels=1;
+  srcStride=src.getWidth();
+  dstStride=dst.getWidth();
+  break;
+}
+case BufferedImage.TYPE_3BYTE_BGR:
+{
+channels=3;
+srcStride=src.getWidth() * 3;
+dstStride=dst.getWidth() * 3;
+break;
+}
+case BufferedImage.TYPE_USHORT_GRAY:
+case BufferedImage.TYPE_USHORT_565_RGB:
+case BufferedImage.TYPE_USHORT_555_RGB:
+case BufferedImage.TYPE_BYTE_BINARY:
+{
+return slowFilter(src,dst);
+}
+default :
+{
+SampleModel srcSM=src.getSampleModel();
+SampleModel dstSM=dst.getSampleModel();
+if (srcSM instanceof PixelInterleavedSampleModel && dstSM instanceof PixelInterleavedSampleModel) {
+if (srcSM.getDataType() != DataBuffer.TYPE_BYTE || dstSM.getDataType() != DataBuffer.TYPE_BYTE) {
+return slowFilter(src,dst);
+}
+channels=srcSM.getNumBands();
+if (channels != 1 && channels != 3 && channels != 4) {
+return slowFilter(src,dst);
+}
+int dataTypeSize=DataBuffer.getDataTypeSize(srcSM.getDataType()) / 8;
+srcStride=((ComponentSampleModel)srcSM).getScanlineStride() * dataTypeSize;
+dstStride=((ComponentSampleModel)dstSM).getScanlineStride() * dataTypeSize;
+}
+ else if (srcSM instanceof SinglePixelPackedSampleModel && dstSM instanceof SinglePixelPackedSampleModel) {
+SinglePixelPackedSampleModel sppsm1=(SinglePixelPackedSampleModel)srcSM;
+SinglePixelPackedSampleModel sppsm2=(SinglePixelPackedSampleModel)dstSM;
+if (sppsm1.getDataType() == DataBuffer.TYPE_USHORT) {
+return slowFilter(src,dst);
+}
+channels=sppsm1.getNumBands();
+if (channels != 1 && channels != 3 && channels != 4) {
+return slowFilter(src,dst);
+}
+if (sppsm1.getDataType() != sppsm2.getDataType() || !Arrays.equals(sppsm1.getBitOffsets(),sppsm2.getBitOffsets()) || !Arrays.equals(sppsm1.getBitMasks(),sppsm2.getBitMasks())) {
+return slowFilter(src,dst);
+}
+for (int i=0; i < channels; i++) {
+if (sppsm1.getSampleSize(i) != 8) {
+  return slowFilter(src,dst);
+}
+}
+if (channels == 3) {
+channels=4;
+}
+int dataTypeSize=DataBuffer.getDataTypeSize(sppsm1.getDataType()) / 8;
+srcStride=sppsm1.getScanlineStride() * dataTypeSize;
+dstStride=sppsm2.getScanlineStride() * dataTypeSize;
+}
+ else {
+return slowFilter(src,dst);
+}
+if (src.getParent() != null || dst.getParent() != null) {
+if (src.getSampleModelTranslateX() != 0 || src.getSampleModelTranslateY() != 0 || dst.getSampleModelTranslateX() != 0 || dst.getSampleModelTranslateY() != 0) {
+offsets=new int[4];
+offsets[0]=-src.getSampleModelTranslateX() + src.getMinX();
+offsets[1]=-src.getSampleModelTranslateY() + src.getMinY();
+offsets[2]=-dst.getSampleModelTranslateX() + dst.getMinX();
+offsets[3]=-dst.getSampleModelTranslateY() + dst.getMinY();
+}
+}
+}
+}
+double m00=at.getScaleX();
+double m01=at.getShearX();
+double m02=at.getTranslateX();
+double m10=at.getShearY();
+double m11=at.getScaleY();
+double m12=at.getTranslateY();
+Object srcData, dstData;
+AwtImageBackdoorAccessor dbAccess=AwtImageBackdoorAccessor.getInstance();
+try {
+srcData=dbAccess.getData(src.getDataBuffer());
+dstData=dbAccess.getData(dst.getDataBuffer());
+}
+ catch (IllegalArgumentException e) {
+return -1;
+}
+return ippAffineTransform(m00,m01,m02,m10,m11,m12,srcData,src.getWidth(),src.getHeight(),srcStride,dstData,dst.getWidth(),dst.getHeight(),dstStride,iType,channels,skipChannel,offsets);
+}

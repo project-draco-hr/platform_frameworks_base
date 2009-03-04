@@ -1,0 +1,52 @@
+{
+  ServiceRecord r=null;
+  if (service.getComponent() != null) {
+    r=mServices.get(service.getComponent());
+  }
+  Intent.FilterComparison filter=new Intent.FilterComparison(service);
+  r=mServicesByIntent.get(filter);
+  if (r == null) {
+    try {
+      ResolveInfo rInfo=ActivityThread.getPackageManager().resolveService(service,resolvedType,PackageManager.GET_SHARED_LIBRARY_FILES);
+      ServiceInfo sInfo=rInfo != null ? rInfo.serviceInfo : null;
+      if (sInfo == null) {
+        Log.w(TAG,"Unable to start service " + service + ": not found");
+        return null;
+      }
+      ComponentName name=new ComponentName(sInfo.applicationInfo.packageName,sInfo.name);
+      r=mServices.get(name);
+      if (r == null) {
+        filter=new Intent.FilterComparison(service.cloneFilter());
+        ServiceRestarter res=new ServiceRestarter();
+        BatteryStatsImpl.Uid.Pkg.Serv ss=null;
+        BatteryStatsImpl stats=mBatteryStatsService.getActiveStatistics();
+synchronized (stats) {
+          ss=stats.getServiceStatsLocked(sInfo.applicationInfo.uid,sInfo.packageName,sInfo.name);
+        }
+        r=new ServiceRecord(ss,name,filter,sInfo,res);
+        res.setService(r);
+        mServices.put(name,r);
+        mServicesByIntent.put(filter,r);
+        int N=mPendingServices.size();
+        for (int i=0; i < N; i++) {
+          ServiceRecord pr=mPendingServices.get(i);
+          if (pr.name.equals(name)) {
+            mPendingServices.remove(i);
+            i--;
+            N--;
+          }
+        }
+      }
+    }
+ catch (    RemoteException ex) {
+    }
+  }
+  if (r != null) {
+    if (checkComponentPermission(r.permission,callingPid,callingUid,r.exported ? -1 : r.appInfo.uid) != PackageManager.PERMISSION_GRANTED) {
+      Log.w(TAG,"Permission Denial: Accessing service " + r.name + " from pid="+ Binder.getCallingPid()+ ", uid="+ Binder.getCallingUid()+ " requires "+ r.permission);
+      return new ServiceLookupResult(null,r.permission);
+    }
+    return new ServiceLookupResult(r,null);
+  }
+  return null;
+}

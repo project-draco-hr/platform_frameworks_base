@@ -1,0 +1,199 @@
+{
+  boolean forceReset=(newActivity.info.flags & ActivityInfo.FLAG_CLEAR_TASK_ON_LAUNCH) != 0;
+  if (taskTop.task.getInactiveDuration() > ACTIVITY_INACTIVE_RESET_TIME) {
+    if ((newActivity.info.flags & ActivityInfo.FLAG_ALWAYS_RETAIN_TASK_STATE) == 0) {
+      forceReset=true;
+    }
+  }
+  final TaskRecord task=taskTop.task;
+  HistoryRecord target=null;
+  int targetI=0;
+  int taskTopI=-1;
+  int replyChainEnd=-1;
+  int lastReparentPos=-1;
+  for (int i=mHistory.size() - 1; i >= -1; i--) {
+    HistoryRecord below=i >= 0 ? (HistoryRecord)mHistory.get(i) : null;
+    if (below != null && below.finishing) {
+      continue;
+    }
+    if (target == null) {
+      target=below;
+      targetI=i;
+      replyChainEnd=-1;
+      continue;
+    }
+    final int flags=target.info.flags;
+    final boolean finishOnTaskLaunch=(flags & ActivityInfo.FLAG_FINISH_ON_TASK_LAUNCH) != 0;
+    final boolean allowTaskReparenting=(flags & ActivityInfo.FLAG_ALLOW_TASK_REPARENTING) != 0;
+    if (target.task == task) {
+      if (taskTopI < 0) {
+        taskTopI=targetI;
+      }
+      if (below != null && below.task == task) {
+        final boolean clearWhenTaskReset=(target.intent.getFlags() & Intent.FLAG_ACTIVITY_CLEAR_WHEN_TASK_RESET) != 0;
+        if (!finishOnTaskLaunch && target.resultTo != null) {
+          if (replyChainEnd < 0) {
+            replyChainEnd=targetI;
+          }
+        }
+ else         if (!finishOnTaskLaunch && allowTaskReparenting && target.taskAffinity != null && !target.taskAffinity.equals(task.affinity)) {
+          HistoryRecord p=(HistoryRecord)mHistory.get(0);
+          if (target.taskAffinity != null && target.taskAffinity.equals(p.task.affinity)) {
+            target.task=p.task;
+            if (DEBUG_TASKS)             Log.v(TAG,"Start pushing activity " + target + " out to bottom task "+ p.task);
+          }
+ else {
+            mCurTask++;
+            if (mCurTask <= 0) {
+              mCurTask=1;
+            }
+            target.task=new TaskRecord(mCurTask,target.info,null,(target.info.flags & ActivityInfo.FLAG_CLEAR_TASK_ON_LAUNCH) != 0);
+            target.task.affinityIntent=target.intent;
+            if (DEBUG_TASKS)             Log.v(TAG,"Start pushing activity " + target + " out to new task "+ target.task);
+          }
+          mWindowManager.setAppGroupId(target,task.taskId);
+          if (replyChainEnd < 0) {
+            replyChainEnd=targetI;
+          }
+          int dstPos=0;
+          for (int srcPos=targetI; srcPos <= replyChainEnd; srcPos++) {
+            p=(HistoryRecord)mHistory.get(srcPos);
+            if (p.finishing) {
+              continue;
+            }
+            if (DEBUG_TASKS)             Log.v(TAG,"Pushing next activity " + p + " out to target's task "+ target.task);
+            task.numActivities--;
+            p.task=target.task;
+            target.task.numActivities++;
+            mHistory.remove(srcPos);
+            mHistory.add(dstPos,p);
+            mWindowManager.moveAppToken(dstPos,p);
+            mWindowManager.setAppGroupId(p,p.task.taskId);
+            dstPos++;
+            if (VALIDATE_TOKENS) {
+              mWindowManager.validateAppTokens(mHistory);
+            }
+            i++;
+          }
+          if (taskTop == p) {
+            taskTop=below;
+          }
+          if (taskTopI == replyChainEnd) {
+            taskTopI=-1;
+          }
+          replyChainEnd=-1;
+          addRecentTask(target.task);
+        }
+ else         if (forceReset || finishOnTaskLaunch || clearWhenTaskReset) {
+          if (clearWhenTaskReset) {
+            replyChainEnd=targetI + 1;
+            while (replyChainEnd < mHistory.size() && ((HistoryRecord)mHistory.get(replyChainEnd)).task == task) {
+              replyChainEnd++;
+            }
+            replyChainEnd--;
+          }
+ else           if (replyChainEnd < 0) {
+            replyChainEnd=targetI;
+          }
+          HistoryRecord p=null;
+          for (int srcPos=targetI; srcPos <= replyChainEnd; srcPos++) {
+            p=(HistoryRecord)mHistory.get(srcPos);
+            if (p.finishing) {
+              continue;
+            }
+            if (finishActivityLocked(p,srcPos,Activity.RESULT_CANCELED,null,"reset")) {
+              replyChainEnd--;
+              srcPos--;
+            }
+          }
+          if (taskTop == p) {
+            taskTop=below;
+          }
+          if (taskTopI == replyChainEnd) {
+            taskTopI=-1;
+          }
+          replyChainEnd=-1;
+        }
+ else {
+          replyChainEnd=-1;
+        }
+      }
+ else {
+        replyChainEnd=-1;
+      }
+    }
+ else     if (target.resultTo != null) {
+      if (replyChainEnd < 0) {
+        replyChainEnd=targetI;
+      }
+    }
+ else     if (taskTopI >= 0 && allowTaskReparenting && task.affinity != null && task.affinity.equals(target.taskAffinity)) {
+      if (forceReset || finishOnTaskLaunch) {
+        if (replyChainEnd < 0) {
+          replyChainEnd=targetI;
+        }
+        HistoryRecord p=null;
+        for (int srcPos=targetI; srcPos <= replyChainEnd; srcPos++) {
+          p=(HistoryRecord)mHistory.get(srcPos);
+          if (p.finishing) {
+            continue;
+          }
+          if (finishActivityLocked(p,srcPos,Activity.RESULT_CANCELED,null,"reset")) {
+            taskTopI--;
+            lastReparentPos--;
+            replyChainEnd--;
+            srcPos--;
+          }
+        }
+        replyChainEnd=-1;
+      }
+ else {
+        if (replyChainEnd < 0) {
+          replyChainEnd=targetI;
+        }
+        for (int srcPos=replyChainEnd; srcPos >= targetI; srcPos--) {
+          HistoryRecord p=(HistoryRecord)mHistory.get(srcPos);
+          if (p.finishing) {
+            continue;
+          }
+          if (lastReparentPos < 0) {
+            lastReparentPos=taskTopI;
+            taskTop=p;
+          }
+ else {
+            lastReparentPos--;
+          }
+          mHistory.remove(srcPos);
+          p.task.numActivities--;
+          p.task=task;
+          mHistory.add(lastReparentPos,p);
+          if (DEBUG_TASKS)           Log.v(TAG,"Pulling activity " + p + " in to resetting task "+ task);
+          task.numActivities++;
+          mWindowManager.moveAppToken(lastReparentPos,p);
+          mWindowManager.setAppGroupId(p,p.task.taskId);
+          if (VALIDATE_TOKENS) {
+            mWindowManager.validateAppTokens(mHistory);
+          }
+        }
+        replyChainEnd=-1;
+        if (target.info.launchMode == ActivityInfo.LAUNCH_SINGLE_TOP) {
+          for (int j=lastReparentPos - 1; j >= 0; j--) {
+            HistoryRecord p=(HistoryRecord)mHistory.get(j);
+            if (p.finishing) {
+              continue;
+            }
+            if (p.intent.getComponent().equals(target.intent.getComponent())) {
+              if (finishActivityLocked(p,j,Activity.RESULT_CANCELED,null,"replace")) {
+                taskTopI--;
+                lastReparentPos--;
+              }
+            }
+          }
+        }
+      }
+    }
+    target=below;
+    targetI=i;
+  }
+  return taskTop;
+}

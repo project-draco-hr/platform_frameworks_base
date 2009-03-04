@@ -1,0 +1,59 @@
+{
+  if (Config.LOGD) {
+    Log.d(TAG,"_removeUpdates: listener = " + receiver);
+  }
+  final int callingUid=Binder.getCallingUid();
+  long identity=Binder.clearCallingIdentity();
+  try {
+    int idx=mListeners.indexOf(receiver);
+    if (idx >= 0) {
+      Receiver myReceiver=mListeners.remove(idx);
+      if (myReceiver.isListener()) {
+        myReceiver.getListener().asBinder().unlinkToDeath(myReceiver,0);
+      }
+    }
+    HashSet<String> providers=new HashSet<String>();
+    HashMap<String,UpdateRecord> oldRecords=mLocationListeners.get(receiver);
+    if (oldRecords != null) {
+      for (      UpdateRecord record : oldRecords.values()) {
+        if (record.mProvider.equals(LocationManager.NETWORK_PROVIDER)) {
+          if (mNetworkLocationInterface != null) {
+            mNetworkLocationInterface.removeListener(record.mPackages);
+          }
+        }
+        record.disposeLocked();
+      }
+      providers.addAll(oldRecords.keySet());
+    }
+    mLocationListeners.remove(receiver);
+    mLastFixBroadcast.remove(receiver);
+    mLastStatusBroadcast.remove(receiver);
+    for (    String provider : providers) {
+      if (!isAllowedBySettingsLocked(provider)) {
+        continue;
+      }
+      boolean hasOtherListener=false;
+      ArrayList<UpdateRecord> recordsForProvider=mRecordsByProvider.get(provider);
+      if (recordsForProvider != null && recordsForProvider.size() > 0) {
+        hasOtherListener=true;
+      }
+      LocationProviderImpl p=LocationProviderImpl.getProvider(provider);
+      if (p != null) {
+        if (hasOtherListener) {
+          p.setMinTime(getMinTimeLocked(provider));
+        }
+ else {
+          mLocationHandler.removeMessages(MESSAGE_HEARTBEAT,provider);
+          p.enableLocationTracking(false);
+        }
+        if (p == mGpsLocationProvider && mGpsNavigating) {
+          updateReportedGpsLocked();
+        }
+      }
+    }
+    updateWakelockStatusLocked(mScreenOn);
+  }
+  finally {
+    Binder.restoreCallingIdentity(identity);
+  }
+}

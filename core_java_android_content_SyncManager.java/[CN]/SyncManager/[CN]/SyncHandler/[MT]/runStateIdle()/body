@@ -1,0 +1,126 @@
+{
+  boolean isLoggable=Log.isLoggable(TAG,Log.VERBOSE);
+  if (isLoggable)   Log.v(TAG,"runStateIdle");
+  if (!mDataConnectionIsConnected) {
+    if (isLoggable) {
+      Log.v(TAG,"runStateIdle: no data connection, skipping");
+    }
+    setStatusText("No data connection");
+    return;
+  }
+  if (mStorageIsLow) {
+    if (isLoggable) {
+      Log.v(TAG,"runStateIdle: memory low, skipping");
+    }
+    setStatusText("Memory low");
+    return;
+  }
+  String[] accounts=mAccounts;
+  if (accounts == null) {
+    if (isLoggable) {
+      Log.v(TAG,"runStateIdle: accounts not known, skipping");
+    }
+    setStatusText("Accounts not known yet");
+    return;
+  }
+  SyncOperation syncOperation;
+  final Sync.Settings.QueryMap syncSettings=getSyncSettings();
+  final ConnectivityManager connManager=(ConnectivityManager)mContext.getSystemService(Context.CONNECTIVITY_SERVICE);
+  final boolean backgroundDataSetting=connManager.getBackgroundDataSetting();
+synchronized (mSyncQueue) {
+    while (true) {
+      syncOperation=mSyncQueue.head();
+      if (syncOperation == null) {
+        if (isLoggable) {
+          Log.v(TAG,"runStateIdle: no more sync operations, returning");
+        }
+        return;
+      }
+      if (!isSyncEnabled()) {
+        if (isLoggable) {
+          Log.v(TAG,"runStateIdle: sync disabled, dropping " + syncOperation);
+        }
+        mSyncQueue.popHead();
+        continue;
+      }
+      final boolean force=syncOperation.extras.getBoolean(ContentResolver.SYNC_EXTRAS_FORCE,false);
+      if (!force && (!backgroundDataSetting || !syncSettings.getListenForNetworkTickles() || !syncSettings.getSyncProviderAutomatically(syncOperation.authority))) {
+        if (isLoggable) {
+          Log.v(TAG,"runStateIdle: sync off, dropping " + syncOperation);
+        }
+        mSyncQueue.popHead();
+        continue;
+      }
+      if (!ArrayUtils.contains(accounts,syncOperation.account)) {
+        mSyncQueue.popHead();
+        if (isLoggable) {
+          Log.v(TAG,"runStateIdle: account not present, dropping " + syncOperation);
+        }
+        continue;
+      }
+      if (isLoggable) {
+        Log.v(TAG,"runStateIdle: found sync candidate: " + syncOperation);
+      }
+      break;
+    }
+    final long now=SystemClock.elapsedRealtime();
+    if (syncOperation.earliestRunTime > now) {
+      if (Log.isLoggable(TAG,Log.DEBUG)) {
+        Log.d(TAG,"runStateIdle: the time is " + now + " yet the next "+ "sync operation is for "+ syncOperation.earliestRunTime+ ": "+ syncOperation);
+      }
+      return;
+    }
+    if (isLoggable) {
+      Log.v(TAG,"runStateIdle: we are going to sync " + syncOperation);
+    }
+    mSyncQueue.popHead();
+  }
+  String providerName=syncOperation.authority;
+  ensureContentResolver();
+  IContentProvider contentProvider;
+  try {
+    contentProvider=mContentResolver.acquireProvider(providerName);
+    if (contentProvider == null) {
+      Log.e(TAG,"Provider " + providerName + " doesn't exist");
+      return;
+    }
+    if (contentProvider.getSyncAdapter() == null) {
+      Log.e(TAG,"Provider " + providerName + " isn't syncable, "+ contentProvider);
+      return;
+    }
+  }
+ catch (  RemoteException remoteExc) {
+    Log.e(TAG,"Caught a RemoteException while preparing for sync, rescheduling " + syncOperation,remoteExc);
+    rescheduleWithDelay(syncOperation);
+    return;
+  }
+catch (  RuntimeException exc) {
+    Log.e(TAG,"Caught a RuntimeException while validating sync of " + providerName,exc);
+    return;
+  }
+  final long historyRowId=insertStartSyncEvent(syncOperation);
+  try {
+    ISyncAdapter syncAdapter=contentProvider.getSyncAdapter();
+    ActiveSyncContext activeSyncContext=new ActiveSyncContext(syncOperation,contentProvider,syncAdapter,historyRowId);
+    mSyncWakeLock.acquire();
+    if (Log.isLoggable(TAG,Log.DEBUG)) {
+      Log.d(TAG,"starting sync of " + syncOperation);
+    }
+    syncAdapter.startSync(activeSyncContext,syncOperation.account,syncOperation.extras);
+    mActiveSyncContext=activeSyncContext;
+    mSyncStorageEngine.setActiveSync(mActiveSyncContext);
+  }
+ catch (  RemoteException remoteExc) {
+    if (Config.LOGD) {
+      Log.d(TAG,"runStateIdle: caught a RemoteException, rescheduling",remoteExc);
+    }
+    mActiveSyncContext=null;
+    mSyncStorageEngine.setActiveSync(mActiveSyncContext);
+    rescheduleWithDelay(syncOperation);
+  }
+catch (  RuntimeException exc) {
+    mActiveSyncContext=null;
+    mSyncStorageEngine.setActiveSync(mActiveSyncContext);
+    Log.e(TAG,"Caught a RuntimeException while starting the sync " + syncOperation,exc);
+  }
+}

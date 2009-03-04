@@ -1,0 +1,53 @@
+{
+  if (DEBUG_INPUT)   Log.v(TAG,"dispatchTrackball [" + ev.getAction() + "] <"+ ev.getX()+ ", "+ ev.getY()+ ">");
+  Object focusObj=mKeyWaiter.waitForNextEventTarget(null,qev,ev,false,false);
+  if (focusObj == null) {
+    Log.w(TAG,"No focus window, dropping trackball: " + ev);
+    if (qev != null) {
+      mQueue.recycleEvent(qev);
+    }
+    ev.recycle();
+    return false;
+  }
+  if (focusObj == mKeyWaiter.CONSUMED_EVENT_TOKEN) {
+    if (qev != null) {
+      mQueue.recycleEvent(qev);
+    }
+    ev.recycle();
+    return true;
+  }
+  WindowState focus=(WindowState)focusObj;
+  if (uid != 0 && uid != focus.mSession.mUid) {
+    if (mContext.checkPermission(android.Manifest.permission.INJECT_EVENTS,pid,uid) != PackageManager.PERMISSION_GRANTED) {
+      Log.w(TAG,"Permission denied: injecting key event from pid " + pid + " uid "+ uid+ " to window "+ focus+ " owned by uid "+ focus.mSession.mUid);
+      if (qev != null) {
+        mQueue.recycleEvent(qev);
+      }
+      ev.recycle();
+      return false;
+    }
+  }
+  final long eventTime=ev.getEventTime();
+synchronized (mWindowMap) {
+    if (qev != null && ev.getAction() == MotionEvent.ACTION_MOVE) {
+      mKeyWaiter.bindTargetWindowLocked(focus,KeyWaiter.RETURN_PENDING_TRACKBALL,qev);
+      ev=null;
+    }
+ else {
+      mKeyWaiter.bindTargetWindowLocked(focus);
+    }
+  }
+  try {
+    focus.mClient.dispatchTrackball(ev,eventTime);
+    return true;
+  }
+ catch (  android.os.RemoteException e) {
+    Log.i(TAG,"WINDOW DIED during key dispatch: " + focus);
+    try {
+      removeWindow(focus.mSession,focus.mClient);
+    }
+ catch (    java.util.NoSuchElementException ex) {
+    }
+  }
+  return false;
+}

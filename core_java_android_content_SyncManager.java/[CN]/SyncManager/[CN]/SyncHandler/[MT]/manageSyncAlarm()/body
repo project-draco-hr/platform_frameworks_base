@@ -1,0 +1,56 @@
+{
+  if (!mDataConnectionIsConnected)   return;
+  if (mAccounts == null)   return;
+  if (mStorageIsLow)   return;
+  Long alarmTime=null;
+  ActiveSyncContext activeSyncContext=mActiveSyncContext;
+  if (activeSyncContext == null) {
+    SyncOperation syncOperation;
+synchronized (mSyncQueue) {
+      syncOperation=mSyncQueue.head();
+    }
+    if (syncOperation != null) {
+      alarmTime=syncOperation.earliestRunTime;
+    }
+  }
+ else {
+    final long notificationTime=mSyncHandler.mSyncNotificationInfo.startTime + SYNC_NOTIFICATION_DELAY;
+    final long timeoutTime=mActiveSyncContext.mTimeoutStartTime + MAX_TIME_PER_SYNC;
+    if (mSyncHandler.mSyncNotificationInfo.isActive) {
+      alarmTime=timeoutTime;
+    }
+ else {
+      alarmTime=Math.min(notificationTime,timeoutTime);
+    }
+  }
+  if (!mErrorNotificationInstalled) {
+    long when=mSyncStorageEngine.getInitialSyncFailureTime();
+    if (when > 0) {
+      when+=ERROR_NOTIFICATION_DELAY_MS;
+      long delay=when - System.currentTimeMillis();
+      when=SystemClock.elapsedRealtime() + delay;
+      alarmTime=alarmTime != null ? Math.min(alarmTime,when) : when;
+    }
+  }
+  boolean shouldSet=false;
+  boolean shouldCancel=false;
+  final boolean alarmIsActive=mAlarmScheduleTime != null;
+  final boolean needAlarm=alarmTime != null;
+  if (needAlarm) {
+    if (!alarmIsActive || alarmTime < mAlarmScheduleTime) {
+      shouldSet=true;
+    }
+  }
+ else {
+    shouldCancel=alarmIsActive;
+  }
+  ensureAlarmService();
+  if (shouldSet) {
+    mAlarmScheduleTime=alarmTime;
+    mAlarmService.set(AlarmManager.ELAPSED_REALTIME_WAKEUP,alarmTime,mSyncAlarmIntent);
+  }
+ else   if (shouldCancel) {
+    mAlarmScheduleTime=null;
+    mAlarmService.cancel(mSyncAlarmIntent);
+  }
+}

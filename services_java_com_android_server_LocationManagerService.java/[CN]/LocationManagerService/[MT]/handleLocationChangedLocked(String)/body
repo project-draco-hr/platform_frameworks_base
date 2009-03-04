@@ -1,0 +1,111 @@
+{
+  ArrayList<UpdateRecord> records=mRecordsByProvider.get(provider);
+  if (records == null || records.size() == 0) {
+    return;
+  }
+  LocationProviderImpl p=LocationProviderImpl.getProvider(provider);
+  if (p == null) {
+    return;
+  }
+  Location loc=mLocationsByProvider.get(provider);
+  if (loc == null) {
+    loc=new Location(provider);
+    mLocationsByProvider.put(provider,loc);
+  }
+ else {
+    loc.reset();
+  }
+  Location mockLoc=mMockProviderLocation.get(provider);
+  boolean locationValid;
+  if (mockLoc != null) {
+    locationValid=true;
+    loc.set(mockLoc);
+  }
+ else {
+    locationValid=p.getLocation(loc);
+  }
+  if (locationValid) {
+    Location location=mLastKnownLocation.get(provider);
+    if (location == null) {
+      mLastKnownLocation.put(provider,new Location(loc));
+    }
+ else {
+      location.set(loc);
+    }
+    writeLastKnownLocationLocked(provider,loc);
+    if (p instanceof INetworkLocationProvider) {
+      mWakeLockNetworkReceived=true;
+    }
+ else     if (p instanceof GpsLocationProvider) {
+    }
+  }
+  long newStatusUpdateTime=p.getStatusUpdateTime();
+  Long mockStatusUpdateTime=mMockProviderStatusUpdateTime.get(provider);
+  if (mockStatusUpdateTime != null) {
+    newStatusUpdateTime=mockStatusUpdateTime.longValue();
+  }
+  Bundle extras=new Bundle();
+  int status=p.getStatus(extras);
+  Integer mockStatus=mMockProviderStatus.get(provider);
+  if (mockStatus != null) {
+    status=mockStatus.intValue();
+  }
+  Bundle mockExtras=mMockProviderStatusExtras.get(provider);
+  if (mockExtras != null) {
+    extras.clear();
+    extras.putAll(mockExtras);
+  }
+  ArrayList<Receiver> deadReceivers=null;
+  final int N=records.size();
+  for (int i=0; i < N; i++) {
+    UpdateRecord r=records.get(i);
+    Receiver receiver=r.mReceiver;
+    if (locationValid) {
+      HashMap<String,Location> map=mLastFixBroadcast.get(receiver);
+      if (map == null) {
+        map=new HashMap<String,Location>();
+        mLastFixBroadcast.put(receiver,map);
+      }
+      Location lastLoc=map.get(provider);
+      if ((lastLoc == null) || shouldBroadcastSafe(loc,lastLoc,r)) {
+        if (lastLoc == null) {
+          lastLoc=new Location(loc);
+          map.put(provider,lastLoc);
+        }
+ else {
+          lastLoc.set(loc);
+        }
+        if (!receiver.callLocationChangedLocked(loc)) {
+          Log.w(TAG,"RemoteException calling onLocationChanged on " + receiver);
+          if (deadReceivers == null) {
+            deadReceivers=new ArrayList<Receiver>();
+          }
+          deadReceivers.add(receiver);
+        }
+      }
+    }
+    HashMap<String,Long> statusMap=mLastStatusBroadcast.get(receiver);
+    if (statusMap == null) {
+      statusMap=new HashMap<String,Long>();
+      mLastStatusBroadcast.put(receiver,statusMap);
+    }
+    long prevStatusUpdateTime=(statusMap.get(provider) != null) ? statusMap.get(provider) : 0;
+    if ((newStatusUpdateTime > prevStatusUpdateTime) && (prevStatusUpdateTime != 0 || status != LocationProvider.AVAILABLE)) {
+      statusMap.put(provider,newStatusUpdateTime);
+      if (!receiver.callStatusChangedLocked(provider,status,extras)) {
+        Log.w(TAG,"RemoteException calling onStatusChanged on " + receiver);
+        if (deadReceivers == null) {
+          deadReceivers=new ArrayList<Receiver>();
+        }
+        if (!deadReceivers.contains(receiver)) {
+          deadReceivers.add(receiver);
+        }
+      }
+    }
+  }
+  if (deadReceivers != null) {
+    for (int i=deadReceivers.size() - 1; i >= 0; i--) {
+      removeUpdatesLocked(deadReceivers.get(i));
+    }
+  }
+}

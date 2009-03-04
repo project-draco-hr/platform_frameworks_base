@@ -1,0 +1,107 @@
+{
+  int localX=x - mCenterX;
+  int localY=y - mCenterY;
+  boolean isTouchingThumb=mThumbVisible;
+  boolean isTouchingRing=mThumbVisible;
+  int touchAngle=getAngle(localX,localY);
+  int radiusSquared=localX * localX + localY * localY;
+  if (radiusSquared < mBoundInnerRadiusSquared || radiusSquared > mBoundOuterRadiusSquared) {
+    isTouchingThumb=false;
+    isTouchingRing=false;
+  }
+  if (isTouchingThumb) {
+    int deltaThumbAndTouch=getDelta(mThumbAngle,touchAngle);
+    int absoluteDeltaThumbAndTouch=deltaThumbAndTouch >= 0 ? deltaThumbAndTouch : -deltaThumbAndTouch;
+    if (absoluteDeltaThumbAndTouch > THUMB_GRAB_SLOP) {
+      isTouchingThumb=false;
+    }
+  }
+switch (action) {
+case MotionEvent.ACTION_DOWN:
+    if (!isTouchingRing && (time - mPreviousCenterUpTime <= DOUBLE_TAP_DISMISS_TIMEOUT)) {
+      mCallback.onZoomRingDismissed(true);
+      onTouchUp(time,isTouchingRing);
+      return true;
+    }
+  resetToIdle();
+mCallback.onUserInteractionStarted();
+mPreviousDownX=x;
+mPreviousDownY=y;
+break;
+case MotionEvent.ACTION_MOVE:
+break;
+case MotionEvent.ACTION_CANCEL:
+case MotionEvent.ACTION_UP:
+onTouchUp(time,isTouchingRing);
+return true;
+default :
+return false;
+}
+if (mMode == MODE_IDLE) {
+if (isTouchingThumb) {
+setMode(MODE_DRAG_THUMB);
+onThumbDragStarted(touchAngle);
+}
+ else if (isTouchingRing) {
+int tickAngle=getClosestTickAngle(touchAngle);
+int deltaThumbAndTick=getDelta(mThumbAngle,tickAngle);
+int boundAngle=getBoundIfExceeds(mThumbAngle,deltaThumbAndTick);
+if (mEnforceMaxAbsJump) {
+if (deltaThumbAndTick > MAX_ABS_JUMP_DELTA_ANGLE || deltaThumbAndTick < -MAX_ABS_JUMP_DELTA_ANGLE) {
+setMode(MODE_IGNORE_UNTIL_TOUCHES_THUMB);
+return true;
+}
+if (boundAngle != Integer.MIN_VALUE) {
+tickAngle=boundAngle;
+}
+}
+ else {
+if (boundAngle != Integer.MIN_VALUE) {
+boolean oldDirectionIsCcw=deltaThumbAndTick > 0;
+deltaThumbAndTick=getDelta(mThumbAngle,tickAngle,!oldDirectionIsCcw);
+boundAngle=getBoundIfExceeds(mThumbAngle,deltaThumbAndTick);
+if (boundAngle != Integer.MIN_VALUE) {
+setMode(MODE_IGNORE_UNTIL_TOUCHES_THUMB);
+return true;
+}
+}
+}
+setMode(MODE_WAITING_FOR_DRAG_THUMB_AFTER_JUMP);
+mWaitingForDragThumbDownAngle=touchAngle;
+boolean ccw=deltaThumbAndTick > 0;
+setThumbAngleAnimated(tickAngle,0,ccw);
+onThumbDragStarted(mThumbAngle);
+onThumbDragged(tickAngle,true,ccw);
+}
+ else {
+setMode(MODE_WAITING_FOR_MOVE_ZOOM_RING);
+mCallback.onZoomRingSetMovableHintVisible(true);
+}
+}
+ else if (mMode == MODE_WAITING_FOR_DRAG_THUMB_AFTER_JUMP) {
+int deltaDownAngle=getDelta(mWaitingForDragThumbDownAngle,touchAngle);
+if ((deltaDownAngle < -THUMB_DRAG_SLOP || deltaDownAngle > THUMB_DRAG_SLOP) && isDeltaInBounds(mWaitingForDragThumbDownAngle,deltaDownAngle)) {
+setMode(MODE_DRAG_THUMB);
+}
+}
+ else if (mMode == MODE_WAITING_FOR_MOVE_ZOOM_RING) {
+if (Math.abs(x - mPreviousDownX) > mTouchSlop || Math.abs(y - mPreviousDownY) > mTouchSlop) {
+setMode(MODE_MOVE_ZOOM_RING);
+mCallback.onZoomRingMovingStarted();
+}
+}
+ else if (mMode == MODE_IGNORE_UNTIL_TOUCHES_THUMB) {
+if (isTouchingThumb) {
+setMode(mPreviousMode);
+}
+}
+if (mMode == MODE_DRAG_THUMB || mMode == MODE_TAP_DRAG) {
+if (isTouchingRing) {
+onThumbDragged(touchAngle,false,false);
+}
+}
+ else if (mMode == MODE_MOVE_ZOOM_RING) {
+onZoomRingMoved(rawX,rawY);
+}
+return true;
+}

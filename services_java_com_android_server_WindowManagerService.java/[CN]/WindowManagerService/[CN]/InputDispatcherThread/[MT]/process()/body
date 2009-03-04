@@ -1,0 +1,86 @@
+{
+  android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_URGENT_DISPLAY);
+  KeyEvent lastKey=null;
+  long lastKeyTime=SystemClock.uptimeMillis();
+  long nextKeyTime=lastKeyTime + LONG_WAIT;
+  int keyRepeatCount=0;
+  boolean configChanged=false;
+  while (true) {
+    long curTime=SystemClock.uptimeMillis();
+    if (DEBUG_INPUT)     Log.v(TAG,"Waiting for next key: now=" + curTime + ", repeat @ "+ nextKeyTime);
+    QueuedEvent ev=mQueue.getEvent((int)((!configChanged && curTime < nextKeyTime) ? (nextKeyTime - curTime) : 0));
+    if (DEBUG_INPUT && ev != null)     Log.v(TAG,"Event: type=" + ev.classType + " data="+ ev.event);
+    try {
+      if (ev != null) {
+        curTime=ev.when;
+        int eventType;
+        if (ev.classType == RawInputEvent.CLASS_TOUCHSCREEN) {
+          eventType=eventType((MotionEvent)ev.event);
+        }
+ else         if (ev.classType == RawInputEvent.CLASS_KEYBOARD || ev.classType == RawInputEvent.CLASS_TRACKBALL) {
+          eventType=LocalPowerManager.BUTTON_EVENT;
+        }
+ else {
+          eventType=LocalPowerManager.OTHER_EVENT;
+        }
+        mPowerManager.userActivity(curTime,false,eventType);
+switch (ev.classType) {
+case RawInputEvent.CLASS_KEYBOARD:
+          KeyEvent ke=(KeyEvent)ev.event;
+        if (ke.isDown()) {
+          lastKey=ke;
+          keyRepeatCount=0;
+          lastKeyTime=curTime;
+          nextKeyTime=lastKeyTime + KEY_REPEAT_FIRST_DELAY;
+          if (DEBUG_INPUT)           Log.v(TAG,"Received key down: first repeat @ " + nextKeyTime);
+        }
+ else {
+          lastKey=null;
+          lastKeyTime=curTime;
+          nextKeyTime=curTime + LONG_WAIT;
+          if (DEBUG_INPUT)           Log.v(TAG,"Received key up: ignore repeat @ " + nextKeyTime);
+        }
+      dispatchKey((KeyEvent)ev.event,0,0);
+    mQueue.recycleEvent(ev);
+  break;
+case RawInputEvent.CLASS_TOUCHSCREEN:
+dispatchPointer(ev,(MotionEvent)ev.event,0,0);
+break;
+case RawInputEvent.CLASS_TRACKBALL:
+dispatchTrackball(ev,(MotionEvent)ev.event,0,0);
+break;
+case RawInputEvent.CLASS_CONFIGURATION_CHANGED:
+configChanged=true;
+break;
+default :
+mQueue.recycleEvent(ev);
+break;
+}
+}
+ else if (configChanged) {
+configChanged=false;
+sendNewConfiguration();
+}
+ else if (lastKey != null) {
+curTime=SystemClock.uptimeMillis();
+if (DEBUG_INPUT) Log.v(TAG,"Key timeout: repeat=" + nextKeyTime + ", now="+ curTime);
+if (curTime < nextKeyTime) {
+continue;
+}
+lastKeyTime=nextKeyTime;
+nextKeyTime=nextKeyTime + KEY_REPEAT_DELAY;
+keyRepeatCount++;
+if (DEBUG_INPUT) Log.v(TAG,"Key repeat: count=" + keyRepeatCount + ", next @ "+ nextKeyTime);
+dispatchKey(new KeyEvent(lastKey,curTime,keyRepeatCount),0,0);
+}
+ else {
+curTime=SystemClock.uptimeMillis();
+lastKeyTime=curTime;
+nextKeyTime=curTime + LONG_WAIT;
+}
+}
+ catch (Exception e) {
+Log.e(TAG,"Input thread received uncaught exception: " + e,e);
+}
+}
+}

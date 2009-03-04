@@ -1,0 +1,127 @@
+{
+  AsyncResult ar;
+  Message onComplete;
+switch (msg.what) {
+case EVENT_RADIO_AVAILABLE:
+{
+      mCM.getBasebandVersion(obtainMessage(EVENT_GET_BASEBAND_VERSION_DONE));
+      mCM.getIMEI(obtainMessage(EVENT_GET_IMEI_DONE));
+      mCM.getIMEISV(obtainMessage(EVENT_GET_IMEISV_DONE));
+    }
+  break;
+case EVENT_RADIO_ON:
+break;
+case EVENT_REGISTERED_TO_NETWORK:
+syncClirSetting();
+break;
+case EVENT_SIM_RECORDS_LOADED:
+updateCurrentCarrierInProvider();
+String imsi=getVmSimImsi();
+if (imsi != null && !getSubscriberId().equals(imsi)) {
+storeVoiceMailNumber(null);
+setVmSimImsi(null);
+}
+break;
+case EVENT_GET_BASEBAND_VERSION_DONE:
+ar=(AsyncResult)msg.obj;
+if (ar.exception != null) {
+break;
+}
+if (LOCAL_DEBUG) Log.d(LOG_TAG,"Baseband version: " + ar.result);
+setSystemProperty(PROPERTY_BASEBAND_VERSION,(String)ar.result);
+break;
+case EVENT_GET_IMEI_DONE:
+ar=(AsyncResult)msg.obj;
+if (ar.exception != null) {
+break;
+}
+mImei=(String)ar.result;
+break;
+case EVENT_GET_IMEISV_DONE:
+ar=(AsyncResult)msg.obj;
+if (ar.exception != null) {
+break;
+}
+mImeiSv=(String)ar.result;
+break;
+case EVENT_USSD:
+ar=(AsyncResult)msg.obj;
+String[] ussdResult=(String[])ar.result;
+if (ussdResult.length > 1) {
+try {
+onIncomingUSSD(Integer.parseInt(ussdResult[0]),ussdResult[1]);
+}
+ catch (NumberFormatException e) {
+Log.w(LOG_TAG,"error parsing USSD");
+}
+}
+break;
+case EVENT_RADIO_OFF_OR_NOT_AVAILABLE:
+for (int i=0, s=mPendingMMIs.size(); i < s; i++) {
+if (mPendingMMIs.get(i).isPendingUSSD()) {
+mPendingMMIs.get(i).onUssdFinishedError();
+}
+}
+break;
+case EVENT_SSN:
+ar=(AsyncResult)msg.obj;
+SuppServiceNotification not=(SuppServiceNotification)ar.result;
+mSsnRegistrants.notifyRegistrants(ar);
+break;
+case EVENT_SET_CALL_FORWARD_DONE:
+ar=(AsyncResult)msg.obj;
+if (ar.exception == null) {
+mSIMRecords.setVoiceCallForwardingFlag(1,msg.arg1 == 1);
+}
+onComplete=(Message)ar.userObj;
+if (onComplete != null) {
+AsyncResult.forMessage(onComplete,ar.result,ar.exception);
+onComplete.sendToTarget();
+}
+break;
+case EVENT_SET_VM_NUMBER_DONE:
+ar=(AsyncResult)msg.obj;
+if (SimVmNotSupportedException.class.isInstance(ar.exception)) {
+storeVoiceMailNumber(mVmNumber);
+ar.exception=null;
+}
+onComplete=(Message)ar.userObj;
+if (onComplete != null) {
+AsyncResult.forMessage(onComplete,ar.result,ar.exception);
+onComplete.sendToTarget();
+}
+break;
+case EVENT_GET_CALL_FORWARD_DONE:
+ar=(AsyncResult)msg.obj;
+if (ar.exception == null) {
+handleCfuQueryResult((CallForwardInfo[])ar.result);
+}
+onComplete=(Message)ar.userObj;
+if (onComplete != null) {
+AsyncResult.forMessage(onComplete,ar.result,ar.exception);
+onComplete.sendToTarget();
+}
+break;
+case EVENT_CALL_RING:
+ar=(AsyncResult)msg.obj;
+if (ar.exception == null) {
+notifyIncomingRing();
+}
+break;
+case EVENT_SET_NETWORK_MANUAL_COMPLETE:
+case EVENT_SET_NETWORK_AUTOMATIC_COMPLETE:
+handleSetSelectNetwork((AsyncResult)msg.obj);
+break;
+case EVENT_SET_CLIR_COMPLETE:
+ar=(AsyncResult)msg.obj;
+if (ar.exception == null) {
+saveClirSetting(msg.arg1);
+}
+onComplete=(Message)ar.userObj;
+if (onComplete != null) {
+AsyncResult.forMessage(onComplete,ar.result,ar.exception);
+onComplete.sendToTarget();
+}
+break;
+}
+}

@@ -1,0 +1,55 @@
+{
+  if (mInLayout) {
+    if (Config.DEBUG) {
+      throw new RuntimeException("Recursive call!");
+    }
+    Log.w(TAG,"performLayoutAndPlaceSurfacesLocked called while in layout");
+    return;
+  }
+  boolean recoveringMemory=false;
+  if (mForceRemoves != null) {
+    recoveringMemory=true;
+    for (int i=0; i < mForceRemoves.size(); i++) {
+      WindowState ws=mForceRemoves.get(i);
+      Log.i(TAG,"Force removing: " + ws);
+      removeWindowInnerLocked(ws.mSession,ws);
+    }
+    mForceRemoves=null;
+    Log.w(TAG,"Due to memory failure, waiting a bit for next layout");
+    Object tmp=new Object();
+synchronized (tmp) {
+      try {
+        tmp.wait(250);
+      }
+ catch (      InterruptedException e) {
+      }
+    }
+  }
+  mInLayout=true;
+  try {
+    performLayoutAndPlaceSurfacesLockedInner(recoveringMemory);
+    int i=mPendingRemove.size() - 1;
+    if (i >= 0) {
+      while (i >= 0) {
+        WindowState w=mPendingRemove.get(i);
+        removeWindowInnerLocked(w.mSession,w);
+        i--;
+      }
+      mPendingRemove.clear();
+      mInLayout=false;
+      assignLayersLocked();
+      mLayoutNeeded=true;
+      performLayoutAndPlaceSurfacesLocked();
+    }
+ else {
+      mInLayout=false;
+      if (mLayoutNeeded) {
+        requestAnimationLocked(0);
+      }
+    }
+  }
+ catch (  RuntimeException e) {
+    mInLayout=false;
+    Log.e(TAG,"Unhandled exception while layout out windows",e);
+  }
+}
