@@ -2,11 +2,6 @@
   if (mNativeClass == 0 || !isClickable() || !isLongClickable()) {
     return false;
   }
-  if (mShowZoomTutorial && getSettings().supportZoom() && (mMaxZoomScale != mMinZoomScale)) {
-    ZoomButtonsController.showZoomTutorialOnce(mContext);
-    mShowZoomTutorial=false;
-    mPrivateHandler.sendMessageDelayed(mPrivateHandler.obtainMessage(DISMISS_ZOOM_TUTORIAL),ZOOM_TUTORIAL_DURATION);
-  }
   if (LOGV_ENABLED) {
     Log.v(LOGTAG,ev + " at " + ev.getEventTime()+ " mTouchMode="+ mTouchMode);
   }
@@ -54,24 +49,6 @@ case MotionEvent.ACTION_DOWN:
         }
         nativeMoveSelection(viewToContent(mSelectX),viewToContent(mSelectY),false);
         mTouchSelection=mExtendSelection=true;
-      }
- else       if (!ZoomButtonsController.useOldZoom(mContext) && mPrivateHandler.hasMessages(RELEASE_SINGLE_TAP)) {
-        mPrivateHandler.removeMessages(RELEASE_SINGLE_TAP);
-        if (deltaX * deltaX + deltaY * deltaY < mDoubleTapSlopSquare) {
-          int contentX=viewToContent((int)mLastTouchX + mScrollX);
-          int contentY=viewToContent((int)mLastTouchY + mScrollY);
-          if (inEditingMode()) {
-            mTextEntry.updateCachedTextfield();
-          }
-          nativeClearFocus(contentX,contentY);
-          if (mLogEvent) {
-            EventLog.writeEvent(EVENT_LOG_DOUBLE_TAP_DURATION,(eventTime - mLastTouchUpTime),eventTime);
-          }
-          return mZoomButtonsController.handleDoubleTapEvent(ev);
-        }
- else {
-          doShortPress();
-        }
       }
  else {
         mTouchMode=TOUCH_INIT_MODE;
@@ -141,6 +118,9 @@ case MotionEvent.ACTION_MOVE:
       if (mZoomScale != 0) {
         mWebViewCore.sendMessage(EventHub.SET_SNAP_ANCHOR,0,0);
       }
+      if (getSettings().supportZoom() && !mZoomButtonsController.isVisible() && (canZoomScrollOut() || mMinZoomScale < mMaxZoomScale)) {
+        mZoomButtonsController.setVisible(true);
+      }
     }
     int newScrollX=pinLocX(mScrollX + deltaX);
     deltaX=newScrollX - mScrollX;
@@ -197,14 +177,12 @@ case MotionEvent.ACTION_UP:
   mLastTouchUpTime=eventTime;
 switch (mTouchMode) {
 case TOUCH_INIT_MODE:
+case TOUCH_SHORTPRESS_START_MODE:
+case TOUCH_SHORTPRESS_MODE:
     mPrivateHandler.removeMessages(SWITCH_TO_SHORTPRESS);
-  if (getSettings().supportZoom()) {
-    mPrivateHandler.sendMessageDelayed(mPrivateHandler.obtainMessage(RELEASE_SINGLE_TAP),DOUBLE_TAP_TIMEOUT);
-  }
- else {
-    mTouchMode=TOUCH_DONE_MODE;
-    doShortPress();
-  }
+  mPrivateHandler.removeMessages(SWITCH_TO_LONGPRESS);
+mTouchMode=TOUCH_DONE_MODE;
+doShortPress();
 break;
 case TOUCH_SELECT_MODE:
 commitCopy();
@@ -226,20 +204,6 @@ mTouchMode=SCROLL_ZOOM_ANIMATION_IN;
 invalidate();
 }
 break;
-case TOUCH_SHORTPRESS_START_MODE:
-case TOUCH_SHORTPRESS_MODE:
-{
-mPrivateHandler.removeMessages(SWITCH_TO_LONGPRESS);
-if (eventTime - mLastTouchTime < TAP_TIMEOUT && getSettings().supportZoom()) {
-mTouchMode=TOUCH_INIT_MODE;
-mPrivateHandler.sendMessageDelayed(mPrivateHandler.obtainMessage(RELEASE_SINGLE_TAP),DOUBLE_TAP_TIMEOUT);
-}
- else {
-mTouchMode=TOUCH_DONE_MODE;
-doShortPress();
-}
-break;
-}
 case TOUCH_DRAG_MODE:
 if (eventTime - mLastTouchTime <= MIN_FLING_TIME) {
 mVelocityTracker.addMovement(ev);
@@ -272,7 +236,6 @@ WebViewCore.resumeUpdate(mWebViewCore);
 }
 mPrivateHandler.removeMessages(SWITCH_TO_SHORTPRESS);
 mPrivateHandler.removeMessages(SWITCH_TO_LONGPRESS);
-mPrivateHandler.removeMessages(RELEASE_SINGLE_TAP);
 mTouchMode=TOUCH_DONE_MODE;
 int contentX=viewToContent((int)mLastTouchX + mScrollX);
 int contentY=viewToContent((int)mLastTouchY + mScrollY);
