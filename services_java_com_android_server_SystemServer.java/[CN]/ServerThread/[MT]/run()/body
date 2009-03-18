@@ -69,12 +69,12 @@
   }
   StatusBarService statusBar=null;
   InputMethodManagerService imm=null;
+  AppWidgetService appWidget=null;
   if (factoryTest != SystemServer.FACTORY_TEST_LOW_LEVEL) {
     try {
       Log.i(TAG,"Starting Status Bar Service.");
       statusBar=new StatusBarService(context);
       ServiceManager.addService("statusbar",statusBar);
-      com.android.server.status.StatusBarPolicy.installIcons(context,statusBar);
     }
  catch (    Throwable e) {
       Log.e(TAG,"Failure starting StatusBarService",e);
@@ -155,8 +155,12 @@
       (new DemoThread(context)).start();
     }
     try {
-      Log.i(TAG,"Starting Checkin Service");
-      addService(context,"checkin","com.google.android.server.checkin.CheckinService",FallbackCheckinService.class);
+      Log.i(TAG,"Starting Checkin Service.");
+      Intent intent=new Intent().setComponent(new ComponentName("com.google.android.server.checkin","com.google.android.server.checkin.CheckinService"));
+      if (context.startService(intent) == null) {
+        Log.w(TAG,"Using fallback Checkin Service.");
+        ServiceManager.addService("checkin",new FallbackCheckinService(context));
+      }
     }
  catch (    Throwable e) {
       Log.e(TAG,"Failure starting Checkin Service",e);
@@ -183,15 +187,23 @@
       Log.e(TAG,"Failure starting HeadsetObserver",e);
     }
     try {
-      Log.i(TAG,"Starting Gadget Service");
-      ServiceManager.addService(Context.GADGET_SERVICE,new GadgetService(context));
+      Log.i(TAG,"Starting AppWidget Service");
+      appWidget=new AppWidgetService(context);
+      ServiceManager.addService(Context.APPWIDGET_SERVICE,appWidget);
     }
  catch (    Throwable e) {
-      Log.e(TAG,"Failure starting Gadget Service",e);
+      Log.e(TAG,"Failure starting AppWidget Service",e);
+    }
+    try {
+      com.android.server.status.StatusBarPolicy.installIcons(context,statusBar);
+    }
+ catch (    Throwable e) {
+      Log.e(TAG,"Failure installing status bar icons",e);
     }
   }
   Settings.Secure.putInt(mContentResolver,Settings.Secure.ADB_ENABLED,"1".equals(SystemProperties.get("persist.service.adb.enable")) ? 1 : 0);
   mContentResolver.registerContentObserver(Settings.Secure.getUriFor(Settings.Secure.ADB_ENABLED),false,new AdbSettingsObserver());
+  boolean safeMode=wm.detectSafeMode();
   if (statusBar != null) {
     statusBar.systemReady();
   }
@@ -204,6 +216,9 @@
     pm.systemReady();
   }
  catch (  RemoteException e) {
+  }
+  if (appWidget != null) {
+    appWidget.systemReady(safeMode);
   }
   try {
     ActivityManagerNative.getDefault().systemReady();

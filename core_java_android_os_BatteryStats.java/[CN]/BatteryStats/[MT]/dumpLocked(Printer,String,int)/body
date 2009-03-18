@@ -1,0 +1,142 @@
+{
+  final long rawUptime=SystemClock.uptimeMillis() * 1000;
+  final long rawRealtime=SystemClock.elapsedRealtime() * 1000;
+  final long batteryUptime=getBatteryUptime(rawUptime);
+  final long batteryRealtime=getBatteryUptime(rawRealtime);
+  final long whichBatteryUptime=computeBatteryUptime(rawUptime,which);
+  final long whichBatteryRealtime=computeBatteryRealtime(rawRealtime,which);
+  final long totalRealtime=computeRealtime(rawRealtime,which);
+  final long totalUptime=computeUptime(rawUptime,which);
+  StringBuilder sb=new StringBuilder(128);
+  pw.println(prefix + "  Time on battery: " + formatTimeMs(whichBatteryUptime / 1000)+ "("+ formatRatioLocked(whichBatteryUptime,totalRealtime)+ ") uptime, "+ formatTimeMs(whichBatteryRealtime / 1000)+ "("+ formatRatioLocked(whichBatteryRealtime,totalRealtime)+ ") realtime");
+  pw.println(prefix + "  Total: " + formatTimeMs(totalUptime / 1000)+ "uptime, "+ formatTimeMs(totalRealtime / 1000)+ "realtime");
+  long screenOnTime=getScreenOnTime(batteryRealtime,which);
+  long phoneOnTime=getPhoneOnTime(batteryRealtime,which);
+  pw.println(prefix + "  Time with screen on: " + formatTimeMs(screenOnTime / 1000)+ "("+ formatRatioLocked(screenOnTime,whichBatteryRealtime)+ "), time with phone on: "+ formatTimeMs(phoneOnTime / 1000)+ "("+ formatRatioLocked(phoneOnTime,whichBatteryRealtime)+ ")");
+  pw.println(" ");
+  SparseArray<? extends Uid> uidStats=getUidStats();
+  final int NU=uidStats.size();
+  for (int iu=0; iu < NU; iu++) {
+    final int uid=uidStats.keyAt(iu);
+    Uid u=uidStats.valueAt(iu);
+    pw.println(prefix + "  #" + uid+ ":");
+    boolean uidActivity=false;
+    long tcpReceived=u.getTcpBytesReceived(which);
+    long tcpSent=u.getTcpBytesSent(which);
+    if (tcpReceived != 0 || tcpSent != 0) {
+      pw.println(prefix + "    Network: " + tcpReceived+ " bytes received, "+ tcpSent+ " bytes sent");
+    }
+    Map<String,? extends BatteryStats.Uid.Wakelock> wakelocks=u.getWakelockStats();
+    if (wakelocks.size() > 0) {
+      for (      Map.Entry<String,? extends BatteryStats.Uid.Wakelock> ent : wakelocks.entrySet()) {
+        Uid.Wakelock wl=ent.getValue();
+        String linePrefix=": ";
+        sb.setLength(0);
+        sb.append(prefix);
+        sb.append("    Wake lock ");
+        sb.append(ent.getKey());
+        linePrefix=printWakeLock(sb,wl.getWakeTime(WAKE_TYPE_FULL),batteryRealtime,"full",which,linePrefix);
+        linePrefix=printWakeLock(sb,wl.getWakeTime(WAKE_TYPE_PARTIAL),batteryRealtime,"partial",which,linePrefix);
+        linePrefix=printWakeLock(sb,wl.getWakeTime(WAKE_TYPE_WINDOW),batteryRealtime,"window",which,linePrefix);
+        if (!linePrefix.equals(": ")) {
+          sb.append(" realtime");
+        }
+ else {
+          sb.append(": (nothing executed)");
+        }
+        pw.println(sb.toString());
+        uidActivity=true;
+      }
+    }
+    Map<Integer,? extends BatteryStats.Uid.Sensor> sensors=u.getSensorStats();
+    if (sensors.size() > 0) {
+      for (      Map.Entry<Integer,? extends BatteryStats.Uid.Sensor> ent : sensors.entrySet()) {
+        Uid.Sensor se=ent.getValue();
+        int sensorNumber=ent.getKey();
+        sb.setLength(0);
+        sb.append(prefix);
+        sb.append("    Sensor ");
+        int handle=se.getHandle();
+        if (handle == Uid.Sensor.GPS) {
+          sb.append("GPS");
+        }
+ else {
+          sb.append(handle);
+        }
+        sb.append(": ");
+        Timer timer=se.getSensorTime();
+        if (timer != null) {
+          long totalTime=(timer.getTotalTime(batteryRealtime,which) + 500) / 1000;
+          int count=timer.getCount(which);
+          if (totalTime != 0) {
+            sb.append(formatTimeMs(totalTime));
+            sb.append("realtime (");
+            sb.append(count);
+            sb.append(" times)");
+          }
+ else {
+            sb.append("(not used)");
+          }
+        }
+ else {
+          sb.append("(not used)");
+        }
+        pw.println(sb.toString());
+        uidActivity=true;
+      }
+    }
+    Map<String,? extends BatteryStats.Uid.Proc> processStats=u.getProcessStats();
+    if (processStats.size() > 0) {
+      for (      Map.Entry<String,? extends BatteryStats.Uid.Proc> ent : processStats.entrySet()) {
+        Uid.Proc ps=ent.getValue();
+        long userTime;
+        long systemTime;
+        int starts;
+        userTime=ps.getUserTime(which);
+        systemTime=ps.getSystemTime(which);
+        starts=ps.getStarts(which);
+        if (userTime != 0 || systemTime != 0 || starts != 0) {
+          pw.println(prefix + "    Proc " + ent.getKey()+ ":");
+          pw.println(prefix + "      CPU: " + formatTime(userTime)+ "user + "+ formatTime(systemTime)+ "kernel");
+          pw.println(prefix + "      " + starts+ " process starts");
+          uidActivity=true;
+        }
+      }
+    }
+    Map<String,? extends BatteryStats.Uid.Pkg> packageStats=u.getPackageStats();
+    if (packageStats.size() > 0) {
+      for (      Map.Entry<String,? extends BatteryStats.Uid.Pkg> ent : packageStats.entrySet()) {
+        pw.println(prefix + "    Apk " + ent.getKey()+ ":");
+        boolean apkActivity=false;
+        Uid.Pkg ps=ent.getValue();
+        int wakeups=ps.getWakeups(which);
+        if (wakeups != 0) {
+          pw.println(prefix + "      " + wakeups+ " wakeup alarms");
+          apkActivity=true;
+        }
+        Map<String,? extends Uid.Pkg.Serv> serviceStats=ps.getServiceStats();
+        if (serviceStats.size() > 0) {
+          for (          Map.Entry<String,? extends BatteryStats.Uid.Pkg.Serv> sent : serviceStats.entrySet()) {
+            BatteryStats.Uid.Pkg.Serv ss=sent.getValue();
+            long startTime=ss.getStartTime(batteryUptime,which);
+            int starts=ss.getStarts(which);
+            int launches=ss.getLaunches(which);
+            if (startTime != 0 || starts != 0 || launches != 0) {
+              pw.println(prefix + "      Service " + sent.getKey()+ ":");
+              pw.println(prefix + "        Created for: " + formatTimeMs(startTime / 1000)+ " uptime");
+              pw.println(prefix + "        Starts: " + starts+ ", launches: "+ launches);
+              apkActivity=true;
+            }
+          }
+        }
+        if (!apkActivity) {
+          pw.println(prefix + "      (nothing executed)");
+        }
+        uidActivity=true;
+      }
+    }
+    if (!uidActivity) {
+      pw.println(prefix + "    (nothing executed)");
+    }
+  }
+}

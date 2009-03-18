@@ -1,0 +1,52 @@
+{
+  HashSet<String> keep=new HashSet();
+  Intent intent=new Intent(AppWidgetManager.ACTION_APPWIDGET_UPDATE);
+  List<ResolveInfo> broadcastReceivers=mPackageManager.queryBroadcastReceivers(intent,PackageManager.GET_META_DATA);
+  int N=broadcastReceivers.size();
+  for (int i=0; i < N; i++) {
+    ResolveInfo ri=broadcastReceivers.get(i);
+    ActivityInfo ai=ri.activityInfo;
+    if (pkgName.equals(ai.packageName)) {
+      ComponentName component=new ComponentName(ai.packageName,ai.name);
+      Provider p=lookupProviderLocked(component);
+      if (p == null) {
+        if (addProviderLocked(ri)) {
+          keep.add(ai.name);
+        }
+      }
+ else {
+        Provider parsed=parseProviderInfoXml(component,ri);
+        if (parsed != null) {
+          keep.add(ai.name);
+          AppWidgetProviderInfo oldInfo=p.info;
+          p.info=parsed.info;
+          final int M=p.instances.size();
+          if (M > 0) {
+            int[] appWidgetIds=getAppWidgetIds(p);
+            cancelBroadcasts(p);
+            registerForBroadcastsLocked(p,appWidgetIds);
+            for (int j=0; j < M; j++) {
+              AppWidgetId id=p.instances.get(j);
+              if (id.host != null && id.host.callbacks != null) {
+                try {
+                  id.host.callbacks.providerChanged(id.appWidgetId,p.info);
+                }
+ catch (                RemoteException ex) {
+                  id.host.callbacks=null;
+                }
+              }
+            }
+            sendUpdateIntentLocked(p,appWidgetIds);
+          }
+        }
+      }
+    }
+  }
+  N=mInstalledProviders.size();
+  for (int i=N - 1; i >= 0; i--) {
+    Provider p=mInstalledProviders.get(i);
+    if (pkgName.equals(p.info.provider.getPackageName()) && !keep.contains(p.info.provider.getClassName())) {
+      removeProviderLocked(i,p);
+    }
+  }
+}

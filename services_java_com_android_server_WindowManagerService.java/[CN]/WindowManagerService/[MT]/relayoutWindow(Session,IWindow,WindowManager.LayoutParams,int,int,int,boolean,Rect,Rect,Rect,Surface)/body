@@ -1,6 +1,7 @@
 {
   boolean displayed=false;
   boolean inTouchMode;
+  Configuration newConfig=null;
   long origId=Binder.clearCallingIdentity();
 synchronized (mWindowMap) {
     WindowState win=windowForClientLocked(session,client);
@@ -48,6 +49,10 @@ synchronized (mWindowMap) {
       if (displayed && win.mSurface != null && !win.mDrawPending && !win.mCommitDrawPending && !mDisplayFrozen) {
         applyEnterAnimationLocked(win);
       }
+      if ((attrChanges & WindowManager.LayoutParams.FORMAT_CHANGED) != 0) {
+        win.destroySurfaceLocked();
+        displayed=true;
+      }
       try {
         Surface surface=win.createSurfaceLocked();
         if (surface != null) {
@@ -78,7 +83,7 @@ synchronized (mWindowMap) {
           if (win.getAttrs().type == TYPE_APPLICATION_STARTING) {
             transit=WindowManagerPolicy.TRANSIT_PREVIEW_DONE;
           }
-          if (win.isVisibleLw() && applyAnimationLocked(win,transit,false)) {
+          if (win.isWinVisibleLw() && applyAnimationLocked(win,transit,false)) {
             win.mExiting=true;
             mKeyWaiter.finishedKey(session,client,true,KeyWaiter.RETURN_NOTHING);
           }
@@ -86,22 +91,21 @@ synchronized (mWindowMap) {
             win.mExiting=true;
           }
  else {
+            if (mInputMethodWindow == win) {
+              mInputMethodWindow=null;
+            }
             win.destroySurfaceLocked();
           }
         }
       }
-      if (mInputMethodWindow == win) {
-        mInputMethodWindow=null;
-      }
       outSurface.clear();
     }
-    boolean assignLayers=false;
     if (focusMayChange) {
       if (updateFocusedWindowLocked(UPDATE_FOCUS_WILL_PLACE_SURFACES)) {
-        assignLayers=true;
         imMayMove=false;
       }
     }
+    boolean assignLayers=false;
     if (imMayMove) {
       if (moveInputMethodWindowsIfNeededLocked(false)) {
         assignLayers=true;
@@ -112,6 +116,7 @@ synchronized (mWindowMap) {
     if (assignLayers) {
       assignLayersLocked();
     }
+    newConfig=updateOrientationFromAppTokensLocked(null);
     performLayoutAndPlaceSurfacesLocked();
     if (win.mAppToken != null) {
       win.mAppToken.updateReportedVisibilityLocked();
@@ -122,6 +127,9 @@ synchronized (mWindowMap) {
     if (localLOGV)     Log.v(TAG,"Relayout given client " + client.asBinder() + ", requestedWidth="+ requestedWidth+ ", requestedHeight="+ requestedHeight+ ", viewVisibility="+ viewVisibility+ "\nRelayout returning frame="+ outFrame+ ", surface="+ outSurface);
     if (localLOGV || DEBUG_FOCUS)     Log.v(TAG,"Relayout of " + win + ": focusMayChange="+ focusMayChange);
     inTouchMode=mInTouchMode;
+  }
+  if (newConfig != null) {
+    sendNewConfiguration();
   }
   Binder.restoreCallingIdentity(origId);
   return (inTouchMode ? WindowManagerImpl.RELAYOUT_IN_TOUCH_MODE : 0) | (displayed ? WindowManagerImpl.RELAYOUT_FIRST_TIME : 0);

@@ -1,0 +1,72 @@
+{
+  int listeners=0;
+  LocationProviderImpl p=LocationProviderImpl.getProvider(provider);
+  if (p == null) {
+    return;
+  }
+  ArrayList<Receiver> deadReceivers=null;
+  ArrayList<UpdateRecord> records=mRecordsByProvider.get(provider);
+  if (records != null) {
+    final int N=records.size();
+    for (int i=0; i < N; i++) {
+      UpdateRecord record=records.get(i);
+      try {
+        Receiver receiver=record.mReceiver;
+        if (receiver.isListener()) {
+          if (enabled) {
+            receiver.getListener().onProviderEnabled(provider);
+          }
+ else {
+            receiver.getListener().onProviderDisabled(provider);
+          }
+        }
+ else {
+          Intent providerIntent=new Intent();
+          providerIntent.putExtra(LocationManager.KEY_PROVIDER_ENABLED,enabled);
+          try {
+            receiver.getPendingIntent().send(mContext,0,providerIntent,null,null);
+          }
+ catch (          PendingIntent.CanceledException e) {
+            if (deadReceivers == null) {
+              deadReceivers=new ArrayList<Receiver>();
+              deadReceivers.add(receiver);
+            }
+          }
+        }
+      }
+ catch (      RemoteException e) {
+      }
+      listeners++;
+    }
+  }
+  if (deadReceivers != null) {
+    for (int i=deadReceivers.size() - 1; i >= 0; i--) {
+      removeUpdatesLocked(deadReceivers.get(i));
+    }
+  }
+  if (enabled) {
+    p.enable();
+    if (listeners > 0) {
+      p.setMinTime(getMinTimeLocked(provider));
+      p.enableLocationTracking(true);
+      updateWakelockStatusLocked(mScreenOn);
+    }
+  }
+ else {
+    p.enableLocationTracking(false);
+    if (p == mGpsLocationProvider) {
+      mGpsNavigating=false;
+      reportStopGpsLocked();
+    }
+    p.disable();
+    updateWakelockStatusLocked(mScreenOn);
+  }
+  if (enabled && listeners > 0) {
+    mLocationHandler.removeMessages(MESSAGE_HEARTBEAT,provider);
+    Message m=Message.obtain(mLocationHandler,MESSAGE_HEARTBEAT,provider);
+    mLocationHandler.sendMessageAtTime(m,SystemClock.uptimeMillis() + 1000);
+  }
+ else {
+    mLocationHandler.removeMessages(MESSAGE_HEARTBEAT,provider);
+  }
+}

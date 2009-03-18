@@ -20,10 +20,11 @@
     ted.mAction=action;
     ted.mX=viewToContent((int)x + mScrollX);
     ted.mY=viewToContent((int)y + mScrollY);
-    ;
     mWebViewCore.sendMessage(EventHub.TOUCH_EVENT,ted);
     mLastSentTouchTime=eventTime;
   }
+  int deltaX=(int)(mLastTouchX - x);
+  int deltaY=(int)(mLastTouchY - y);
 switch (action) {
 case MotionEvent.ACTION_DOWN:
 {
@@ -51,6 +52,10 @@ case MotionEvent.ACTION_DOWN:
       }
  else {
         mTouchMode=TOUCH_INIT_MODE;
+        mPreventDrag=mForwardTouchEvents;
+        if (mLogEvent && eventTime - mLastTouchUpTime < 1000) {
+          EventLog.writeEvent(EVENT_LOG_DOUBLE_TAP_DURATION,(eventTime - mLastTouchUpTime),eventTime);
+        }
       }
       if (mTouchMode == TOUCH_INIT_MODE) {
         mPrivateHandler.sendMessageDelayed(mPrivateHandler.obtainMessage(SWITCH_TO_SHORTPRESS),TAP_TIMEOUT);
@@ -72,8 +77,6 @@ case MotionEvent.ACTION_MOVE:
       break;
     }
     mVelocityTracker.addMovement(ev);
-    int deltaX=(int)(mLastTouchX - x);
-    int deltaY=(int)(mLastTouchY - y);
     if (mTouchMode != TOUCH_DRAG_MODE) {
       if (mTouchMode == TOUCH_SELECT_MODE) {
         mSelectX=mScrollX + (int)x;
@@ -85,7 +88,7 @@ case MotionEvent.ACTION_MOVE:
         invalidate();
         break;
       }
-      if ((deltaX * deltaX + deltaY * deltaY) < TOUCH_SLOP_SQUARE) {
+      if (mPreventDrag || (deltaX * deltaX + deltaY * deltaY) < mTouchSlopSquare) {
         break;
       }
       if (mTouchMode == TOUCH_SHORTPRESS_MODE || mTouchMode == TOUCH_SHORTPRESS_START_MODE) {
@@ -115,6 +118,9 @@ case MotionEvent.ACTION_MOVE:
       if (mZoomScale != 0) {
         mWebViewCore.sendMessage(EventHub.SET_SNAP_ANCHOR,0,0);
       }
+      if (getSettings().supportZoom() && !mZoomButtonsController.isVisible() && (canZoomScrollOut() || mMinZoomScale < mMaxZoomScale)) {
+        mZoomButtonsController.setVisible(true);
+      }
     }
     int newScrollX=pinLocX(mScrollX + deltaX);
     deltaX=newScrollX - mScrollX;
@@ -132,7 +138,7 @@ case MotionEvent.ACTION_MOVE:
           if (ay > MAX_SLOPE_FOR_DIAG * ax && ay > MIN_BREAK_SNAP_CROSS_DISTANCE) {
             mSnapScrollMode=SNAP_NONE;
           }
-          if ((ax > MAX_SLOPE_FOR_DIAG * ay) && ((mSnapPositive && deltaX < -MIN_LOCK_SNAP_REVERSE_DISTANCE) || (!mSnapPositive && deltaX > MIN_LOCK_SNAP_REVERSE_DISTANCE))) {
+          if ((ax > MAX_SLOPE_FOR_DIAG * ay) && ((mSnapPositive && deltaX < -mMinLockSnapReverseDistance) || (!mSnapPositive && deltaX > mMinLockSnapReverseDistance))) {
             mSnapScrollMode=SNAP_X_LOCK;
           }
         }
@@ -140,7 +146,7 @@ case MotionEvent.ACTION_MOVE:
           if ((ax > MAX_SLOPE_FOR_DIAG * ay) && ax > MIN_BREAK_SNAP_CROSS_DISTANCE) {
             mSnapScrollMode=SNAP_NONE;
           }
-          if ((ay > MAX_SLOPE_FOR_DIAG * ax) && ((mSnapPositive && deltaY < -MIN_LOCK_SNAP_REVERSE_DISTANCE) || (!mSnapPositive && deltaY > MIN_LOCK_SNAP_REVERSE_DISTANCE))) {
+          if ((ay > MAX_SLOPE_FOR_DIAG * ax) && ((mSnapPositive && deltaY < -mMinLockSnapReverseDistance) || (!mSnapPositive && deltaY > mMinLockSnapReverseDistance))) {
             mSnapScrollMode=SNAP_Y_LOCK;
           }
         }
@@ -161,17 +167,6 @@ case MotionEvent.ACTION_MOVE:
       mLastTouchTime=eventTime;
       mUserScroll=true;
     }
-    boolean showPlusMinus=mMinZoomScale < mMaxZoomScale;
-    boolean showMagnify=canZoomScrollOut();
-    if (mZoomControls != null && (showPlusMinus || showMagnify)) {
-      if (mZoomControls.getVisibility() == View.VISIBLE) {
-        mPrivateHandler.removeCallbacks(mZoomControlRunnable);
-      }
- else {
-        mZoomControls.show(showPlusMinus,showMagnify);
-      }
-      mPrivateHandler.postDelayed(mZoomControlRunnable,ZOOM_CONTROLS_TIMEOUT);
-    }
     if (done) {
       return false;
     }
@@ -179,20 +174,19 @@ case MotionEvent.ACTION_MOVE:
   }
 case MotionEvent.ACTION_UP:
 {
+  mLastTouchUpTime=eventTime;
 switch (mTouchMode) {
 case TOUCH_INIT_MODE:
+case TOUCH_SHORTPRESS_START_MODE:
+case TOUCH_SHORTPRESS_MODE:
     mPrivateHandler.removeMessages(SWITCH_TO_SHORTPRESS);
-  if (getSettings().supportZoom()) {
-    mPrivateHandler.sendMessageDelayed(mPrivateHandler.obtainMessage(RELEASE_SINGLE_TAP),DOUBLE_TAP_TIMEOUT);
-  }
- else {
-    mTouchMode=TOUCH_DONE_MODE;
-    doShortPress();
-  }
+  mPrivateHandler.removeMessages(SWITCH_TO_LONGPRESS);
+mTouchMode=TOUCH_DONE_MODE;
+doShortPress();
 break;
 case TOUCH_SELECT_MODE:
 commitCopy();
-mTouchSelection=mExtendSelection=false;
+mTouchSelection=false;
 break;
 case SCROLL_ZOOM_ANIMATION_IN:
 case SCROLL_ZOOM_ANIMATION_OUT:
@@ -210,20 +204,6 @@ mTouchMode=SCROLL_ZOOM_ANIMATION_IN;
 invalidate();
 }
 break;
-case TOUCH_SHORTPRESS_START_MODE:
-case TOUCH_SHORTPRESS_MODE:
-{
-mPrivateHandler.removeMessages(SWITCH_TO_LONGPRESS);
-if (eventTime - mLastTouchTime < TAP_TIMEOUT && getSettings().supportZoom()) {
-mTouchMode=TOUCH_INIT_MODE;
-mPrivateHandler.sendMessageDelayed(mPrivateHandler.obtainMessage(RELEASE_SINGLE_TAP),DOUBLE_TAP_TIMEOUT);
-}
- else {
-mTouchMode=TOUCH_DONE_MODE;
-doShortPress();
-}
-break;
-}
 case TOUCH_DRAG_MODE:
 if (eventTime - mLastTouchTime <= MIN_FLING_TIME) {
 mVelocityTracker.addMovement(ev);
@@ -256,7 +236,6 @@ WebViewCore.resumeUpdate(mWebViewCore);
 }
 mPrivateHandler.removeMessages(SWITCH_TO_SHORTPRESS);
 mPrivateHandler.removeMessages(SWITCH_TO_LONGPRESS);
-mPrivateHandler.removeMessages(RELEASE_SINGLE_TAP);
 mTouchMode=TOUCH_DONE_MODE;
 int contentX=viewToContent((int)mLastTouchX + mScrollX);
 int contentY=viewToContent((int)mLastTouchY + mScrollY);

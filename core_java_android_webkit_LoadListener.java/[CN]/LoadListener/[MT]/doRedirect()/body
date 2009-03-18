@@ -2,6 +2,10 @@
   if (mCancelled) {
     return;
   }
+  if (mCacheRedirectCount >= RequestHandle.MAX_REDIRECT_COUNT) {
+    handleError(EventHandler.ERROR_REDIRECT_LOOP,mContext.getString(R.string.httpErrorRedirectLoop));
+    return;
+  }
   String redirectTo=mHeaders.getLocation();
   if (redirectTo != null) {
     int nativeResponse=createNativeResponse();
@@ -15,7 +19,7 @@
       return;
     }
  else     if (!URLUtil.isNetworkUrl(redirectTo)) {
-      final String text=mContext.getString(com.android.internal.R.string.open_permission_deny) + "\n" + redirectTo;
+      final String text=mContext.getString(R.string.open_permission_deny) + "\n" + redirectTo;
       nativeAddData(text.getBytes(),text.length());
       nativeFinished();
       clearNativeLoader();
@@ -34,24 +38,35 @@
     if (mRequestHeaders == null) {
       mRequestHeaders=new HashMap<String,String>();
     }
+    boolean fromCache=false;
+    if (mCacheLoader != null) {
+      mCacheRedirectCount++;
+      fromCache=true;
+    }
     if (!checkCache(mRequestHeaders)) {
       if (mRequestHandle != null) {
-        mRequestHandle.setupRedirect(redirectTo,mStatusCode,mRequestHeaders);
+        mRequestHandle.setupRedirect(mUrl,mStatusCode,mRequestHeaders);
       }
  else {
-        String method=mMethod;
-        if (method == null) {
+        Network network=Network.getInstance(getContext());
+        if (!network.requestURL(mMethod,mRequestHeaders,mPostData,this,mIsHighPriority)) {
+          handleError(EventHandler.ERROR_BAD_URL,mContext.getString(R.string.httpErrorBadUrl));
           return;
         }
-        Network network=Network.getInstance(getContext());
-        network.requestURL(method,mRequestHeaders,mPostData,this,mIsHighPriority);
+      }
+      if (fromCache) {
+        mRequestHandle.setRedirectCount(mCacheRedirectCount);
       }
     }
+ else     if (!fromCache) {
+      mCacheRedirectCount=mRequestHandle.getRedirectCount() + 1;
+    }
+    mDataBuilder.clear();
   }
  else {
     commitHeaders();
     commitLoad();
-    nativeFinished();
+    tearDown();
   }
   if (Config.LOGV) {
     Log.v(LOGTAG,"LoadListener.onRedirect(): redirect to: " + redirectTo);

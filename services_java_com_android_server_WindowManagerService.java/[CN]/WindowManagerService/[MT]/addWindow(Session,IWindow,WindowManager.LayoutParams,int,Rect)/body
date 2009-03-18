@@ -39,7 +39,7 @@ synchronized (mWindowMap) {
         Log.w(TAG,"Attempted to add input method window with unknown token " + attrs.token + ".  Aborting.");
         return WindowManagerImpl.ADD_BAD_APP_TOKEN;
       }
-      token=new WindowToken(attrs.token,-1);
+      token=new WindowToken(attrs.token,-1,false);
       addToken=true;
     }
  else     if (attrs.type >= FIRST_APPLICATION_WINDOW && attrs.type <= LAST_APPLICATION_WINDOW) {
@@ -99,7 +99,6 @@ synchronized (mWindowMap) {
  else {
       addWindowToListInOrderLocked(win,true);
     }
-    Binder.restoreCallingIdentity(origId);
     win.mEnterAnimationPending=true;
     mPolicy.getContentInsetHintLw(attrs,outContentInsets);
     if (mInTouchMode) {
@@ -108,8 +107,9 @@ synchronized (mWindowMap) {
     if (win == null || win.mAppToken == null || !win.mAppToken.clientHidden) {
       res|=WindowManagerImpl.ADD_FLAG_APP_VISIBLE;
     }
+    boolean focusChanged=false;
     if (win.canReceiveKeys()) {
-      if (updateFocusedWindowLocked(UPDATE_FOCUS_WILL_ASSIGN_LAYERS)) {
+      if ((focusChanged=updateFocusedWindowLocked(UPDATE_FOCUS_WILL_ASSIGN_LAYERS)) == true) {
         imMayMove=false;
       }
     }
@@ -117,12 +117,24 @@ synchronized (mWindowMap) {
       moveInputMethodWindowsIfNeededLocked(false);
     }
     assignLayersLocked();
+    if (focusChanged) {
+      if (mCurrentFocus != null) {
+        mKeyWaiter.handleNewWindowLocked(mCurrentFocus);
+      }
+    }
     if (localLOGV)     Log.v(TAG,"New client " + client.asBinder() + ": window="+ win);
   }
+  final long origId=Binder.clearCallingIdentity();
   if (reportNewConfig) {
-    final long origId=Binder.clearCallingIdentity();
     sendNewConfiguration();
-    Binder.restoreCallingIdentity(origId);
   }
+ else {
+    if (win.isVisibleOrAdding()) {
+      if (updateOrientationFromAppTokens(null) != null) {
+        sendNewConfiguration();
+      }
+    }
+  }
+  Binder.restoreCallingIdentity(origId);
   return res;
 }

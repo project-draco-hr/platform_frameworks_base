@@ -1,0 +1,64 @@
+{
+  if (Config.LOGD) {
+    Log.d(TAG,"_requestLocationUpdates: listener = " + receiver);
+  }
+  LocationProviderImpl impl=LocationProviderImpl.getProvider(provider);
+  if (impl == null) {
+    throw new IllegalArgumentException("provider=" + provider);
+  }
+  checkPermissionsSafe(provider);
+  String[] packages=getPackageNames();
+  final int callingUid=Binder.getCallingUid();
+  long identity=Binder.clearCallingIdentity();
+  try {
+    UpdateRecord r=new UpdateRecord(provider,minTime,minDistance,receiver,callingUid,packages);
+    if (!mListeners.contains(receiver)) {
+      try {
+        if (receiver.isListener()) {
+          receiver.getListener().asBinder().linkToDeath(receiver,0);
+        }
+        mListeners.add(receiver);
+      }
+ catch (      RemoteException e) {
+        return;
+      }
+    }
+    HashMap<String,UpdateRecord> records=mLocationListeners.get(receiver);
+    if (records == null) {
+      records=new HashMap<String,UpdateRecord>();
+      mLocationListeners.put(receiver,records);
+    }
+    UpdateRecord oldRecord=records.put(provider,r);
+    if (oldRecord != null) {
+      oldRecord.disposeLocked();
+    }
+    boolean isProviderEnabled=isAllowedBySettingsLocked(provider);
+    if (isProviderEnabled) {
+      long minTimeForProvider=getMinTimeLocked(provider);
+      impl.setMinTime(minTimeForProvider);
+      impl.enableLocationTracking(true);
+      updateWakelockStatusLocked(mScreenOn);
+      if (provider.equals(LocationManager.GPS_PROVIDER)) {
+        if (mGpsNavigating) {
+          updateReportedGpsLocked();
+        }
+      }
+      mLocationHandler.removeMessages(MESSAGE_HEARTBEAT,provider);
+      Message m=Message.obtain(mLocationHandler,MESSAGE_HEARTBEAT,provider);
+      mLocationHandler.sendMessageAtTime(m,SystemClock.uptimeMillis() + 1000);
+    }
+ else {
+      try {
+        if (receiver.isListener()) {
+          receiver.getListener().onProviderDisabled(provider);
+        }
+      }
+ catch (      RemoteException e) {
+        Log.w(TAG,"RemoteException calling onProviderDisabled on " + receiver.getListener());
+      }
+    }
+  }
+  finally {
+    Binder.restoreCallingIdentity(identity);
+  }
+}

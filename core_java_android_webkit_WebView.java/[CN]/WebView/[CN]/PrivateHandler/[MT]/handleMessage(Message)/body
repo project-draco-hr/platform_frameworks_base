@@ -1,4 +1,7 @@
 {
+  if (LOGV_ENABLED) {
+    Log.v(LOGTAG,msg.what < REMEMBER_PASSWORD || msg.what > INVAL_RECT_MSG_ID ? Integer.toString(msg.what) : HandlerDebugString[msg.what - REMEMBER_PASSWORD]);
+  }
 switch (msg.what) {
 case REMEMBER_PASSWORD:
 {
@@ -27,19 +30,13 @@ performLongClick();
 updateTextEntry();
 break;
 }
-case RELEASE_SINGLE_TAP:
-{
-mTouchMode=TOUCH_DONE_MODE;
-doShortPress();
-break;
-}
 case SWITCH_TO_ENTER:
 if (LOGV_ENABLED) Log.v(LOGTAG,"SWITCH_TO_ENTER");
 mTouchMode=TOUCH_DONE_MODE;
 onKeyUp(KeyEvent.KEYCODE_ENTER,new KeyEvent(KeyEvent.ACTION_UP,KeyEvent.KEYCODE_ENTER));
 break;
 case SCROLL_BY_MSG_ID:
-setContentScrollBy(msg.arg1,msg.arg2);
+setContentScrollBy(msg.arg1,msg.arg2,(Boolean)msg.obj);
 break;
 case SYNC_SCROLL_TO_MSG_ID:
 if (mUserScroll) {
@@ -63,6 +60,9 @@ if (Math.round(getViewWidth() / mZoomScale) == viewSize.x) {
 mZoomScale=0;
 mWebViewCore.sendMessage(EventHub.SET_SNAP_ANCHOR,0,0);
 }
+}
+if (!mMinZoomScaleFixed) {
+mMinZoomScale=(float)getViewWidth() / Math.max(ZOOM_OUT_WIDTH,draw.mWidthHeight.x);
 }
 final boolean updateLayout=viewSize.x == mLastWidthSent && viewSize.y == mLastHeightSent;
 recordNewContentSize(draw.mWidthHeight.x,draw.mWidthHeight.y,updateLayout);
@@ -101,9 +101,11 @@ HashMap scaleLimit=(HashMap)msg.obj;
 int minScale=(Integer)scaleLimit.get("minScale");
 if (minScale == 0) {
 mMinZoomScale=DEFAULT_MIN_ZOOM_SCALE;
+mMinZoomScaleFixed=false;
 }
  else {
 mMinZoomScale=(float)(minScale / 100.0);
+mMinZoomScaleFixed=true;
 }
 int maxScale=(Integer)scaleLimit.get("maxScale");
 if (maxScale == 0) {
@@ -149,6 +151,13 @@ nativeNotifyFocusSet(inEditingMode());
 }
 break;
 case UPDATE_TEXT_ENTRY_MSG_ID:
+boolean alreadyThere=inEditingMode();
+if (alreadyThere && nativeUpdateFocusNode()) {
+FocusNode node=mFocusNode;
+if (node.mIsTextField || node.mIsTextArea) {
+mTextEntry.bringIntoView();
+}
+}
 updateTextEntry();
 break;
 case RECOMPUTE_FOCUS_MSG_ID:
@@ -156,6 +165,17 @@ if (mNativeClass != 0) {
 nativeRecomputeFocus();
 }
 break;
+case INVAL_RECT_MSG_ID:
+{
+Rect r=(Rect)msg.obj;
+if (r == null) {
+invalidate();
+}
+ else {
+viewInvalidate(r.left,r.top,r.right,r.bottom);
+}
+break;
+}
 case UPDATE_TEXT_ENTRY_ADAPTER:
 HashMap data=(HashMap)msg.obj;
 if (mTextEntry.isSameTextField(msg.arg1)) {
@@ -190,10 +210,12 @@ case WEBCORE_NEED_TOUCH_EVENTS:
 mForwardTouchEvents=(msg.arg1 != 0);
 break;
 case PREVENT_TOUCH_ID:
-if (mTouchMode == TOUCH_DRAG_MODE) {
-WebViewCore.resumeUpdate(mWebViewCore);
-}
+if (msg.arg1 == MotionEvent.ACTION_DOWN) {
+mPreventDrag=msg.arg2 == 1;
+if (mPreventDrag) {
 mTouchMode=TOUCH_DONE_MODE;
+}
+}
 break;
 default :
 super.handleMessage(msg);
