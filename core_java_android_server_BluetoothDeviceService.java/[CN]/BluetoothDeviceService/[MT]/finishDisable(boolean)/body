@@ -1,0 +1,42 @@
+{
+  if (mBluetoothState != BluetoothDevice.BLUETOOTH_STATE_TURNING_OFF) {
+    return;
+  }
+  mEventLoop.stop();
+  disableNative();
+  for (  String address : mBondState.listInState(BluetoothDevice.BOND_BONDING)) {
+    mBondState.setBondState(address,BluetoothDevice.BOND_NOT_BONDED,BluetoothDevice.UNBOND_REASON_AUTH_CANCELED);
+  }
+  HashMap<String,IBluetoothDeviceCallback> callbacksMap=mEventLoop.getRemoteServiceChannelCallbacks();
+  for (Iterator<String> i=callbacksMap.keySet().iterator(); i.hasNext(); ) {
+    String address=i.next();
+    IBluetoothDeviceCallback callback=callbacksMap.get(address);
+    try {
+      callback.onGetRemoteServiceChannelResult(address,BluetoothError.ERROR_DISABLED);
+    }
+ catch (    RemoteException e) {
+    }
+    i.remove();
+  }
+  Intent intent=new Intent(BluetoothIntent.SCAN_MODE_CHANGED_ACTION);
+  intent.putExtra(BluetoothIntent.SCAN_MODE,BluetoothDevice.SCAN_MODE_NONE);
+  mContext.sendBroadcast(intent,BLUETOOTH_PERM);
+  mIsDiscovering=false;
+  if (saveSetting) {
+    persistBluetoothOnSetting(false);
+  }
+  setBluetoothState(BluetoothDevice.BLUETOOTH_STATE_OFF);
+  long ident=Binder.clearCallingIdentity();
+  try {
+    mBatteryStats.noteBluetoothOff();
+  }
+ catch (  RemoteException e) {
+  }
+ finally {
+    Binder.restoreCallingIdentity(ident);
+  }
+  if (mRestart) {
+    mRestart=false;
+    enable();
+  }
+}
