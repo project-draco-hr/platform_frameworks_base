@@ -13,9 +13,34 @@
   final long wifiRunningTime=getWifiRunningTime(batteryRealtime,which);
   final long bluetoothOnTime=getBluetoothOnTime(batteryRealtime,which);
   StringBuilder sb=new StringBuilder(128);
+  SparseArray<? extends Uid> uidStats=getUidStats();
+  final int NU=uidStats.size();
   String category=STAT_NAMES[which];
   dumpLine(pw,0,category,BATTERY_DATA,which == STATS_TOTAL ? getStartCount() : "N/A",whichBatteryUptime / 1000,whichBatteryRealtime / 1000,totalUptime / 1000,totalRealtime / 1000);
-  dumpLine(pw,0,category,MISC_DATA,screenOnTime / 1000,phoneOnTime / 1000,wifiOnTime / 1000,wifiRunningTime / 1000,bluetoothOnTime / 1000);
+  long rxTotal=0;
+  long txTotal=0;
+  long fullWakeLockTimeTotal=0;
+  long partialWakeLockTimeTotal=0;
+  for (int iu=0; iu < NU; iu++) {
+    Uid u=uidStats.valueAt(iu);
+    rxTotal+=u.getTcpBytesReceived(which);
+    txTotal+=u.getTcpBytesSent(which);
+    Map<String,? extends BatteryStats.Uid.Wakelock> wakelocks=u.getWakelockStats();
+    if (wakelocks.size() > 0) {
+      for (      Map.Entry<String,? extends BatteryStats.Uid.Wakelock> ent : wakelocks.entrySet()) {
+        Uid.Wakelock wl=ent.getValue();
+        Timer fullWakeTimer=wl.getWakeTime(WAKE_TYPE_FULL);
+        if (fullWakeTimer != null) {
+          fullWakeLockTimeTotal+=fullWakeTimer.getTotalTime(batteryRealtime,which);
+        }
+        Timer partialWakeTimer=wl.getWakeTime(WAKE_TYPE_PARTIAL);
+        if (partialWakeTimer != null) {
+          partialWakeLockTimeTotal+=partialWakeTimer.getTotalTime(batteryRealtime,which);
+        }
+      }
+    }
+  }
+  dumpLine(pw,0,category,MISC_DATA,screenOnTime / 1000,phoneOnTime / 1000,wifiOnTime / 1000,wifiRunningTime / 1000,bluetoothOnTime / 1000,rxTotal,txTotal,fullWakeLockTimeTotal,partialWakeLockTimeTotal);
   Object[] args=new Object[NUM_SIGNAL_STRENGTH_BINS];
   for (int i=0; i < NUM_SIGNAL_STRENGTH_BINS; i++) {
     args[i]=getPhoneSignalStrengthTime(i,batteryRealtime,which) / 1000;
@@ -29,8 +54,6 @@
   if (which == STATS_UNPLUGGED) {
     dumpLine(pw,0,category,BATTERY_DATA,getUnpluggedStartLevel(),getPluggedStartLevel());
   }
-  SparseArray<? extends Uid> uidStats=getUidStats();
-  final int NU=uidStats.size();
   for (int iu=0; iu < NU; iu++) {
     final int uid=uidStats.keyAt(iu);
     Uid u=uidStats.valueAt(iu);
