@@ -8,6 +8,8 @@
   final long totalRealtime=computeRealtime(rawRealtime,which);
   final long totalUptime=computeUptime(rawUptime,which);
   StringBuilder sb=new StringBuilder(128);
+  SparseArray<? extends Uid> uidStats=getUidStats();
+  final int NU=uidStats.size();
   pw.println(prefix + "  Time on battery: " + formatTimeMs(whichBatteryUptime / 1000)+ "("+ formatRatioLocked(whichBatteryUptime,totalRealtime)+ ") uptime, "+ formatTimeMs(whichBatteryRealtime / 1000)+ "("+ formatRatioLocked(whichBatteryRealtime,totalRealtime)+ ") realtime");
   pw.println(prefix + "  Total: " + formatTimeMs(totalUptime / 1000)+ "uptime, "+ formatTimeMs(totalRealtime / 1000)+ "realtime");
   final long screenOnTime=getScreenOnTime(batteryRealtime,which);
@@ -17,6 +19,31 @@
   final long bluetoothOnTime=getBluetoothOnTime(batteryRealtime,which);
   pw.println(prefix + "  Screen on: " + formatTimeMs(screenOnTime / 1000)+ "("+ formatRatioLocked(screenOnTime,whichBatteryRealtime)+ "), Phone on: "+ formatTimeMs(phoneOnTime / 1000)+ "("+ formatRatioLocked(phoneOnTime,whichBatteryRealtime));
   pw.println(prefix + "  Wifi on: " + formatTimeMs(wifiOnTime / 1000)+ "("+ formatRatioLocked(wifiOnTime,whichBatteryRealtime)+ "), Wifi running: "+ formatTimeMs(wifiRunningTime / 1000)+ "("+ formatRatioLocked(wifiRunningTime,whichBatteryRealtime)+ "), Bluetooth on: "+ formatTimeMs(bluetoothOnTime / 1000)+ "("+ formatRatioLocked(bluetoothOnTime,whichBatteryRealtime)+ ")");
+  long rxTotal=0;
+  long txTotal=0;
+  long fullWakeLockTimeTotalMicros=0;
+  long partialWakeLockTimeTotalMicros=0;
+  for (int iu=0; iu < NU; iu++) {
+    Uid u=uidStats.valueAt(iu);
+    rxTotal+=u.getTcpBytesReceived(which);
+    txTotal+=u.getTcpBytesSent(which);
+    Map<String,? extends BatteryStats.Uid.Wakelock> wakelocks=u.getWakelockStats();
+    if (wakelocks.size() > 0) {
+      for (      Map.Entry<String,? extends BatteryStats.Uid.Wakelock> ent : wakelocks.entrySet()) {
+        Uid.Wakelock wl=ent.getValue();
+        Timer fullWakeTimer=wl.getWakeTime(WAKE_TYPE_FULL);
+        if (fullWakeTimer != null) {
+          fullWakeLockTimeTotalMicros+=fullWakeTimer.getTotalTime(batteryRealtime,which);
+        }
+        Timer partialWakeTimer=wl.getWakeTime(WAKE_TYPE_PARTIAL);
+        if (partialWakeTimer != null) {
+          partialWakeLockTimeTotalMicros+=partialWakeTimer.getTotalTime(batteryRealtime,which);
+        }
+      }
+    }
+  }
+  pw.println(prefix + "  Total received: " + formatBytesLocked(rxTotal)+ ", Total sent: "+ formatBytesLocked(txTotal));
+  pw.println(prefix + "  Total full wakelock time: " + formatTimeMs((fullWakeLockTimeTotalMicros + 500) / 1000)+ ", Total partial waklock time: "+ formatTimeMs((partialWakeLockTimeTotalMicros + 500) / 1000));
   sb.setLength(0);
   sb.append("  Signal strengths: ");
   boolean didOne=false;
@@ -68,8 +95,6 @@
     }
   }
   pw.println(" ");
-  SparseArray<? extends Uid> uidStats=getUidStats();
-  final int NU=uidStats.size();
   for (int iu=0; iu < NU; iu++) {
     final int uid=uidStats.keyAt(iu);
     Uid u=uidStats.valueAt(iu);
@@ -80,7 +105,7 @@
     long fullWifiLockOnTime=u.getFullWifiLockTime(batteryRealtime,which);
     long scanWifiLockOnTime=u.getScanWifiLockTime(batteryRealtime,which);
     if (tcpReceived != 0 || tcpSent != 0) {
-      pw.println(prefix + "    Network: " + tcpReceived+ " bytes received, "+ tcpSent+ " bytes sent");
+      pw.println(prefix + "    Network: " + formatBytesLocked(tcpReceived)+ " received, "+ formatBytesLocked(tcpSent)+ " sent");
     }
     if (fullWifiLockOnTime != 0 || scanWifiLockOnTime != 0) {
       pw.println(prefix + "    Full Wifi Lock Time: " + formatTimeMs(fullWifiLockOnTime / 1000)+ "("+ formatRatioLocked(fullWifiLockOnTime,whichBatteryRealtime)+ ")");
