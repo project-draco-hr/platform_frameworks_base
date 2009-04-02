@@ -1,0 +1,61 @@
+{
+synchronized (Phone.class) {
+    if (!sMadeDefaults) {
+      sLooper=Looper.myLooper();
+      sContext=context;
+      if (sLooper == null) {
+        throw new RuntimeException("PhoneFactory.makeDefaultPhone must be called from Looper thread");
+      }
+      int retryCount=0;
+      for (; ; ) {
+        boolean hasException=false;
+        retryCount++;
+        try {
+          new LocalServerSocket("com.android.internal.telephony");
+        }
+ catch (        java.io.IOException ex) {
+          hasException=true;
+        }
+        if (!hasException) {
+          break;
+        }
+ else         if (retryCount > SOCKET_OPEN_MAX_RETRY) {
+          throw new RuntimeException("PhoneFactory probably already running");
+        }
+ else {
+          try {
+            Thread.sleep(SOCKET_OPEN_RETRY_MILLIS);
+          }
+ catch (          InterruptedException er) {
+          }
+        }
+      }
+      sPhoneNotifier=new DefaultPhoneNotifier();
+      int networkMode=Settings.Secure.getInt(context.getContentResolver(),Settings.Secure.PREFERRED_NETWORK_MODE,preferredNetworkMode);
+      Log.i(LOG_TAG,"Network Mode set to " + Integer.toString(networkMode));
+      int cdmaSubscription=Settings.Secure.getInt(context.getContentResolver(),Settings.Secure.PREFERRED_CDMA_SUBSCRIPTION,preferredCdmaSubscription);
+      Log.i(LOG_TAG,"Cdma Subscription set to " + Integer.toString(cdmaSubscription));
+      sCommandsInterface=new RIL(context,networkMode,cdmaSubscription);
+switch (networkMode) {
+case RILConstants.NETWORK_MODE_WCDMA_PREF:
+case RILConstants.NETWORK_MODE_GSM_ONLY:
+case RILConstants.NETWORK_MODE_WCDMA_ONLY:
+case RILConstants.NETWORK_MODE_GSM_UMTS:
+        sProxyPhone=new PhoneProxy(new GSMPhone(context,sCommandsInterface,sPhoneNotifier));
+      Log.i(LOG_TAG,"Creating GSMPhone");
+    break;
+case RILConstants.NETWORK_MODE_CDMA:
+case RILConstants.NETWORK_MODE_CDMA_NO_EVDO:
+case RILConstants.NETWORK_MODE_EVDO_NO_CDMA:
+  sProxyPhone=new PhoneProxy(new CDMAPhone(context,sCommandsInterface,sPhoneNotifier));
+Log.i(LOG_TAG,"Creating CDMAPhone");
+break;
+case RILConstants.NETWORK_MODE_GLOBAL:
+default :
+sProxyPhone=new PhoneProxy(new CDMAPhone(context,sCommandsInterface,sPhoneNotifier));
+Log.i(LOG_TAG,"Creating CDMAPhone");
+}
+sMadeDefaults=true;
+}
+}
+}
