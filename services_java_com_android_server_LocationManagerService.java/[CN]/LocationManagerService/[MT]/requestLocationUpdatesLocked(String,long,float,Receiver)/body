@@ -7,30 +7,17 @@
     throw new IllegalArgumentException("provider=" + provider);
   }
   checkPermissionsSafe(provider);
-  String[] packages=getPackageNames();
   final int callingUid=Binder.getCallingUid();
+  boolean newUid=!providerHasListener(provider,callingUid,null);
   long identity=Binder.clearCallingIdentity();
   try {
-    UpdateRecord r=new UpdateRecord(provider,minTime,minDistance,receiver,callingUid,packages);
-    if (!mListeners.contains(receiver)) {
-      try {
-        if (receiver.isListener()) {
-          receiver.getListener().asBinder().linkToDeath(receiver,0);
-        }
-        mListeners.add(receiver);
-      }
- catch (      RemoteException e) {
-        return;
-      }
-    }
-    HashMap<String,UpdateRecord> records=mLocationListeners.get(receiver);
-    if (records == null) {
-      records=new HashMap<String,UpdateRecord>();
-      mLocationListeners.put(receiver,records);
-    }
-    UpdateRecord oldRecord=records.put(provider,r);
+    UpdateRecord r=new UpdateRecord(provider,minTime,minDistance,receiver,callingUid);
+    UpdateRecord oldRecord=receiver.mUpdateRecords.put(provider,r);
     if (oldRecord != null) {
       oldRecord.disposeLocked();
+    }
+    if (newUid) {
+      impl.addListener(callingUid);
     }
     boolean isProviderEnabled=isAllowedBySettingsLocked(provider);
     if (isProviderEnabled) {
@@ -38,11 +25,6 @@
       impl.setMinTime(minTimeForProvider);
       impl.enableLocationTracking(true);
       updateWakelockStatusLocked(mScreenOn);
-      if (provider.equals(LocationManager.GPS_PROVIDER)) {
-        if (mGpsNavigating) {
-          updateReportedGpsLocked();
-        }
-      }
     }
  else {
       try {
