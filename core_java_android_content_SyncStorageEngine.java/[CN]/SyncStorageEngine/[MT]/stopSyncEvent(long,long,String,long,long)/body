@@ -1,65 +1,95 @@
 {
-  SQLiteDatabase db=mOpenHelper.getWritableDatabase();
-  db.beginTransaction();
-  try {
-    ContentValues values=new ContentValues();
-    values.put(Sync.History.ELAPSED_TIME,elapsedTime);
-    values.put(Sync.History.EVENT,Sync.History.EVENT_STOP);
-    values.put(Sync.History.MESG,resultMessage);
-    values.put(Sync.History.DOWNSTREAM_ACTIVITY,downstreamActivity);
-    values.put(Sync.History.UPSTREAM_ACTIVITY,upstreamActivity);
-    int count=db.update("history",values,"_id=?",new String[]{Long.toString(historyId)});
-    if (count > 0) {
-      int source=(int)DatabaseUtils.longForQuery(db,"SELECT source FROM history WHERE _id=" + historyId,null);
-      long eventTime=DatabaseUtils.longForQuery(db,"SELECT eventTime FROM history WHERE _id=" + historyId,null);
-      long statsId=DatabaseUtils.longForQuery(db,"SELECT stats_id FROM history WHERE _id=" + historyId,null);
-      createStatusRowIfNecessary(statsId);
-      StringBuilder sb=new StringBuilder();
-      ArrayList<String> bindArgs=new ArrayList<String>();
-      sb.append("UPDATE status SET");
-      sb.append(" numSyncs=numSyncs+1");
-      sb.append(", totalElapsedTime=totalElapsedTime+" + elapsedTime);
-switch (source) {
-case Sync.History.SOURCE_LOCAL:
-        sb.append(", numSourceLocal=numSourceLocal+1");
-      break;
-case Sync.History.SOURCE_POLL:
-    sb.append(", numSourcePoll=numSourcePoll+1");
-  break;
-case Sync.History.SOURCE_USER:
-sb.append(", numSourceUser=numSourceUser+1");
+synchronized (mAuthorities) {
+    if (DEBUG)     Log.v(TAG,"stopSyncEvent: historyId=" + historyId);
+    SyncHistoryItem item=null;
+    int i=mSyncHistory.size();
+    while (i > 0) {
+      i--;
+      item=mSyncHistory.get(i);
+      if (item.historyId == historyId) {
+        break;
+      }
+      item=null;
+    }
+    if (item == null) {
+      Log.w(TAG,"stopSyncEvent: no history for id " + historyId);
+      return;
+    }
+    item.elapsedTime=elapsedTime;
+    item.event=EVENT_STOP;
+    item.mesg=resultMessage;
+    item.downstreamActivity=downstreamActivity;
+    item.upstreamActivity=upstreamActivity;
+    SyncStatusInfo status=getOrCreateSyncStatusLocked(item.authorityId);
+    status.numSyncs++;
+    status.totalElapsedTime+=elapsedTime;
+switch (item.source) {
+case SOURCE_LOCAL:
+      status.numSourceLocal++;
+    break;
+case SOURCE_POLL:
+  status.numSourcePoll++;
 break;
-case Sync.History.SOURCE_SERVER:
-sb.append(", numSourceServer=numSourceServer+1");
+case SOURCE_USER:
+status.numSourceUser++;
+break;
+case SOURCE_SERVER:
+status.numSourceServer++;
 break;
 }
-final String statsIdString=String.valueOf(statsId);
-final long lastSyncTime=(eventTime + elapsedTime);
-if (Sync.History.MESG_SUCCESS.equals(resultMessage)) {
-sb.append(", lastSuccessTime=" + lastSyncTime);
-sb.append(", lastSuccessSource=" + source);
-sb.append(", lastFailureTime=null");
-sb.append(", lastFailureSource=null");
-sb.append(", lastFailureMesg=null");
-sb.append(", initialFailureTime=null");
+boolean writeStatisticsNow=false;
+int day=getCurrentDay();
+if (mDayStats[0] == null) {
+mDayStats[0]=new DayStats(day);
 }
- else if (!Sync.History.MESG_CANCELED.equals(resultMessage)) {
-sb.append(", lastFailureTime=" + lastSyncTime);
-sb.append(", lastFailureSource=" + source);
-sb.append(", lastFailureMesg=?");
-bindArgs.add(resultMessage);
-long initialFailureTime=DatabaseUtils.longForQuery(db,SELECT_INITIAL_FAILURE_TIME_QUERY_STRING,new String[]{statsIdString,String.valueOf(lastSyncTime)});
-sb.append(", initialFailureTime=" + initialFailureTime);
+ else if (day != mDayStats[0].day) {
+System.arraycopy(mDayStats,0,mDayStats,1,mDayStats.length - 1);
+mDayStats[0]=new DayStats(day);
+writeStatisticsNow=true;
 }
-sb.append(" WHERE stats_id=?");
-bindArgs.add(statsIdString);
-db.execSQL(sb.toString(),bindArgs.toArray());
-db.setTransactionSuccessful();
-mContext.getContentResolver().notifyChange(Sync.History.CONTENT_URI,null);
-mContext.getContentResolver().notifyChange(Sync.Status.CONTENT_URI,null);
+ else if (mDayStats[0] == null) {
+}
+final DayStats ds=mDayStats[0];
+final long lastSyncTime=(item.eventTime + elapsedTime);
+boolean writeStatusNow=false;
+if (MESG_SUCCESS.equals(resultMessage)) {
+if (status.lastSuccessTime == 0 || status.lastFailureTime != 0) {
+writeStatusNow=true;
+}
+status.lastSuccessTime=lastSyncTime;
+status.lastSuccessSource=item.source;
+status.lastFailureTime=0;
+status.lastFailureSource=-1;
+status.lastFailureMesg=null;
+status.initialFailureTime=0;
+ds.successCount++;
+ds.successTime+=elapsedTime;
+}
+ else if (!MESG_CANCELED.equals(resultMessage)) {
+if (status.lastFailureTime == 0) {
+writeStatusNow=true;
+}
+status.lastFailureTime=lastSyncTime;
+status.lastFailureSource=item.source;
+status.lastFailureMesg=resultMessage;
+if (status.initialFailureTime == 0) {
+status.initialFailureTime=lastSyncTime;
+}
+ds.failureCount++;
+ds.failureTime+=elapsedTime;
+}
+if (writeStatusNow) {
+writeStatusLocked();
+}
+ else if (!hasMessages(MSG_WRITE_STATUS)) {
+sendMessageDelayed(obtainMessage(MSG_WRITE_STATUS),WRITE_STATUS_DELAY);
+}
+if (writeStatisticsNow) {
+writeStatisticsLocked();
+}
+ else if (!hasMessages(MSG_WRITE_STATISTICS)) {
+sendMessageDelayed(obtainMessage(MSG_WRITE_STATISTICS),WRITE_STATISTICS_DELAY);
 }
 }
-  finally {
-db.endTransaction();
-}
+reportChange(CHANGE_STATUS);
 }
