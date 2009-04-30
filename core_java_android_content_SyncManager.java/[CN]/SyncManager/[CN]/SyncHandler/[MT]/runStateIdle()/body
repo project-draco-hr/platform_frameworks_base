@@ -75,52 +75,27 @@ synchronized (mSyncQueue) {
     }
     mSyncQueue.popHead();
   }
-  String providerName=syncOperation.authority;
-  ensureContentResolver();
-  IContentProvider contentProvider;
-  try {
-    contentProvider=mContentResolver.acquireProvider(providerName);
-    if (contentProvider == null) {
-      Log.e(TAG,"Provider " + providerName + " doesn't exist");
-      return;
-    }
-    if (contentProvider.getSyncAdapter() == null) {
-      Log.e(TAG,"Provider " + providerName + " isn't syncable, "+ contentProvider);
-      return;
-    }
-  }
- catch (  RemoteException remoteExc) {
-    Log.e(TAG,"Caught a RemoteException while preparing for sync, rescheduling " + syncOperation,remoteExc);
-    rescheduleWithDelay(syncOperation);
-    return;
-  }
-catch (  RuntimeException exc) {
-    Log.e(TAG,"Caught a RuntimeException while validating sync of " + providerName,exc);
-    return;
-  }
-  final long historyRowId=insertStartSyncEvent(syncOperation);
-  try {
-    ISyncAdapter syncAdapter=contentProvider.getSyncAdapter();
-    ActiveSyncContext activeSyncContext=new ActiveSyncContext(syncOperation,contentProvider,syncAdapter,historyRowId);
-    mSyncWakeLock.acquire();
-    if (Log.isLoggable(TAG,Log.DEBUG)) {
-      Log.d(TAG,"starting sync of " + syncOperation);
-    }
-    syncAdapter.startSync(activeSyncContext,syncOperation.account,syncOperation.extras);
-    mActiveSyncContext=activeSyncContext;
-    mSyncStorageEngine.setActiveSync(mActiveSyncContext);
-  }
- catch (  RemoteException remoteExc) {
+  SyncAdapterType syncAdapterType=new SyncAdapterType(syncOperation.authority,syncOperation.account.mType);
+  RegisteredServicesCache.ServiceInfo syncAdapterInfo=mSyncAdapters.getServiceInfo(syncAdapterType);
+  if (syncAdapterInfo == null) {
     if (Config.LOGD) {
-      Log.d(TAG,"runStateIdle: caught a RemoteException, rescheduling",remoteExc);
+      Log.d(TAG,"can't find a sync adapter for " + syncAdapterType);
     }
+    runStateIdle();
+    return;
+  }
+  ActiveSyncContext activeSyncContext=new ActiveSyncContext(syncOperation,insertStartSyncEvent(syncOperation));
+  mActiveSyncContext=activeSyncContext;
+  if (Log.isLoggable(TAG,Log.VERBOSE)) {
+    Log.v(TAG,"runStateIdle: setting mActiveSyncContext to " + mActiveSyncContext);
+  }
+  mSyncStorageEngine.setActiveSync(mActiveSyncContext);
+  if (!activeSyncContext.bindToSyncAdapter(syncAdapterInfo)) {
+    Log.e(TAG,"Bind attempt failed to " + syncAdapterInfo);
     mActiveSyncContext=null;
     mSyncStorageEngine.setActiveSync(mActiveSyncContext);
-    rescheduleWithDelay(syncOperation);
+    runStateIdle();
+    return;
   }
-catch (  RuntimeException exc) {
-    mActiveSyncContext=null;
-    mSyncStorageEngine.setActiveSync(mActiveSyncContext);
-    Log.e(TAG,"Caught a RuntimeException while starting the sync " + syncOperation,exc);
-  }
+  mSyncWakeLock.acquire();
 }
