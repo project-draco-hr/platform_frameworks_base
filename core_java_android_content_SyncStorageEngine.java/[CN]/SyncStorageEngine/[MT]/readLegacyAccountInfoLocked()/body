@@ -1,0 +1,92 @@
+{
+  File file=mContext.getDatabasePath("syncmanager.db");
+  if (!file.exists()) {
+    return;
+  }
+  String path=file.getPath();
+  SQLiteDatabase db=null;
+  try {
+    db=SQLiteDatabase.openDatabase(path,null,SQLiteDatabase.OPEN_READONLY);
+  }
+ catch (  SQLiteException e) {
+  }
+  if (db != null) {
+    if (DEBUG_FILE)     Log.v(TAG,"Reading legacy sync accounts db");
+    SQLiteQueryBuilder qb=new SQLiteQueryBuilder();
+    qb.setTables("stats, status");
+    HashMap<String,String> map=new HashMap<String,String>();
+    map.put("_id","status._id as _id");
+    map.put("account","stats.account as account");
+    map.put("authority","stats.authority as authority");
+    map.put("totalElapsedTime","totalElapsedTime");
+    map.put("numSyncs","numSyncs");
+    map.put("numSourceLocal","numSourceLocal");
+    map.put("numSourcePoll","numSourcePoll");
+    map.put("numSourceServer","numSourceServer");
+    map.put("numSourceUser","numSourceUser");
+    map.put("lastSuccessSource","lastSuccessSource");
+    map.put("lastSuccessTime","lastSuccessTime");
+    map.put("lastFailureSource","lastFailureSource");
+    map.put("lastFailureTime","lastFailureTime");
+    map.put("lastFailureMesg","lastFailureMesg");
+    map.put("pending","pending");
+    qb.setProjectionMap(map);
+    qb.appendWhere("stats._id = status.stats_id");
+    Cursor c=qb.query(db,null,null,null,null,null,null);
+    while (c.moveToNext()) {
+      String accountName=c.getString(c.getColumnIndex("account"));
+      String authorityName=c.getString(c.getColumnIndex("authority"));
+      AuthorityInfo authority=this.getOrCreateAuthorityLocked(accountName,authorityName,-1,false);
+      if (authority != null) {
+        int i=mSyncStatus.size();
+        boolean found=false;
+        SyncStatusInfo st=null;
+        while (i > 0) {
+          i--;
+          st=mSyncStatus.get(i);
+          if (st.authorityId == authority.ident) {
+            found=true;
+            break;
+          }
+        }
+        if (!found) {
+          st=new SyncStatusInfo(authority.ident);
+          mSyncStatus.put(authority.ident,st);
+        }
+        st.totalElapsedTime=getLongColumn(c,"totalElapsedTime");
+        st.numSyncs=getIntColumn(c,"numSyncs");
+        st.numSourceLocal=getIntColumn(c,"numSourceLocal");
+        st.numSourcePoll=getIntColumn(c,"numSourcePoll");
+        st.numSourceServer=getIntColumn(c,"numSourceServer");
+        st.numSourceUser=getIntColumn(c,"numSourceUser");
+        st.lastSuccessSource=getIntColumn(c,"lastSuccessSource");
+        st.lastSuccessTime=getLongColumn(c,"lastSuccessTime");
+        st.lastFailureSource=getIntColumn(c,"lastFailureSource");
+        st.lastFailureTime=getLongColumn(c,"lastFailureTime");
+        st.lastFailureMesg=c.getString(c.getColumnIndex("lastFailureMesg"));
+        st.pending=getIntColumn(c,"pending") != 0;
+      }
+    }
+    c.close();
+    qb=new SQLiteQueryBuilder();
+    qb.setTables("settings");
+    c=qb.query(db,null,null,null,null,null,null);
+    while (c.moveToNext()) {
+      String name=c.getString(c.getColumnIndex("name"));
+      String value=c.getString(c.getColumnIndex("value"));
+      if (name == null)       continue;
+      if (name.equals("listen_for_tickles")) {
+        setListenForNetworkTickles(value == null || Boolean.parseBoolean(value));
+      }
+ else       if (name.startsWith("sync_provider_")) {
+        String provider=name.substring("sync_provider_".length(),name.length());
+        setSyncProviderAutomatically(null,provider,value == null || Boolean.parseBoolean(value));
+      }
+    }
+    c.close();
+    db.close();
+    writeAccountInfoLocked();
+    writeStatusLocked();
+    (new File(path)).delete();
+  }
+}
