@@ -2,16 +2,16 @@
 switch (msg.what) {
 case MSG_RUN_BACKUP:
 {
-      HashSet<ServiceInfo> queue;
+      HashSet<BackupRequest> queue;
 synchronized (mQueueLock) {
         queue=mPendingBackups;
-        mPendingBackups=new HashSet<ServiceInfo>();
+        mPendingBackups=new HashSet<BackupRequest>();
       }
       Intent backupIntent=new Intent(BackupService.SERVICE_ACTION);
-      for (      ServiceInfo service : queue) {
+      for (      BackupRequest request : queue) {
         mBinding=true;
         mTargetService=null;
-        backupIntent.setClassName(service.packageName,service.name);
+        backupIntent.setClassName(request.service.packageName,request.service.name);
         Log.d(TAG,"binding to " + backupIntent);
         if (mContext.bindService(backupIntent,this,0)) {
 synchronized (mBindSignaller) {
@@ -26,10 +26,35 @@ synchronized (mBindSignaller) {
           if (mTargetService != null) {
             try {
               Log.d(TAG,"invoking doBackup() on " + backupIntent);
-              mTargetService.doBackup(-1,-1,-1);
+              File savedStateName=new File(mStateDir,request.service.packageName);
+              File backupDataName=new File(mDataDir,request.service.packageName + ".data");
+              File newStateName=new File(mStateDir,request.service.packageName + ".new");
+              ParcelFileDescriptor savedState=(request.fullBackup) ? null : ParcelFileDescriptor.open(savedStateName,ParcelFileDescriptor.MODE_READ_ONLY | ParcelFileDescriptor.MODE_CREATE);
+              backupDataName.delete();
+              ParcelFileDescriptor backupData=ParcelFileDescriptor.open(backupDataName,ParcelFileDescriptor.MODE_READ_WRITE | ParcelFileDescriptor.MODE_CREATE);
+              newStateName.delete();
+              ParcelFileDescriptor newState=ParcelFileDescriptor.open(newStateName,ParcelFileDescriptor.MODE_READ_WRITE | ParcelFileDescriptor.MODE_CREATE);
+              try {
+                mTargetService.doBackup(savedState,backupData,newState);
+              }
+  finally {
+                savedState.close();
+                backupData.close();
+                newState.close();
+              }
+              backupDataName.delete();
+              newStateName.renameTo(savedStateName);
             }
- catch (            RemoteException e) {
+ catch (            FileNotFoundException fnf) {
+              Log.d(TAG,"File not found on backup: ");
+              fnf.printStackTrace();
+            }
+catch (            RemoteException e) {
               Log.d(TAG,"Remote target " + backupIntent + " threw during backup:");
+              e.printStackTrace();
+            }
+catch (            Exception e) {
+              Log.w(TAG,"Final exception guard in backup: ");
               e.printStackTrace();
             }
             mContext.unbindService(this);
