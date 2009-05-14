@@ -1,0 +1,44 @@
+{
+  if (DEBUG_BACKUP)   Log.v(TAG,"handleCreateBackupAgent: " + data);
+  unscheduleGcIdler();
+  PackageInfo packageInfo=getPackageInfoNoCheck(data.appInfo);
+  String packageName=packageInfo.mPackageName;
+  if (mBackupAgents.get(packageName) != null) {
+    Log.d(TAG,"BackupAgent " + "  for " + packageName + " already exists");
+    return;
+  }
+  BackupAgent agent=null;
+  String classname=data.appInfo.backupAgentName;
+  if (classname == null) {
+    if (data.backupMode == IApplicationThread.BACKUP_MODE_INCREMENTAL) {
+      Log.e(TAG,"Attempted incremental backup but no defined agent for " + packageName);
+      return;
+    }
+    classname="android.app.FullBackupAgent";
+  }
+  try {
+    java.lang.ClassLoader cl=packageInfo.getClassLoader();
+    agent=(BackupAgent)cl.loadClass(data.appInfo.backupAgentName).newInstance();
+  }
+ catch (  Exception e) {
+    throw new RuntimeException("Unable to instantiate backup agent " + data.appInfo.backupAgentName + ": "+ e.toString(),e);
+  }
+  try {
+    if (DEBUG_BACKUP)     Log.v(TAG,"Initializing BackupAgent " + data.appInfo.backupAgentName);
+    ApplicationContext context=new ApplicationContext();
+    context.init(packageInfo,null,this);
+    context.setOuterContext(agent);
+    agent.attach(context);
+    agent.onCreate();
+    IBinder binder=agent.onBind();
+    try {
+      ActivityManagerNative.getDefault().backupAgentCreated(packageName,binder);
+    }
+ catch (    RemoteException e) {
+    }
+    mBackupAgents.put(packageName,agent);
+  }
+ catch (  Exception e) {
+    throw new RuntimeException("Unable to create BackupAgent " + data.appInfo.backupAgentName + ": "+ e.toString(),e);
+  }
+}
