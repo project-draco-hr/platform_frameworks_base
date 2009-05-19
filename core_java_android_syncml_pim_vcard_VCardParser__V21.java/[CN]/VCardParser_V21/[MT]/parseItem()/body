@@ -1,43 +1,42 @@
 {
   mEncoding=sDefaultEncoding;
   String line=getNonEmptyLine();
-  String[] strArray=line.split(":",2);
-  if (strArray.length < 2) {
-    throw new VCardException("Invalid line(\":\" does not exist): " + line);
-  }
-  String propertyValue=strArray[1];
-  String[] groupNameParamsArray=strArray[0].split(";");
-  String groupAndName=groupNameParamsArray[0].trim();
-  String[] groupNameArray=groupAndName.split("\\.");
-  int length=groupNameArray.length;
-  String propertyName=groupNameArray[length - 1];
-  if (mBuilder != null) {
-    mBuilder.propertyName(propertyName);
-    for (int i=0; i < length - 1; i++) {
-      mBuilder.propertyGroup(groupNameArray[i]);
-    }
-  }
-  if (propertyName.equalsIgnoreCase("END")) {
-    mPreviousLine=line;
+  long start=System.currentTimeMillis();
+  String[] propertyNameAndValue=separateLineAndHandleGroup(line);
+  if (propertyNameAndValue == null) {
     return true;
   }
-  length=groupNameParamsArray.length;
-  for (int i=1; i < length; i++) {
-    handleParams(groupNameParamsArray[i]);
+  if (propertyNameAndValue.length != 2) {
+    throw new VCardException("Invalid line \"" + line + "\"");
   }
-  if (isValidPropertyName(propertyName) || propertyName.startsWith("X-")) {
-    if (propertyName.equals("VERSION") && !propertyValue.equals(getVersion())) {
-      throw new VCardVersionException("Incompatible version: " + propertyValue + " != "+ getVersion());
-    }
-    handlePropertyValue(propertyName,propertyValue);
-    return false;
-  }
- else   if (propertyName.equals("ADR") || propertyName.equals("ORG") || propertyName.equals("N")) {
+  String propertyName=propertyNameAndValue[0].toUpperCase();
+  String propertyValue=propertyNameAndValue[1];
+  mTimeParseItem1+=System.currentTimeMillis() - start;
+  if (propertyName.equals("ADR") || propertyName.equals("ORG") || propertyName.equals("N")) {
+    start=System.currentTimeMillis();
     handleMultiplePropertyValue(propertyName,propertyValue);
+    mTimeParseItem3+=System.currentTimeMillis() - start;
     return false;
   }
  else   if (propertyName.equals("AGENT")) {
     handleAgent(propertyValue);
+    return false;
+  }
+ else   if (isValidPropertyName(propertyName)) {
+    if (propertyName.equals("BEGIN")) {
+      if (propertyValue.equals("VCARD")) {
+        throw new VCardNestedException("This vCard has nested vCard data in it.");
+      }
+ else {
+        throw new VCardException("Unknown BEGIN type: " + propertyValue);
+      }
+    }
+ else     if (propertyName.equals("VERSION") && !propertyValue.equals(getVersion())) {
+      throw new VCardVersionException("Incompatible version: " + propertyValue + " != "+ getVersion());
+    }
+    start=System.currentTimeMillis();
+    handlePropertyValue(propertyName,propertyValue);
+    mTimeParseItem2+=System.currentTimeMillis() - start;
     return false;
   }
   throw new VCardException("Unknown property name: \"" + propertyName + "\"");

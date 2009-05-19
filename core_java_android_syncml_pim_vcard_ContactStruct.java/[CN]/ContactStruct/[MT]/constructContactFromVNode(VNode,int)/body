@@ -1,0 +1,394 @@
+{
+  if (!node.VName.equals("VCARD")) {
+    Log.e(LOG_TAG,"Non VCARD data is inserted.");
+    return null;
+  }
+  String fullName=null;
+  String nameFromNProperty=null;
+  String xPhoneticFirstName=null;
+  String xPhoneticMiddleName=null;
+  String xPhoneticLastName=null;
+  ContactStruct contact=new ContactStruct();
+  boolean prefIsSetAddress=false;
+  boolean prefIsSetPhone=false;
+  boolean prefIsSetEmail=false;
+  boolean prefIsSetOrganization=false;
+  for (  PropertyNode propertyNode : node.propList) {
+    String name=propertyNode.propName;
+    if (TextUtils.isEmpty(propertyNode.propValue)) {
+      continue;
+    }
+    if (name.equals("VERSION")) {
+    }
+ else     if (name.equals("FN")) {
+      fullName=propertyNode.propValue;
+    }
+ else     if (name.equals("NAME") && fullName == null) {
+      fullName=propertyNode.propValue;
+    }
+ else     if (name.equals("N")) {
+      nameFromNProperty=getNameFromNProperty(propertyNode.propValue_vector,nameOrderType);
+    }
+ else     if (name.equals("SORT-STRING")) {
+      contact.phoneticName=propertyNode.propValue;
+    }
+ else     if (name.equals("SOUND")) {
+      if (propertyNode.paramMap_TYPE.contains("X-IRMC-N") && contact.phoneticName == null) {
+        StringBuilder builder=new StringBuilder();
+        String value=propertyNode.propValue;
+        int length=value.length();
+        for (int i=0; i < length; i++) {
+          char ch=value.charAt(i);
+          if (ch != ';') {
+            builder.append(ch);
+          }
+        }
+        contact.phoneticName=builder.toString();
+      }
+ else {
+        contact.addExtension(propertyNode);
+      }
+    }
+ else     if (name.equals("ADR")) {
+      List<String> values=propertyNode.propValue_vector;
+      boolean valuesAreAllEmpty=true;
+      for (      String value : values) {
+        if (value.length() > 0) {
+          valuesAreAllEmpty=false;
+          break;
+        }
+      }
+      if (valuesAreAllEmpty) {
+        continue;
+      }
+      int kind=Contacts.KIND_POSTAL;
+      int type=-1;
+      String label="";
+      boolean isPrimary=false;
+      for (      String typeString : propertyNode.paramMap_TYPE) {
+        if (typeString.equals("PREF") && !prefIsSetAddress) {
+          prefIsSetAddress=true;
+          isPrimary=true;
+        }
+ else         if (typeString.equalsIgnoreCase("HOME")) {
+          type=Contacts.ContactMethodsColumns.TYPE_HOME;
+          label="";
+        }
+ else         if (typeString.equalsIgnoreCase("WORK") || typeString.equalsIgnoreCase("COMPANY")) {
+          type=Contacts.ContactMethodsColumns.TYPE_WORK;
+          label="";
+        }
+ else         if (typeString.equalsIgnoreCase("POSTAL")) {
+          kind=Contacts.KIND_POSTAL;
+        }
+ else         if (typeString.equalsIgnoreCase("PARCEL") || typeString.equalsIgnoreCase("DOM") || typeString.equalsIgnoreCase("INTL")) {
+        }
+ else         if (typeString.toUpperCase().startsWith("X-") && type < 0) {
+          type=Contacts.ContactMethodsColumns.TYPE_CUSTOM;
+          label=typeString.substring(2);
+        }
+ else         if (type < 0) {
+          type=Contacts.ContactMethodsColumns.TYPE_CUSTOM;
+          label=typeString;
+        }
+      }
+      if (type < 0) {
+        type=Contacts.ContactMethodsColumns.TYPE_HOME;
+      }
+      String address;
+      List<String> list=propertyNode.propValue_vector;
+      int size=list.size();
+      if (size > 1) {
+        StringBuilder builder=new StringBuilder();
+        boolean builderIsEmpty=true;
+        if (Locale.getDefault().getCountry().equals(Locale.JAPAN.getCountry())) {
+          for (int i=size - 1; i >= 0; i--) {
+            String addressPart=list.get(i);
+            if (addressPart.length() > 0) {
+              if (!builderIsEmpty) {
+                builder.append(' ');
+              }
+              builder.append(addressPart);
+              builderIsEmpty=false;
+            }
+          }
+        }
+ else {
+          for (int i=0; i < size; i++) {
+            String addressPart=list.get(i);
+            if (addressPart.length() > 0) {
+              if (!builderIsEmpty) {
+                builder.append(' ');
+              }
+              builder.append(addressPart);
+              builderIsEmpty=false;
+            }
+          }
+        }
+        address=builder.toString().trim();
+      }
+ else {
+        address=propertyNode.propValue;
+      }
+      contact.addContactmethod(kind,type,address,label,isPrimary);
+    }
+ else     if (name.equals("ORG")) {
+      int type=Contacts.OrganizationColumns.TYPE_WORK;
+      String companyName="";
+      String positionName="";
+      boolean isPrimary=false;
+      for (      String typeString : propertyNode.paramMap_TYPE) {
+        if (typeString.equals("PREF") && !prefIsSetOrganization) {
+          prefIsSetOrganization=true;
+          isPrimary=true;
+        }
+      }
+      List<String> list=propertyNode.propValue_vector;
+      int size=list.size();
+      if (size > 1) {
+        companyName=list.get(0);
+        StringBuilder builder=new StringBuilder();
+        for (int i=1; i < size; i++) {
+          builder.append(list.get(1));
+          if (i != size - 1) {
+            builder.append(", ");
+          }
+        }
+        positionName=builder.toString();
+      }
+ else       if (size == 1) {
+        companyName=propertyNode.propValue;
+        positionName="";
+      }
+      contact.addOrganization(type,companyName,positionName,isPrimary);
+    }
+ else     if (name.equals("TITLE")) {
+      contact.title=propertyNode.propValue;
+      contact.addExtension(propertyNode);
+    }
+ else     if (name.equals("ROLE")) {
+      contact.addExtension(propertyNode);
+    }
+ else     if (name.equals("PHOTO")) {
+      String valueType=propertyNode.paramMap.getAsString("VALUE");
+      if (valueType != null && valueType.equals("URL")) {
+      }
+ else {
+        contact.photoBytes=propertyNode.propValue_bytes;
+        String type=propertyNode.paramMap.getAsString("TYPE");
+        if (type != null) {
+          contact.photoType=type;
+        }
+      }
+    }
+ else     if (name.equals("LOGO")) {
+      String valueType=propertyNode.paramMap.getAsString("VALUE");
+      if (valueType != null && valueType.equals("URL")) {
+      }
+ else       if (contact.photoBytes == null) {
+        contact.photoBytes=propertyNode.propValue_bytes;
+        String type=propertyNode.paramMap.getAsString("TYPE");
+        if (type != null) {
+          contact.photoType=type;
+        }
+      }
+    }
+ else     if (name.equals("EMAIL")) {
+      int type=-1;
+      String label=null;
+      boolean isPrimary=false;
+      for (      String typeString : propertyNode.paramMap_TYPE) {
+        if (typeString.equals("PREF") && !prefIsSetEmail) {
+          prefIsSetEmail=true;
+          isPrimary=true;
+        }
+ else         if (typeString.equalsIgnoreCase("HOME")) {
+          type=Contacts.ContactMethodsColumns.TYPE_HOME;
+        }
+ else         if (typeString.equalsIgnoreCase("WORK")) {
+          type=Contacts.ContactMethodsColumns.TYPE_WORK;
+        }
+ else         if (typeString.equalsIgnoreCase("CELL")) {
+          type=Contacts.ContactMethodsColumns.TYPE_CUSTOM;
+          label=Contacts.ContactMethodsColumns.MOBILE_EMAIL_TYPE_NAME;
+        }
+ else         if (typeString.toUpperCase().startsWith("X-") && type < 0) {
+          type=Contacts.ContactMethodsColumns.TYPE_CUSTOM;
+          label=typeString.substring(2);
+        }
+ else         if (type < 0) {
+          type=Contacts.ContactMethodsColumns.TYPE_CUSTOM;
+          label=typeString;
+        }
+      }
+      if (type < 0) {
+        type=Contacts.ContactMethodsColumns.TYPE_OTHER;
+      }
+      contact.addContactmethod(Contacts.KIND_EMAIL,type,propertyNode.propValue,label,isPrimary);
+    }
+ else     if (name.equals("TEL")) {
+      int type=-1;
+      String label=null;
+      boolean isPrimary=false;
+      boolean isFax=false;
+      for (      String typeString : propertyNode.paramMap_TYPE) {
+        if (typeString.equals("PREF") && !prefIsSetPhone) {
+          prefIsSetPhone=true;
+          isPrimary=true;
+        }
+ else         if (typeString.equalsIgnoreCase("HOME")) {
+          type=Contacts.PhonesColumns.TYPE_HOME;
+        }
+ else         if (typeString.equalsIgnoreCase("WORK")) {
+          type=Contacts.PhonesColumns.TYPE_WORK;
+        }
+ else         if (typeString.equalsIgnoreCase("CELL")) {
+          type=Contacts.PhonesColumns.TYPE_MOBILE;
+        }
+ else         if (typeString.equalsIgnoreCase("PAGER")) {
+          type=Contacts.PhonesColumns.TYPE_PAGER;
+        }
+ else         if (typeString.equalsIgnoreCase("FAX")) {
+          isFax=true;
+        }
+ else         if (typeString.equalsIgnoreCase("VOICE") || typeString.equalsIgnoreCase("MSG")) {
+        }
+ else         if (typeString.toUpperCase().startsWith("X-") && type < 0) {
+          type=Contacts.PhonesColumns.TYPE_CUSTOM;
+          label=typeString.substring(2);
+        }
+ else         if (type < 0) {
+          type=Contacts.PhonesColumns.TYPE_CUSTOM;
+          label=typeString;
+        }
+      }
+      if (type < 0) {
+        type=Contacts.PhonesColumns.TYPE_HOME;
+      }
+      if (isFax) {
+        if (type == Contacts.PhonesColumns.TYPE_HOME) {
+          type=Contacts.PhonesColumns.TYPE_FAX_HOME;
+        }
+ else         if (type == Contacts.PhonesColumns.TYPE_WORK) {
+          type=Contacts.PhonesColumns.TYPE_FAX_WORK;
+        }
+      }
+      contact.addPhone(type,propertyNode.propValue,label,isPrimary);
+    }
+ else     if (name.equals("NOTE")) {
+      contact.notes.add(propertyNode.propValue);
+    }
+ else     if (name.equals("BDAY")) {
+      contact.addExtension(propertyNode);
+    }
+ else     if (name.equals("URL")) {
+      contact.addExtension(propertyNode);
+    }
+ else     if (name.equals("REV")) {
+      contact.addExtension(propertyNode);
+    }
+ else     if (name.equals("UID")) {
+      contact.addExtension(propertyNode);
+    }
+ else     if (name.equals("KEY")) {
+      contact.addExtension(propertyNode);
+    }
+ else     if (name.equals("MAILER")) {
+      contact.addExtension(propertyNode);
+    }
+ else     if (name.equals("TZ")) {
+      contact.addExtension(propertyNode);
+    }
+ else     if (name.equals("GEO")) {
+      contact.addExtension(propertyNode);
+    }
+ else     if (name.equals("NICKNAME")) {
+      contact.addExtension(propertyNode);
+    }
+ else     if (name.equals("CLASS")) {
+      contact.addExtension(propertyNode);
+    }
+ else     if (name.equals("PROFILE")) {
+      contact.addExtension(propertyNode);
+    }
+ else     if (name.equals("CATEGORIES")) {
+      contact.addExtension(propertyNode);
+    }
+ else     if (name.equals("SOURCE")) {
+      contact.addExtension(propertyNode);
+    }
+ else     if (name.equals("PRODID")) {
+      contact.addExtension(propertyNode);
+    }
+ else     if (name.equals("X-PHONETIC-FIRST-NAME")) {
+      xPhoneticFirstName=propertyNode.propValue;
+    }
+ else     if (name.equals("X-PHONETIC-MIDDLE-NAME")) {
+      xPhoneticMiddleName=propertyNode.propValue;
+    }
+ else     if (name.equals("X-PHONETIC-LAST-NAME")) {
+      xPhoneticLastName=propertyNode.propValue;
+    }
+ else {
+      contact.addExtension(propertyNode);
+    }
+  }
+  if (fullName != null) {
+    contact.name=fullName;
+  }
+ else   if (nameFromNProperty != null) {
+    contact.name=nameFromNProperty;
+  }
+ else {
+    contact.name="";
+  }
+  if (contact.phoneticName == null && (xPhoneticFirstName != null || xPhoneticMiddleName != null || xPhoneticLastName != null)) {
+    String first;
+    String second;
+    if (nameOrderType == NAME_ORDER_TYPE_JAPANESE) {
+      first=xPhoneticLastName;
+      second=xPhoneticFirstName;
+    }
+ else {
+      first=xPhoneticFirstName;
+      second=xPhoneticLastName;
+    }
+    StringBuilder builder=new StringBuilder();
+    if (first != null) {
+      builder.append(first);
+    }
+    if (xPhoneticMiddleName != null) {
+      builder.append(xPhoneticMiddleName);
+    }
+    if (second != null) {
+      builder.append(second);
+    }
+    contact.phoneticName=builder.toString();
+  }
+  if (contact.phoneticName != null) {
+    contact.phoneticName=contact.phoneticName.trim();
+  }
+  if (!prefIsSetPhone && contact.phoneList != null && contact.phoneList.size() > 0) {
+    contact.phoneList.get(0).isPrimary=true;
+  }
+  if (!prefIsSetAddress && contact.contactmethodList != null) {
+    for (    ContactMethod contactMethod : contact.contactmethodList) {
+      if (contactMethod.kind == Contacts.KIND_POSTAL) {
+        contactMethod.isPrimary=true;
+        break;
+      }
+    }
+  }
+  if (!prefIsSetEmail && contact.contactmethodList != null) {
+    for (    ContactMethod contactMethod : contact.contactmethodList) {
+      if (contactMethod.kind == Contacts.KIND_EMAIL) {
+        contactMethod.isPrimary=true;
+        break;
+      }
+    }
+  }
+  if (!prefIsSetOrganization && contact.organizationList != null && contact.organizationList.size() > 0) {
+    contact.organizationList.get(0).isPrimary=true;
+  }
+  return contact;
+}
