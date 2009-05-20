@@ -1,0 +1,96 @@
+{
+  int ints[];
+  String states[];
+  if (ar.userObj != pollingContext)   return;
+  if (ar.exception != null) {
+    CommandException.Error err=null;
+    if (ar.exception instanceof CommandException) {
+      err=((CommandException)(ar.exception)).getCommandError();
+    }
+    if (err == CommandException.Error.RADIO_NOT_AVAILABLE) {
+      cancelPollState();
+      return;
+    }
+    if (!cm.getRadioState().isOn()) {
+      cancelPollState();
+      return;
+    }
+    if (err != CommandException.Error.OP_NOT_ALLOWED_BEFORE_REG_NW && err != CommandException.Error.OP_NOT_ALLOWED_BEFORE_REG_NW) {
+      Log.e(LOG_TAG,"RIL implementation has returned an error where it must succeed",ar.exception);
+    }
+  }
+ else   try {
+switch (what) {
+case EVENT_POLL_STATE_REGISTRATION_CDMA:
+      final int offset=3;
+    states=(String[])ar.result;
+  int responseValuesRegistrationState[]={-1,-1,-1,-1,0,-1,-1,-1,-1,-1,-1};
+if (states.length > 0) {
+  try {
+    this.mRegistrationState=Integer.parseInt(states[0]);
+    if (states.length >= 10) {
+      for (int i=0; i < states.length - offset; i++) {
+        if (states[i + offset] != null && states[i + offset].length() > 0) {
+          try {
+            responseValuesRegistrationState[i]=Integer.parseInt(states[i + offset],16);
+          }
+ catch (          NumberFormatException ex) {
+            Log.w(LOG_TAG,"Warning! There is an unexpected value" + "returned as response from " + "RIL_REQUEST_REGISTRATION_STATE.");
+          }
+        }
+      }
+    }
+ else {
+      Log.e(LOG_TAG,"Too less parameters returned from" + " RIL_REQUEST_REGISTRATION_STATE");
+    }
+  }
+ catch (  NumberFormatException ex) {
+    Log.w(LOG_TAG,"error parsing RegistrationState: " + ex);
+  }
+}
+mCdmaRoaming=regCodeIsRoaming(this.mRegistrationState);
+this.newCdmaDataConnectionState=radioTechnologyToServiceState(responseValuesRegistrationState[0]);
+newSS.setState(regCodeToServiceState(this.mRegistrationState));
+newSS.setRadioTechnology(responseValuesRegistrationState[0]);
+newSS.setCssIndicator(responseValuesRegistrationState[4]);
+newSS.setSystemAndNetworkId(responseValuesRegistrationState[5],responseValuesRegistrationState[6]);
+newNetworkType=responseValuesRegistrationState[0];
+newCellLoc.setCellLocationData(responseValuesRegistrationState[1],responseValuesRegistrationState[2],responseValuesRegistrationState[3]);
+break;
+case EVENT_POLL_STATE_OPERATOR_CDMA:
+String opNames[]=(String[])ar.result;
+if (opNames != null && opNames.length >= 3) {
+newSS.setOperatorName(opNames[0],opNames[1],opNames[2]);
+}
+break;
+case EVENT_POLL_STATE_NETWORK_SELECTION_MODE_CDMA:
+ints=(int[])ar.result;
+newSS.setIsManualSelection(ints[0] == 1);
+break;
+default :
+Log.e(LOG_TAG,"RIL response handle in wrong phone!" + " Expected CDMA RIL request and get GSM RIL request.");
+break;
+}
+}
+ catch (RuntimeException ex) {
+Log.e(LOG_TAG,"Exception while polling service state. " + "Probably malformed RIL response.",ex);
+}
+pollingContext[0]--;
+if (pollingContext[0] == 0) {
+newSS.setRoaming(isRoamingBetweenOperators(mCdmaRoaming,newSS));
+switch (this.mRegistrationState) {
+case ServiceState.REGISTRATION_STATE_HOME_NETWORK:
+newSS.setExtendedCdmaRoaming(ServiceState.REGISTRATION_STATE_HOME_NETWORK);
+break;
+case ServiceState.REGISTRATION_STATE_ROAMING:
+newSS.setExtendedCdmaRoaming(ServiceState.REGISTRATION_STATE_ROAMING);
+break;
+case ServiceState.REGISTRATION_STATE_ROAMING_AFFILIATE:
+newSS.setExtendedCdmaRoaming(ServiceState.REGISTRATION_STATE_ROAMING_AFFILIATE);
+break;
+default :
+Log.w(LOG_TAG,"Received a different registration state, " + "but don't changed the extended cdma roaming mode.");
+}
+pollStateDone();
+}
+}

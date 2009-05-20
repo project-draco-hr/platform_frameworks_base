@@ -5,29 +5,23 @@
   final int callingUid=Binder.getCallingUid();
   long identity=Binder.clearCallingIdentity();
   try {
-    int idx=mListeners.indexOf(receiver);
-    if (idx >= 0) {
-      Receiver myReceiver=mListeners.remove(idx);
-      if (myReceiver.isListener()) {
-        myReceiver.getListener().asBinder().unlinkToDeath(myReceiver,0);
-      }
+    if (mReceivers.remove(receiver.mKey) != null && receiver.isListener()) {
+      receiver.getListener().asBinder().unlinkToDeath(receiver,0);
     }
     HashSet<String> providers=new HashSet<String>();
-    HashMap<String,UpdateRecord> oldRecords=mLocationListeners.get(receiver);
+    HashMap<String,UpdateRecord> oldRecords=receiver.mUpdateRecords;
     if (oldRecords != null) {
       for (      UpdateRecord record : oldRecords.values()) {
-        if (record.mProvider.equals(LocationManager.NETWORK_PROVIDER)) {
-          if (mNetworkLocationInterface != null) {
-            mNetworkLocationInterface.removeListener(record.mPackages);
+        if (!providerHasListener(record.mProvider,callingUid,receiver)) {
+          LocationProviderProxy proxy=mProvidersByName.get(record.mProvider);
+          if (proxy != null) {
+            proxy.removeListener(callingUid);
           }
         }
         record.disposeLocked();
       }
       providers.addAll(oldRecords.keySet());
     }
-    mLocationListeners.remove(receiver);
-    mLastFixBroadcast.remove(receiver);
-    mLastStatusBroadcast.remove(receiver);
     for (    String provider : providers) {
       if (!isAllowedBySettingsLocked(provider)) {
         continue;
@@ -37,21 +31,16 @@
       if (recordsForProvider != null && recordsForProvider.size() > 0) {
         hasOtherListener=true;
       }
-      LocationProviderImpl p=LocationProviderImpl.getProvider(provider);
+      LocationProviderProxy p=mProvidersByName.get(provider);
       if (p != null) {
         if (hasOtherListener) {
           p.setMinTime(getMinTimeLocked(provider));
         }
  else {
-          mLocationHandler.removeMessages(MESSAGE_HEARTBEAT,provider);
           p.enableLocationTracking(false);
-        }
-        if (p == mGpsLocationProvider && mGpsNavigating) {
-          updateReportedGpsLocked();
         }
       }
     }
-    updateWakelockStatusLocked(mScreenOn);
   }
   finally {
     Binder.restoreCallingIdentity(identity);

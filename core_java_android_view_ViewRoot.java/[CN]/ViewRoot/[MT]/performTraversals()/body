@@ -28,8 +28,8 @@
     fullRedrawNeeded=true;
     mLayoutRequested=true;
     Display d=new Display(0);
-    desiredWindowWidth=d.getWidth();
-    desiredWindowHeight=d.getHeight();
+    desiredWindowWidth=(int)(d.getWidth() * mAppScaleInverted);
+    desiredWindowHeight=(int)(d.getHeight() * mAppScaleInverted);
     attachInfo.mSurface=mSurface;
     attachInfo.mHasWindowFocus=false;
     attachInfo.mWindowVisibility=viewVisibility;
@@ -82,8 +82,8 @@
       if (lp.width == ViewGroup.LayoutParams.WRAP_CONTENT || lp.height == ViewGroup.LayoutParams.WRAP_CONTENT) {
         windowResizesToFitContent=true;
         Display d=new Display(0);
-        desiredWindowWidth=d.getWidth();
-        desiredWindowHeight=d.getHeight();
+        desiredWindowWidth=(int)(d.getWidth() * mAppScaleInverted);
+        desiredWindowHeight=(int)(d.getHeight() * mAppScaleInverted);
       }
     }
     childWidthMeasureSpec=getRootMeasureSpec(desiredWindowWidth,lp.width);
@@ -146,7 +146,7 @@
     final Rect frame=mWinFrame;
     boolean initialized=false;
     boolean contentInsetsChanged=false;
-    boolean visibleInsetsChanged=false;
+    boolean visibleInsetsChanged;
     try {
       boolean hadSurface=mSurface.isValid();
       int fl=0;
@@ -156,7 +156,10 @@
           params.flags|=WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON;
         }
       }
-      relayoutResult=sWindowSession.relayout(mWindow,params,host.mMeasuredWidth,host.mMeasuredHeight,viewVisibility,insetsPending,frame,mPendingContentInsets,mPendingVisibleInsets,mSurface);
+      if (DEBUG_LAYOUT) {
+        Log.i(TAG,"host=w:" + host.mMeasuredWidth + ", h:"+ host.mMeasuredHeight+ ", params="+ params);
+      }
+      relayoutResult=relayoutWindow(params,viewVisibility,insetsPending);
       if (params != null) {
         params.flags=fl;
       }
@@ -198,7 +201,7 @@
     mWidth=frame.width();
     mHeight=frame.height();
     if (initialized) {
-      mGlCanvas.setViewport(mWidth,mHeight);
+      mGlCanvas.setViewport((int)(mWidth * mAppScale),(int)(mHeight * mAppScale));
     }
     boolean focusChangedDueToTouchMode=ensureTouchModeLocally((relayoutResult & WindowManagerImpl.RELAYOUT_IN_TOUCH_MODE) != 0);
     if (focusChangedDueToTouchMode || mWidth != host.mMeasuredWidth || mHeight != host.mMeasuredHeight || contentInsetsChanged) {
@@ -232,12 +235,17 @@
     mLayoutRequested=false;
     mScrollMayChange=true;
     if (DEBUG_ORIENTATION || DEBUG_LAYOUT)     Log.v("ViewRoot","Laying out " + host + " to ("+ host.mMeasuredWidth+ ", "+ host.mMeasuredHeight+ ")");
-    long startTime;
-    if (PROFILE_LAYOUT) {
+    long startTime=0L;
+    if (Config.DEBUG && ViewDebug.profileLayout) {
       startTime=SystemClock.elapsedRealtime();
     }
     host.layout(0,0,host.mMeasuredWidth,host.mMeasuredHeight);
-    if (PROFILE_LAYOUT) {
+    if (Config.DEBUG && ViewDebug.consistencyCheckEnabled) {
+      if (!host.dispatchConsistencyCheck(ViewDebug.CONSISTENCY_LAYOUT)) {
+        throw new IllegalStateException("The view hierarchy is an inconsistent state," + "please refer to the logs with the tag " + ViewDebug.CONSISTENCY_LOG_TAG + " for more infomation.");
+      }
+    }
+    if (Config.DEBUG && ViewDebug.profileLayout) {
       EventLog.writeEvent(60001,SystemClock.elapsedRealtime() - startTime);
     }
     if ((host.mPrivateFlags & View.REQUEST_TRANSPARENT_REGIONS) != 0) {
@@ -268,6 +276,8 @@
     final Rect givenContent=attachInfo.mGivenInternalInsets.contentInsets;
     final Rect givenVisible=attachInfo.mGivenInternalInsets.visibleInsets;
     givenContent.left=givenContent.top=givenContent.right=givenContent.bottom=givenVisible.left=givenVisible.top=givenVisible.right=givenVisible.bottom=0;
+    insets.contentInsets.scale(mAppScale);
+    insets.visibleInsets.scale(mAppScale);
     attachInfo.mTreeObserver.dispatchOnComputeInternalInsets(insets);
     if (insetsPending || !mLastGivenInsets.equals(insets)) {
       mLastGivenInsets.set(insets);

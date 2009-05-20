@@ -1,0 +1,76 @@
+{
+  int segment;
+  int totalSegments;
+  int index=0;
+  int msgType;
+  int sourcePort;
+  int destinationPort;
+  msgType=pdu[index++];
+  if (msgType != 0) {
+    Log.w(TAG,"Received a WAP SMS which is not WDP. Discard.");
+    return;
+  }
+  totalSegments=pdu[index++];
+  segment=pdu[index++];
+  sourcePort=(0xFF & pdu[index++]) << 8;
+  sourcePort|=0xFF & pdu[index++];
+  destinationPort=(0xFF & pdu[index++]) << 8;
+  destinationPort|=0xFF & pdu[index++];
+  StringBuilder where=new StringBuilder("reference_number =");
+  where.append(referenceNumber);
+  where.append(" AND address = ?");
+  String[] whereArgs=new String[]{address};
+  Log.i(TAG,"Received WAP PDU. Type = " + msgType + ", originator = "+ address+ ", src-port = "+ sourcePort+ ", dst-port = "+ destinationPort+ ", ID = "+ referenceNumber+ ", segment# = "+ segment+ "/"+ totalSegments);
+  byte[][] pdus=null;
+  Cursor cursor=null;
+  try {
+    cursor=mResolver.query(mRawUri,RAW_PROJECTION,where.toString(),whereArgs,null);
+    int cursorCount=cursor.getCount();
+    if (cursorCount != totalSegments - 1) {
+      ContentValues values=new ContentValues();
+      values.put("date",new Long(0));
+      values.put("pdu",HexDump.toHexString(pdu,index,pdu.length - index));
+      values.put("address",address);
+      values.put("reference_number",referenceNumber);
+      values.put("count",totalSegments);
+      values.put("sequence",segment);
+      values.put("destination_port",destinationPort);
+      mResolver.insert(mRawUri,values);
+      return;
+    }
+    int pduColumn=cursor.getColumnIndex("pdu");
+    int sequenceColumn=cursor.getColumnIndex("sequence");
+    pdus=new byte[totalSegments][];
+    for (int i=0; i < cursorCount; i++) {
+      cursor.moveToNext();
+      int cursorSequence=(int)cursor.getLong(sequenceColumn);
+      pdus[cursorSequence]=HexDump.hexStringToByteArray(cursor.getString(pduColumn));
+    }
+    mResolver.delete(mRawUri,where.toString(),whereArgs);
+  }
+ catch (  SQLException e) {
+    Log.e(TAG,"Can't access multipart SMS database",e);
+    return;
+  }
+ finally {
+    if (cursor != null)     cursor.close();
+  }
+  ByteArrayOutputStream output=new ByteArrayOutputStream();
+  for (int i=0; i < totalSegments - 1; i++) {
+    output.write(pdus[i],0,pdus[i].length);
+  }
+  output.write(pdu,index,pdu.length - index);
+  byte[] datagram=output.toByteArray();
+switch (destinationPort) {
+case SmsHeader.PORT_WAP_PUSH:
+    mWapPush.dispatchWapPdu(datagram);
+  break;
+default :
+{
+  pdus=new byte[1][];
+  pdus[0]=datagram;
+  dispatchPortAddressedPdus(pdus,destinationPort);
+  break;
+}
+}
+}
