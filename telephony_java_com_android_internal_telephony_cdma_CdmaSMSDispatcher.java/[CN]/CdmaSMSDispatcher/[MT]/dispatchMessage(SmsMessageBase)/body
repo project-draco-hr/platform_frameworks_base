@@ -3,101 +3,51 @@
     return;
   }
   SmsMessage sms=(SmsMessage)smsb;
-  int teleService;
-  boolean handled=false;
   sms.parseSms();
-  teleService=sms.getTeleService();
-  if ((SmsEnvelope.TELESERVICE_WMT == teleService) || (SmsEnvelope.TELESERVICE_WEMT == teleService) || (SmsEnvelope.TELESERVICE_VMN == teleService)) {
+  int teleService=sms.getTeleService();
+  boolean handled=false;
+  if ((teleService == SmsEnvelope.TELESERVICE_WMT) || (teleService == SmsEnvelope.TELESERVICE_WEMT) || (teleService == SmsEnvelope.TELESERVICE_VMN)) {
     if (sms.isMWISetMessage()) {
-      ((CDMAPhone)mPhone).updateMessageWaitingIndicator(true);
-      if (sms.isMwiDontStore()) {
-        handled=true;
-      }
+      mCdmaPhone.updateMessageWaitingIndicator(true);
+      handled|=sms.isMwiDontStore();
       if (Config.LOGD) {
         Log.d(TAG,"Received voice mail indicator set SMS shouldStore=" + !handled);
       }
     }
  else     if (sms.isMWIClearMessage()) {
-      ((CDMAPhone)mPhone).updateMessageWaitingIndicator(false);
-      if (sms.isMwiDontStore()) {
-        handled=true;
-      }
+      mCdmaPhone.updateMessageWaitingIndicator(false);
+      handled|=sms.isMwiDontStore();
       if (Config.LOGD) {
         Log.d(TAG,"Received voice mail indicator clear SMS shouldStore=" + !handled);
       }
     }
   }
-  if (null == sms.getUserData()) {
-    handled=true;
+  if (sms.getUserData() == null) {
     if (Config.LOGD) {
       Log.d(TAG,"Received SMS without user data");
     }
+    handled=true;
   }
   if (handled)   return;
   if (SmsEnvelope.TELESERVICE_WAP == teleService) {
     processCdmaWapPdu(sms.getUserData(),sms.messageRef,sms.getOriginatingAddress());
     return;
   }
-  int referenceNumber=-1;
-  int count=0;
-  int sequence=0;
-  int destPort=-1;
-  SmsHeader header=sms.getUserDataHeader();
-  if (header != null) {
-    for (    SmsHeader.Element element : header.getElements()) {
-      try {
-switch (element.getID()) {
-case SmsHeader.CONCATENATED_8_BIT_REFERENCE:
-{
-            byte[] data=element.getData();
-            referenceNumber=data[0] & 0xff;
-            count=data[1] & 0xff;
-            sequence=data[2] & 0xff;
-            if (count == 0 || sequence == 0 || sequence > count) {
-              referenceNumber=-1;
-            }
-            break;
-          }
-case SmsHeader.CONCATENATED_16_BIT_REFERENCE:
-{
-          byte[] data=element.getData();
-          referenceNumber=(data[0] & 0xff) * 256 + (data[1] & 0xff);
-          count=data[2] & 0xff;
-          sequence=data[3] & 0xff;
-          if (count == 0 || sequence == 0 || sequence > count) {
-            referenceNumber=-1;
-          }
-          break;
-        }
-case SmsHeader.APPLICATION_PORT_ADDRESSING_16_BIT:
-{
-        byte[] data=element.getData();
-        destPort=(data[0] & 0xff) << 8;
-        destPort|=(data[1] & 0xff);
-        break;
+  SmsHeader smsHeader=sms.getUserDataHeader();
+  if ((smsHeader == null) || (smsHeader.concatRef == null)) {
+    byte[][] pdus=new byte[1][];
+    pdus[0]=sms.getPdu();
+    if (smsHeader.portAddrs != null) {
+      if (smsHeader.portAddrs.destPort == SmsHeader.PORT_WAP_PUSH) {
+        mWapPush.dispatchWapPdu(sms.getUserData());
       }
+      dispatchPortAddressedPdus(pdus,smsHeader.portAddrs.destPort);
+    }
+ else {
+      dispatchPdus(pdus);
+    }
   }
-}
- catch (ArrayIndexOutOfBoundsException e) {
-  Log.e(TAG,"Bad element in header",e);
-  return;
-}
-}
-}
-if (referenceNumber == -1) {
-byte[][] pdus=new byte[1][];
-pdus[0]=sms.getPdu();
-if (destPort != -1) {
-if (destPort == SmsHeader.PORT_WAP_PUSH) {
-  mWapPush.dispatchWapPdu(sms.getUserData());
-}
-dispatchPortAddressedPdus(pdus,destPort);
-}
  else {
-dispatchPdus(pdus);
-}
-}
- else {
-processMessagePart(sms,referenceNumber,sequence,count,destPort);
-}
+    processMessagePart(sms,smsHeader.concatRef,smsHeader.portAddrs);
+  }
 }
