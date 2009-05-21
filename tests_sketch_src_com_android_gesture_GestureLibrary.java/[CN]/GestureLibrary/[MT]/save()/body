@@ -3,7 +3,7 @@
     return true;
   }
   boolean result=false;
-  PrintWriter writer=null;
+  DataOutputStream out=null;
   try {
     File file=new File(mGestureFileName);
     if (!file.getParentFile().exists()) {
@@ -11,26 +11,29 @@
         return false;
       }
     }
-    writer=new PrintWriter(new BufferedOutputStream(new FileOutputStream(mGestureFileName),GestureConstants.IO_BUFFER_SIZE));
-    final XmlSerializer serializer=Xml.newSerializer();
-    serializer.setOutput(writer);
-    serializer.startDocument(Encoding.ISO_8859_1.name(),null);
-    serializer.startTag(NAMESPACE,GestureConstants.XML_TAG_LIBRARY);
-    final HashMap<String,ArrayList<Gesture>> maps=mEntryName2gestures;
-    for (    String key : maps.keySet()) {
-      ArrayList<Gesture> examples=maps.get(key);
-      serializer.startTag(NAMESPACE,GestureConstants.XML_TAG_ENTRY);
-      serializer.attribute(NAMESPACE,GestureConstants.XML_TAG_NAME,key);
-      int count=examples.size();
-      for (int i=0; i < count; i++) {
-        Gesture gesture=examples.get(i);
-        gesture.toXML(NAMESPACE,serializer);
-      }
-      serializer.endTag(NAMESPACE,GestureConstants.XML_TAG_ENTRY);
+    long start;
+    if (PROFILE_LOADING_SAVING) {
+      start=SystemClock.elapsedRealtime();
     }
-    serializer.endTag(NAMESPACE,GestureConstants.XML_TAG_LIBRARY);
-    serializer.endDocument();
-    serializer.flush();
+    final HashMap<String,ArrayList<Gesture>> maps=mNamedGestures;
+    out=new DataOutputStream(new BufferedOutputStream(new FileOutputStream(file),GestureConstants.IO_BUFFER_SIZE));
+    out.writeShort(FILE_FORMAT_VERSION);
+    out.writeInt(maps.size());
+    for (    Map.Entry<String,ArrayList<Gesture>> entry : maps.entrySet()) {
+      final String key=entry.getKey();
+      final ArrayList<Gesture> examples=entry.getValue();
+      final int count=examples.size();
+      out.writeUTF(key);
+      out.writeInt(count);
+      for (int i=0; i < count; i++) {
+        examples.get(i).serialize(out);
+      }
+    }
+    out.flush();
+    if (PROFILE_LOADING_SAVING) {
+      long end=SystemClock.elapsedRealtime();
+      Log.d(LOG_TAG,"Saving gestures library = " + (end - start) + " ms");
+    }
     mChanged=false;
     result=true;
   }
@@ -38,7 +41,7 @@
     Log.d(LOG_TAG,"Failed to save gestures:",ex);
   }
  finally {
-    GestureUtilities.closeStream(writer);
+    GestureUtilities.closeStream(out);
   }
   return result;
 }
