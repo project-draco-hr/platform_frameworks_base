@@ -10,9 +10,12 @@
     if (DEBUG_INPUT)     Log.v(TAG,"Waiting for next key: now=" + curTime + ", repeat @ "+ nextKeyTime);
     QueuedEvent ev=mQueue.getEvent((int)((!configChanged && curTime < nextKeyTime) ? (nextKeyTime - curTime) : 0));
     if (DEBUG_INPUT && ev != null)     Log.v(TAG,"Event: type=" + ev.classType + " data="+ ev.event);
+    if (MEASURE_LATENCY) {
+      lt.sample("2 got event              ",System.nanoTime() - ev.whenNano);
+    }
     try {
       if (ev != null) {
-        curTime=ev.when;
+        curTime=SystemClock.uptimeMillis();
         int eventType;
         if (ev.classType == RawInputEvent.CLASS_TOUCHSCREEN) {
           eventType=eventType((MotionEvent)ev.event);
@@ -24,15 +27,21 @@
           eventType=LocalPowerManager.OTHER_EVENT;
         }
         try {
-          long now=SystemClock.uptimeMillis();
-          if ((now - mLastBatteryStatsCallTime) >= MIN_TIME_BETWEEN_USERACTIVITIES) {
-            mLastBatteryStatsCallTime=now;
+          if ((curTime - mLastBatteryStatsCallTime) >= MIN_TIME_BETWEEN_USERACTIVITIES) {
+            mLastBatteryStatsCallTime=curTime;
             mBatteryStats.noteInputEvent();
           }
         }
  catch (        RemoteException e) {
         }
-        mPowerManager.userActivity(curTime,false,eventType,false);
+        if (eventType != TOUCH_EVENT && eventType != LONG_TOUCH_EVENT && eventType != CHEEK_EVENT) {
+          mPowerManager.userActivity(curTime,false,eventType,false);
+        }
+ else         if (mLastTouchEventType != eventType || (curTime - mLastUserActivityCallTime) >= MIN_TIME_BETWEEN_USERACTIVITIES) {
+          mLastUserActivityCallTime=curTime;
+          mLastTouchEventType=eventType;
+          mPowerManager.userActivity(curTime,false,eventType,false);
+        }
 switch (ev.classType) {
 case RawInputEvent.CLASS_KEYBOARD:
           KeyEvent ke=(KeyEvent)ev.event;
