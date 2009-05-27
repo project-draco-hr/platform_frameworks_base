@@ -1,0 +1,71 @@
+{
+  boolean speechQueueAvailable=false;
+  try {
+    speechQueueAvailable=speechQueueLock.tryLock();
+    if (!speechQueueAvailable) {
+      return;
+    }
+    if (speechQueue.size() < 1) {
+      isSpeaking=false;
+      dispatchSpeechCompletedCallbacks("");
+      return;
+    }
+    SpeechItem currentSpeechItem=speechQueue.get(0);
+    isSpeaking=true;
+    SoundResource sr=getSoundResource(currentSpeechItem);
+    Log.i("TTS processing: ",currentSpeechItem.mText);
+    if (sr == null) {
+      if (currentSpeechItem.mType == SpeechItem.SPEECH) {
+        speakInternalOnly(currentSpeechItem.mText,currentSpeechItem.mParams);
+      }
+ else {
+        silence(currentSpeechItem.mDuration);
+      }
+    }
+ else {
+      cleanUpPlayer();
+      if (sr.mSourcePackageName == PKGNAME) {
+        player=MediaPlayer.create(this,sr.mResId);
+      }
+ else       if (sr.mSourcePackageName != null) {
+        Context ctx;
+        try {
+          ctx=this.createPackageContext(sr.mSourcePackageName,0);
+        }
+ catch (        NameNotFoundException e) {
+          e.printStackTrace();
+          speechQueue.remove(0);
+          isSpeaking=false;
+          return;
+        }
+        player=MediaPlayer.create(ctx,sr.mResId);
+      }
+ else {
+        player=MediaPlayer.create(this,Uri.parse(sr.mFilename));
+      }
+      if (player == null) {
+        speechQueue.clear();
+        isSpeaking=false;
+        return;
+      }
+      player.setOnCompletionListener(this);
+      try {
+        player.start();
+      }
+ catch (      IllegalStateException e) {
+        speechQueue.clear();
+        isSpeaking=false;
+        cleanUpPlayer();
+        return;
+      }
+    }
+    if (speechQueue.size() > 0) {
+      speechQueue.remove(0);
+    }
+  }
+  finally {
+    if (speechQueueAvailable) {
+      speechQueueLock.unlock();
+    }
+  }
+}
