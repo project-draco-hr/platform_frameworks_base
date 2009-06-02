@@ -22,51 +22,57 @@
  else   try {
 switch (what) {
 case EVENT_POLL_STATE_REGISTRATION_CDMA:
-      final int offset=3;
-    states=(String[])ar.result;
-  int responseValuesRegistrationState[]={-1,-1,-1,-1,0,-1,-1,-1,-1,-1,-1};
+      states=(String[])ar.result;
+    int registrationState=4;
+  int radioTechnology=-1;
+int baseStationId=-1;
+int baseStationLatitude=-1;
+int baseStationLongitude=-1;
+int cssIndicator=0;
+int systemId=0;
+int networkId=0;
+int roamingIndicator=-1;
+int systemIsInPrl=0;
+int defaultRoamingIndicator=0;
+int reasonForDenial=0;
 if (states.length == 14) {
-  try {
-    this.mRegistrationState=Integer.parseInt(states[0]);
-  }
- catch (  NumberFormatException ex) {
-    Log.w(LOG_TAG,"error parsing RegistrationState: " + ex);
-  }
-  try {
-    responseValuesRegistrationState[0]=Integer.parseInt(states[3]);
-    responseValuesRegistrationState[1]=Integer.parseInt(states[4],16);
-    responseValuesRegistrationState[2]=Integer.parseInt(states[5],16);
-    responseValuesRegistrationState[3]=Integer.parseInt(states[6],16);
-    responseValuesRegistrationState[4]=Integer.parseInt(states[7]);
-    responseValuesRegistrationState[5]=Integer.parseInt(states[8]);
-    responseValuesRegistrationState[6]=Integer.parseInt(states[9]);
-    responseValuesRegistrationState[7]=Integer.parseInt(states[10]);
-    responseValuesRegistrationState[8]=Integer.parseInt(states[11]);
-    responseValuesRegistrationState[9]=Integer.parseInt(states[12]);
-    responseValuesRegistrationState[10]=Integer.parseInt(states[13]);
-  }
- catch (  NumberFormatException ex) {
-    Log.w(LOG_TAG,"Warning! There is an unexpected value" + "returned as response from " + "RIL_REQUEST_REGISTRATION_STATE.");
-  }
+try {
+registrationState=Integer.parseInt(states[0]);
+radioTechnology=Integer.parseInt(states[3]);
+baseStationId=Integer.parseInt(states[4],16);
+baseStationLatitude=Integer.parseInt(states[5],16);
+baseStationLongitude=Integer.parseInt(states[6],16);
+cssIndicator=Integer.parseInt(states[7]);
+systemId=Integer.parseInt(states[8]);
+networkId=Integer.parseInt(states[9]);
+roamingIndicator=Integer.parseInt(states[10]);
+systemIsInPrl=Integer.parseInt(states[11]);
+defaultRoamingIndicator=Integer.parseInt(states[12]);
+reasonForDenial=Integer.parseInt(states[13]);
+}
+ catch (NumberFormatException ex) {
+Log.w(LOG_TAG,"error parsing RegistrationState: " + ex);
+}
 }
  else {
-  throw new RuntimeException("Warning! Wrong number of parameters returned from " + "RIL_REQUEST_REGISTRATION_STATE: expected 14 got " + states.length);
+throw new RuntimeException("Warning! Wrong number of parameters returned from " + "RIL_REQUEST_REGISTRATION_STATE: expected 14 got " + states.length);
 }
-mCdmaRoaming=regCodeIsRoaming(this.mRegistrationState);
-this.newCdmaDataConnectionState=radioTechnologyToServiceState(responseValuesRegistrationState[0]);
-newSS.setState(regCodeToServiceState(this.mRegistrationState));
-newSS.setRadioTechnology(responseValuesRegistrationState[0]);
-newSS.setCssIndicator(responseValuesRegistrationState[4]);
-newSS.setSystemAndNetworkId(responseValuesRegistrationState[5],responseValuesRegistrationState[6]);
-mRoamingIndicator=responseValuesRegistrationState[7];
-mIsInPrl=responseValuesRegistrationState[8];
-mDefaultRoamingIndicator=responseValuesRegistrationState[9];
-newNetworkType=responseValuesRegistrationState[0];
-newCellLoc.setCellLocationData(responseValuesRegistrationState[1],responseValuesRegistrationState[2],responseValuesRegistrationState[3]);
-if (responseValuesRegistrationState[10] == 0) {
+mRegistrationState=registrationState;
+mCdmaRoaming=regCodeIsRoaming(registrationState);
+newSS.setState(regCodeToServiceState(registrationState));
+this.newCdmaDataConnectionState=radioTechnologyToDataServiceState(radioTechnology);
+newSS.setRadioTechnology(radioTechnology);
+newNetworkType=radioTechnology;
+newSS.setCssIndicator(cssIndicator);
+newSS.setSystemAndNetworkId(systemId,networkId);
+mRoamingIndicator=roamingIndicator;
+mIsInPrl=(systemIsInPrl == 0) ? false : true;
+mDefaultRoamingIndicator=defaultRoamingIndicator;
+newCellLoc.setCellLocationData(baseStationId,baseStationLatitude,baseStationLongitude);
+if (reasonForDenial == 0) {
 mRegistrationDeniedReason=ServiceStateTracker.REGISTRATION_DENIED_GEN;
 }
- else if (responseValuesRegistrationState[10] == 1) {
+ else if (reasonForDenial == 1) {
 mRegistrationDeniedReason=ServiceStateTracker.REGISTRATION_DENIED_AUTH;
 }
  else {
@@ -79,8 +85,7 @@ break;
 case EVENT_POLL_STATE_OPERATOR_CDMA:
 String opNames[]=(String[])ar.result;
 if (opNames != null && opNames.length >= 3) {
-newSS.setOperatorName(opNames[0],opNames[1],opNames[2]);
-if (phone.mCM.getRadioState().isNVReady()) {
+if (cm.getRadioState().isNVReady()) {
 newSS.setOperatorName(null,opNames[1],opNames[2]);
 }
  else {
@@ -123,21 +128,24 @@ newSS.setRoaming(isRoamingBetweenOperators(mCdmaRoaming,newSS));
  else {
 newSS.setRoaming(mCdmaRoaming);
 }
-if (mIsInPrl == 0 && mRegistrationState == 5) {
-newSS.setCdmaRoamingIndicator(2);
+if (mIsInPrl) {
+if (namMatch && (mRoamingIndicator <= 2)) {
+newSS.setCdmaRoamingIndicator(EriInfo.ROAMING_INDICATOR_OFF);
 }
- else if (!namMatch && (mIsInPrl == 1)) {
+ else {
 newSS.setCdmaRoamingIndicator(mRoamingIndicator);
 }
- else if (namMatch && (mIsInPrl == 1) && mRoamingIndicator <= 2) {
-newSS.setCdmaRoamingIndicator(1);
 }
- else if (namMatch && (mIsInPrl == 1) && mRoamingIndicator > 2) {
-newSS.setCdmaRoamingIndicator(mRoamingIndicator);
+ else {
+if (mRegistrationState == 5) {
+newSS.setCdmaRoamingIndicator(EriInfo.ROAMING_INDICATOR_FLASH);
+}
+ else {
+}
 }
 newSS.setCdmaDefaultRoamingIndicator(mDefaultRoamingIndicator);
 if (DBG) {
-log("Set CDMA Roaming Indicator to: " + newSS.getCdmaRoamingIndicator() + ". mCdmaRoaming = "+ mCdmaRoaming+ ",  namMatch = "+ namMatch+ ", mIsInPrl= "+ mIsInPrl+ ", mRoamingIndicator = "+ mRoamingIndicator+ ", mDefaultRoamingIndicator= "+ mDefaultRoamingIndicator);
+log("Set CDMA Roaming Indicator to: " + newSS.getCdmaRoamingIndicator() + ". mCdmaRoaming = "+ mCdmaRoaming+ ",  namMatch = "+ namMatch+ ", mIsInPrl = "+ mIsInPrl+ ", mRoamingIndicator = "+ mRoamingIndicator+ ", mDefaultRoamingIndicator= "+ mDefaultRoamingIndicator);
 }
 pollStateDone();
 }
