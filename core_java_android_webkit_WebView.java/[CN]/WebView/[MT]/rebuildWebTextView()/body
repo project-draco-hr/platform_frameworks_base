@@ -1,0 +1,77 @@
+{
+  if (!hasFocus() && (null == mWebTextView || !mWebTextView.hasFocus()) || (mTouchMode >= FIRST_SCROLL_ZOOM && mTouchMode <= LAST_SCROLL_ZOOM)) {
+    mNeedsRebuildWebTextView=true;
+    return;
+  }
+  boolean alreadyThere=inEditingMode();
+  if (0 == mNativeClass || (!nativeFocusIsTextInput() && !nativeCursorIsTextInput())) {
+    if (alreadyThere) {
+      mWebTextView.remove();
+    }
+    return;
+  }
+  if (mWebTextView == null) {
+    mWebTextView=new WebTextView(mContext,WebView.this);
+    mTextGeneration=0;
+  }
+  mWebTextView.setTextSize(contentToView(nativeFocusTextSize()));
+  Rect visibleRect=sendOurVisibleRect();
+  Rect bounds=nativeFocusNodeBounds();
+  if (!Rect.intersects(bounds,visibleRect)) {
+    return;
+  }
+  String text=nativeFocusText();
+  int nodePointer=nativeFocusNodePointer();
+  if (alreadyThere && mWebTextView.isSameTextField(nodePointer)) {
+    Spannable spannable=(Spannable)mWebTextView.getText();
+    int start=Selection.getSelectionStart(spannable);
+    int end=Selection.getSelectionEnd(spannable);
+    if (text != null && !text.equals(spannable.toString()) && nativeTextGeneration() == mTextGeneration) {
+      mWebTextView.setTextAndKeepSelection(text);
+    }
+ else {
+      Selection.setSelection(spannable,start,end);
+    }
+  }
+ else {
+    Rect vBox=contentToView(bounds);
+    mWebTextView.setRect(vBox.left,vBox.top,vBox.width(),vBox.height());
+    mWebTextView.setGravity(nativeFocusIsRtlText() ? Gravity.RIGHT : Gravity.NO_GRAVITY);
+    mWebTextView.setNodePointer(nodePointer);
+    int maxLength=-1;
+    boolean isTextField=nativeFocusIsTextField();
+    if (isTextField) {
+      maxLength=nativeFocusMaxLength();
+      String name=nativeFocusName();
+      if (mWebViewCore.getSettings().getSaveFormData() && name != null) {
+        HashMap data=new HashMap();
+        data.put("text",text);
+        Message update=mPrivateHandler.obtainMessage(REQUEST_FORM_DATA,nodePointer,0,data);
+        RequestFormData updater=new RequestFormData(name,getUrl(),update);
+        Thread t=new Thread(updater);
+        t.start();
+      }
+    }
+    mWebTextView.setMaxLength(maxLength);
+    AutoCompleteAdapter adapter=null;
+    mWebTextView.setAdapterCustom(adapter);
+    mWebTextView.setSingleLine(isTextField);
+    mWebTextView.setInPassword(nativeFocusIsPassword());
+    if (null == text) {
+      mWebTextView.setText("",0,0);
+    }
+ else {
+      if (false) {
+        mWebTextView.setText(text,0,text.length());
+      }
+ else       if (isTextField) {
+        int length=text.length();
+        mWebTextView.setText(text,length,length);
+      }
+ else {
+        mWebTextView.setText(text,0,0);
+      }
+    }
+    mWebTextView.requestFocus();
+  }
+}
