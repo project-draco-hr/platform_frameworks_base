@@ -1,0 +1,47 @@
+{
+  String svc=mServiceName;
+  Log.d(mTag,"+++++  Execute: " + svc);
+  SystemProperties.set(SVC_START_CMD,svc);
+  boolean success=blockUntil(SVC_STATE_RUNNING,WAITING_TIME);
+  if (success) {
+    Log.d(mTag,"-----  Running: " + svc + ", create keepalive socket");
+    LocalSocket s=mKeepaliveSocket=createServiceSocket();
+    setState(ProcessState.RUNNING);
+    if (s == null) {
+      stop();
+      return;
+    }
+    try {
+      for (; ; ) {
+        InputStream in=s.getInputStream();
+        int data=in.read();
+        if (data >= 0) {
+          Log.d(mTag,"got data from keepalive socket: " + data);
+          if (data == 0) {
+synchronized (this) {
+              setResultAndCloseControlSocket((byte)data);
+              s=mKeepaliveSocket=createServiceSocket();
+            }
+          }
+ else {
+            setSocketResult(data);
+          }
+        }
+ else {
+          if (mControlSocketInUse)           setSocketResult(-1);
+          break;
+        }
+      }
+      Log.d(mTag,"keepalive connection closed");
+    }
+ catch (    IOException e) {
+      Log.d(mTag,"keepalive socket broken: " + e.getMessage());
+    }
+    success=blockUntil(SVC_STATE_STOPPED,5);
+    Log.d(mTag,"stopping " + svc + ", success? "+ success);
+  }
+ else {
+    setState(ProcessState.STOPPED);
+    throw new IOException("cannot start service: " + svc);
+  }
+}
