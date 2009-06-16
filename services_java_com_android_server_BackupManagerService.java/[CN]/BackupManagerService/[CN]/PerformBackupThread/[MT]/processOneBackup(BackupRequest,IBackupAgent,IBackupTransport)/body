@@ -1,0 +1,48 @@
+{
+  final String packageName=request.appInfo.packageName;
+  Log.d(TAG,"processOneBackup doBackup() on " + packageName);
+  try {
+    PackageInfo packInfo=mPackageManager.getPackageInfo(packageName,PackageManager.GET_SIGNATURES);
+    File savedStateName=new File(mStateDir,packageName);
+    File backupDataName=new File(mDataDir,packageName + ".data");
+    File newStateName=new File(mStateDir,packageName + ".new");
+    ParcelFileDescriptor savedState=(request.fullBackup) ? null : ParcelFileDescriptor.open(savedStateName,ParcelFileDescriptor.MODE_READ_ONLY | ParcelFileDescriptor.MODE_CREATE);
+    backupDataName.delete();
+    ParcelFileDescriptor backupData=ParcelFileDescriptor.open(backupDataName,ParcelFileDescriptor.MODE_READ_WRITE | ParcelFileDescriptor.MODE_CREATE);
+    newStateName.delete();
+    ParcelFileDescriptor newState=ParcelFileDescriptor.open(newStateName,ParcelFileDescriptor.MODE_READ_WRITE | ParcelFileDescriptor.MODE_CREATE);
+    boolean success=false;
+    try {
+      agent.doBackup(savedState,backupData,newState);
+      success=true;
+    }
+  finally {
+      if (savedState != null) {
+        savedState.close();
+      }
+      backupData.close();
+      newState.close();
+    }
+    if (success) {
+      if (DEBUG)       Log.v(TAG,"doBackup() success; calling transport");
+      backupData=ParcelFileDescriptor.open(backupDataName,ParcelFileDescriptor.MODE_READ_ONLY);
+      int error=transport.performBackup(packInfo,backupData);
+      newStateName.renameTo(savedStateName);
+    }
+  }
+ catch (  NameNotFoundException e) {
+    Log.e(TAG,"Package not found on backup: " + packageName);
+  }
+catch (  FileNotFoundException fnf) {
+    Log.w(TAG,"File not found on backup: ");
+    fnf.printStackTrace();
+  }
+catch (  RemoteException e) {
+    Log.d(TAG,"Remote target " + request.appInfo.packageName + " threw during backup:");
+    e.printStackTrace();
+  }
+catch (  Exception e) {
+    Log.w(TAG,"Final exception guard in backup: ");
+    e.printStackTrace();
+  }
+}

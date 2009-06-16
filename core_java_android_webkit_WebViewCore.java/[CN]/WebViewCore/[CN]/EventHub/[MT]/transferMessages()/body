@@ -4,7 +4,7 @@
   mHandler=new Handler(){
     @Override public void handleMessage(    Message msg){
       if (DebugFlags.WEB_VIEW_CORE) {
-        Log.v(LOGTAG,msg.what < LOAD_URL || msg.what > SET_ACTIVE ? Integer.toString(msg.what) : HandlerDebugString[msg.what - LOAD_URL]);
+        Log.v(LOGTAG,msg.what < LOAD_URL || msg.what > SET_INACTIVE ? Integer.toString(msg.what) : HandlerDebugString[msg.what - LOAD_URL]);
       }
 switch (msg.what) {
 case WEBKIT_DRAW:
@@ -20,15 +20,13 @@ loadUrl((String)msg.obj);
 break;
 case POST_URL:
 {
-HashMap param=(HashMap)msg.obj;
-String url=(String)param.get("url");
-byte[] data=(byte[])param.get("data");
-mBrowserFrame.postUrl(url,data);
+PostUrlData param=(PostUrlData)msg.obj;
+mBrowserFrame.postUrl(param.mUrl,param.mPostData);
 break;
 }
 case LOAD_DATA:
-HashMap loadParams=(HashMap)msg.obj;
-String baseUrl=(String)loadParams.get("baseUrl");
+BaseUrlData loadParams=(BaseUrlData)msg.obj;
+String baseUrl=loadParams.mBaseUrl;
 if (baseUrl != null) {
 int i=baseUrl.indexOf(':');
 if (i > 0) {
@@ -38,7 +36,7 @@ nativeRegisterURLSchemeAsLocal(scheme);
 }
 }
 }
-mBrowserFrame.loadData(baseUrl,(String)loadParams.get("data"),(String)loadParams.get("mimeType"),(String)loadParams.get("encoding"),(String)loadParams.get("failUrl"));
+mBrowserFrame.loadData(baseUrl,loadParams.mData,loadParams.mMimeType,loadParams.mEncoding,loadParams.mFailUrl);
 break;
 case STOP_LOADING:
 if (mBrowserFrame.committed() && !mBrowserFrame.firstLayoutDone()) {
@@ -103,6 +101,10 @@ break;
 case ON_RESUME:
 nativeResume();
 break;
+case FREE_MEMORY:
+clearCache(false);
+nativeFreeMemory();
+break;
 case SET_NETWORK_STATE:
 if (BrowserFrame.sJavaBridge == null) {
 throw new IllegalStateException("No WebView " + "has been created in this process!");
@@ -110,35 +112,29 @@ throw new IllegalStateException("No WebView " + "has been created in this proces
 BrowserFrame.sJavaBridge.setNetworkOnLine(msg.arg1 == 1);
 break;
 case CLEAR_CACHE:
-mBrowserFrame.clearCache();
-if (msg.arg1 == 1) {
-CacheManager.removeAllCacheFiles();
-}
+clearCache(msg.arg1 == 1);
 break;
 case CLEAR_HISTORY:
 mCallbackProxy.getBackForwardList().close(mBrowserFrame.mNativeFrame);
 break;
 case REPLACE_TEXT:
-HashMap jMap=(HashMap)msg.obj;
-String replace=(String)jMap.get("replace");
-int newStart=((Integer)jMap.get("start")).intValue();
-int newEnd=((Integer)jMap.get("end")).intValue();
-nativeReplaceTextfieldText(msg.arg1,msg.arg2,replace,newStart,newEnd);
+ReplaceTextData rep=(ReplaceTextData)msg.obj;
+nativeReplaceTextfieldText(msg.arg1,msg.arg2,rep.mReplace,rep.mNewStart,rep.mNewEnd);
 break;
 case PASS_TO_JS:
 {
-HashMap jsMap=(HashMap)msg.obj;
-KeyEvent evt=(KeyEvent)jsMap.get("event");
+JSKeyData jsData=(JSKeyData)msg.obj;
+KeyEvent evt=jsData.mEvent;
 int keyCode=evt.getKeyCode();
 int keyValue=evt.getUnicodeChar();
 int generation=msg.arg1;
-passToJs(generation,(String)jsMap.get("currentText"),keyCode,keyValue,evt.isDown(),evt.isShiftPressed(),evt.isAltPressed(),evt.isSymPressed());
+passToJs(generation,jsData.mCurrentText,keyCode,keyValue,evt.isDown(),evt.isShiftPressed(),evt.isAltPressed(),evt.isSymPressed());
 break;
 }
 case SAVE_DOCUMENT_STATE:
 {
-CursorData fDat=(CursorData)msg.obj;
-nativeSaveDocumentState(fDat.mFrame);
+CursorData cDat=(CursorData)msg.obj;
+nativeSaveDocumentState(cDat.mFrame);
 break;
 }
 case CLEAR_SSL_PREF_TABLE:
@@ -154,14 +150,12 @@ TouchEventData ted=(TouchEventData)msg.obj;
 Message.obtain(mWebView.mPrivateHandler,WebView.PREVENT_TOUCH_ID,ted.mAction,nativeHandleTouchEvent(ted.mAction,ted.mX,ted.mY) ? 1 : 0).sendToTarget();
 break;
 }
-case SET_ACTIVE:
-nativeSetFocusControllerActive(msg.arg1 == 1);
+case SET_INACTIVE:
+nativeSetFocusControllerInactive();
 break;
 case ADD_JS_INTERFACE:
-HashMap map=(HashMap)msg.obj;
-Object obj=map.get("object");
-String interfaceName=(String)map.get("interfaceName");
-mBrowserFrame.addJavascriptInterface(obj,interfaceName);
+JSInterfaceData jsData=(JSInterfaceData)msg.obj;
+mBrowserFrame.addJavascriptInterface(jsData.mObject,jsData.mInterfaceName);
 break;
 case REQUEST_EXT_REPRESENTATION:
 mBrowserFrame.externalRepresentation((Message)msg.obj);
@@ -170,17 +164,14 @@ case REQUEST_DOC_AS_TEXT:
 mBrowserFrame.documentAsText((Message)msg.obj);
 break;
 case SET_MOVE_MOUSE:
-CursorData finalData=(CursorData)msg.obj;
-nativeMoveMouse(finalData.mFrame,finalData.mNode,finalData.mX,finalData.mY);
-break;
-case UNBLOCK_FOCUS:
-nativeUnblockFocus();
+CursorData cursorData=(CursorData)msg.obj;
+nativeMoveMouse(cursorData.mFrame,cursorData.mNode,cursorData.mX,cursorData.mY);
 break;
 case SET_MOVE_MOUSE_IF_LATEST:
-CursorData focusData=(CursorData)msg.obj;
-nativeMoveMouseIfLatest(focusData.mMoveGeneration,focusData.mFrame,focusData.mNode,focusData.mX,focusData.mY,focusData.mIgnoreNullFocus);
+CursorData cData=(CursorData)msg.obj;
+nativeMoveMouseIfLatest(cData.mMoveGeneration,cData.mFrame,cData.mNode,cData.mX,cData.mY,cData.mIgnoreNullFocus);
 break;
-case REQUEST_FOCUS_HREF:
+case REQUEST_CURSOR_HREF:
 {
 Message hrefMsg=(Message)msg.obj;
 String res=nativeRetrieveHref(msg.arg1,msg.arg2);
