@@ -1,17 +1,22 @@
 {
   HashSet<String> existing=parseStateFile(oldState);
+  if (DEBUG)   Log.v(TAG,"onBackup()");
+  ByteArrayOutputStream bufStream=new ByteArrayOutputStream();
+  DataOutputStream outWriter=new DataOutputStream(bufStream);
   for (  ApplicationInfo app : mAllApps) {
     String packName=app.packageName;
     if (!existing.contains(packName)) {
       try {
         PackageInfo info=mPackageManager.getPackageInfo(packName,PackageManager.GET_SIGNATURES);
+        bufStream.reset();
+        outWriter.writeInt(info.versionCode);
+        byte[] versionBuf=bufStream.toByteArray();
         byte[] sigs=flattenSignatureArray(info.signatures);
         if (DEBUG) {
-          CRC32 crc=new CRC32();
-          crc.update(sigs);
-          Log.i(TAG,"+ flat sig array for " + packName + " : "+ crc.getValue());
+          Log.v(TAG,"+ metadata for " + packName + " version="+ info.versionCode);
         }
-        data.writeEntityHeader(packName,sigs.length);
+        data.writeEntityHeader(packName,versionBuf.length + sigs.length);
+        data.writeEntityData(versionBuf,versionBuf.length);
         data.writeEntityData(sigs,sigs.length);
       }
  catch (      NameNotFoundException e) {
@@ -23,12 +28,14 @@ catch (      IOException e) {
       }
     }
  else {
+      if (DEBUG)       Log.v(TAG,"= already backed up metadata for " + packName);
       if (!existing.remove(packName)) {
         Log.d(TAG,"*** failed to remove " + packName + " from package set!");
       }
     }
   }
   for (  String app : existing) {
+    if (DEBUG)     Log.v(TAG,"- removing metadata for deleted pkg " + app);
     try {
       data.writeEntityHeader(app,-1);
     }
