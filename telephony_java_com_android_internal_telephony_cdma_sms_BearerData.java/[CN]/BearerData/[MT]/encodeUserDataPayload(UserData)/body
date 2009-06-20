@@ -3,14 +3,17 @@
   if (uData.userDataHeader != null)   headerData=SmsHeader.toByteArray(uData.userDataHeader);
   int headerDataLen=(headerData == null) ? 0 : headerData.length + 1;
   byte[] payloadData;
+  int codeUnitCount;
   if (uData.msgEncodingSet) {
     if (uData.msgEncoding == UserData.ENCODING_OCTET) {
       if (uData.payload == null) {
         Log.e(LOG_TAG,"user data with octet encoding but null payload");
         payloadData=new byte[0];
+        codeUnitCount=0;
       }
  else {
         payloadData=uData.payload;
+        codeUnitCount=uData.payload.length;
       }
     }
  else {
@@ -20,18 +23,19 @@
       }
       if (uData.msgEncoding == UserData.ENCODING_GSM_7BIT_ALPHABET) {
         payloadData=encode7bitGsm(uData.payloadStr);
+        codeUnitCount=(payloadData.length * 8) / 7;
       }
  else       if (uData.msgEncoding == UserData.ENCODING_7BIT_ASCII) {
-        SeptetData septetData=encode7bitAscii(uData.payloadStr,true);
-        payloadData=septetData.data;
+        payloadData=encode7bitAscii(uData.payloadStr,true);
+        codeUnitCount=uData.payloadStr.length();
       }
  else       if (uData.msgEncoding == UserData.ENCODING_UNICODE_16) {
         payloadData=encodeUtf16(uData.payloadStr);
+        codeUnitCount=uData.payloadStr.length();
       }
  else {
         throw new CodingException("unsupported user data encoding (" + uData.msgEncoding + ")");
       }
-      uData.numFields=uData.payloadStr.length();
     }
   }
  else {
@@ -40,21 +44,29 @@
       uData.payloadStr="";
     }
     try {
-      SeptetData septetData=encode7bitAscii(uData.payloadStr,false);
-      payloadData=septetData.data;
-      uData.msgEncoding=UserData.ENCODING_7BIT_ASCII;
+      if (headerData == null) {
+        payloadData=encode7bitAscii(uData.payloadStr,false);
+        codeUnitCount=uData.payloadStr.length();
+        uData.msgEncoding=UserData.ENCODING_7BIT_ASCII;
+      }
+ else {
+        payloadData=encode7bitGsm(uData.payloadStr);
+        codeUnitCount=(payloadData.length * 8) / 7;
+        uData.msgEncoding=UserData.ENCODING_GSM_7BIT_ALPHABET;
+      }
     }
  catch (    CodingException ex) {
       payloadData=encodeUtf16(uData.payloadStr);
+      codeUnitCount=uData.payloadStr.length();
       uData.msgEncoding=UserData.ENCODING_UNICODE_16;
     }
     uData.msgEncodingSet=true;
-    uData.numFields=uData.payloadStr.length();
   }
   int totalLength=payloadData.length + headerDataLen;
   if (totalLength > SmsMessage.MAX_USER_DATA_BYTES) {
     throw new CodingException("encoded user data too large (" + totalLength + " > "+ SmsMessage.MAX_USER_DATA_BYTES+ " bytes)");
   }
+  uData.numFields=codeUnitCount;
   uData.payload=new byte[totalLength];
   if (headerData != null) {
     uData.payload[0]=(byte)headerData.length;
