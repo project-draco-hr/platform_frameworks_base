@@ -1,0 +1,75 @@
+{
+  boolean isLoggable=Log.isLoggable(TAG,Log.VERBOSE);
+  if (isLoggable) {
+    Log.v(TAG,"scheduleSync:" + " delay " + delay + ", account "+ requestedAccount+ ", authority "+ requestedAuthority+ ", extras "+ ((extras == null) ? "(null)" : extras));
+  }
+  if (!isSyncEnabled()) {
+    if (isLoggable) {
+      Log.v(TAG,"not syncing because sync is disabled");
+    }
+    setStatusText("Sync is disabled.");
+    return;
+  }
+  if (mAccounts == null)   setStatusText("The accounts aren't known yet.");
+  if (!mDataConnectionIsConnected)   setStatusText("No data connection");
+  if (mStorageIsLow)   setStatusText("Memory low");
+  if (extras == null)   extras=new Bundle();
+  Boolean expedited=extras.getBoolean(ContentResolver.SYNC_EXTRAS_EXPEDITED,false);
+  if (expedited) {
+    delay=-1;
+  }
+  Account[] accounts;
+  if (requestedAccount != null) {
+    accounts=new Account[]{requestedAccount};
+  }
+ else {
+    accounts=mAccounts;
+    if (accounts == null) {
+      if (isLoggable) {
+        Log.v(TAG,"scheduleSync: no accounts yet, dropping");
+      }
+      return;
+    }
+    if (accounts.length == 0) {
+      if (isLoggable) {
+        Log.v(TAG,"scheduleSync: no accounts configured, dropping");
+      }
+      setStatusText("No accounts are configured.");
+      return;
+    }
+  }
+  final boolean uploadOnly=extras.getBoolean(ContentResolver.SYNC_EXTRAS_UPLOAD,false);
+  final boolean manualSync=extras.getBoolean(ContentResolver.SYNC_EXTRAS_MANUAL,false);
+  int source;
+  if (uploadOnly) {
+    source=SyncStorageEngine.SOURCE_LOCAL;
+  }
+ else   if (manualSync) {
+    source=SyncStorageEngine.SOURCE_USER;
+  }
+ else   if (requestedAuthority == null) {
+    source=SyncStorageEngine.SOURCE_POLL;
+  }
+ else {
+    source=SyncStorageEngine.SOURCE_SERVER;
+  }
+  final HashSet<String> syncableAuthorities=new HashSet<String>();
+  for (  RegisteredServicesCache.ServiceInfo<SyncAdapterType> syncAdapter : mSyncAdapters.getAllServices()) {
+    syncableAuthorities.add(syncAdapter.type.authority);
+  }
+  if (requestedAuthority != null) {
+    final boolean isSyncable=syncableAuthorities.contains(requestedAuthority);
+    syncableAuthorities.clear();
+    if (isSyncable)     syncableAuthorities.add(requestedAuthority);
+  }
+  for (  String authority : syncableAuthorities) {
+    for (    Account account : accounts) {
+      if (mSyncAdapters.getServiceInfo(new SyncAdapterType(authority,account.mType)) != null) {
+        scheduleSyncOperation(new SyncOperation(account,source,authority,extras,delay));
+        if ("calendar".equals(authority)) {
+          break;
+        }
+      }
+    }
+  }
+}
