@@ -1,53 +1,93 @@
 {
   if (DEBUG)   Log.v(TAG,"Beginning restore process");
-  int err=-1;
   try {
-    err=mTransport.startSession();
-  }
- catch (  Exception e) {
-    Log.e(TAG,"Error starting transport for restore");
-    e.printStackTrace();
-  }
-  if (err == 0) {
-    try {
-      RestoreSet[] images=mTransport.getAvailableRestoreSets();
-      if (images.length > 0) {
-        mImage=images[0];
-        PackageManagerBackupAgent pmAgent=new PackageManagerBackupAgent(mPackageManager,allAgentApps());
-        PackageInfo pmApp=new PackageInfo();
-        pmApp.packageName=PACKAGE_MANAGER_SENTINEL;
-        processOneRestore(pmApp,IBackupAgent.Stub.asInterface(pmAgent.onBind()));
-        PackageInfo[] packages=mTransport.getAppSet(mImage.token);
-        HashSet<PackageInfo> appsToRestore=new HashSet<PackageInfo>();
-        for (        PackageInfo pkg : packages) {
-          PackageInfo app=isRestorable(pkg);
-          if (app != null) {
-            Metadata info=pmAgent.getRestoredMetadata(app.packageName);
-            if (app.versionCode >= info.versionCode) {
-              if (DEBUG)               Log.v(TAG,"Restore version " + info.versionCode + " compatible with app version "+ app.versionCode);
-              if (signaturesMatch(info.signatures,app.signatures)) {
-                appsToRestore.add(app);
-              }
- else {
-                Log.w(TAG,"Sig mismatch restoring " + app.packageName);
-              }
-            }
- else {
-              Log.i(TAG,"Restore set for " + app.packageName + " is too new ["+ info.versionCode+ "] for installed app version "+ app.versionCode);
-            }
-          }
-        }
-        doQueuedRestores(appsToRestore);
+    RestoreSet[] images=mTransport.getAvailableRestoreSets();
+    if (images == null) {
+      Log.e(TAG,"Error getting restore sets");
+      return;
+    }
+    if (images.length == 0) {
+      Log.i(TAG,"No restore sets available");
+      return;
+    }
+    mImage=images[0];
+    ArrayList<PackageInfo> restorePackages=new ArrayList<PackageInfo>();
+    PackageInfo omPackage=new PackageInfo();
+    omPackage.packageName=PACKAGE_MANAGER_SENTINEL;
+    restorePackages.add(omPackage);
+    List<PackageInfo> agentPackages=allAgentPackages();
+    restorePackages.addAll(agentPackages);
+    long token=images[0].token;
+    if (!mTransport.startRestore(token,restorePackages.toArray(new PackageInfo[0]))) {
+      Log.e(TAG,"Error starting restore operation");
+      return;
+    }
+    String packageName=mTransport.nextRestorePackage();
+    if (packageName == null) {
+      Log.e(TAG,"Error getting first restore package");
+      return;
+    }
+ else     if (packageName.equals("")) {
+      Log.i(TAG,"No restore data available");
+      return;
+    }
+ else     if (!packageName.equals(PACKAGE_MANAGER_SENTINEL)) {
+      Log.e(TAG,"Expected restore data for \"" + PACKAGE_MANAGER_SENTINEL + "\", found only \""+ packageName+ "\"");
+      return;
+    }
+    PackageManagerBackupAgent pmAgent=new PackageManagerBackupAgent(mPackageManager,agentPackages);
+    processOneRestore(omPackage,0,IBackupAgent.Stub.asInterface(pmAgent.onBind()));
+    for (; ; ) {
+      packageName=mTransport.nextRestorePackage();
+      if (packageName == null) {
+        Log.e(TAG,"Error getting next restore package");
+        return;
+      }
+ else       if (packageName.equals("")) {
+        break;
+      }
+      Metadata metaInfo=pmAgent.getRestoredMetadata(packageName);
+      if (metaInfo == null) {
+        Log.e(TAG,"Missing metadata for " + packageName);
+        continue;
+      }
+      int flags=PackageManager.GET_SIGNATURES;
+      PackageInfo packageInfo=mPackageManager.getPackageInfo(packageName,flags);
+      if (metaInfo.versionCode > packageInfo.versionCode) {
+        Log.w(TAG,"Package " + packageName + " restore version ["+ metaInfo.versionCode+ "] is too new for installed version ["+ packageInfo.versionCode+ "]");
+        continue;
+      }
+      if (!signaturesMatch(metaInfo.signatures,packageInfo.signatures)) {
+        Log.w(TAG,"Signature mismatch restoring " + packageName);
+        continue;
+      }
+      if (DEBUG)       Log.v(TAG,"Package " + packageName + " restore version ["+ metaInfo.versionCode+ "] is compatible with installed version ["+ packageInfo.versionCode+ "]");
+      clearApplicationDataSynchronous(packageName);
+      IBackupAgent agent=bindToAgentSynchronous(packageInfo.applicationInfo,IApplicationThread.BACKUP_MODE_RESTORE);
+      if (agent == null) {
+        Log.w(TAG,"Can't find backup agent for " + packageName);
+        continue;
+      }
+      try {
+        processOneRestore(packageInfo,metaInfo.versionCode,agent);
+      }
+  finally {
+        mActivityManager.unbindBackupAgent(packageInfo.applicationInfo);
       }
     }
- catch (    RemoteException e) {
-    }
+  }
+ catch (  NameNotFoundException e) {
+    Log.e(TAG,"Invalid paackage restoring data",e);
+  }
+catch (  RemoteException e) {
+    Log.e(TAG,"Error restoring data",e);
+  }
+ finally {
     try {
-      mTransport.endSession();
+      mTransport.finishRestore();
     }
- catch (    Exception e) {
-      Log.e(TAG,"Error ending transport for restore");
-      e.printStackTrace();
+ catch (    RemoteException e) {
+      Log.e(TAG,"Error finishing restore",e);
     }
   }
 }

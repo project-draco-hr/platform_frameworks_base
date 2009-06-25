@@ -1,48 +1,60 @@
 {
-  HashSet<String> existing=parseStateFile(oldState);
   if (DEBUG)   Log.v(TAG,"onBackup()");
   ByteArrayOutputStream bufStream=new ByteArrayOutputStream();
   DataOutputStream outWriter=new DataOutputStream(bufStream);
-  for (  ApplicationInfo app : mAllApps) {
-    String packName=app.packageName;
-    if (!existing.contains(packName)) {
-      try {
-        PackageInfo info=mPackageManager.getPackageInfo(packName,PackageManager.GET_SIGNATURES);
-        bufStream.reset();
-        outWriter.writeInt(info.versionCode);
-        byte[] versionBuf=bufStream.toByteArray();
-        byte[] sigs=flattenSignatureArray(info.signatures);
-        if (DEBUG) {
-          Log.v(TAG,"+ metadata for " + packName + " version="+ info.versionCode);
+  HashSet<String> existing=parseStateFile(oldState);
+  try {
+    if (!existing.contains(GLOBAL_METADATA_KEY)) {
+      if (DEBUG)       Log.v(TAG,"Storing global metadata key");
+      outWriter.writeInt(Build.VERSION.SDK_INT);
+      byte[] metadata=bufStream.toByteArray();
+      data.writeEntityHeader(GLOBAL_METADATA_KEY,metadata.length);
+      data.writeEntityData(metadata,metadata.length);
+    }
+ else {
+      if (DEBUG)       Log.v(TAG,"Global metadata key already stored");
+    }
+    for (    PackageInfo pkg : mAllPackages) {
+      String packName=pkg.packageName;
+      if (!existing.contains(packName)) {
+        try {
+          PackageInfo info=mPackageManager.getPackageInfo(packName,PackageManager.GET_SIGNATURES);
+          bufStream.reset();
+          outWriter.writeInt(info.versionCode);
+          byte[] versionBuf=bufStream.toByteArray();
+          byte[] sigs=flattenSignatureArray(info.signatures);
+          if (DEBUG) {
+            Log.v(TAG,"+ metadata for " + packName + " version="+ info.versionCode+ " versionLen="+ versionBuf.length+ " sigsLen="+ sigs.length);
+          }
+          data.writeEntityHeader(packName,versionBuf.length + sigs.length);
+          data.writeEntityData(versionBuf,versionBuf.length);
+          data.writeEntityData(sigs,sigs.length);
         }
-        data.writeEntityHeader(packName,versionBuf.length + sigs.length);
-        data.writeEntityData(versionBuf,versionBuf.length);
-        data.writeEntityData(sigs,sigs.length);
+ catch (        NameNotFoundException e) {
+          existing.add(packName);
+        }
       }
- catch (      NameNotFoundException e) {
-        existing.add(packName);
+ else {
+        if (DEBUG)         Log.v(TAG,"= already backed up metadata for " + packName);
+        if (!existing.remove(packName)) {
+          Log.d(TAG,"*** failed to remove " + packName + " from package set!");
+        }
       }
-catch (      IOException e) {
-        Log.e(TAG,"Unable to write package backup data file!");
+    }
+    for (    String app : existing) {
+      if (DEBUG)       Log.v(TAG,"- removing metadata for deleted pkg " + app);
+      try {
+        data.writeEntityHeader(app,-1);
+      }
+ catch (      IOException e) {
+        Log.e(TAG,"Unable to write package deletions!");
         return;
       }
     }
- else {
-      if (DEBUG)       Log.v(TAG,"= already backed up metadata for " + packName);
-      if (!existing.remove(packName)) {
-        Log.d(TAG,"*** failed to remove " + packName + " from package set!");
-      }
-    }
   }
-  for (  String app : existing) {
-    if (DEBUG)     Log.v(TAG,"- removing metadata for deleted pkg " + app);
-    try {
-      data.writeEntityHeader(app,-1);
-    }
- catch (    IOException e) {
-      Log.e(TAG,"Unable to write package deletions!");
-      return;
-    }
+ catch (  IOException e) {
+    Log.e(TAG,"Unable to write package backup data file!");
+    return;
   }
-  writeStateFile(mAllApps,newState);
+  writeStateFile(mAllPackages,newState);
 }
