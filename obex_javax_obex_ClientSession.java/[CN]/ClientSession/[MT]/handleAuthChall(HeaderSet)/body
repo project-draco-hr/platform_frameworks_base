@@ -1,0 +1,83 @@
+{
+  if (authenticator == null) {
+    return false;
+  }
+  byte[] challenge=OBEXHelper.getTagValue((byte)0x00,header.authChall);
+  byte[] option=OBEXHelper.getTagValue((byte)0x01,header.authChall);
+  byte[] description=OBEXHelper.getTagValue((byte)0x02,header.authChall);
+  String realm="";
+  if (description != null) {
+    byte[] realmString=new byte[description.length - 1];
+    System.arraycopy(description,1,realmString,0,realmString.length);
+switch (description[0] & 0xFF) {
+case 0x00:
+case 0x01:
+      try {
+        realm=new String(realmString,"ISO8859_1");
+      }
+ catch (      Exception e) {
+        throw new RuntimeException("Unsupported Encoding Scheme");
+      }
+    break;
+case 0xFF:
+  realm=OBEXHelper.convertToUnicode(realmString,false);
+break;
+case 0x02:
+case 0x03:
+case 0x04:
+case 0x05:
+case 0x06:
+case 0x07:
+case 0x08:
+case 0x09:
+default :
+throw new RuntimeException("Unsupported Encoding Scheme");
+}
+}
+boolean isUserIDRequired=false;
+boolean isFullAccess=true;
+if (option != null) {
+if ((option[0] & 0x01) != 0) {
+isUserIDRequired=true;
+}
+if ((option[0] & 0x02) != 0) {
+isFullAccess=false;
+}
+}
+PasswordAuthentication result=null;
+header.authChall=null;
+try {
+result=authenticator.onAuthenticationChallenge(realm,isUserIDRequired,isFullAccess);
+}
+ catch (Exception e) {
+return false;
+}
+if (result == null) {
+return false;
+}
+byte[] password=result.getPassword();
+if (password == null) {
+return false;
+}
+byte[] userName=result.getUserName();
+if (userName != null) {
+header.authResp=new byte[38 + userName.length];
+header.authResp[36]=(byte)0x01;
+header.authResp[37]=(byte)userName.length;
+System.arraycopy(userName,0,header.authResp,38,userName.length);
+}
+ else {
+header.authResp=new byte[36];
+}
+byte[] digest=new byte[challenge.length + password.length];
+System.arraycopy(challenge,0,digest,0,challenge.length);
+System.arraycopy(password,0,digest,challenge.length,password.length);
+header.authResp[0]=(byte)0x00;
+header.authResp[1]=(byte)0x10;
+byte[] responseDigest=OBEXHelper.computeMD5Hash(digest);
+System.arraycopy(responseDigest,0,header.authResp,2,16);
+header.authResp[18]=(byte)0x02;
+header.authResp[19]=(byte)0x10;
+System.arraycopy(challenge,0,header.authResp,20,16);
+return true;
+}

@@ -1,0 +1,90 @@
+{
+  boolean returnValue=false;
+  ByteArrayOutputStream out=new ByteArrayOutputStream();
+  int bodyLength=-1;
+  byte[] headerArray=OBEXHelper.createHeader(requestHeaders,true);
+  if (privateOutput != null) {
+    bodyLength=privateOutput.size();
+  }
+  if ((BASE_PACKET_LENGTH + headerArray.length) > maxPacketSize) {
+    int end=0;
+    int start=0;
+    while (end != headerArray.length) {
+      end=OBEXHelper.findHeaderEnd(headerArray,start,maxPacketSize - BASE_PACKET_LENGTH);
+      if (end == -1) {
+        isDone=true;
+        abort();
+        exceptionMessage="Header larger then can be sent in a packet";
+        isClosed=true;
+        if (privateInput != null) {
+          privateInput.close();
+        }
+        if (privateOutput != null) {
+          privateOutput.close();
+        }
+        throw new IOException("OBEX Packet exceeds max packet size");
+      }
+      byte[] sendHeader=new byte[end - start];
+      System.arraycopy(headerArray,start,sendHeader,0,sendHeader.length);
+      if (!parent.sendRequest(type,sendHeader,replyHeaders,privateInput)) {
+        return false;
+      }
+      if (replyHeaders.responseCode != OBEXConstants.OBEX_HTTP_CONTINUE) {
+        return false;
+      }
+      start=end;
+    }
+    if (bodyLength > 0) {
+      return true;
+    }
+ else {
+      return false;
+    }
+  }
+ else {
+    out.write(headerArray);
+  }
+  if (bodyLength > 0) {
+    if (bodyLength > (maxPacketSize - headerArray.length - 6)) {
+      returnValue=true;
+      bodyLength=maxPacketSize - headerArray.length - 6;
+    }
+    byte[] body=privateOutput.readBytes(bodyLength);
+    if ((privateOutput.isClosed()) && (!returnValue) && (!isEndOfBodySent)&& ((type & 0x80) != 0)) {
+      out.write(0x49);
+      isEndOfBodySent=true;
+    }
+ else {
+      out.write(0x48);
+    }
+    bodyLength+=3;
+    out.write((byte)(bodyLength >> 8));
+    out.write((byte)bodyLength);
+    if (body != null) {
+      out.write(body);
+    }
+  }
+  if (outputStreamOpened && bodyLength <= 0 && !isEndOfBodySent) {
+    if ((type & 0x80) == 0) {
+      out.write(0x48);
+    }
+ else {
+      out.write(0x49);
+      isEndOfBodySent=true;
+    }
+    bodyLength=3;
+    out.write((byte)(bodyLength >> 8));
+    out.write((byte)bodyLength);
+  }
+  if (out.size() == 0) {
+    if (!parent.sendRequest(type,null,replyHeaders,privateInput)) {
+      return false;
+    }
+    return returnValue;
+  }
+  if ((out.size() > 0) && (!parent.sendRequest(type,out.toByteArray(),replyHeaders,privateInput))) {
+    return false;
+  }
+  if ((privateOutput != null) && (privateOutput.size() > 0))   returnValue=true;
+  return returnValue;
+}

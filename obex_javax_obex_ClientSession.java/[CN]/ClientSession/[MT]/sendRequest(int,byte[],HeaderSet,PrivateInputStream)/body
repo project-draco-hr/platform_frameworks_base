@@ -1,0 +1,85 @@
+{
+  if (head != null) {
+    if ((head.length + 3) > OBEXConstants.MAX_PACKET_SIZE_INT) {
+      throw new IOException("header too large ");
+    }
+  }
+  int bytesReceived;
+  ByteArrayOutputStream out=new ByteArrayOutputStream();
+  out.write((byte)code);
+  if (head == null) {
+    out.write(0x00);
+    out.write(0x03);
+  }
+ else {
+    out.write((byte)((head.length + 3) >> 8));
+    out.write((byte)(head.length + 3));
+    out.write(head);
+  }
+  output.write(out.toByteArray());
+  output.flush();
+  headers.responseCode=input.read();
+  int length=((input.read() << 8) | (input.read()));
+  if (length > OBEXConstants.MAX_PACKET_SIZE_INT) {
+    throw new IOException("Packet received exceeds packet size limit");
+  }
+  if (length > 3) {
+    byte[] data=null;
+    if (code == 0x80) {
+      int version=input.read();
+      int flags=input.read();
+      maxPacketSize=(input.read() << 8) + input.read();
+      if (maxPacketSize > OBEXConstants.MAX_PACKET_SIZE_INT) {
+        maxPacketSize=OBEXConstants.MAX_PACKET_SIZE_INT;
+      }
+      if (length > 7) {
+        data=new byte[length - 7];
+        bytesReceived=input.read(data);
+        while (bytesReceived != (length - 7)) {
+          bytesReceived+=input.read(data,bytesReceived,data.length - bytesReceived);
+        }
+      }
+ else {
+        return true;
+      }
+    }
+ else {
+      data=new byte[length - 3];
+      bytesReceived=input.read(data);
+      while (bytesReceived != (length - 3)) {
+        bytesReceived+=input.read(data,bytesReceived,data.length - bytesReceived);
+      }
+      if (code == 0xFF) {
+        return true;
+      }
+    }
+    byte[] body=OBEXHelper.updateHeaderSet(headers,data);
+    if ((privateInput != null) && (body != null)) {
+      privateInput.writeBytes(body,1);
+    }
+    if (headers.connectionID != null) {
+      connectionID=new byte[4];
+      System.arraycopy(headers.connectionID,0,connectionID,0,4);
+    }
+    if (headers.authResp != null) {
+      if (!handleAuthResp(headers.authResp)) {
+        setInactive();
+        throw new IOException("Authentication Failed");
+      }
+    }
+    if ((headers.responseCode == ResponseCodes.OBEX_HTTP_UNAUTHORIZED) && (headers.authChall != null)) {
+      if (handleAuthChall(headers)) {
+        out.write((byte)0x4E);
+        out.write((byte)((headers.authResp.length + 3) >> 8));
+        out.write((byte)(headers.authResp.length + 3));
+        out.write(headers.authResp);
+        headers.authChall=null;
+        headers.authResp=null;
+        byte[] sendHeaders=new byte[out.size() - 3];
+        System.arraycopy(out.toByteArray(),3,sendHeaders,0,sendHeaders.length);
+        return sendRequest(code,sendHeaders,headers,privateInput);
+      }
+    }
+  }
+  return true;
+}
