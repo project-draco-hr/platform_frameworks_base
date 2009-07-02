@@ -1,0 +1,80 @@
+{
+  int length;
+  int code=ResponseCodes.OBEX_HTTP_OK;
+  int totalLength=3;
+  byte[] head=null;
+  int bytesReceived;
+  HeaderSet request=new HeaderSet();
+  HeaderSet reply=new HeaderSet();
+  length=input.read();
+  length=(length << 8) + input.read();
+  if (length > ObexHelper.MAX_PACKET_SIZE_INT) {
+    code=ResponseCodes.OBEX_HTTP_REQ_TOO_LARGE;
+    totalLength=3;
+  }
+ else {
+    if (length > 3) {
+      byte[] headers=new byte[length - 3];
+      bytesReceived=input.read(headers);
+      while (bytesReceived != headers.length) {
+        bytesReceived+=input.read(headers,bytesReceived,headers.length - bytesReceived);
+      }
+      ObexHelper.updateHeaderSet(request,headers);
+    }
+    if (request.connectionID != null) {
+      listener.setConnectionID(ObexHelper.convertToLong(request.connectionID));
+    }
+ else {
+      listener.setConnectionID(1);
+    }
+    if (request.authResp != null) {
+      if (!handleAuthResp(request.authResp)) {
+        code=ResponseCodes.OBEX_HTTP_UNAUTHORIZED;
+        listener.onAuthenticationFailure(ObexHelper.getTagValue((byte)0x01,request.authResp));
+      }
+      request.authResp=null;
+    }
+    if (code != ResponseCodes.OBEX_HTTP_UNAUTHORIZED) {
+      if (request.authChall != null) {
+        handleAuthChall(request);
+        request.authChall=null;
+      }
+      try {
+        listener.onDisconnect(request,reply);
+      }
+ catch (      Exception e) {
+        sendResponse(ResponseCodes.OBEX_HTTP_INTERNAL_ERROR,null);
+        return;
+      }
+      long id=listener.getConnectionID();
+      if (id == -1) {
+        reply.connectionID=null;
+      }
+ else {
+        reply.connectionID=ObexHelper.convertToByteArray(id);
+      }
+      head=ObexHelper.createHeader(reply,false);
+      totalLength+=head.length;
+      if (totalLength > maxPacketLength) {
+        totalLength=3;
+        head=null;
+        code=ResponseCodes.OBEX_HTTP_INTERNAL_ERROR;
+      }
+    }
+  }
+  byte[] replyData;
+  if (head != null) {
+    replyData=new byte[3 + head.length];
+  }
+ else {
+    replyData=new byte[3];
+  }
+  replyData[0]=(byte)code;
+  replyData[1]=(byte)(totalLength >> 8);
+  replyData[2]=(byte)totalLength;
+  if (head != null) {
+    System.arraycopy(head,0,replyData,3,head.length);
+  }
+  output.write(replyData);
+  output.flush();
+}

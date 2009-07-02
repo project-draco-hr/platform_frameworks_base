@@ -1,0 +1,95 @@
+{
+  isAborted=false;
+  parent=p;
+  socketInput=in;
+  maxPacketLength=maxSize;
+  isClosed=false;
+  requestHeaders=new HeaderSet();
+  replyHeaders=new HeaderSet();
+  privateInput=new PrivateInputStream(this);
+  endOfBody=false;
+  responseSize=3;
+  listener=listen;
+  requestFinished=false;
+  outputStreamOpened=false;
+  isHasBody=false;
+  int bytesReceived;
+  if ((request == 0x02) || (request == 0x82)) {
+    isGet=false;
+  }
+ else {
+    isGet=true;
+  }
+  if ((request & 0x80) == 0) {
+    finalBitSet=false;
+  }
+ else {
+    finalBitSet=true;
+    requestFinished=true;
+  }
+  int length=in.read();
+  length=(length << 8) + in.read();
+  if (length > ObexHelper.MAX_PACKET_SIZE_INT) {
+    parent.sendResponse(ResponseCodes.OBEX_HTTP_REQ_TOO_LARGE,null);
+    throw new IOException("Packet received was too large");
+  }
+  if (length > 3) {
+    byte[] data=new byte[length - 3];
+    bytesReceived=in.read(data);
+    while (bytesReceived != data.length) {
+      bytesReceived+=in.read(data,bytesReceived,data.length - bytesReceived);
+    }
+    byte[] body=ObexHelper.updateHeaderSet(requestHeaders,data);
+    if (body != null) {
+      isHasBody=true;
+    }
+    if (requestHeaders.connectionID != null) {
+      listener.setConnectionID(ObexHelper.convertToLong(requestHeaders.connectionID));
+    }
+ else {
+      listener.setConnectionID(0);
+    }
+    if (requestHeaders.authResp != null) {
+      if (!parent.handleAuthResp(requestHeaders.authResp)) {
+        exceptionString="Authentication Failed";
+        parent.sendResponse(ResponseCodes.OBEX_HTTP_UNAUTHORIZED,null);
+        isClosed=true;
+        requestHeaders.authResp=null;
+        return;
+      }
+    }
+    if (requestHeaders.authChall != null) {
+      parent.handleAuthChall(requestHeaders);
+      replyHeaders.authResp=new byte[requestHeaders.authResp.length];
+      System.arraycopy(requestHeaders.authResp,0,replyHeaders.authResp,0,replyHeaders.authResp.length);
+      requestHeaders.authResp=null;
+      requestHeaders.authChall=null;
+    }
+    if (body != null) {
+      if (body[0] == 0x49) {
+        endOfBody=true;
+      }
+      privateInput.writeBytes(body,1);
+    }
+ else {
+      while ((!isGet) && (!finalBitSet)) {
+        sendReply(ObexHelper.OBEX_HTTP_CONTINUE);
+        if (privateInput.available() > 0) {
+          break;
+        }
+      }
+    }
+  }
+  while ((!isGet) && (!finalBitSet) && (privateInput.available() == 0)) {
+    sendReply(ObexHelper.OBEX_HTTP_CONTINUE);
+    if (privateInput.available() > 0) {
+      break;
+    }
+  }
+  while (isGet && !finalBitSet) {
+    sendReply(ObexHelper.OBEX_HTTP_CONTINUE);
+  }
+  if (finalBitSet && isGet) {
+    requestFinished=true;
+  }
+}

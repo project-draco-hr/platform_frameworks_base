@@ -2,23 +2,49 @@
   if (DEBUG)   Log.v(TAG,"onBackup()");
   ByteArrayOutputStream bufStream=new ByteArrayOutputStream();
   DataOutputStream outWriter=new DataOutputStream(bufStream);
-  HashSet<String> existing=parseStateFile(oldState);
+  parseStateFile(oldState);
+  if (mStoredIncrementalVersion == null || !mStoredIncrementalVersion.equals(Build.VERSION.INCREMENTAL)) {
+    Log.i(TAG,"Previous metadata " + mStoredIncrementalVersion + " mismatch vs "+ Build.VERSION.INCREMENTAL+ " - rewriting");
+    mExisting.clear();
+  }
   try {
-    if (!existing.contains(GLOBAL_METADATA_KEY)) {
+    if (!mExisting.contains(GLOBAL_METADATA_KEY)) {
       if (DEBUG)       Log.v(TAG,"Storing global metadata key");
       outWriter.writeInt(Build.VERSION.SDK_INT);
+      outWriter.writeUTF(Build.VERSION.INCREMENTAL);
       byte[] metadata=bufStream.toByteArray();
       data.writeEntityHeader(GLOBAL_METADATA_KEY,metadata.length);
       data.writeEntityData(metadata,metadata.length);
     }
  else {
       if (DEBUG)       Log.v(TAG,"Global metadata key already stored");
+      mExisting.remove(GLOBAL_METADATA_KEY);
     }
     for (    PackageInfo pkg : mAllPackages) {
       String packName=pkg.packageName;
-      if (!existing.contains(packName)) {
+      if (packName.equals(GLOBAL_METADATA_KEY)) {
+        continue;
+      }
+ else {
+        PackageInfo info=null;
         try {
-          PackageInfo info=mPackageManager.getPackageInfo(packName,PackageManager.GET_SIGNATURES);
+          info=mPackageManager.getPackageInfo(packName,PackageManager.GET_SIGNATURES);
+        }
+ catch (        NameNotFoundException e) {
+          mExisting.add(packName);
+          continue;
+        }
+        boolean doBackup=false;
+        if (!mExisting.contains(packName)) {
+          doBackup=true;
+        }
+ else {
+          if (info.versionCode != mStateVersions.get(packName).versionCode) {
+            doBackup=true;
+          }
+          mExisting.remove(packName);
+        }
+        if (doBackup) {
           bufStream.reset();
           outWriter.writeInt(info.versionCode);
           byte[] versionBuf=bufStream.toByteArray();
@@ -30,18 +56,9 @@
           data.writeEntityData(versionBuf,versionBuf.length);
           data.writeEntityData(sigs,sigs.length);
         }
- catch (        NameNotFoundException e) {
-          existing.add(packName);
-        }
-      }
- else {
-        if (DEBUG)         Log.v(TAG,"= already backed up metadata for " + packName);
-        if (!existing.remove(packName)) {
-          Log.d(TAG,"*** failed to remove " + packName + " from package set!");
-        }
       }
     }
-    for (    String app : existing) {
+    for (    String app : mExisting) {
       if (DEBUG)       Log.v(TAG,"- removing metadata for deleted pkg " + app);
       try {
         data.writeEntityHeader(app,-1);

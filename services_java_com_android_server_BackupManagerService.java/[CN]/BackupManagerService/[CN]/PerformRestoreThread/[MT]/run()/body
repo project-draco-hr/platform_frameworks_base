@@ -1,5 +1,6 @@
 {
   if (DEBUG)   Log.v(TAG,"Beginning restore process");
+  int error=-1;
   try {
     RestoreSet[] images=mTransport.getAvailableRestoreSets();
     if (images == null) {
@@ -17,8 +18,16 @@
     restorePackages.add(omPackage);
     List<PackageInfo> agentPackages=allAgentPackages();
     restorePackages.addAll(agentPackages);
-    long token=images[0].token;
-    if (!mTransport.startRestore(token,restorePackages.toArray(new PackageInfo[0]))) {
+    if (mObserver != null) {
+      try {
+        mObserver.restoreStarting(restorePackages.size());
+      }
+ catch (      RemoteException e) {
+        Log.d(TAG,"Restore observer died at restoreStarting");
+        mObserver=null;
+      }
+    }
+    if (!mTransport.startRestore(mToken,restorePackages.toArray(new PackageInfo[0]))) {
       Log.e(TAG,"Error starting restore operation");
       return;
     }
@@ -37,6 +46,7 @@
     }
     PackageManagerBackupAgent pmAgent=new PackageManagerBackupAgent(mPackageManager,agentPackages);
     processOneRestore(omPackage,0,IBackupAgent.Stub.asInterface(pmAgent.onBind()));
+    int count=0;
     for (; ; ) {
       packageName=mTransport.nextRestorePackage();
       if (packageName == null) {
@@ -45,6 +55,16 @@
       }
  else       if (packageName.equals("")) {
         break;
+      }
+      if (mObserver != null) {
+        ++count;
+        try {
+          mObserver.onUpdate(count);
+        }
+ catch (        RemoteException e) {
+          Log.d(TAG,"Restore observer died in onUpdate");
+          mObserver=null;
+        }
       }
       Metadata metaInfo=pmAgent.getRestoredMetadata(packageName);
       if (metaInfo == null) {
@@ -75,6 +95,7 @@
         mActivityManager.unbindBackupAgent(packageInfo.applicationInfo);
       }
     }
+    error=0;
   }
  catch (  NameNotFoundException e) {
     Log.e(TAG,"Invalid paackage restoring data",e);
@@ -88,6 +109,14 @@ catch (  RemoteException e) {
     }
  catch (    RemoteException e) {
       Log.e(TAG,"Error finishing restore",e);
+    }
+    if (mObserver != null) {
+      try {
+        mObserver.restoreFinished(error);
+      }
+ catch (      RemoteException e) {
+        Log.d(TAG,"Restore observer died at restoreFinished");
+      }
     }
   }
 }

@@ -1,37 +1,32 @@
 {
   if (smsb == null) {
-    return;
+    return Intents.RESULT_SMS_GENERIC_ERROR;
   }
   SmsMessage sms=(SmsMessage)smsb;
   sms.parseSms();
   int teleService=sms.getTeleService();
   boolean handled=false;
-  if ((teleService == SmsEnvelope.TELESERVICE_WMT) || (teleService == SmsEnvelope.TELESERVICE_WEMT) || (teleService == SmsEnvelope.TELESERVICE_VMN)) {
-    if (sms.isMWISetMessage()) {
-      mCdmaPhone.updateMessageWaitingIndicator(true);
-      handled|=sms.isMwiDontStore();
-      if (Config.LOGD) {
-        Log.d(TAG,"Received voice mail indicator set SMS shouldStore=" + !handled);
-      }
-    }
- else     if (sms.isMWIClearMessage()) {
-      mCdmaPhone.updateMessageWaitingIndicator(false);
-      handled|=sms.isMwiDontStore();
-      if (Config.LOGD) {
-        Log.d(TAG,"Received voice mail indicator clear SMS shouldStore=" + !handled);
-      }
-    }
-  }
   if (sms.getUserData() == null) {
     if (Config.LOGD) {
       Log.d(TAG,"Received SMS without user data");
     }
     handled=true;
   }
-  if (handled)   return;
+  if (handled) {
+    return Intents.RESULT_SMS_HANDLED;
+  }
   if (SmsEnvelope.TELESERVICE_WAP == teleService) {
-    processCdmaWapPdu(sms.getUserData(),sms.messageRef,sms.getOriginatingAddress());
-    return;
+    return processCdmaWapPdu(sms.getUserData(),sms.messageRef,sms.getOriginatingAddress());
+  }
+ else   if (SmsEnvelope.TELESERVICE_VMN == teleService) {
+    int voicemailCount=sms.getNumOfVoicemails();
+    Log.d(TAG,"Voicemail count=" + voicemailCount);
+    SharedPreferences sp=PreferenceManager.getDefaultSharedPreferences(((CDMAPhone)mPhone).getContext());
+    SharedPreferences.Editor editor=sp.edit();
+    editor.putInt(CDMAPhone.VM_COUNT_CDMA,voicemailCount);
+    editor.commit();
+    ((CDMAPhone)mPhone).updateMessageWaitingIndicator(voicemailCount);
+    return Intents.RESULT_SMS_HANDLED;
   }
   SmsHeader smsHeader=sms.getUserDataHeader();
   if ((smsHeader == null) || (smsHeader.concatRef == null)) {
@@ -39,15 +34,18 @@
     pdus[0]=sms.getPdu();
     if (smsHeader != null && smsHeader.portAddrs != null) {
       if (smsHeader.portAddrs.destPort == SmsHeader.PORT_WAP_PUSH) {
-        mWapPush.dispatchWapPdu(sms.getUserData());
+        return mWapPush.dispatchWapPdu(sms.getUserData());
       }
-      dispatchPortAddressedPdus(pdus,smsHeader.portAddrs.destPort);
+ else {
+        dispatchPortAddressedPdus(pdus,smsHeader.portAddrs.destPort);
+      }
     }
  else {
       dispatchPdus(pdus);
     }
+    return Activity.RESULT_OK;
   }
  else {
-    processMessagePart(sms,smsHeader.concatRef,smsHeader.portAddrs);
+    return processMessagePart(sms,smsHeader.concatRef,smsHeader.portAddrs);
   }
 }

@@ -1,0 +1,155 @@
+{
+  ByteArrayOutputStream out=new ByteArrayOutputStream();
+  int bytesReceived;
+  long id=listener.getConnectionID();
+  if (id == -1) {
+    replyHeaders.connectionID=null;
+  }
+ else {
+    replyHeaders.connectionID=ObexHelper.convertToByteArray(id);
+  }
+  byte[] headerArray=ObexHelper.createHeader(replyHeaders,true);
+  int bodyLength=-1;
+  int orginalBodyLength=-1;
+  if (privateOutput != null) {
+    bodyLength=privateOutput.size();
+    orginalBodyLength=bodyLength;
+  }
+  if ((BASE_PACKET_LENGTH + headerArray.length) > maxPacketLength) {
+    int end=0;
+    int start=0;
+    while (end != headerArray.length) {
+      end=ObexHelper.findHeaderEnd(headerArray,start,maxPacketLength - BASE_PACKET_LENGTH);
+      if (end == -1) {
+        isClosed=true;
+        if (privateInput != null) {
+          privateInput.close();
+        }
+        if (privateOutput != null) {
+          privateOutput.close();
+        }
+        parent.sendResponse(ResponseCodes.OBEX_HTTP_INTERNAL_ERROR,null);
+        throw new IOException("OBEX Packet exceeds max packet size");
+      }
+      byte[] sendHeader=new byte[end - start];
+      System.arraycopy(headerArray,start,sendHeader,0,sendHeader.length);
+      parent.sendResponse(type,sendHeader);
+      start=end;
+    }
+    if (bodyLength > 0) {
+      return true;
+    }
+ else {
+      return false;
+    }
+  }
+ else {
+    out.write(headerArray);
+  }
+  if ((finalBitSet) || (headerArray.length < (maxPacketLength - 20))) {
+    if (bodyLength > 0) {
+      if (bodyLength > (maxPacketLength - headerArray.length - 6)) {
+        bodyLength=maxPacketLength - headerArray.length - 6;
+      }
+      byte[] body=privateOutput.readBytes(bodyLength);
+      if ((finalBitSet) || (privateOutput.isClosed())) {
+        out.write(0x49);
+      }
+ else {
+        out.write(0x48);
+      }
+      bodyLength+=3;
+      out.write((byte)(bodyLength >> 8));
+      out.write((byte)bodyLength);
+      out.write(body);
+    }
+  }
+  if ((finalBitSet) && (type == ResponseCodes.OBEX_HTTP_OK) && (orginalBodyLength <= 0)) {
+    out.write(0x49);
+    orginalBodyLength=3;
+    out.write((byte)(orginalBodyLength >> 8));
+    out.write((byte)orginalBodyLength);
+  }
+  responseSize=3;
+  parent.sendResponse(type,out.toByteArray());
+  if (type == ObexHelper.OBEX_HTTP_CONTINUE) {
+    int headerID=socketInput.read();
+    int length=socketInput.read();
+    length=(length << 8) + socketInput.read();
+    if ((headerID != 0x02) && (headerID != 0x82) && (headerID != 0x03)&& (headerID != 0x83)) {
+      if (length > 3) {
+        byte[] temp=new byte[length];
+        bytesReceived=socketInput.read(temp);
+        while (bytesReceived != length) {
+          bytesReceived+=socketInput.read(temp,bytesReceived,length - bytesReceived);
+        }
+      }
+      if (headerID == 0xFF) {
+        parent.sendResponse(ResponseCodes.OBEX_HTTP_OK,null);
+        isClosed=true;
+        isAborted=true;
+        exceptionString="Abort Received";
+        throw new IOException("Abort Received");
+      }
+ else {
+        parent.sendResponse(ResponseCodes.OBEX_HTTP_BAD_REQUEST,null);
+        isClosed=true;
+        exceptionString="Bad Request Received";
+        throw new IOException("Bad Request Received");
+      }
+    }
+ else {
+      if ((headerID == 0x82) || (headerID == 0x83)) {
+        finalBitSet=true;
+      }
+      if (length > ObexHelper.MAX_PACKET_SIZE_INT) {
+        parent.sendResponse(ResponseCodes.OBEX_HTTP_REQ_TOO_LARGE,null);
+        throw new IOException("Packet received was too large");
+      }
+      if (length > 3) {
+        byte[] data=new byte[length - 3];
+        bytesReceived=socketInput.read(data);
+        while (bytesReceived != data.length) {
+          bytesReceived+=socketInput.read(data,bytesReceived,data.length - bytesReceived);
+        }
+        byte[] body=ObexHelper.updateHeaderSet(requestHeaders,data);
+        if (body != null) {
+          isHasBody=true;
+        }
+        if (requestHeaders.connectionID != null) {
+          listener.setConnectionID(ObexHelper.convertToLong(requestHeaders.connectionID));
+        }
+ else {
+          listener.setConnectionID(1);
+        }
+        if (requestHeaders.authResp != null) {
+          if (!parent.handleAuthResp(requestHeaders.authResp)) {
+            exceptionString="Authentication Failed";
+            parent.sendResponse(ResponseCodes.OBEX_HTTP_UNAUTHORIZED,null);
+            isClosed=true;
+            requestHeaders.authResp=null;
+            return false;
+          }
+          requestHeaders.authResp=null;
+        }
+        if (requestHeaders.authChall != null) {
+          parent.handleAuthChall(requestHeaders);
+          replyHeaders.authResp=new byte[requestHeaders.authResp.length];
+          System.arraycopy(requestHeaders.authResp,0,replyHeaders.authResp,0,replyHeaders.authResp.length);
+          requestHeaders.authResp=null;
+          requestHeaders.authChall=null;
+        }
+        if (body != null) {
+          if (body[0] == 0x49) {
+            endOfBody=true;
+          }
+          privateInput.writeBytes(body,1);
+        }
+      }
+    }
+    return true;
+  }
+ else {
+    return false;
+  }
+}
