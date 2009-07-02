@@ -1,39 +1,39 @@
 {
   ByteArrayOutputStream out=new ByteArrayOutputStream();
   int bytesReceived;
-  long id=listener.getConnectionID();
+  long id=mListener.getConnectionId();
   if (id == -1) {
-    replyHeaders.connectionID=null;
+    replyHeader.mConnectionID=null;
   }
  else {
-    replyHeaders.connectionID=ObexHelper.convertToByteArray(id);
+    replyHeader.mConnectionID=ObexHelper.convertToByteArray(id);
   }
-  byte[] headerArray=ObexHelper.createHeader(replyHeaders,true);
+  byte[] headerArray=ObexHelper.createHeader(replyHeader,true);
   int bodyLength=-1;
   int orginalBodyLength=-1;
-  if (privateOutput != null) {
-    bodyLength=privateOutput.size();
+  if (mPrivateOutput != null) {
+    bodyLength=mPrivateOutput.size();
     orginalBodyLength=bodyLength;
   }
-  if ((BASE_PACKET_LENGTH + headerArray.length) > maxPacketLength) {
+  if ((ObexHelper.BASE_PACKET_LENGTH + headerArray.length) > mMaxPacketLength) {
     int end=0;
     int start=0;
     while (end != headerArray.length) {
-      end=ObexHelper.findHeaderEnd(headerArray,start,maxPacketLength - BASE_PACKET_LENGTH);
+      end=ObexHelper.findHeaderEnd(headerArray,start,mMaxPacketLength - ObexHelper.BASE_PACKET_LENGTH);
       if (end == -1) {
-        isClosed=true;
-        if (privateInput != null) {
-          privateInput.close();
+        mClosed=true;
+        if (mPrivateInput != null) {
+          mPrivateInput.close();
         }
-        if (privateOutput != null) {
-          privateOutput.close();
+        if (mPrivateOutput != null) {
+          mPrivateOutput.close();
         }
-        parent.sendResponse(ResponseCodes.OBEX_HTTP_INTERNAL_ERROR,null);
+        mParent.sendResponse(ResponseCodes.OBEX_HTTP_INTERNAL_ERROR,null);
         throw new IOException("OBEX Packet exceeds max packet size");
       }
       byte[] sendHeader=new byte[end - start];
       System.arraycopy(headerArray,start,sendHeader,0,sendHeader.length);
-      parent.sendResponse(type,sendHeader);
+      mParent.sendResponse(type,sendHeader);
       start=end;
     }
     if (bodyLength > 0) {
@@ -46,13 +46,13 @@
  else {
     out.write(headerArray);
   }
-  if ((finalBitSet) || (headerArray.length < (maxPacketLength - 20))) {
+  if ((finalBitSet) || (headerArray.length < (mMaxPacketLength - 20))) {
     if (bodyLength > 0) {
-      if (bodyLength > (maxPacketLength - headerArray.length - 6)) {
-        bodyLength=maxPacketLength - headerArray.length - 6;
+      if (bodyLength > (mMaxPacketLength - headerArray.length - 6)) {
+        bodyLength=mMaxPacketLength - headerArray.length - 6;
       }
-      byte[] body=privateOutput.readBytes(bodyLength);
-      if ((finalBitSet) || (privateOutput.isClosed())) {
+      byte[] body=mPrivateOutput.readBytes(bodyLength);
+      if ((finalBitSet) || (mPrivateOutput.isClosed())) {
         out.write(0x49);
       }
  else {
@@ -70,80 +70,77 @@
     out.write((byte)(orginalBodyLength >> 8));
     out.write((byte)orginalBodyLength);
   }
-  responseSize=3;
-  parent.sendResponse(type,out.toByteArray());
-  if (type == ObexHelper.OBEX_HTTP_CONTINUE) {
-    int headerID=socketInput.read();
-    int length=socketInput.read();
-    length=(length << 8) + socketInput.read();
-    if ((headerID != 0x02) && (headerID != 0x82) && (headerID != 0x03)&& (headerID != 0x83)) {
+  mResponseSize=3;
+  mParent.sendResponse(type,out.toByteArray());
+  if (type == ResponseCodes.OBEX_HTTP_CONTINUE) {
+    int headerID=mInput.read();
+    int length=mInput.read();
+    length=(length << 8) + mInput.read();
+    if ((headerID != ObexHelper.OBEX_OPCODE_PUT) && (headerID != ObexHelper.OBEX_OPCODE_PUT_FINAL) && (headerID != ObexHelper.OBEX_OPCODE_GET)&& (headerID != ObexHelper.OBEX_OPCODE_GET_FINAL)) {
       if (length > 3) {
         byte[] temp=new byte[length];
-        bytesReceived=socketInput.read(temp);
+        bytesReceived=mInput.read(temp);
         while (bytesReceived != length) {
-          bytesReceived+=socketInput.read(temp,bytesReceived,length - bytesReceived);
+          bytesReceived+=mInput.read(temp,bytesReceived,length - bytesReceived);
         }
       }
-      if (headerID == 0xFF) {
-        parent.sendResponse(ResponseCodes.OBEX_HTTP_OK,null);
-        isClosed=true;
+      if (headerID == ObexHelper.OBEX_OPCODE_ABORT) {
+        mParent.sendResponse(ResponseCodes.OBEX_HTTP_OK,null);
+        mClosed=true;
         isAborted=true;
-        exceptionString="Abort Received";
+        mExceptionString="Abort Received";
         throw new IOException("Abort Received");
       }
  else {
-        parent.sendResponse(ResponseCodes.OBEX_HTTP_BAD_REQUEST,null);
-        isClosed=true;
-        exceptionString="Bad Request Received";
+        mParent.sendResponse(ResponseCodes.OBEX_HTTP_BAD_REQUEST,null);
+        mClosed=true;
+        mExceptionString="Bad Request Received";
         throw new IOException("Bad Request Received");
       }
     }
  else {
-      if ((headerID == 0x82) || (headerID == 0x83)) {
+      if ((headerID == ObexHelper.OBEX_OPCODE_PUT_FINAL) || (headerID == ObexHelper.OBEX_OPCODE_GET_FINAL)) {
         finalBitSet=true;
       }
       if (length > ObexHelper.MAX_PACKET_SIZE_INT) {
-        parent.sendResponse(ResponseCodes.OBEX_HTTP_REQ_TOO_LARGE,null);
+        mParent.sendResponse(ResponseCodes.OBEX_HTTP_REQ_TOO_LARGE,null);
         throw new IOException("Packet received was too large");
       }
       if (length > 3) {
         byte[] data=new byte[length - 3];
-        bytesReceived=socketInput.read(data);
+        bytesReceived=mInput.read(data);
         while (bytesReceived != data.length) {
-          bytesReceived+=socketInput.read(data,bytesReceived,data.length - bytesReceived);
+          bytesReceived+=mInput.read(data,bytesReceived,data.length - bytesReceived);
         }
-        byte[] body=ObexHelper.updateHeaderSet(requestHeaders,data);
+        byte[] body=ObexHelper.updateHeaderSet(requestHeader,data);
         if (body != null) {
-          isHasBody=true;
+          mHasBody=true;
         }
-        if (requestHeaders.connectionID != null) {
-          listener.setConnectionID(ObexHelper.convertToLong(requestHeaders.connectionID));
+        if (requestHeader.mConnectionID != null) {
+          mListener.setConnectionId(ObexHelper.convertToLong(requestHeader.mConnectionID));
         }
  else {
-          listener.setConnectionID(1);
+          mListener.setConnectionId(1);
         }
-        if (requestHeaders.authResp != null) {
-          if (!parent.handleAuthResp(requestHeaders.authResp)) {
-            exceptionString="Authentication Failed";
-            parent.sendResponse(ResponseCodes.OBEX_HTTP_UNAUTHORIZED,null);
-            isClosed=true;
-            requestHeaders.authResp=null;
+        if (requestHeader.mAuthResp != null) {
+          if (!mParent.handleAuthResp(requestHeader.mAuthResp)) {
+            mExceptionString="Authentication Failed";
+            mParent.sendResponse(ResponseCodes.OBEX_HTTP_UNAUTHORIZED,null);
+            mClosed=true;
+            requestHeader.mAuthResp=null;
             return false;
           }
-          requestHeaders.authResp=null;
+          requestHeader.mAuthResp=null;
         }
-        if (requestHeaders.authChall != null) {
-          parent.handleAuthChall(requestHeaders);
-          replyHeaders.authResp=new byte[requestHeaders.authResp.length];
-          System.arraycopy(requestHeaders.authResp,0,replyHeaders.authResp,0,replyHeaders.authResp.length);
-          requestHeaders.authResp=null;
-          requestHeaders.authChall=null;
+        if (requestHeader.mAuthChall != null) {
+          mParent.handleAuthChall(requestHeader);
+          replyHeader.mAuthResp=new byte[requestHeader.mAuthResp.length];
+          System.arraycopy(requestHeader.mAuthResp,0,replyHeader.mAuthResp,0,replyHeader.mAuthResp.length);
+          requestHeader.mAuthResp=null;
+          requestHeader.mAuthChall=null;
         }
         if (body != null) {
-          if (body[0] == 0x49) {
-            endOfBody=true;
-          }
-          privateInput.writeBytes(body,1);
+          mPrivateInput.writeBytes(body,1);
         }
       }
     }
