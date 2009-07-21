@@ -20,6 +20,8 @@
     mCurScrollY=yoff;
     fullRedrawNeeded=true;
   }
+  float appScale=mAttachInfo.mApplicationScale;
+  boolean scalingRequired=mAttachInfo.mScalingRequired;
   Rect dirty=mDirty;
   if (mUseGL) {
     if (!dirty.isEmpty()) {
@@ -30,13 +32,13 @@
         mGL.glClear(GL_COLOR_BUFFER_BIT);
         mGL.glEnable(GL_SCISSOR_TEST);
         mAttachInfo.mDrawingTime=SystemClock.uptimeMillis();
+        mAttachInfo.mIgnoreDirtyState=true;
         mView.mPrivateFlags|=View.DRAWN;
-        float scale=mAppScale;
         int saveCount=canvas.save(Canvas.MATRIX_SAVE_FLAG);
         try {
           canvas.translate(0,-yoff);
-          if (scale != 1.0f) {
-            canvas.scale(scale,scale);
+          if (mTranslator != null) {
+            mTranslator.translateCanvas(canvas);
           }
           mView.draw(canvas);
           if (Config.DEBUG && ViewDebug.consistencyCheckEnabled) {
@@ -46,6 +48,7 @@
   finally {
           canvas.restoreToCount(saveCount);
         }
+        mAttachInfo.mIgnoreDirtyState=false;
         mEgl.eglSwapBuffers(mEglDisplay,mEglSurface);
         checkEglErrors();
         if (Config.DEBUG && ViewDebug.showFps) {
@@ -63,13 +66,23 @@
     }
     return;
   }
-  if (fullRedrawNeeded)   dirty.union(0,0,(int)(mWidth * mAppScale),(int)(mHeight * mAppScale));
+  if (fullRedrawNeeded) {
+    mAttachInfo.mIgnoreDirtyState=true;
+    dirty.union(0,0,(int)(mWidth * appScale),(int)(mHeight * appScale));
+  }
   if (DEBUG_ORIENTATION || DEBUG_DRAW) {
-    Log.v("ViewRoot","Draw " + mView + "/"+ mWindowAttributes.getTitle()+ ": dirty={"+ dirty.left+ ","+ dirty.top+ ","+ dirty.right+ ","+ dirty.bottom+ "} surface="+ surface+ " surface.isValid()="+ surface.isValid());
+    Log.v("ViewRoot","Draw " + mView + "/"+ mWindowAttributes.getTitle()+ ": dirty={"+ dirty.left+ ","+ dirty.top+ ","+ dirty.right+ ","+ dirty.bottom+ "} surface="+ surface+ " surface.isValid()="+ surface.isValid()+ ", appScale:"+ appScale+ ", width="+ mWidth+ ", height="+ mHeight);
   }
   Canvas canvas;
   try {
+    int left=dirty.left;
+    int top=dirty.top;
+    int right=dirty.right;
+    int bottom=dirty.bottom;
     canvas=surface.lockCanvas(dirty);
+    if (left != dirty.left || top != dirty.top || right != dirty.right || bottom != dirty.bottom) {
+      mAttachInfo.mIgnoreDirtyState=true;
+    }
     canvas.setDensityScale(mDensity);
   }
  catch (  Surface.OutOfResourcesException e) {
@@ -85,34 +98,31 @@
       if (Config.DEBUG && ViewDebug.profileDrawing) {
         startTime=SystemClock.elapsedRealtime();
       }
-      if (!canvas.isOpaque()) {
-        canvas.drawColor(0x00000000,PorterDuff.Mode.CLEAR);
-      }
- else       if (yoff != 0) {
+      if (!canvas.isOpaque() || yoff != 0) {
         canvas.drawColor(0,PorterDuff.Mode.CLEAR);
       }
       dirty.setEmpty();
       mIsAnimating=false;
       mAttachInfo.mDrawingTime=SystemClock.uptimeMillis();
       mView.mPrivateFlags|=View.DRAWN;
-      float scale=mAppScale;
-      Context cxt=mView.getContext();
       if (DEBUG_DRAW) {
-        Log.i(TAG,"Drawing: package:" + cxt.getPackageName() + ", appScale="+ mAppScale);
+        Context cxt=mView.getContext();
+        Log.i(TAG,"Drawing: package:" + cxt.getPackageName() + ", metrics="+ mView.getContext().getResources().getDisplayMetrics());
       }
       int saveCount=canvas.save(Canvas.MATRIX_SAVE_FLAG);
       try {
         canvas.translate(0,-yoff);
-        if (scale != 1.0f) {
-          canvas.scale(scale,scale);
+        if (mTranslator != null) {
+          mTranslator.translateCanvas(canvas);
         }
         mView.draw(canvas);
-        if (Config.DEBUG && ViewDebug.consistencyCheckEnabled) {
-          mView.dispatchConsistencyCheck(ViewDebug.CONSISTENCY_DRAWING);
-        }
       }
   finally {
+        mAttachInfo.mIgnoreDirtyState=false;
         canvas.restoreToCount(saveCount);
+      }
+      if (Config.DEBUG && ViewDebug.consistencyCheckEnabled) {
+        mView.dispatchConsistencyCheck(ViewDebug.CONSISTENCY_DRAWING);
       }
       if (Config.DEBUG && ViewDebug.showFps) {
         int now=(int)SystemClock.elapsedRealtime();

@@ -1,15 +1,43 @@
 {
   mContext=context;
   mPackageManager=context.getPackageManager();
-  mStateDir=new File(Environment.getDataDirectory(),"backup");
-  mStateDir.mkdirs();
+  mActivityManager=ActivityManagerNative.getDefault();
+  mAlarmManager=(AlarmManager)context.getSystemService(Context.ALARM_SERVICE);
+  mPowerManager=(PowerManager)context.getSystemService(Context.POWER_SERVICE);
+  boolean areEnabled=Settings.Secure.getInt(context.getContentResolver(),Settings.Secure.BACKUP_ENABLED,0) != 0;
+  mProvisioned=Settings.Secure.getInt(context.getContentResolver(),Settings.Secure.BACKUP_PROVISIONED,1) != 0;
+  mBaseStateDir=new File(Environment.getDataDirectory(),"backup");
   mDataDir=Environment.getDownloadCacheDirectory();
+  mRunBackupReceiver=new RunBackupReceiver();
+  mRunBackupFilter=new IntentFilter();
+  mRunBackupFilter.addAction(RUN_BACKUP_ACTION);
+  context.registerReceiver(mRunBackupReceiver,mRunBackupFilter);
+  Intent backupIntent=new Intent(RUN_BACKUP_ACTION);
+  backupIntent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY);
+  mRunBackupIntent=PendingIntent.getBroadcast(context,MSG_RUN_BACKUP,backupIntent,0);
+  mJournalDir=new File(mBaseStateDir,"pending");
+  mJournalDir.mkdirs();
+  makeJournalLocked();
 synchronized (mBackupParticipants) {
     addPackageParticipantsLocked(null);
   }
+  mLocalTransport=new LocalTransport(context);
+  ComponentName localName=new ComponentName(context,LocalTransport.class);
+  registerTransport(localName.flattenToShortString(),mLocalTransport);
+  mGoogleTransport=null;
+  mCurrentTransport=Settings.Secure.getString(context.getContentResolver(),Settings.Secure.BACKUP_TRANSPORT);
+  if ("".equals(mCurrentTransport)) {
+    mCurrentTransport=null;
+  }
+  if (DEBUG)   Log.v(TAG,"Starting with transport " + mCurrentTransport);
+  Intent intent=new Intent().setComponent(new ComponentName("com.google.android.backup","com.google.android.backup.BackupTransportService"));
+  context.bindService(intent,mGoogleConnection,Context.BIND_AUTO_CREATE);
+  parseLeftoverJournals();
   IntentFilter filter=new IntentFilter();
   filter.addAction(Intent.ACTION_PACKAGE_ADDED);
   filter.addAction(Intent.ACTION_PACKAGE_REMOVED);
   filter.addDataScheme("package");
   mContext.registerReceiver(mBroadcastReceiver,filter);
+  mWakelock=mPowerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,"backup");
+  setBackupEnabled(areEnabled);
 }

@@ -2,32 +2,61 @@
   HashMap<ComponentName,SearchableInfo> newSearchablesMap=new HashMap<ComponentName,SearchableInfo>();
   ArrayList<SearchableInfo> newSearchablesList=new ArrayList<SearchableInfo>();
   ArrayList<SearchableInfo> newSearchablesInGlobalSearchList=new ArrayList<SearchableInfo>();
+  ArrayList<SearchableInfo> newSearchablesForWebSearchList=new ArrayList<SearchableInfo>();
   final PackageManager pm=mContext.getPackageManager();
-  List<ResolveInfo> infoList;
+  List<ResolveInfo> searchList;
   final Intent intent=new Intent(Intent.ACTION_SEARCH);
-  infoList=pm.queryIntentActivities(intent,PackageManager.GET_META_DATA);
-  if (infoList != null) {
-    int count=infoList.size();
+  searchList=pm.queryIntentActivities(intent,PackageManager.GET_META_DATA);
+  List<ResolveInfo> webSearchInfoList;
+  final Intent webSearchIntent=new Intent(Intent.ACTION_WEB_SEARCH);
+  webSearchInfoList=pm.queryIntentActivities(webSearchIntent,PackageManager.GET_META_DATA);
+  if (searchList != null || webSearchInfoList != null) {
+    int search_count=(searchList == null ? 0 : searchList.size());
+    int web_search_count=(webSearchInfoList == null ? 0 : webSearchInfoList.size());
+    int count=search_count + web_search_count;
     for (int ii=0; ii < count; ii++) {
-      ResolveInfo info=infoList.get(ii);
+      ResolveInfo info=(ii < search_count) ? searchList.get(ii) : webSearchInfoList.get(ii - search_count);
       ActivityInfo ai=info.activityInfo;
-      SearchableInfo searchable=SearchableInfo.getActivityMetaData(mContext,ai);
-      if (searchable != null) {
-        newSearchablesList.add(searchable);
-        newSearchablesMap.put(searchable.getSearchActivity(),searchable);
-        if (searchable.shouldIncludeInGlobalSearch()) {
-          newSearchablesInGlobalSearchList.add(searchable);
+      if (newSearchablesMap.get(new ComponentName(ai.packageName,ai.name)) == null) {
+        SearchableInfo searchable=SearchableInfo.getActivityMetaData(mContext,ai);
+        if (searchable != null) {
+          newSearchablesList.add(searchable);
+          newSearchablesMap.put(searchable.getSearchActivity(),searchable);
+          if (searchable.shouldIncludeInGlobalSearch()) {
+            newSearchablesInGlobalSearchList.add(searchable);
+          }
         }
       }
+    }
+  }
+  if (webSearchInfoList != null) {
+    for (int i=0; i < webSearchInfoList.size(); ++i) {
+      ActivityInfo ai=webSearchInfoList.get(i).activityInfo;
+      ComponentName component=new ComponentName(ai.packageName,ai.name);
+      newSearchablesForWebSearchList.add(newSearchablesMap.get(component));
     }
   }
   Intent globalSearchIntent=new Intent(SearchManager.INTENT_ACTION_GLOBAL_SEARCH);
   ComponentName globalSearchActivity=globalSearchIntent.resolveActivity(pm);
   SearchableInfo newDefaultSearchable=newSearchablesMap.get(globalSearchActivity);
+  if (newDefaultSearchable == null) {
+    Log.w(LOG_TAG,"No searchable info found for new default searchable activity " + globalSearchActivity);
+  }
+  ComponentName webSearchActivity=getPreferredWebSearchActivity();
+  SearchableInfo newDefaultSearchableForWebSearch=null;
+  if (webSearchActivity != null) {
+    newDefaultSearchableForWebSearch=newSearchablesMap.get(webSearchActivity);
+  }
+  if (newDefaultSearchableForWebSearch == null) {
+    Log.w(LOG_TAG,"No searchable info found for new default web search activity " + webSearchActivity);
+  }
 synchronized (this) {
     mSearchablesMap=newSearchablesMap;
     mSearchablesList=newSearchablesList;
     mSearchablesInGlobalSearchList=newSearchablesInGlobalSearchList;
+    mSearchablesForWebSearchList=newSearchablesForWebSearchList;
     mDefaultSearchable=newDefaultSearchable;
+    mDefaultSearchableForWebSearch=newDefaultSearchableForWebSearch;
   }
+  mContext.sendBroadcast(new Intent(SearchManager.INTENT_ACTION_SEARCHABLES_CHANGED));
 }

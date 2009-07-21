@@ -1,16 +1,38 @@
 {
-  Log.d(TAG,"dataChanged packageName=" + packageName);
-  HashSet<ServiceInfo> targets=mBackupParticipants.get(Binder.getCallingUid());
-  Log.d(TAG,"targets=" + targets);
+  HashSet<ApplicationInfo> targets;
+  if ((mContext.checkPermission(android.Manifest.permission.BACKUP,Binder.getCallingPid(),Binder.getCallingUid())) == PackageManager.PERMISSION_DENIED) {
+    targets=mBackupParticipants.get(Binder.getCallingUid());
+  }
+ else {
+    targets=new HashSet<ApplicationInfo>();
+    int N=mBackupParticipants.size();
+    for (int i=0; i < N; i++) {
+      HashSet<ApplicationInfo> s=mBackupParticipants.valueAt(i);
+      if (s != null) {
+        targets.addAll(s);
+      }
+    }
+  }
   if (targets != null) {
 synchronized (mQueueLock) {
-      for (      ServiceInfo service : targets) {
-        if (service.packageName.equals(packageName)) {
-          mPendingBackups.put(new ComponentName(service.packageName,service.name),new BackupRequest(service,true));
+      for (      ApplicationInfo app : targets) {
+        if (app.packageName.equals(packageName)) {
+          BackupRequest req=new BackupRequest(app,false);
+          if (mPendingBackups.put(app,req) == null) {
+            writeToJournalLocked(packageName);
+            if (DEBUG) {
+              int numKeys=mPendingBackups.size();
+              Log.d(TAG,"Now awaiting backup for " + numKeys + " participants:");
+              for (              BackupRequest b : mPendingBackups.values()) {
+                Log.d(TAG,"    + " + b + " agent="+ b.appInfo.backupAgentName);
+              }
+            }
+          }
         }
       }
-      Log.d(TAG,"Scheduling backup for " + mPendingBackups.size() + " participants");
-      mBackupHandler.sendEmptyMessageDelayed(MSG_RUN_BACKUP,COLLECTION_INTERVAL);
     }
+  }
+ else {
+    Log.w(TAG,"dataChanged but no participant pkg='" + packageName + "'");
   }
 }
