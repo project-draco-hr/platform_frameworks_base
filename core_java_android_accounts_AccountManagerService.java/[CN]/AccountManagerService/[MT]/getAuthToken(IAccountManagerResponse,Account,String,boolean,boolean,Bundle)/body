@@ -1,21 +1,19 @@
 {
+  checkBinderPermission(Manifest.permission.USE_CREDENTIALS);
+  final int callerUid=Binder.getCallingUid();
+  final boolean permissionGranted=permissionIsGranted(account,authTokenType,callerUid);
   long identityToken=clearCallingIdentity();
   try {
-    String authToken=readAuthTokenFromDatabase(account,authTokenType);
-    if (authToken != null) {
-      try {
+    if (permissionGranted) {
+      String authToken=readAuthTokenFromDatabase(account,authTokenType);
+      if (authToken != null) {
         Bundle result=new Bundle();
         result.putString(Constants.AUTHTOKEN_KEY,authToken);
         result.putString(Constants.ACCOUNT_NAME_KEY,account.mName);
         result.putString(Constants.ACCOUNT_TYPE_KEY,account.mType);
-        response.onResult(result);
+        onResult(response,result);
+        return;
       }
- catch (      RemoteException e) {
-        if (Log.isLoggable(TAG,Log.VERBOSE)) {
-          Log.v(TAG,"failure while notifying response",e);
-        }
-      }
-      return;
     }
     new Session(response,account.mType,expectActivityLaunch){
       protected String toDebugString(      long now){
@@ -23,10 +21,22 @@
         return super.toDebugString(now) + ", getAuthToken" + ", "+ account+ ", authTokenType "+ authTokenType+ ", loginOptions "+ loginOptions+ ", notifyOnAuthFailure "+ notifyOnAuthFailure;
       }
       public void run() throws RemoteException {
-        mAuthenticator.getAuthToken(this,account,authTokenType,loginOptions);
+        if (!permissionGranted) {
+          mAuthenticator.getAuthTokenLabel(this,authTokenType);
+        }
+ else {
+          mAuthenticator.getAuthToken(this,account,authTokenType,loginOptions);
+        }
       }
       public void onResult(      Bundle result){
         if (result != null) {
+          if (result.containsKey(Constants.AUTH_TOKEN_LABEL_KEY)) {
+            Intent intent=newGrantCredentialsPermissionIntent(account,callerUid,new AccountAuthenticatorResponse(this),authTokenType,result.getString(Constants.AUTH_TOKEN_LABEL_KEY));
+            Bundle bundle=new Bundle();
+            bundle.putParcelable(Constants.INTENT_KEY,intent);
+            onResult(bundle);
+            return;
+          }
           String authToken=result.getString(Constants.AUTHTOKEN_KEY);
           if (authToken != null) {
             String name=result.getString(Constants.ACCOUNT_NAME_KEY);
@@ -39,7 +49,7 @@
           }
           Intent intent=result.getParcelable(Constants.INTENT_KEY);
           if (intent != null && notifyOnAuthFailure) {
-            doNotification(result.getString(Constants.AUTH_FAILED_MESSAGE_KEY),intent);
+            doNotification(account,result.getString(Constants.AUTH_FAILED_MESSAGE_KEY),intent);
           }
         }
         super.onResult(result);
