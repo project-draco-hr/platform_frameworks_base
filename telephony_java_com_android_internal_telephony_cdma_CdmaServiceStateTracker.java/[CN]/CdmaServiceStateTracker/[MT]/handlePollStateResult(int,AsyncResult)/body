@@ -1,0 +1,167 @@
+{
+  int ints[];
+  String states[];
+  if (ar.userObj != pollingContext)   return;
+  if (ar.exception != null) {
+    CommandException.Error err=null;
+    if (ar.exception instanceof CommandException) {
+      err=((CommandException)(ar.exception)).getCommandError();
+    }
+    if (err == CommandException.Error.RADIO_NOT_AVAILABLE) {
+      cancelPollState();
+      return;
+    }
+    if (!cm.getRadioState().isOn()) {
+      cancelPollState();
+      return;
+    }
+    if (err != CommandException.Error.OP_NOT_ALLOWED_BEFORE_REG_NW && err != CommandException.Error.OP_NOT_ALLOWED_BEFORE_REG_NW) {
+      Log.e(LOG_TAG,"RIL implementation has returned an error where it must succeed",ar.exception);
+    }
+  }
+ else   try {
+switch (what) {
+case EVENT_POLL_STATE_REGISTRATION_CDMA:
+      states=(String[])ar.result;
+    int registrationState=4;
+  int radioTechnology=-1;
+int baseStationId=-1;
+int baseStationLatitude=-1;
+int baseStationLongitude=-1;
+int cssIndicator=0;
+int systemId=0;
+int networkId=0;
+int roamingIndicator=-1;
+int systemIsInPrl=0;
+int defaultRoamingIndicator=0;
+int reasonForDenial=0;
+if (states.length == 14) {
+try {
+registrationState=Integer.parseInt(states[0]);
+radioTechnology=Integer.parseInt(states[3]);
+baseStationId=Integer.parseInt(states[4],16);
+baseStationLatitude=Integer.parseInt(states[5],16);
+baseStationLongitude=Integer.parseInt(states[6],16);
+cssIndicator=Integer.parseInt(states[7]);
+systemId=Integer.parseInt(states[8]);
+networkId=Integer.parseInt(states[9]);
+roamingIndicator=Integer.parseInt(states[10]);
+systemIsInPrl=Integer.parseInt(states[11]);
+defaultRoamingIndicator=Integer.parseInt(states[12]);
+reasonForDenial=Integer.parseInt(states[13]);
+}
+ catch (NumberFormatException ex) {
+Log.w(LOG_TAG,"error parsing RegistrationState: " + ex);
+}
+}
+ else {
+throw new RuntimeException("Warning! Wrong number of parameters returned from " + "RIL_REQUEST_REGISTRATION_STATE: expected 14 got " + states.length);
+}
+mRegistrationState=registrationState;
+mCdmaRoaming=regCodeIsRoaming(registrationState);
+newSS.setState(regCodeToServiceState(registrationState));
+this.newCdmaDataConnectionState=radioTechnologyToDataServiceState(radioTechnology);
+newSS.setRadioTechnology(radioTechnology);
+newNetworkType=radioTechnology;
+newSS.setCssIndicator(cssIndicator);
+newSS.setSystemAndNetworkId(systemId,networkId);
+mRoamingIndicator=roamingIndicator;
+mIsInPrl=(systemIsInPrl == 0) ? false : true;
+mDefaultRoamingIndicator=defaultRoamingIndicator;
+newCellLoc.setCellLocationData(baseStationId,baseStationLatitude,baseStationLongitude);
+if (reasonForDenial == 0) {
+mRegistrationDeniedReason=ServiceStateTracker.REGISTRATION_DENIED_GEN;
+}
+ else if (reasonForDenial == 1) {
+mRegistrationDeniedReason=ServiceStateTracker.REGISTRATION_DENIED_AUTH;
+}
+ else {
+mRegistrationDeniedReason="";
+}
+if (mRegistrationState == 3) {
+if (DBG) log("Registration denied, " + mRegistrationDeniedReason);
+}
+break;
+case EVENT_POLL_STATE_OPERATOR_CDMA:
+String opNames[]=(String[])ar.result;
+if (opNames != null && opNames.length >= 3) {
+if (cm.getRadioState().isNVReady()) {
+newSS.setOperatorName(null,opNames[1],opNames[2]);
+}
+ else {
+newSS.setOperatorName(opNames[0],opNames[1],opNames[2]);
+}
+if (!(opNames[2].equals(currentCarrier))) {
+try {
+Uri uri=Uri.withAppendedPath(Telephony.Carriers.CONTENT_URI,"current");
+ContentValues map=new ContentValues();
+map.put(Telephony.Carriers.NUMERIC,opNames[2]);
+cr.insert(uri,map);
+currentCarrier=opNames[2];
+}
+ catch (SQLException e) {
+Log.e(LOG_TAG,"Can't store current operator",e);
+}
+}
+ else {
+Log.i(LOG_TAG,"current carrier is not changed");
+}
+}
+ else {
+Log.w(LOG_TAG,"error parsing opNames");
+}
+break;
+case EVENT_POLL_STATE_CDMA_SUBSCRIPTION:
+String cdmaSubscription[]=(String[])ar.result;
+if (cdmaSubscription != null && cdmaSubscription.length >= 4) {
+mMdn=cdmaSubscription[0];
+mHomeSystemId=Integer.parseInt(cdmaSubscription[1],16);
+mHomeNetworkId=Integer.parseInt(cdmaSubscription[2],16);
+mMin=cdmaSubscription[3];
+}
+ else {
+Log.w(LOG_TAG,"error parsing cdmaSubscription");
+}
+break;
+default :
+Log.e(LOG_TAG,"RIL response handle in wrong phone!" + " Expected CDMA RIL request and get GSM RIL request.");
+break;
+}
+}
+ catch (RuntimeException ex) {
+Log.e(LOG_TAG,"Exception while polling service state. " + "Probably malformed RIL response.",ex);
+}
+pollingContext[0]--;
+if (pollingContext[0] == 0) {
+boolean namMatch=false;
+if ((mHomeSystemId != 0) && (mHomeSystemId == newSS.getSystemId())) {
+namMatch=true;
+}
+if (isSubscriptionFromRuim) {
+newSS.setRoaming(isRoamingBetweenOperators(mCdmaRoaming,newSS));
+}
+ else {
+newSS.setRoaming(mCdmaRoaming);
+}
+if (mIsInPrl) {
+if (namMatch && (mRoamingIndicator <= 2)) {
+newSS.setCdmaRoamingIndicator(EriInfo.ROAMING_INDICATOR_OFF);
+}
+ else {
+newSS.setCdmaRoamingIndicator(mRoamingIndicator);
+}
+}
+ else {
+if (mRegistrationState == 5) {
+newSS.setCdmaRoamingIndicator(EriInfo.ROAMING_INDICATOR_FLASH);
+}
+ else {
+}
+}
+newSS.setCdmaDefaultRoamingIndicator(mDefaultRoamingIndicator);
+if (DBG) {
+log("Set CDMA Roaming Indicator to: " + newSS.getCdmaRoamingIndicator() + ". mCdmaRoaming = "+ mCdmaRoaming+ ",  namMatch = "+ namMatch+ ", mIsInPrl = "+ mIsInPrl+ ", mRoamingIndicator = "+ mRoamingIndicator+ ", mDefaultRoamingIndicator= "+ mDefaultRoamingIndicator);
+}
+pollStateDone();
+}
+}

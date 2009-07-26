@@ -1,0 +1,51 @@
+{
+  if (smsb == null) {
+    return Intents.RESULT_SMS_GENERIC_ERROR;
+  }
+  SmsMessage sms=(SmsMessage)smsb;
+  sms.parseSms();
+  int teleService=sms.getTeleService();
+  boolean handled=false;
+  if (sms.getUserData() == null) {
+    if (Config.LOGD) {
+      Log.d(TAG,"Received SMS without user data");
+    }
+    handled=true;
+  }
+  if (handled) {
+    return Intents.RESULT_SMS_HANDLED;
+  }
+  if (SmsEnvelope.TELESERVICE_WAP == teleService) {
+    return processCdmaWapPdu(sms.getUserData(),sms.messageRef,sms.getOriginatingAddress());
+  }
+ else   if (SmsEnvelope.TELESERVICE_VMN == teleService) {
+    int voicemailCount=sms.getNumOfVoicemails();
+    Log.d(TAG,"Voicemail count=" + voicemailCount);
+    SharedPreferences sp=PreferenceManager.getDefaultSharedPreferences(((CDMAPhone)mPhone).getContext());
+    SharedPreferences.Editor editor=sp.edit();
+    editor.putInt(CDMAPhone.VM_COUNT_CDMA,voicemailCount);
+    editor.commit();
+    ((CDMAPhone)mPhone).updateMessageWaitingIndicator(voicemailCount);
+    return Intents.RESULT_SMS_HANDLED;
+  }
+  SmsHeader smsHeader=sms.getUserDataHeader();
+  if ((smsHeader == null) || (smsHeader.concatRef == null)) {
+    byte[][] pdus=new byte[1][];
+    pdus[0]=sms.getPdu();
+    if (smsHeader != null && smsHeader.portAddrs != null) {
+      if (smsHeader.portAddrs.destPort == SmsHeader.PORT_WAP_PUSH) {
+        return mWapPush.dispatchWapPdu(sms.getUserData());
+      }
+ else {
+        dispatchPortAddressedPdus(pdus,smsHeader.portAddrs.destPort);
+      }
+    }
+ else {
+      dispatchPdus(pdus);
+    }
+    return Activity.RESULT_OK;
+  }
+ else {
+    return processMessagePart(sms,smsHeader.concatRef,smsHeader.portAddrs);
+  }
+}

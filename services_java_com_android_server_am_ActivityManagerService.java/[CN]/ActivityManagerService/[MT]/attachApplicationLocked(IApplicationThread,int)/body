@@ -7,7 +7,7 @@ synchronized (mPidsSelfLocked) {
   }
  else   if (mStartingProcesses.size() > 0) {
     app=mStartingProcesses.remove(0);
-    app.pid=pid;
+    app.setPid(pid);
   }
  else {
     app=null;
@@ -43,6 +43,7 @@ synchronized (mPidsSelfLocked) {
   EventLog.writeEvent(LOG_AM_PROCESS_BOUND,app.pid,app.processName);
   app.thread=thread;
   app.curAdj=app.setAdj=-100;
+  app.curSchedGroup=app.setSchedGroup=Process.THREAD_GROUP_DEFAULT;
   app.forcingToForeground=null;
   app.foregroundServices=false;
   app.debugging=false;
@@ -59,7 +60,15 @@ synchronized (mPidsSelfLocked) {
         mWaitForDebugger=mOrigWaitForDebugger;
       }
     }
-    thread.bindApplication(processName,app.info,providers,app.instrumentationClass,app.instrumentationProfileFile,app.instrumentationArguments,app.instrumentationWatcher,testMode,mConfiguration,getCommonServicesLocked());
+    boolean isRestrictedBackupMode=false;
+    if (mBackupTarget != null && mBackupAppName.equals(processName)) {
+      isRestrictedBackupMode=(mBackupTarget.backupMode == BackupRecord.RESTORE) || (mBackupTarget.backupMode == BackupRecord.BACKUP_FULL);
+    }
+    ensurePackageDexOpt(app.instrumentationInfo != null ? app.instrumentationInfo.packageName : app.info.packageName);
+    if (app.instrumentationClass != null) {
+      ensurePackageDexOpt(app.instrumentationClass.getPackageName());
+    }
+    thread.bindApplication(processName,app.instrumentationInfo != null ? app.instrumentationInfo : app.info,providers,app.instrumentationClass,app.instrumentationProfileFile,app.instrumentationArguments,app.instrumentationWatcher,testMode,isRestrictedBackupMode,mConfiguration,getCommonServicesLocked());
     updateLRUListLocked(app,false);
     app.lastRequestedGc=SystemClock.uptimeMillis();
   }
@@ -122,6 +131,17 @@ synchronized (mPidsSelfLocked) {
       logBroadcastReceiverDiscard(br);
       finishReceiverLocked(br.receiver,br.resultCode,br.resultData,br.resultExtras,br.resultAbort,true);
       scheduleBroadcastsLocked();
+    }
+  }
+  if (!badApp && mBackupTarget != null && mBackupTarget.appInfo.uid == app.info.uid) {
+    if (DEBUG_BACKUP)     Log.v(TAG,"New app is backup target, launching agent for " + app);
+    ensurePackageDexOpt(mBackupTarget.appInfo.packageName);
+    try {
+      thread.scheduleCreateBackupAgent(mBackupTarget.appInfo,mBackupTarget.backupMode);
+    }
+ catch (    Exception e) {
+      Log.w(TAG,"Exception scheduling backup agent creation: ");
+      e.printStackTrace();
     }
   }
   if (badApp) {

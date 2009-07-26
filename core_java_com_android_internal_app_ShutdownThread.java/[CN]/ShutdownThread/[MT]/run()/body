@@ -1,0 +1,89 @@
+{
+  boolean bluetoothOff;
+  boolean radioOff;
+  BroadcastReceiver br=new BroadcastReceiver(){
+    @Override public void onReceive(    Context context,    Intent intent){
+      broadcastDone();
+    }
+  }
+;
+  Log.i(TAG,"Sending shutdown broadcast...");
+  mBroadcastDone=false;
+  mContext.sendOrderedBroadcast(new Intent(Intent.ACTION_SHUTDOWN),null,br,mHandler,0,null,null);
+  final long endTime=System.currentTimeMillis() + MAX_BROADCAST_TIME;
+synchronized (mBroadcastDoneSync) {
+    while (!mBroadcastDone) {
+      long delay=endTime - System.currentTimeMillis();
+      if (delay <= 0) {
+        Log.w(TAG,"Shutdown broadcast timed out");
+        break;
+      }
+      try {
+        mBroadcastDoneSync.wait(delay);
+      }
+ catch (      InterruptedException e) {
+      }
+    }
+  }
+  Log.i(TAG,"Shutting down activity manager...");
+  final IActivityManager am=ActivityManagerNative.asInterface(ServiceManager.checkService("activity"));
+  if (am != null) {
+    try {
+      am.shutdown(MAX_BROADCAST_TIME);
+    }
+ catch (    RemoteException e) {
+    }
+  }
+  final ITelephony phone=ITelephony.Stub.asInterface(ServiceManager.checkService("phone"));
+  final IBluetoothDevice bluetooth=IBluetoothDevice.Stub.asInterface(ServiceManager.checkService(Context.BLUETOOTH_SERVICE));
+  try {
+    bluetoothOff=bluetooth == null || bluetooth.getBluetoothState() == BluetoothDevice.BLUETOOTH_STATE_OFF;
+    if (!bluetoothOff) {
+      Log.w(TAG,"Disabling Bluetooth...");
+      bluetooth.disable(false);
+    }
+  }
+ catch (  RemoteException ex) {
+    Log.e(TAG,"RemoteException during bluetooth shutdown",ex);
+    bluetoothOff=true;
+  }
+  try {
+    radioOff=phone == null || !phone.isRadioOn();
+    if (!radioOff) {
+      Log.w(TAG,"Turning off radio...");
+      phone.setRadio(false);
+    }
+  }
+ catch (  RemoteException ex) {
+    Log.e(TAG,"RemoteException during radio shutdown",ex);
+    radioOff=true;
+  }
+  Log.i(TAG,"Waiting for Bluetooth and Radio...");
+  for (int i=0; i < MAX_NUM_PHONE_STATE_READS; i++) {
+    if (!bluetoothOff) {
+      try {
+        bluetoothOff=bluetooth.getBluetoothState() == BluetoothDevice.BLUETOOTH_STATE_OFF;
+      }
+ catch (      RemoteException ex) {
+        Log.e(TAG,"RemoteException during bluetooth shutdown",ex);
+        bluetoothOff=true;
+      }
+    }
+    if (!radioOff) {
+      try {
+        radioOff=!phone.isRadioOn();
+      }
+ catch (      RemoteException ex) {
+        Log.e(TAG,"RemoteException during radio shutdown",ex);
+        radioOff=true;
+      }
+    }
+    if (radioOff && bluetoothOff) {
+      Log.i(TAG,"Radio and Bluetooth shutdown complete.");
+      break;
+    }
+    SystemClock.sleep(PHONE_STATE_POLL_SLEEP_MSEC);
+  }
+  Log.i(TAG,"Performing low-level shutdown...");
+  Power.shutdown();
+}

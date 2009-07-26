@@ -1,0 +1,104 @@
+{
+  AsyncResult ar;
+  int[] ints;
+  String[] strings;
+switch (msg.what) {
+case EVENT_RADIO_AVAILABLE:
+    break;
+case EVENT_RUIM_READY:
+  isSubscriptionFromRuim=true;
+if (mNeedToRegForRuimLoaded) {
+  phone.mRuimRecords.registerForRecordsLoaded(this,EVENT_RUIM_RECORDS_LOADED,null);
+  mNeedToRegForRuimLoaded=false;
+}
+pollState();
+queueNextSignalStrengthPoll();
+break;
+case EVENT_NV_READY:
+isSubscriptionFromRuim=false;
+pollState();
+queueNextSignalStrengthPoll();
+break;
+case EVENT_RADIO_STATE_CHANGED:
+setPowerStateToDesired();
+pollState();
+break;
+case EVENT_NETWORK_STATE_CHANGED_CDMA:
+pollState();
+break;
+case EVENT_GET_SIGNAL_STRENGTH:
+if (!(cm.getRadioState().isOn()) || (cm.getRadioState().isGsm())) {
+return;
+}
+ar=(AsyncResult)msg.obj;
+onSignalStrengthResult(ar);
+queueNextSignalStrengthPoll();
+break;
+case EVENT_GET_LOC_DONE_CDMA:
+ar=(AsyncResult)msg.obj;
+if (ar.exception == null) {
+String states[]=(String[])ar.result;
+int baseStationId=-1;
+int baseStationLongitude=-1;
+int baseStationLatitude=-1;
+int baseStationData[]={-1,-1,-1};
+if (states.length == 3) {
+for (int i=0; i < states.length; i++) {
+try {
+if (states[i] != null && states[i].length() > 0) {
+baseStationData[i]=Integer.parseInt(states[i],16);
+}
+}
+ catch (NumberFormatException ex) {
+Log.w(LOG_TAG,"error parsing cell location data: " + ex);
+}
+}
+}
+if (cellLoc.getBaseStationId() != baseStationData[0] || cellLoc.getBaseStationLatitude() != baseStationData[1] || cellLoc.getBaseStationLongitude() != baseStationData[2]) {
+cellLoc.setCellLocationData(baseStationData[0],baseStationData[1],baseStationData[2]);
+phone.notifyLocationChanged();
+}
+}
+if (ar.userObj != null) {
+AsyncResult.forMessage(((Message)ar.userObj)).exception=ar.exception;
+((Message)ar.userObj).sendToTarget();
+}
+break;
+case EVENT_POLL_STATE_REGISTRATION_CDMA:
+case EVENT_POLL_STATE_OPERATOR_CDMA:
+case EVENT_POLL_STATE_CDMA_SUBSCRIPTION:
+ar=(AsyncResult)msg.obj;
+handlePollStateResult(msg.what,ar);
+break;
+case EVENT_POLL_SIGNAL_STRENGTH:
+cm.getSignalStrength(obtainMessage(EVENT_GET_SIGNAL_STRENGTH));
+break;
+case EVENT_NITZ_TIME:
+ar=(AsyncResult)msg.obj;
+String nitzString=(String)((Object[])ar.result)[0];
+long nitzReceiveTime=((Long)((Object[])ar.result)[1]).longValue();
+setTimeFromNITZString(nitzString,nitzReceiveTime);
+break;
+case EVENT_SIGNAL_STRENGTH_UPDATE:
+ar=(AsyncResult)msg.obj;
+dontPollSignalStrength=true;
+onSignalStrengthResult(ar);
+break;
+case EVENT_RUIM_RECORDS_LOADED:
+updateSpnDisplay();
+break;
+case EVENT_LOCATION_UPDATES_ENABLED:
+ar=(AsyncResult)msg.obj;
+if (ar.exception == null) {
+getLacAndCid(null);
+}
+break;
+case EVENT_ERI_FILE_LOADED:
+if (DBG) log("[CdmaServiceStateTracker] ERI file has been loaded, repolling.");
+pollState();
+break;
+default :
+Log.e(LOG_TAG,"Unhandled message with number: " + msg.what);
+break;
+}
+}

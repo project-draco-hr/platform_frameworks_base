@@ -1,0 +1,53 @@
+{
+  String name;
+  int count;
+  long totalTime;
+  int startIndex, endIndex;
+  int numUpdatedWlNames=0;
+  int i;
+  for (i=0; i < len && wlBuffer[i] != '\n' && wlBuffer[i] != '\0'; i++)   ;
+  startIndex=endIndex=i + 1;
+synchronized (this) {
+    Map<String,KernelWakelockStats> m=mProcWakelockFileStats;
+    sKernelWakelockUpdateVersion++;
+    while (endIndex < len) {
+      for (endIndex=startIndex; endIndex < len && wlBuffer[endIndex] != '\n' && wlBuffer[endIndex] != '\0'; endIndex++)       ;
+      endIndex++;
+      String[] nameStringArray=mProcWakelocksName;
+      long[] wlData=mProcWakelocksData;
+      Process.parseProcLine(wlBuffer,startIndex,endIndex,PROC_WAKELOCKS_FORMAT,nameStringArray,wlData,null);
+      name=nameStringArray[0];
+      count=(int)wlData[1];
+      totalTime=(wlData[2] + 500) / 1000;
+      if (name.length() > 0) {
+        if (!m.containsKey(name)) {
+          m.put(name,new KernelWakelockStats(count,totalTime,sKernelWakelockUpdateVersion));
+          numUpdatedWlNames++;
+        }
+ else {
+          KernelWakelockStats kwlStats=m.get(name);
+          if (kwlStats.mVersion == sKernelWakelockUpdateVersion) {
+            kwlStats.mCount+=count;
+            kwlStats.mTotalTime+=totalTime;
+          }
+ else {
+            kwlStats.mCount=count;
+            kwlStats.mTotalTime=totalTime;
+            kwlStats.mVersion=sKernelWakelockUpdateVersion;
+            numUpdatedWlNames++;
+          }
+        }
+      }
+      startIndex=endIndex;
+    }
+    if (m.size() != numUpdatedWlNames) {
+      Iterator<KernelWakelockStats> itr=m.values().iterator();
+      while (itr.hasNext()) {
+        if (itr.next().mVersion != sKernelWakelockUpdateVersion) {
+          itr.remove();
+        }
+      }
+    }
+    return m;
+  }
+}

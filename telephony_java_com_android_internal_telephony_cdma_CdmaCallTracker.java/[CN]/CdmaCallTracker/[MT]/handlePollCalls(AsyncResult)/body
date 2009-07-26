@@ -1,0 +1,153 @@
+{
+  List polledCalls;
+  if (ar.exception == null) {
+    polledCalls=(List)ar.result;
+  }
+ else   if (isCommandExceptionRadioNotAvailable(ar.exception)) {
+    polledCalls=new ArrayList();
+  }
+ else {
+    pollCallsAfterDelay();
+    return;
+  }
+  Connection newRinging=null;
+  boolean hasNonHangupStateChanged=false;
+  boolean needsPollDelay=false;
+  boolean unknownConnectionAppeared=false;
+  for (int i=0, curDC=0, dcSize=polledCalls.size(); i < connections.length; i++) {
+    CdmaConnection conn=connections[i];
+    DriverCall dc=null;
+    if (curDC < dcSize) {
+      dc=(DriverCall)polledCalls.get(curDC);
+      if (dc.index == i + 1) {
+        curDC++;
+      }
+ else {
+        dc=null;
+      }
+    }
+    if (DBG_POLL)     log("poll: conn[i=" + i + "]="+ conn+ ", dc="+ dc);
+    if (conn == null && dc != null) {
+      if (pendingMO != null && pendingMO.compareTo(dc)) {
+        if (DBG_POLL)         log("poll: pendingMO=" + pendingMO);
+        connections[i]=pendingMO;
+        pendingMO.index=i;
+        pendingMO.update(dc);
+        pendingMO=null;
+        if (hangupPendingMO) {
+          hangupPendingMO=false;
+          try {
+            if (Phone.DEBUG_PHONE)             log("poll: hangupPendingMO, hangup conn " + i);
+            hangup(connections[i]);
+          }
+ catch (          CallStateException ex) {
+            Log.e(LOG_TAG,"unexpected error on hangup");
+          }
+          return;
+        }
+      }
+ else {
+        connections[i]=new CdmaConnection(phone.getContext(),dc,this,i);
+        if (connections[i].getCall() == ringingCall) {
+          newRinging=connections[i];
+        }
+ else {
+          Log.i(LOG_TAG,"Phantom call appeared " + dc);
+          if (dc.state != DriverCall.State.ALERTING && dc.state != DriverCall.State.DIALING) {
+            connections[i].connectTime=System.currentTimeMillis();
+          }
+          unknownConnectionAppeared=true;
+        }
+      }
+      hasNonHangupStateChanged=true;
+    }
+ else     if (conn != null && dc == null) {
+      int count=foregroundCall.connections.size();
+      if (count == 0) {
+        droppedDuringPoll.add(conn);
+      }
+ else {
+        for (int n=0; n < count; n++) {
+          CdmaConnection cn=(CdmaConnection)foregroundCall.connections.get(n);
+          droppedDuringPoll.add(cn);
+        }
+      }
+      foregroundCall.setGeneric(false);
+      connections[i]=null;
+    }
+ else     if (conn != null && dc != null && !conn.compareTo(dc)) {
+      droppedDuringPoll.add(conn);
+      connections[i]=new CdmaConnection(phone.getContext(),dc,this,i);
+      if (connections[i].getCall() == ringingCall) {
+        newRinging=connections[i];
+      }
+      hasNonHangupStateChanged=true;
+    }
+ else     if (conn != null && dc != null) {
+      boolean changed;
+      changed=conn.update(dc);
+      hasNonHangupStateChanged=hasNonHangupStateChanged || changed;
+    }
+    if (REPEAT_POLLING) {
+      if (dc != null) {
+        if ((dc.state == DriverCall.State.DIALING) || (dc.state == DriverCall.State.ALERTING) || (dc.state == DriverCall.State.INCOMING)|| (dc.state == DriverCall.State.WAITING)) {
+          needsPollDelay=true;
+        }
+      }
+    }
+  }
+  if (pendingMO != null) {
+    Log.d(LOG_TAG,"Pending MO dropped before poll fg state:" + foregroundCall.getState());
+    droppedDuringPoll.add(pendingMO);
+    pendingMO=null;
+    hangupPendingMO=false;
+    if (pendingCallInECM) {
+      pendingCallInECM=false;
+    }
+  }
+  if (newRinging != null) {
+    phone.notifyNewRingingConnection(newRinging);
+  }
+  for (int i=droppedDuringPoll.size() - 1; i >= 0; i--) {
+    CdmaConnection conn=droppedDuringPoll.get(i);
+    if (conn.isIncoming() && conn.getConnectTime() == 0) {
+      Connection.DisconnectCause cause;
+      if (conn.cause == Connection.DisconnectCause.LOCAL) {
+        cause=Connection.DisconnectCause.INCOMING_REJECTED;
+      }
+ else {
+        cause=Connection.DisconnectCause.INCOMING_MISSED;
+      }
+      if (Phone.DEBUG_PHONE) {
+        log("missed/rejected call, conn.cause=" + conn.cause);
+        log("setting cause to " + cause);
+      }
+      droppedDuringPoll.remove(i);
+      conn.onDisconnect(cause);
+    }
+ else     if (conn.cause == Connection.DisconnectCause.LOCAL) {
+      droppedDuringPoll.remove(i);
+      conn.onDisconnect(Connection.DisconnectCause.LOCAL);
+    }
+ else     if (conn.cause == Connection.DisconnectCause.INVALID_NUMBER) {
+      droppedDuringPoll.remove(i);
+      conn.onDisconnect(Connection.DisconnectCause.INVALID_NUMBER);
+    }
+  }
+  if (droppedDuringPoll.size() > 0) {
+    cm.getLastCallFailCause(obtainNoPollCompleteMessage(EVENT_GET_LAST_CALL_FAIL_CAUSE));
+  }
+  if (needsPollDelay) {
+    pollCallsAfterDelay();
+  }
+  if (newRinging != null || hasNonHangupStateChanged) {
+    internalClearDisconnected();
+  }
+  updatePhoneState();
+  if (unknownConnectionAppeared) {
+    phone.notifyUnknownConnection();
+  }
+  if (hasNonHangupStateChanged || newRinging != null) {
+    phone.notifyCallStateChanged();
+  }
+}

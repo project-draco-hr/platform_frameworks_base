@@ -1,5 +1,9 @@
 {
   AttributeSet attrs=parser;
+  mParseInstrumentationArgs=null;
+  mParseActivityArgs=null;
+  mParseServiceArgs=null;
+  mParseProviderArgs=null;
   String pkgName=parsePackageName(parser,attrs,flags,outError);
   if (pkgName == null) {
     mParseError=PackageManager.INSTALL_PARSE_FAILED_BAD_PACKAGE_NAME;
@@ -7,7 +11,6 @@
   }
   int type;
   final Package pkg=new Package(pkgName);
-  pkg.mSystem=(flags & PARSE_IS_SYSTEM) != 0;
   boolean foundApp=false;
   TypedArray sa=res.obtainAttributes(attrs,com.android.internal.R.styleable.AndroidManifest);
   pkg.mVersionCode=sa.getInteger(com.android.internal.R.styleable.AndroidManifest_versionCode,0);
@@ -27,7 +30,9 @@
     pkg.mSharedUserLabel=sa.getResourceId(com.android.internal.R.styleable.AndroidManifest_sharedUserLabel,0);
   }
   sa.recycle();
-  final int innerDepth=parser.getDepth();
+  int supportsSmallScreens=1;
+  int supportsNormalScreens=1;
+  int supportsLargeScreens=1;
   int outerDepth=parser.getDepth();
   while ((type=parser.next()) != parser.END_DOCUMENT && (type != parser.END_TAG || parser.getDepth() > outerDepth)) {
     if (type == parser.END_TAG || type == parser.TEXT) {
@@ -92,13 +97,76 @@
       pkg.configPreferences.add(cPref);
       XmlUtils.skipCurrentTag(parser);
     }
+ else     if (tagName.equals("uses-feature")) {
+      ConfigurationInfo cPref=new ConfigurationInfo();
+      sa=res.obtainAttributes(attrs,com.android.internal.R.styleable.AndroidManifestUsesFeature);
+      cPref.reqGlEsVersion=sa.getInt(com.android.internal.R.styleable.AndroidManifestUsesFeature_glEsVersion,ConfigurationInfo.GL_ES_VERSION_UNDEFINED);
+      sa.recycle();
+      pkg.configPreferences.add(cPref);
+      XmlUtils.skipCurrentTag(parser);
+    }
  else     if (tagName.equals("uses-sdk")) {
       if (mSdkVersion > 0) {
         sa=res.obtainAttributes(attrs,com.android.internal.R.styleable.AndroidManifestUsesSdk);
-        int vers=sa.getInt(com.android.internal.R.styleable.AndroidManifestUsesSdk_minSdkVersion,0);
+        int minVers=0;
+        String minCode=null;
+        int targetVers=0;
+        String targetCode=null;
+        TypedValue val=sa.peekValue(com.android.internal.R.styleable.AndroidManifestUsesSdk_minSdkVersion);
+        if (val != null) {
+          if (val.type == TypedValue.TYPE_STRING && val.string != null) {
+            targetCode=minCode=val.string.toString();
+          }
+ else {
+            targetVers=minVers=val.data;
+          }
+        }
+        val=sa.peekValue(com.android.internal.R.styleable.AndroidManifestUsesSdk_targetSdkVersion);
+        if (val != null) {
+          if (val.type == TypedValue.TYPE_STRING && val.string != null) {
+            targetCode=minCode=val.string.toString();
+          }
+ else {
+            targetVers=val.data;
+          }
+        }
+        int maxVers=sa.getInt(com.android.internal.R.styleable.AndroidManifestUsesSdk_maxSdkVersion,mSdkVersion);
         sa.recycle();
-        if (vers > mSdkVersion) {
-          outError[0]="Requires newer sdk version #" + vers + " (current version is #"+ mSdkVersion+ ")";
+        if (minCode != null) {
+          if (!minCode.equals(mSdkCodename)) {
+            if (mSdkCodename != null) {
+              outError[0]="Requires development platform " + minCode + " (current platform is "+ mSdkCodename+ ")";
+            }
+ else {
+              outError[0]="Requires development platform " + minCode + " but this is a release platform.";
+            }
+            mParseError=PackageManager.INSTALL_FAILED_OLDER_SDK;
+            return null;
+          }
+        }
+ else         if (minVers > mSdkVersion) {
+          outError[0]="Requires newer sdk version #" + minVers + " (current version is #"+ mSdkVersion+ ")";
+          mParseError=PackageManager.INSTALL_FAILED_OLDER_SDK;
+          return null;
+        }
+        if (targetCode != null) {
+          if (!targetCode.equals(mSdkCodename)) {
+            if (mSdkCodename != null) {
+              outError[0]="Requires development platform " + targetCode + " (current platform is "+ mSdkCodename+ ")";
+            }
+ else {
+              outError[0]="Requires development platform " + targetCode + " but this is a release platform.";
+            }
+            mParseError=PackageManager.INSTALL_FAILED_OLDER_SDK;
+            return null;
+          }
+          pkg.applicationInfo.targetSdkVersion=android.os.Build.VERSION_CODES.CUR_DEVELOPMENT;
+        }
+ else {
+          pkg.applicationInfo.targetSdkVersion=targetVers;
+        }
+        if (maxVers < mSdkVersion) {
+          outError[0]="Requires older sdk version #" + maxVers + " (current version is #"+ mSdkVersion+ ")";
           mParseError=PackageManager.INSTALL_FAILED_OLDER_SDK;
           return null;
         }
@@ -119,6 +187,23 @@
       mParseError=PackageManager.INSTALL_PARSE_FAILED_MANIFEST_MALFORMED;
       return null;
     }
+ else     if (tagName.equals("supports-density")) {
+      sa=res.obtainAttributes(attrs,com.android.internal.R.styleable.AndroidManifestSupportsDensity);
+      int density=sa.getInteger(com.android.internal.R.styleable.AndroidManifestSupportsDensity_density,-1);
+      sa.recycle();
+      if (density != -1 && !pkg.supportsDensityList.contains(density)) {
+        pkg.supportsDensityList.add(density);
+      }
+      XmlUtils.skipCurrentTag(parser);
+    }
+ else     if (tagName.equals("supports-screens")) {
+      sa=res.obtainAttributes(attrs,com.android.internal.R.styleable.AndroidManifestSupportsScreens);
+      supportsSmallScreens=sa.getInteger(com.android.internal.R.styleable.AndroidManifestSupportsScreens_smallScreens,supportsSmallScreens);
+      supportsNormalScreens=sa.getInteger(com.android.internal.R.styleable.AndroidManifestSupportsScreens_normalScreens,supportsNormalScreens);
+      supportsLargeScreens=sa.getInteger(com.android.internal.R.styleable.AndroidManifestSupportsScreens_largeScreens,supportsLargeScreens);
+      sa.recycle();
+      XmlUtils.skipCurrentTag(parser);
+    }
  else {
       Log.w(TAG,"Bad element under <manifest>: " + parser.getName());
       XmlUtils.skipCurrentTag(parser);
@@ -129,9 +214,37 @@
     outError[0]="<manifest> does not contain an <application> or <instrumentation>";
     mParseError=PackageManager.INSTALL_PARSE_FAILED_MANIFEST_EMPTY;
   }
+  final int NP=PackageParser.NEW_PERMISSIONS.length;
+  for (int ip=0; ip < NP; ip++) {
+    final PackageParser.NewPermissionInfo npi=PackageParser.NEW_PERMISSIONS[ip];
+    if (pkg.applicationInfo.targetSdkVersion >= npi.sdkVersion) {
+      break;
+    }
+    if (!pkg.requestedPermissions.contains(npi.name)) {
+      Log.i(TAG,"Impliciting adding " + npi.name + " to old pkg "+ pkg.packageName);
+      pkg.requestedPermissions.add(npi.name);
+    }
+  }
   if (pkg.usesLibraries.size() > 0) {
     pkg.usesLibraryFiles=new String[pkg.usesLibraries.size()];
     pkg.usesLibraries.toArray(pkg.usesLibraryFiles);
+  }
+  if (supportsSmallScreens < 0 || (supportsSmallScreens > 0 && pkg.applicationInfo.targetSdkVersion >= android.os.Build.VERSION_CODES.CUR_DEVELOPMENT)) {
+    pkg.applicationInfo.flags|=ApplicationInfo.FLAG_SUPPORTS_SMALL_SCREENS;
+  }
+  if (supportsNormalScreens != 0) {
+    pkg.applicationInfo.flags|=ApplicationInfo.FLAG_SUPPORTS_NORMAL_SCREENS;
+  }
+  if (supportsLargeScreens < 0 || (supportsLargeScreens > 0 && pkg.applicationInfo.targetSdkVersion >= android.os.Build.VERSION_CODES.CUR_DEVELOPMENT)) {
+    pkg.applicationInfo.flags|=ApplicationInfo.FLAG_SUPPORTS_LARGE_SCREENS;
+  }
+  int size=pkg.supportsDensityList.size();
+  if (size > 0) {
+    int densities[]=pkg.supportsDensities=new int[size];
+    List<Integer> densityList=pkg.supportsDensityList;
+    for (int i=0; i < size; i++) {
+      densities[i]=densityList.get(i);
+    }
   }
   return pkg;
 }

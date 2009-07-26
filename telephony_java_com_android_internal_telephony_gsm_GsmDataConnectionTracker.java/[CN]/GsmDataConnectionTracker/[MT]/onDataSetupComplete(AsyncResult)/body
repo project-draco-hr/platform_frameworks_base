@@ -1,0 +1,48 @@
+{
+  String reason=null;
+  if (ar.userObj instanceof String) {
+    reason=(String)ar.userObj;
+  }
+  if (ar.exception == null) {
+    if (dataEnabled[APN_MMS_ID] || dataEnabled[APN_SUPL_ID]) {
+      removeMessages(EVENT_RESTORE_DEFAULT_APN);
+      sendMessageDelayed(obtainMessage(EVENT_RESTORE_DEFAULT_APN),getRestoreDefaultApnDelay());
+    }
+    if (isApnTypeActive(Phone.APN_TYPE_DEFAULT)) {
+      SystemProperties.set("gsm.defaultpdpcontext.active","true");
+      if (canSetPreferApn && preferredApn == null) {
+        Log.d(LOG_TAG,"PREFERED APN is null");
+        preferredApn=mActiveApn;
+        setPreferredApn(preferredApn.id);
+      }
+    }
+ else {
+      SystemProperties.set("gsm.defaultpdpcontext.active","false");
+    }
+    notifyDefaultData(reason);
+  }
+ else {
+    PdpConnection.FailCause cause;
+    cause=(PdpConnection.FailCause)(ar.result);
+    if (DBG)     log("PDP setup failed " + cause);
+    if (cause.isEventLoggable()) {
+      int cid=-1;
+      GsmCellLocation loc=((GsmCellLocation)phone.getCellLocation());
+      if (loc != null)       cid=loc.getCid();
+      EventLog.List val=new EventLog.List(cause.ordinal(),cid,TelephonyManager.getDefault().getNetworkType());
+      EventLog.writeEvent(TelephonyEventLog.EVENT_LOG_RADIO_PDP_SETUP_FAIL,val);
+    }
+    if (cause.isPermanentFail()) {
+      notifyNoData(cause);
+      return;
+    }
+    waitingApns.remove(0);
+    if (waitingApns.isEmpty()) {
+      startDelayedRetry(cause,reason);
+    }
+ else {
+      setState(State.SCANNING);
+      sendMessageDelayed(obtainMessage(EVENT_TRY_SETUP_DATA,reason),RECONNECT_DELAY_INITIAL_MILLIS);
+    }
+  }
+}

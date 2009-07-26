@@ -1,6 +1,6 @@
 {
   if (DEBUG_INPUT || WindowManagerPolicy.WATCH_POINTER)   Log.v(TAG,"dispatchPointer " + ev);
-  Object targetObj=mKeyWaiter.waitForNextEventTarget(null,qev,ev,true,false);
+  Object targetObj=mKeyWaiter.waitForNextEventTarget(null,qev,ev,true,false,pid,uid);
   int action=ev.getAction();
   if (action == MotionEvent.ACTION_UP) {
     mKeyWaiter.mMotionTarget=null;
@@ -10,21 +10,21 @@
     mPowerManager.logPointerDownEvent();
   }
   if (targetObj == null) {
-    if (ev.getAction() != MotionEvent.ACTION_MOVE) {
+    if (action != MotionEvent.ACTION_MOVE) {
       Log.w(TAG,"No window to dispatch pointer action " + ev.getAction());
     }
     if (qev != null) {
       mQueue.recycleEvent(qev);
     }
     ev.recycle();
-    return false;
+    return INJECT_FAILED;
   }
   if (targetObj == mKeyWaiter.CONSUMED_EVENT_TOKEN) {
     if (qev != null) {
       mQueue.recycleEvent(qev);
     }
     ev.recycle();
-    return true;
+    return INJECT_SUCCEEDED;
   }
   WindowState target=(WindowState)targetObj;
   final long eventTime=ev.getEventTime();
@@ -35,7 +35,7 @@
         mQueue.recycleEvent(qev);
       }
       ev.recycle();
-      return false;
+      return INJECT_NO_PERMISSION;
     }
   }
   if ((target.mAttrs.flags & WindowManager.LayoutParams.FLAG_IGNORE_CHEEK_PRESSES) != 0) {
@@ -76,7 +76,34 @@
         mQueue.recycleEvent(qev);
       }
       ev.recycle();
-      return false;
+      return INJECT_FAILED;
+    }
+  }
+  if (action == MotionEvent.ACTION_DOWN) {
+    int max_events_per_sec=35;
+    try {
+      max_events_per_sec=Integer.parseInt(SystemProperties.get("windowsmgr.max_events_per_sec"));
+      if (max_events_per_sec < 1) {
+        max_events_per_sec=35;
+      }
+    }
+ catch (    NumberFormatException e) {
+    }
+    mMinWaitTimeBetweenTouchEvents=1000 / max_events_per_sec;
+  }
+  if (action == MotionEvent.ACTION_MOVE) {
+    long nextEventTime=mLastTouchEventTime + mMinWaitTimeBetweenTouchEvents;
+    long now=SystemClock.uptimeMillis();
+    if (now < nextEventTime) {
+      try {
+        Thread.sleep(nextEventTime - now);
+      }
+ catch (      InterruptedException e) {
+      }
+      mLastTouchEventTime=nextEventTime;
+    }
+ else {
+      mLastTouchEventTime=now;
     }
   }
 synchronized (mWindowMap) {
@@ -116,7 +143,7 @@ synchronized (mWindowMap) {
       Log.v(TAG,"Delivering pointer " + qev + " to "+ target);
     }
     target.mClient.dispatchPointer(ev,eventTime);
-    return true;
+    return INJECT_SUCCEEDED;
   }
  catch (  android.os.RemoteException e) {
     Log.i(TAG,"WINDOW DIED during motion dispatch: " + target);
@@ -127,5 +154,5 @@ synchronized (mWindowMap) {
  catch (    java.util.NoSuchElementException ex) {
     }
   }
-  return false;
+  return INJECT_FAILED;
 }

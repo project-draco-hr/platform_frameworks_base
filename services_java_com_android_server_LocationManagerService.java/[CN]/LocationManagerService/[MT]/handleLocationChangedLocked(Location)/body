@@ -1,0 +1,63 @@
+{
+  String provider=location.getProvider();
+  ArrayList<UpdateRecord> records=mRecordsByProvider.get(provider);
+  if (records == null || records.size() == 0) {
+    return;
+  }
+  LocationProviderProxy p=mProvidersByName.get(provider);
+  if (p == null) {
+    return;
+  }
+  Location lastLocation=mLastKnownLocation.get(provider);
+  if (lastLocation == null) {
+    mLastKnownLocation.put(provider,new Location(location));
+  }
+ else {
+    lastLocation.set(location);
+  }
+  writeLastKnownLocationLocked(provider,location);
+  long newStatusUpdateTime=p.getStatusUpdateTime();
+  Bundle extras=new Bundle();
+  int status=p.getStatus(extras);
+  ArrayList<Receiver> deadReceivers=null;
+  final int N=records.size();
+  for (int i=0; i < N; i++) {
+    UpdateRecord r=records.get(i);
+    Receiver receiver=r.mReceiver;
+    Location lastLoc=r.mLastFixBroadcast;
+    if ((lastLoc == null) || shouldBroadcastSafe(location,lastLoc,r)) {
+      if (lastLoc == null) {
+        lastLoc=new Location(location);
+        r.mLastFixBroadcast=lastLoc;
+      }
+ else {
+        lastLoc.set(location);
+      }
+      if (!receiver.callLocationChangedLocked(location)) {
+        Log.w(TAG,"RemoteException calling onLocationChanged on " + receiver);
+        if (deadReceivers == null) {
+          deadReceivers=new ArrayList<Receiver>();
+        }
+        deadReceivers.add(receiver);
+      }
+    }
+    long prevStatusUpdateTime=r.mLastStatusBroadcast;
+    if ((newStatusUpdateTime > prevStatusUpdateTime) && (prevStatusUpdateTime != 0 || status != LocationProvider.AVAILABLE)) {
+      r.mLastStatusBroadcast=newStatusUpdateTime;
+      if (!receiver.callStatusChangedLocked(provider,status,extras)) {
+        Log.w(TAG,"RemoteException calling onStatusChanged on " + receiver);
+        if (deadReceivers == null) {
+          deadReceivers=new ArrayList<Receiver>();
+        }
+        if (!deadReceivers.contains(receiver)) {
+          deadReceivers.add(receiver);
+        }
+      }
+    }
+  }
+  if (deadReceivers != null) {
+    for (int i=deadReceivers.size() - 1; i >= 0; i--) {
+      removeUpdatesLocked(deadReceivers.get(i));
+    }
+  }
+}

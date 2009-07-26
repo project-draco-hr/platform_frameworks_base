@@ -1,11 +1,22 @@
 {
 synchronized (this) {
     if (mView == null) {
+      mView=view;
       mWindowAttributes.copyFrom(attrs);
+      CompatibilityInfo compatibilityInfo=mView.getContext().getResources().getCompatibilityInfo();
+      mTranslator=compatibilityInfo.getTranslator(attrs);
+      boolean restore=false;
+      if (attrs != null && mTranslator != null) {
+        restore=true;
+        attrs.backup();
+        mTranslator.translateWindowLayout(attrs);
+      }
+      if (DEBUG_LAYOUT)       Log.d(TAG,"WindowLayout in setView:" + attrs);
       mSoftInputMode=attrs.softInputMode;
       mWindowAttributesChanged=true;
-      mView=view;
       mAttachInfo.mRootView=view;
+      mAttachInfo.mScalingRequired=mTranslator == null ? false : mTranslator.scalingRequired;
+      mAttachInfo.mApplicationScale=mTranslator == null ? 1.0f : mTranslator.applicationScale;
       if (panelParentView != null) {
         mAttachInfo.mPanelParentWindowToken=panelParentView.getApplicationWindowToken();
       }
@@ -13,7 +24,7 @@ synchronized (this) {
       int res;
       requestLayout();
       try {
-        res=sWindowSession.add(mWindow,attrs,getHostVisibility(),mAttachInfo.mContentInsets);
+        res=sWindowSession.add(mWindow,mWindowAttributes,getHostVisibility(),mAttachInfo.mContentInsets);
       }
  catch (      RemoteException e) {
         mAdded=false;
@@ -21,6 +32,14 @@ synchronized (this) {
         mAttachInfo.mRootView=null;
         unscheduleTraversals();
         throw new RuntimeException("Adding window failed",e);
+      }
+ finally {
+        if (restore) {
+          attrs.restore();
+        }
+      }
+      if (mTranslator != null) {
+        mTranslator.translateRectInScreenToAppWindow(mAttachInfo.mContentInsets);
       }
       mPendingContentInsets.set(mAttachInfo.mContentInsets);
       mPendingVisibleInsets.set(0,0,0,0);

@@ -1,0 +1,59 @@
+{
+  RadioState currentRadioState;
+  IccCardApplication ca;
+  currentRadioState=getRadioState();
+  IccCardStatus status=new IccCardStatus();
+  status.card_state=status.CardStateFromRILInt(p.readInt());
+  status.universal_pin_state=status.PinStateFromRILInt(p.readInt());
+  status.gsm_umts_subscription_app_index=p.readInt();
+  status.cdma_subscription_app_index=p.readInt();
+  status.num_applications=p.readInt();
+  if (status.num_applications > IccCardStatus.CARD_MAX_APPS) {
+    status.num_applications=IccCardStatus.CARD_MAX_APPS;
+  }
+  for (int i=0; i < status.num_applications; i++) {
+    ca=new IccCardApplication();
+    ca.app_type=ca.AppTypeFromRILInt(p.readInt());
+    ca.app_state=ca.AppStateFromRILInt(p.readInt());
+    ca.perso_substate=ca.PersoSubstateFromRILInt(p.readInt());
+    ca.aid=p.readString();
+    ca.app_label=p.readString();
+    ca.pin1_replaced=p.readInt();
+    ca.pin1=p.readInt();
+    ca.pin2=p.readInt();
+    status.application.add(ca);
+  }
+  if (!status.card_state.isCardPresent()) {
+    return IccStatus.ICC_ABSENT;
+  }
+  if (currentRadioState == RadioState.RADIO_OFF || currentRadioState == RadioState.RADIO_UNAVAILABLE || currentRadioState == RadioState.SIM_NOT_READY || currentRadioState == RadioState.RUIM_NOT_READY || currentRadioState == RadioState.NV_NOT_READY || currentRadioState == RadioState.NV_READY) {
+    return IccStatus.ICC_NOT_READY;
+  }
+  if (currentRadioState == RadioState.SIM_LOCKED_OR_ABSENT || currentRadioState == RadioState.SIM_READY || currentRadioState == RadioState.RUIM_LOCKED_OR_ABSENT || currentRadioState == RadioState.RUIM_READY) {
+    int index;
+    if (currentRadioState == RadioState.RUIM_LOCKED_OR_ABSENT || currentRadioState == RadioState.RUIM_READY) {
+      index=status.cdma_subscription_app_index;
+    }
+ else {
+      index=status.gsm_umts_subscription_app_index;
+    }
+    if (status.application.get(index).app_state.isPinRequired()) {
+      return IccStatus.ICC_PIN;
+    }
+    if (status.application.get(index).app_state.isPukRequired()) {
+      return IccStatus.ICC_PUK;
+    }
+    if (status.application.get(index).app_state.isSubscriptionPersoEnabled()) {
+      return IccStatus.ICC_NETWORK_PERSONALIZATION;
+    }
+    if (status.application.get(index).app_state.isAppReady()) {
+      return IccStatus.ICC_READY;
+    }
+    if (status.application.get(index).app_state.isAppNotReady()) {
+      return IccStatus.ICC_NOT_READY;
+    }
+    return IccStatus.ICC_NOT_READY;
+  }
+  Log.e(LOG_TAG,"Unrecognized RIL_REQUEST_GET_SIM_STATUS result: " + status);
+  return IccStatus.ICC_ABSENT;
+}

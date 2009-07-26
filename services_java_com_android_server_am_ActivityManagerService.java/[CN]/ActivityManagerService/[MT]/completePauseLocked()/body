@@ -33,15 +33,34 @@
     }
     mPausingActivity=null;
   }
-  if (!mSleeping) {
+  if (!mSleeping && !mShuttingDown) {
     resumeTopActivityLocked(prev);
   }
  else {
     if (mGoingToSleep.isHeld()) {
       mGoingToSleep.release();
     }
+    if (mShuttingDown) {
+      notifyAll();
+    }
   }
   if (prev != null) {
     prev.resumeKeyDispatchingLocked();
   }
+  if (prev.app != null && prev.cpuTimeAtResume > 0 && mBatteryStatsService.isOnBattery()) {
+    long diff=0;
+synchronized (mProcessStatsThread) {
+      diff=mProcessStats.getCpuTimeForPid(prev.app.pid) - prev.cpuTimeAtResume;
+    }
+    if (diff > 0) {
+      BatteryStatsImpl bsi=mBatteryStatsService.getActiveStatistics();
+synchronized (bsi) {
+        BatteryStatsImpl.Uid.Proc ps=bsi.getProcessStatsLocked(prev.info.applicationInfo.uid,prev.info.packageName);
+        if (ps != null) {
+          ps.addForegroundTimeLocked(diff);
+        }
+      }
+    }
+  }
+  prev.cpuTimeAtResume=0;
 }

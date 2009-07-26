@@ -1,0 +1,81 @@
+{
+  int retryCount=0;
+  try {
+    for (; ; ) {
+      LocalSocket s=null;
+      LocalSocketAddress l;
+      try {
+        s=new LocalSocket();
+        l=new LocalSocketAddress(SOCKET_NAME_RIL,LocalSocketAddress.Namespace.RESERVED);
+        s.connect(l);
+      }
+ catch (      IOException ex) {
+        try {
+          if (s != null) {
+            s.close();
+          }
+        }
+ catch (        IOException ex2) {
+        }
+        if (retryCount == 8) {
+          Log.e(LOG_TAG,"Couldn't find '" + SOCKET_NAME_RIL + "' socket after "+ retryCount+ " times, continuing to retry silently");
+        }
+ else         if (retryCount > 0 && retryCount < 8) {
+          Log.i(LOG_TAG,"Couldn't find '" + SOCKET_NAME_RIL + "' socket; retrying after timeout");
+        }
+        try {
+          Thread.sleep(SOCKET_OPEN_RETRY_MILLIS);
+        }
+ catch (        InterruptedException er) {
+        }
+        retryCount++;
+        continue;
+      }
+      retryCount=0;
+      mSocket=s;
+      Log.i(LOG_TAG,"Connected to '" + SOCKET_NAME_RIL + "' socket");
+      int length=0;
+      try {
+        InputStream is=mSocket.getInputStream();
+        for (; ; ) {
+          Parcel p;
+          length=readRilMessage(is,buffer);
+          if (length < 0) {
+            break;
+          }
+          p=Parcel.obtain();
+          p.unmarshall(buffer,0,length);
+          p.setDataPosition(0);
+          processResponse(p);
+          p.recycle();
+        }
+      }
+ catch (      java.io.IOException ex) {
+        Log.i(LOG_TAG,"'" + SOCKET_NAME_RIL + "' socket closed",ex);
+      }
+catch (      Throwable tr) {
+        Log.e(LOG_TAG,"Uncaught exception read length=" + length + "Exception:"+ tr.toString());
+      }
+      Log.i(LOG_TAG,"Disconnected from '" + SOCKET_NAME_RIL + "' socket");
+      setRadioState(RadioState.RADIO_UNAVAILABLE);
+      try {
+        mSocket.close();
+      }
+ catch (      IOException ex) {
+      }
+      mSocket=null;
+      RILRequest.resetSerial();
+synchronized (mRequestsList) {
+        for (int i=0, sz=mRequestsList.size(); i < sz; i++) {
+          RILRequest rr=mRequestsList.get(i);
+          rr.onError(RADIO_NOT_AVAILABLE,null);
+          rr.release();
+        }
+        mRequestsList.clear();
+      }
+    }
+  }
+ catch (  Throwable tr) {
+    Log.e(LOG_TAG,"Uncaught exception",tr);
+  }
+}

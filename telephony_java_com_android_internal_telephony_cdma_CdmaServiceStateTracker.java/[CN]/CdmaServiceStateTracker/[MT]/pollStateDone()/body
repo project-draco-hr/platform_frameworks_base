@@ -1,0 +1,88 @@
+{
+  if (DBG)   log("Poll ServiceState done: oldSS=[" + ss + "] newSS=["+ newSS+ "]");
+  boolean hasRegistered=ss.getState() != ServiceState.STATE_IN_SERVICE && newSS.getState() == ServiceState.STATE_IN_SERVICE;
+  boolean hasDeregistered=ss.getState() == ServiceState.STATE_IN_SERVICE && newSS.getState() != ServiceState.STATE_IN_SERVICE;
+  boolean hasCdmaDataConnectionAttached=this.cdmaDataConnectionState != ServiceState.STATE_IN_SERVICE && this.newCdmaDataConnectionState == ServiceState.STATE_IN_SERVICE;
+  boolean hasCdmaDataConnectionDetached=this.cdmaDataConnectionState == ServiceState.STATE_IN_SERVICE && this.newCdmaDataConnectionState != ServiceState.STATE_IN_SERVICE;
+  boolean hasCdmaDataConnectionChanged=cdmaDataConnectionState != newCdmaDataConnectionState;
+  boolean hasNetworkTypeChanged=networkType != newNetworkType;
+  boolean hasChanged=!newSS.equals(ss);
+  boolean hasRoamingOn=!ss.getRoaming() && newSS.getRoaming();
+  boolean hasRoamingOff=ss.getRoaming() && !newSS.getRoaming();
+  boolean hasLocationChanged=!newCellLoc.equals(cellLoc);
+  ServiceState tss;
+  tss=ss;
+  ss=newSS;
+  newSS=tss;
+  newSS.setStateOutOfService();
+  CdmaCellLocation tcl=cellLoc;
+  cellLoc=newCellLoc;
+  newCellLoc=tcl;
+  cdmaDataConnectionState=newCdmaDataConnectionState;
+  networkType=newNetworkType;
+  newSS.setStateOutOfService();
+  if (hasNetworkTypeChanged) {
+    phone.setSystemProperty(PROPERTY_DATA_NETWORK_TYPE,networkTypeToString(networkType));
+  }
+  if (hasRegistered) {
+    Checkin.updateStats(phone.getContext().getContentResolver(),Checkin.Stats.Tag.PHONE_CDMA_REGISTERED,1,0.0);
+    networkAttachedRegistrants.notifyRegistrants();
+  }
+  if (hasChanged) {
+    if (cm.getRadioState().isNVReady()) {
+      String eriText;
+      if (ss.getState() == ServiceState.STATE_IN_SERVICE) {
+        eriText=phone.getCdmaEriText();
+      }
+ else {
+        eriText=phone.getContext().getText(com.android.internal.R.string.roamingTextSearching).toString();
+      }
+      ss.setCdmaEriText(eriText);
+    }
+    String operatorNumeric;
+    phone.setSystemProperty(PROPERTY_OPERATOR_ALPHA,ss.getOperatorAlphaLong());
+    operatorNumeric=ss.getOperatorNumeric();
+    phone.setSystemProperty(PROPERTY_OPERATOR_NUMERIC,operatorNumeric);
+    if (operatorNumeric == null) {
+      phone.setSystemProperty(PROPERTY_OPERATOR_ISO_COUNTRY,"");
+    }
+ else {
+      String isoCountryCode="";
+      try {
+        isoCountryCode=MccTable.countryCodeForMcc(Integer.parseInt(operatorNumeric.substring(0,3)));
+      }
+ catch (      NumberFormatException ex) {
+        Log.w(LOG_TAG,"countryCodeForMcc error" + ex);
+      }
+catch (      StringIndexOutOfBoundsException ex) {
+        Log.w(LOG_TAG,"countryCodeForMcc error" + ex);
+      }
+      phone.setSystemProperty(PROPERTY_OPERATOR_ISO_COUNTRY,isoCountryCode);
+      mGotCountryCode=true;
+      if (mNeedFixZone) {
+        fixTimeZone(isoCountryCode);
+      }
+    }
+    phone.setSystemProperty(PROPERTY_OPERATOR_ISROAMING,ss.getRoaming() ? "true" : "false");
+    updateSpnDisplay();
+    phone.notifyServiceStateChanged(ss);
+  }
+  if (hasCdmaDataConnectionAttached) {
+    cdmaDataConnectionAttachedRegistrants.notifyRegistrants();
+  }
+  if (hasCdmaDataConnectionDetached) {
+    cdmaDataConnectionDetachedRegistrants.notifyRegistrants();
+  }
+  if (hasCdmaDataConnectionChanged) {
+    phone.notifyDataConnection(null);
+  }
+  if (hasRoamingOn) {
+    roamingOnRegistrants.notifyRegistrants();
+  }
+  if (hasRoamingOff) {
+    roamingOffRegistrants.notifyRegistrants();
+  }
+  if (hasLocationChanged) {
+    phone.notifyLocationChanged();
+  }
+}

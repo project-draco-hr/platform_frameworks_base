@@ -1,0 +1,61 @@
+{
+  StringBuilder where=new StringBuilder("reference_number =");
+  where.append(concatRef.refNumber);
+  where.append(" AND address = ?");
+  String[] whereArgs=new String[]{sms.getOriginatingAddress()};
+  byte[][] pdus=null;
+  Cursor cursor=null;
+  try {
+    cursor=mResolver.query(mRawUri,RAW_PROJECTION,where.toString(),whereArgs,null);
+    int cursorCount=cursor.getCount();
+    if (cursorCount != concatRef.msgCount - 1) {
+      ContentValues values=new ContentValues();
+      values.put("date",new Long(sms.getTimestampMillis()));
+      values.put("pdu",HexDump.toHexString(sms.getPdu()));
+      values.put("address",sms.getOriginatingAddress());
+      values.put("reference_number",concatRef.refNumber);
+      values.put("count",concatRef.msgCount);
+      values.put("sequence",concatRef.seqNumber);
+      if (portAddrs != null) {
+        values.put("destination_port",portAddrs.destPort);
+      }
+      mResolver.insert(mRawUri,values);
+      return Intents.RESULT_SMS_HANDLED;
+    }
+    int pduColumn=cursor.getColumnIndex("pdu");
+    int sequenceColumn=cursor.getColumnIndex("sequence");
+    pdus=new byte[concatRef.msgCount][];
+    for (int i=0; i < cursorCount; i++) {
+      cursor.moveToNext();
+      int cursorSequence=(int)cursor.getLong(sequenceColumn);
+      pdus[cursorSequence - 1]=HexDump.hexStringToByteArray(cursor.getString(pduColumn));
+    }
+    pdus[concatRef.seqNumber - 1]=sms.getPdu();
+    mResolver.delete(mRawUri,where.toString(),whereArgs);
+  }
+ catch (  SQLException e) {
+    Log.e(TAG,"Can't access multipart SMS database",e);
+    return Intents.RESULT_SMS_GENERIC_ERROR;
+  }
+ finally {
+    if (cursor != null)     cursor.close();
+  }
+  if (portAddrs != null) {
+    if (portAddrs.destPort == SmsHeader.PORT_WAP_PUSH) {
+      ByteArrayOutputStream output=new ByteArrayOutputStream();
+      for (int i=0; i < concatRef.msgCount; i++) {
+        SmsMessage msg=SmsMessage.createFromPdu(pdus[i]);
+        byte[] data=msg.getUserData();
+        output.write(data,0,data.length);
+      }
+      return mWapPush.dispatchWapPdu(output.toByteArray());
+    }
+ else {
+      dispatchPortAddressedPdus(pdus,portAddrs.destPort);
+    }
+  }
+ else {
+    dispatchPdus(pdus);
+  }
+  return Activity.RESULT_OK;
+}
