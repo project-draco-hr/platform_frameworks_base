@@ -1,21 +1,31 @@
 {
+  long startRealtime=SystemClock.elapsedRealtime();
   if (DEBUG)   Log.v(TAG,"Beginning backup of " + mQueue.size() + " targets");
   Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND);
-  PackageManagerBackupAgent pmAgent=new PackageManagerBackupAgent(mPackageManager,allAgentPackages());
-  BackupRequest pmRequest=new BackupRequest(new ApplicationInfo(),false);
-  pmRequest.appInfo.packageName=PACKAGE_MANAGER_SENTINEL;
-  processOneBackup(pmRequest,IBackupAgent.Stub.asInterface(pmAgent.onBind()),mTransport);
-  doQueuedBackups(mTransport);
   try {
-    if (!mTransport.finishBackup()) {
-      Log.e(TAG,"Backup failure in finishBackup()");
+    EventLog.writeEvent(BACKUP_START_EVENT,mTransport.transportDirName());
+    PackageManagerBackupAgent pmAgent=new PackageManagerBackupAgent(mPackageManager,allAgentPackages());
+    BackupRequest pmRequest=new BackupRequest(new ApplicationInfo(),false);
+    pmRequest.appInfo.packageName=PACKAGE_MANAGER_SENTINEL;
+    processOneBackup(pmRequest,IBackupAgent.Stub.asInterface(pmAgent.onBind()),mTransport);
+    int count=mQueue.size();
+    doQueuedBackups(mTransport);
+    if (mTransport.finishBackup()) {
+      int millis=(int)(SystemClock.elapsedRealtime() - startRealtime);
+      EventLog.writeEvent(BACKUP_SUCCESS_EVENT,count,millis);
+    }
+ else {
+      EventLog.writeEvent(BACKUP_TRANSPORT_FAILURE_EVENT,"");
+      Log.e(TAG,"Transport error in finishBackup()");
+    }
+    if (!mJournal.delete()) {
+      Log.e(TAG,"Unable to remove backup journal file " + mJournal);
     }
   }
- catch (  RemoteException e) {
-    Log.e(TAG,"Error in finishBackup()",e);
+ catch (  Exception e) {
+    Log.e(TAG,"Error in backup thread",e);
   }
-  if (!mJournal.delete()) {
-    Log.e(TAG,"Unable to remove backup journal file " + mJournal.getAbsolutePath());
+ finally {
+    mWakelock.release();
   }
-  mWakelock.release();
 }

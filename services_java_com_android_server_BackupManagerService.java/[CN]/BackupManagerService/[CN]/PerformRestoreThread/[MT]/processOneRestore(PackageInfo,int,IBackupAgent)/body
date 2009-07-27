@@ -1,37 +1,43 @@
 {
   final String packageName=app.packageName;
-  Log.d(TAG,"processOneRestore packageName=" + packageName);
+  if (DEBUG)   Log.d(TAG,"processOneRestore packageName=" + packageName);
   File backupDataName=new File(mDataDir,packageName + ".restore");
-  backupDataName.delete();
+  File newStateName=new File(mStateDir,packageName + ".new");
+  File savedStateName=new File(mStateDir,packageName);
+  ParcelFileDescriptor backupData=null;
+  ParcelFileDescriptor newState=null;
   try {
-    ParcelFileDescriptor backupData=ParcelFileDescriptor.open(backupDataName,ParcelFileDescriptor.MODE_READ_WRITE | ParcelFileDescriptor.MODE_CREATE);
-    try {
-      if (!mTransport.getRestoreData(backupData)) {
-        Log.e(TAG,"Error getting restore data for " + packageName);
-        return;
-      }
+    backupData=ParcelFileDescriptor.open(backupDataName,ParcelFileDescriptor.MODE_READ_WRITE | ParcelFileDescriptor.MODE_CREATE | ParcelFileDescriptor.MODE_TRUNCATE);
+    if (!mTransport.getRestoreData(backupData)) {
+      Log.e(TAG,"Error getting restore data for " + packageName);
+      EventLog.writeEvent(RESTORE_TRANSPORT_FAILURE_EVENT);
+      return;
     }
-  finally {
-      backupData.close();
-    }
-    File newStateName=new File(mStateDir,packageName + ".new");
-    ParcelFileDescriptor newState=ParcelFileDescriptor.open(newStateName,ParcelFileDescriptor.MODE_READ_WRITE | ParcelFileDescriptor.MODE_CREATE);
+    backupData.close();
     backupData=ParcelFileDescriptor.open(backupDataName,ParcelFileDescriptor.MODE_READ_ONLY);
-    try {
-      agent.doRestore(backupData,appVersionCode,newState);
-    }
-  finally {
-      newState.close();
-      backupData.close();
-    }
-    File savedStateName=new File(mStateDir,packageName);
+    newState=ParcelFileDescriptor.open(newStateName,ParcelFileDescriptor.MODE_READ_WRITE | ParcelFileDescriptor.MODE_CREATE | ParcelFileDescriptor.MODE_TRUNCATE);
+    agent.doRestore(backupData,appVersionCode,newState);
     newStateName.renameTo(savedStateName);
+    int size=(int)backupDataName.length();
+    EventLog.writeEvent(RESTORE_PACKAGE_EVENT,packageName,size);
   }
  catch (  Exception e) {
     Log.e(TAG,"Error restoring data for " + packageName,e);
+    EventLog.writeEvent(RESTORE_AGENT_FAILURE_EVENT,packageName,e.toString());
     clearApplicationDataSynchronous(packageName);
   }
  finally {
     backupDataName.delete();
+    try {
+      if (backupData != null)       backupData.close();
+    }
+ catch (    IOException e) {
+    }
+    try {
+      if (newState != null)       newState.close();
+    }
+ catch (    IOException e) {
+    }
+    backupData=newState=null;
   }
 }

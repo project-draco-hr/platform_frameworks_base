@@ -1,8 +1,14 @@
 {
   final String packageName=request.appInfo.packageName;
-  Log.d(TAG,"processOneBackup doBackup() on " + packageName);
+  if (DEBUG)   Log.d(TAG,"processOneBackup doBackup() on " + packageName);
+  File savedStateName=new File(mStateDir,packageName);
+  File backupDataName=new File(mDataDir,packageName + ".data");
+  File newStateName=new File(mStateDir,packageName + ".new");
+  ParcelFileDescriptor savedState=null;
+  ParcelFileDescriptor backupData=null;
+  ParcelFileDescriptor newState=null;
+  PackageInfo packInfo;
   try {
-    PackageInfo packInfo;
     if (packageName.equals(PACKAGE_MANAGER_SENTINEL)) {
       packInfo=new PackageInfo();
       packInfo.packageName=packageName;
@@ -10,45 +16,63 @@
  else {
       packInfo=mPackageManager.getPackageInfo(packageName,PackageManager.GET_SIGNATURES);
     }
-    File savedStateName=new File(mStateDir,packageName);
-    File backupDataName=new File(mDataDir,packageName + ".data");
-    File newStateName=new File(mStateDir,packageName + ".new");
-    ParcelFileDescriptor savedState=(request.fullBackup) ? null : ParcelFileDescriptor.open(savedStateName,ParcelFileDescriptor.MODE_READ_ONLY | ParcelFileDescriptor.MODE_CREATE);
-    backupDataName.delete();
-    ParcelFileDescriptor backupData=ParcelFileDescriptor.open(backupDataName,ParcelFileDescriptor.MODE_READ_WRITE | ParcelFileDescriptor.MODE_CREATE);
-    newStateName.delete();
-    ParcelFileDescriptor newState=ParcelFileDescriptor.open(newStateName,ParcelFileDescriptor.MODE_READ_WRITE | ParcelFileDescriptor.MODE_CREATE);
-    boolean success=false;
-    try {
-      agent.doBackup(savedState,backupData,newState);
-      logBackupComplete(packageName);
-      success=true;
+    if (!request.fullBackup) {
+      savedState=ParcelFileDescriptor.open(savedStateName,ParcelFileDescriptor.MODE_READ_ONLY | ParcelFileDescriptor.MODE_CREATE);
     }
-  finally {
-      if (savedState != null) {
-        savedState.close();
-      }
-      backupData.close();
-      newState.close();
-    }
-    if (success) {
-      if (DEBUG)       Log.v(TAG,"doBackup() success");
-      if (backupDataName.length() > 0) {
-        backupData=ParcelFileDescriptor.open(backupDataName,ParcelFileDescriptor.MODE_READ_ONLY);
-        if (!transport.performBackup(packInfo,backupData)) {
-          Log.e(TAG,"Backup failure in performBackup()");
-        }
-      }
- else {
-        if (DEBUG) {
-          Log.i(TAG,"no backup data written; not calling transport");
-        }
-      }
-      backupDataName.delete();
-      newStateName.renameTo(savedStateName);
-    }
+    backupData=ParcelFileDescriptor.open(backupDataName,ParcelFileDescriptor.MODE_READ_WRITE | ParcelFileDescriptor.MODE_CREATE | ParcelFileDescriptor.MODE_TRUNCATE);
+    newState=ParcelFileDescriptor.open(newStateName,ParcelFileDescriptor.MODE_READ_WRITE | ParcelFileDescriptor.MODE_CREATE | ParcelFileDescriptor.MODE_TRUNCATE);
+    agent.doBackup(savedState,backupData,newState);
+    logBackupComplete(packageName);
+    if (DEBUG)     Log.v(TAG,"doBackup() success");
   }
  catch (  Exception e) {
     Log.e(TAG,"Error backing up " + packageName,e);
+    EventLog.writeEvent(BACKUP_AGENT_FAILURE_EVENT,packageName,e.toString());
+    backupDataName.delete();
+    newStateName.delete();
+    return;
+  }
+ finally {
+    try {
+      if (savedState != null)       savedState.close();
+    }
+ catch (    IOException e) {
+    }
+    try {
+      if (backupData != null)       backupData.close();
+    }
+ catch (    IOException e) {
+    }
+    try {
+      if (newState != null)       newState.close();
+    }
+ catch (    IOException e) {
+    }
+    savedState=backupData=newState=null;
+  }
+  try {
+    int size=(int)backupDataName.length();
+    if (size > 0) {
+      backupData=ParcelFileDescriptor.open(backupDataName,ParcelFileDescriptor.MODE_READ_ONLY);
+      if (!transport.performBackup(packInfo,backupData))       throw new Exception();
+    }
+ else {
+      if (DEBUG)       Log.i(TAG,"no backup data written; not calling transport");
+    }
+    backupDataName.delete();
+    newStateName.renameTo(savedStateName);
+    EventLog.writeEvent(BACKUP_PACKAGE_EVENT,packageName,size);
+  }
+ catch (  Exception e) {
+    Log.e(TAG,"Transport error backing up " + packageName,e);
+    EventLog.writeEvent(BACKUP_TRANSPORT_FAILURE_EVENT,packageName);
+    return;
+  }
+ finally {
+    try {
+      if (backupData != null)       backupData.close();
+    }
+ catch (    IOException e) {
+    }
   }
 }
