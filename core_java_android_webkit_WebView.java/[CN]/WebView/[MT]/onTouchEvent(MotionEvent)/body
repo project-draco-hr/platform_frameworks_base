@@ -50,6 +50,15 @@ case MotionEvent.ACTION_DOWN:
         nativeMoveSelection(viewToContent(mSelectX),viewToContent(mSelectY),false);
         mTouchSelection=mExtendSelection=true;
       }
+ else       if (mPrivateHandler.hasMessages(RELEASE_SINGLE_TAP)) {
+        mPrivateHandler.removeMessages(RELEASE_SINGLE_TAP);
+        if (deltaX * deltaX + deltaY * deltaY < mDoubleTapSlopSquare) {
+          mTouchMode=TOUCH_DOUBLE_TAP_MODE;
+        }
+ else {
+          doShortPress();
+        }
+      }
  else {
         mTouchMode=TOUCH_INIT_MODE;
         mPreventDrag=mForwardTouchEvents;
@@ -57,7 +66,7 @@ case MotionEvent.ACTION_DOWN:
           EventLog.writeEvent(EVENT_LOG_DOUBLE_TAP_DURATION,(eventTime - mLastTouchUpTime),eventTime);
         }
       }
-      if (mTouchMode == TOUCH_INIT_MODE) {
+      if (mTouchMode == TOUCH_INIT_MODE || mTouchMode == TOUCH_DOUBLE_TAP_MODE) {
         mPrivateHandler.sendMessageDelayed(mPrivateHandler.obtainMessage(SWITCH_TO_SHORTPRESS),TAP_TIMEOUT);
       }
       mLastTouchX=x;
@@ -94,7 +103,7 @@ case MotionEvent.ACTION_MOVE:
       if (mTouchMode == TOUCH_SHORTPRESS_MODE || mTouchMode == TOUCH_SHORTPRESS_START_MODE) {
         mPrivateHandler.removeMessages(SWITCH_TO_LONGPRESS);
       }
- else       if (mTouchMode == TOUCH_INIT_MODE) {
+ else       if (mTouchMode == TOUCH_INIT_MODE || mTouchMode == TOUCH_DOUBLE_TAP_MODE) {
         mPrivateHandler.removeMessages(SWITCH_TO_SHORTPRESS);
       }
       int ax=Math.abs(deltaX);
@@ -116,7 +125,7 @@ case MotionEvent.ACTION_MOVE:
         mWebViewCore.sendMessage(EventHub.SET_SNAP_ANCHOR,0,0);
       }
       WebSettings settings=getSettings();
-      if (settings.supportZoom() && settings.getBuiltInZoomControls() && !mZoomButtonsController.isVisible()&& (canZoomScrollOut() || mMinZoomScale < mMaxZoomScale)) {
+      if (settings.supportZoom() && !mInZoomOverview && settings.getBuiltInZoomControls()&& !mZoomButtonsController.isVisible()&& (canZoomScrollOut() || mMinZoomScale < mMaxZoomScale)) {
         mZoomButtonsController.setVisible(true);
       }
     }
@@ -165,7 +174,7 @@ case MotionEvent.ACTION_MOVE:
       mLastTouchTime=eventTime;
       mUserScroll=true;
     }
-    if (!getSettings().getBuiltInZoomControls()) {
+    if (!getSettings().getBuiltInZoomControls() && !mInZoomOverview) {
       boolean showPlusMinus=mMinZoomScale < mMaxZoomScale;
       boolean showMagnify=canZoomScrollOut();
       if (mZoomControls != null && (showPlusMinus || showMagnify)) {
@@ -187,11 +196,22 @@ case MotionEvent.ACTION_UP:
 {
   mLastTouchUpTime=eventTime;
 switch (mTouchMode) {
+case TOUCH_DOUBLE_TAP_MODE:
+    mPrivateHandler.removeMessages(SWITCH_TO_SHORTPRESS);
+  doDoubleTap();
+break;
 case TOUCH_INIT_MODE:
+if (ENABLE_DOUBLETAP_ZOOM) {
+mPrivateHandler.removeMessages(SWITCH_TO_SHORTPRESS);
+if (!mPreventDrag) {
+  mPrivateHandler.sendMessageDelayed(mPrivateHandler.obtainMessage(RELEASE_SINGLE_TAP),ViewConfiguration.getDoubleTapTimeout());
+}
+break;
+}
 case TOUCH_SHORTPRESS_START_MODE:
 case TOUCH_SHORTPRESS_MODE:
-    mPrivateHandler.removeMessages(SWITCH_TO_SHORTPRESS);
-  mPrivateHandler.removeMessages(SWITCH_TO_LONGPRESS);
+mPrivateHandler.removeMessages(SWITCH_TO_SHORTPRESS);
+mPrivateHandler.removeMessages(SWITCH_TO_LONGPRESS);
 mTouchMode=TOUCH_DONE_MODE;
 doShortPress();
 break;

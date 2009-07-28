@@ -21,6 +21,9 @@ case SWITCH_TO_SHORTPRESS:
     mTouchMode=TOUCH_SHORTPRESS_START_MODE;
     updateSelection();
   }
+ else   if (mTouchMode == TOUCH_DOUBLE_TAP_MODE) {
+    mTouchMode=TOUCH_DONE_MODE;
+  }
   break;
 }
 case SWITCH_TO_LONGPRESS:
@@ -29,6 +32,14 @@ if (!mPreventDrag) {
   mTouchMode=TOUCH_DONE_MODE;
   performLongClick();
   rebuildWebTextView();
+}
+break;
+}
+case RELEASE_SINGLE_TAP:
+{
+if (!mPreventDrag) {
+mTouchMode=TOUCH_DONE_MODE;
+doShortPress();
 }
 break;
 }
@@ -69,16 +80,14 @@ case SPAWN_SCROLL_TO_MSG_ID:
 spawnContentScrollTo(msg.arg1,msg.arg2);
 break;
 case NEW_PICTURE_MSG_ID:
+final int viewWidth=getViewWidth();
 final WebViewCore.DrawData draw=(WebViewCore.DrawData)msg.obj;
 final Point viewSize=draw.mViewPoint;
 if (mZoomScale > 0) {
-if (Math.round(getViewWidth() / mZoomScale) == viewSize.x) {
+if (Math.round(viewWidth / mZoomScale) == viewSize.x) {
 mZoomScale=0;
 mWebViewCore.sendMessage(EventHub.SET_SNAP_ANCHOR,0,0);
 }
-}
-if (!mMinZoomScaleFixed) {
-mMinZoomScale=(float)getViewWidth() / Math.max(ZOOM_OUT_WIDTH,draw.mWidthHeight.x);
 }
 final boolean updateLayout=viewSize.x == mLastWidthSent && viewSize.y == mLastHeightSent;
 recordNewContentSize(draw.mWidthHeight.x,draw.mWidthHeight.y,updateLayout);
@@ -89,6 +98,17 @@ Log.v(LOGTAG,"NEW_PICTURE_MSG_ID {" + b.left + ","+ b.top+ ","+ b.right+ ","+ b.
 invalidate(contentToView(draw.mInvalRegion.getBounds()));
 if (mPictureListener != null) {
 mPictureListener.onNewPicture(WebView.this,capturePicture());
+}
+if (mWebViewCore.getSettings().getUseWideViewPort()) {
+mZoomOverviewWidth=Math.max(draw.mMinPrefWidth,draw.mViewPoint.x);
+}
+if (!mMinZoomScaleFixed) {
+mMinZoomScale=(float)viewWidth / Math.max(ZOOM_OUT_WIDTH,mZoomOverviewWidth > 0 ? mZoomOverviewWidth : mContentWidth);
+}
+if (!mDrawHistory && mInZoomOverview) {
+if (Math.abs((viewWidth * mInvActualScale) - mZoomOverviewWidth) > 1) {
+zoomWithPreview((float)viewWidth / mZoomOverviewWidth);
+}
 }
 break;
 case WEBCORE_INITIALIZED_MSG_ID:
@@ -110,6 +130,7 @@ mWebTextView.setTextAndKeepSelection((String)msg.obj);
 }
 break;
 case DID_FIRST_LAYOUT_MSG_ID:
+{
 if (mNativeClass == 0) {
 break;
 }
@@ -137,29 +158,42 @@ int width=getViewWidth();
 if (width == 0) {
 break;
 }
+final WebSettings settings=mWebViewCore.getSettings();
 int initialScale=msg.arg1;
 int viewportWidth=msg.arg2;
 float scale=mDefaultScale;
+mInZoomOverview=false;
 if (mInitialScale > 0) {
 scale=mInitialScale / 100.0f;
 }
  else {
-if (initialScale < 0) break;
-if (mWebViewCore.getSettings().getUseWideViewPort()) {
+if (initialScale == -1) break;
+if (settings.getUseWideViewPort()) {
 mLastWidthSent=0;
 }
 if (initialScale == 0) {
 if (viewportWidth > 0 && viewportWidth < width) {
 scale=(float)width / viewportWidth;
 }
+ else {
+if (settings.getUseWideViewPort()) {
+mInZoomOverview=ENABLE_DOUBLETAP_ZOOM;
+}
+}
+}
+ else if (initialScale < 0) {
+mInZoomOverview=true;
+scale=-initialScale / 100.0f;
 }
  else {
 scale=initialScale / 100.0f;
 }
 }
+mLastScale=scale;
 setNewZoomScale(scale,false);
 clearTextEntry();
 break;
+}
 case MOVE_OUT_OF_PLUGIN:
 if (nativePluginEatsNavKey()) {
 navHandledKey(msg.arg1,1,false,0,true);
