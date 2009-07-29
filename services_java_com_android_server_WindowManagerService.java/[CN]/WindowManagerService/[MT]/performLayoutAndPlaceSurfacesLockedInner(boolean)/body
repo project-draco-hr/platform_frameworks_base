@@ -179,6 +179,7 @@
     boolean dimming=false;
     boolean covered=false;
     boolean syswin=false;
+    boolean backgroundFillerShown=false;
     for (i=N - 1; i >= 0; i--) {
       WindowState w=(WindowState)mWindows.get(i);
       boolean displayed=false;
@@ -376,50 +377,44 @@
             syswin=true;
           }
         }
-        if (w.isFullscreenOpaque(dw,dh)) {
+        boolean opaqueDrawn=w.isOpaqueDrawn();
+        if (opaqueDrawn && w.isFullscreen(dw,dh)) {
           obscured=true;
+        }
+ else         if (opaqueDrawn && w.needsBackgroundFiller(dw,dh)) {
+          if (SHOW_TRANSACTIONS)           Log.d(TAG,"showing background filler");
+          obscured=true;
+          if (mBackgroundFillerSurface == null) {
+            try {
+              mBackgroundFillerSurface=new Surface(mFxSession,0,0,dw,dh,PixelFormat.OPAQUE,Surface.FX_SURFACE_NORMAL);
+            }
+ catch (            Exception e) {
+              Log.e(TAG,"Exception creating filler surface",e);
+            }
+          }
+          try {
+            mBackgroundFillerSurface.setPosition(0,0);
+            mBackgroundFillerSurface.setSize(dw,dh);
+            mBackgroundFillerSurface.setLayer(w.mAnimLayer - 1);
+            mBackgroundFillerSurface.show();
+          }
+ catch (          RuntimeException e) {
+            Log.e(TAG,"Exception showing filler surface");
+          }
+          backgroundFillerShown=true;
+          mBackgroundFillerShown=true;
         }
  else         if (canBeSeen && !obscured && (attrFlags & FLAG_BLUR_BEHIND | FLAG_DIM_BEHIND) != 0) {
           if (localLOGV)           Log.v(TAG,"Win " + w + ": blurring="+ blurring+ " obscured="+ obscured+ " displayed="+ displayed);
           if ((attrFlags & FLAG_DIM_BEHIND) != 0) {
             if (!dimming) {
               dimming=true;
-              mDimShown=true;
-              if (mDimSurface == null) {
-                if (SHOW_TRANSACTIONS)                 Log.i(TAG,"  DIM " + mDimSurface + ": CREATE");
-                try {
-                  mDimSurface=new Surface(mFxSession,0,-1,16,16,PixelFormat.OPAQUE,Surface.FX_SURFACE_DIM);
-                }
- catch (                Exception e) {
-                  Log.e(TAG,"Exception creating Dim surface",e);
-                }
+              if (mDimAnimator == null) {
+                mDimAnimator=new DimAnimator(mFxSession);
               }
-              if (SHOW_TRANSACTIONS)               Log.i(TAG,"  DIM " + mDimSurface + ": SHOW pos=(0,0) ("+ dw+ "x"+ dh+ "), layer="+ (w.mAnimLayer - 1));
-              if (mDimSurface != null) {
-                try {
-                  mDimSurface.setPosition(0,0);
-                  mDimSurface.setSize(dw,dh);
-                  mDimSurface.show();
-                }
- catch (                RuntimeException e) {
-                  Log.w(TAG,"Failure showing dim surface",e);
-                }
-              }
+              mDimAnimator.show(dw,dh);
             }
-            mDimSurface.setLayer(w.mAnimLayer - 1);
-            final float target=w.mExiting ? 0 : attrs.dimAmount;
-            if (mDimTargetAlpha != target) {
-              mLastDimAnimTime=currentTime;
-              long duration=(w.mAnimating && w.mAnimation != null) ? w.mAnimation.computeDurationHint() : DEFAULT_DIM_DURATION;
-              if (target > mDimTargetAlpha) {
-                duration*=DIM_DURATION_MULTIPLIER;
-              }
-              if (duration < 1) {
-                duration=1;
-              }
-              mDimTargetAlpha=target;
-              mDimDeltaPerMs=(mDimTargetAlpha - mDimCurrentAlpha) / duration;
-            }
+            mDimAnimator.updateParameters(w,currentTime);
           }
           if ((attrFlags & FLAG_BLUR_BEHIND) != 0) {
             if (!blurring) {
@@ -451,54 +446,18 @@
         }
       }
     }
-    if (!dimming && mDimShown) {
-      if (mDimTargetAlpha != 0) {
-        mLastDimAnimTime=currentTime;
-        mDimTargetAlpha=0;
-        mDimDeltaPerMs=(-mDimCurrentAlpha) / DEFAULT_DIM_DURATION;
+    if (backgroundFillerShown == false && mBackgroundFillerShown) {
+      mBackgroundFillerShown=false;
+      if (SHOW_TRANSACTIONS)       Log.d(TAG,"hiding background filler");
+      try {
+        mBackgroundFillerSurface.hide();
+      }
+ catch (      RuntimeException e) {
+        Log.e(TAG,"Exception hiding filler surface",e);
       }
     }
-    if (mDimShown && mLastDimAnimTime != 0) {
-      mDimCurrentAlpha+=mDimDeltaPerMs * (currentTime - mLastDimAnimTime);
-      boolean more=true;
-      if (mDisplayFrozen) {
-        more=false;
-      }
- else       if (mDimDeltaPerMs > 0) {
-        if (mDimCurrentAlpha > mDimTargetAlpha) {
-          more=false;
-        }
-      }
- else       if (mDimDeltaPerMs < 0) {
-        if (mDimCurrentAlpha < mDimTargetAlpha) {
-          more=false;
-        }
-      }
- else {
-        more=false;
-      }
-      if (more) {
-        if (SHOW_TRANSACTIONS)         Log.i(TAG,"  DIM " + mDimSurface + ": alpha="+ mDimCurrentAlpha);
-        mLastDimAnimTime=currentTime;
-        mDimSurface.setAlpha(mDimCurrentAlpha);
-        animating=true;
-      }
- else {
-        mDimCurrentAlpha=mDimTargetAlpha;
-        mLastDimAnimTime=0;
-        if (SHOW_TRANSACTIONS)         Log.i(TAG,"  DIM " + mDimSurface + ": final alpha="+ mDimCurrentAlpha);
-        mDimSurface.setAlpha(mDimCurrentAlpha);
-        if (!dimming) {
-          if (SHOW_TRANSACTIONS)           Log.i(TAG,"  DIM " + mDimSurface + ": HIDE");
-          try {
-            mDimSurface.hide();
-          }
- catch (          RuntimeException e) {
-            Log.w(TAG,"Illegal argument exception hiding dim surface");
-          }
-          mDimShown=false;
-        }
-      }
+    if (mDimAnimator != null && mDimAnimator.mDimShown) {
+      animating|=mDimAnimator.updateSurface(dimming,currentTime,mDisplayFrozen);
     }
     if (!blurring && mBlurShown) {
       if (SHOW_TRANSACTIONS)       Log.i(TAG,"  BLUR " + mBlurSurface + ": HIDE");
