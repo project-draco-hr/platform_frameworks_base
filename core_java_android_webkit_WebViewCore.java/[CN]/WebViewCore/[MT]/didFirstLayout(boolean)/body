@@ -1,10 +1,10 @@
 {
-  if (mWebView != null && mWebView.mHeightCanMeasure) {
-    mWebView.mLastHeightSent=0;
-    mEventHub.sendMessage(Message.obtain(null,EventHub.VIEW_SIZE_CHANGED,mWebView.mLastWidthSent,mWebView.mLastHeightSent,-1.0f));
+  if (DebugFlags.WEB_VIEW_CORE) {
+    Log.v(LOGTAG,"didFirstLayout standardLoad =" + standardLoad);
   }
   mBrowserFrame.didFirstLayout();
   mWebkitScrollX=mWebkitScrollY=0;
+  if (mWebView == null || (mRestoredScale == 0 && !standardLoad))   return;
   setViewportSettingsFromNative();
   if (WebView.DEFAULT_SCALE_PERCENT != 100) {
     float adjust=(float)WebView.DEFAULT_SCALE_PERCENT / 100.0f;
@@ -50,26 +50,49 @@
   if (mViewportWidth < 0 && mViewportInitialScale == WebView.DEFAULT_SCALE_PERCENT) {
     mViewportWidth=0;
   }
-  if (mWebView != null) {
-    WebView.ScaleLimitData scaleLimit=new WebView.ScaleLimitData();
-    scaleLimit.mMinScale=mViewportMinimumScale;
-    scaleLimit.mMaxScale=mViewportMaximumScale;
-    if (mRestoredScale > 0) {
-      Message.obtain(mWebView.mPrivateHandler,WebView.DID_FIRST_LAYOUT_MSG_ID,mRestoredScreenWidthScale > 0 ? -mRestoredScreenWidthScale : mRestoredScale,0,scaleLimit).sendToTarget();
+  int webViewWidth=Math.round(mCurrentViewWidth * mCurrentViewScale);
+  mRestoreState=new RestoreState();
+  mRestoreState.mMinScale=mViewportMinimumScale / 100.0f;
+  mRestoreState.mMaxScale=mViewportMaximumScale / 100.0f;
+  mRestoreState.mScrollX=mRestoredX;
+  mRestoreState.mScrollY=mRestoredY;
+  if (mRestoredScale > 0) {
+    if (mRestoredScreenWidthScale > 0) {
+      mRestoreState.mTextWrapScale=mRestoredScreenWidthScale / 100.0f;
+      mRestoreState.mViewScale=0;
     }
  else {
-      Message.obtain(mWebView.mPrivateHandler,WebView.DID_FIRST_LAYOUT_MSG_ID,standardLoad ? mViewportInitialScale : -1,mViewportWidth,scaleLimit).sendToTarget();
+      mRestoreState.mViewScale=mRestoreState.mTextWrapScale=mRestoredScale / 100.0f;
     }
-    if (mCurrentViewWidth != 0) {
-synchronized (this) {
-        if (mDrawIsScheduled) {
-          mEventHub.removeMessages(EventHub.WEBKIT_DRAW);
-        }
-        mDrawIsScheduled=true;
-        mEventHub.sendMessageAtFrontOfQueue(Message.obtain(null,EventHub.MESSAGE_RELAY,Message.obtain(mWebView.mPrivateHandler,WebView.SCROLL_TO_MSG_ID,mRestoredX,mRestoredY)));
-        mEventHub.sendMessageAtFrontOfQueue(Message.obtain(null,EventHub.WEBKIT_DRAW));
-      }
-    }
-    mRestoredX=mRestoredY=mRestoredScale=mRestoredScreenWidthScale=0;
   }
+ else {
+    if (mViewportInitialScale > 0) {
+      mRestoreState.mViewScale=mRestoreState.mTextWrapScale=mViewportInitialScale / 100.0f;
+    }
+ else     if (mViewportWidth > 0 && mViewportWidth < webViewWidth) {
+      mRestoreState.mViewScale=mRestoreState.mTextWrapScale=(float)webViewWidth / mViewportWidth;
+    }
+ else {
+      mRestoreState.mTextWrapScale=WebView.DEFAULT_SCALE_PERCENT / 100.0f;
+      mRestoreState.mViewScale=0;
+    }
+  }
+  if (mWebView.mHeightCanMeasure) {
+    mWebView.mLastHeightSent=0;
+    WebView.ViewSizeData data=new WebView.ViewSizeData();
+    data.mWidth=mWebView.mLastWidthSent;
+    data.mHeight=0;
+    data.mTextWrapWidth=data.mWidth;
+    data.mScale=-1.0f;
+    mEventHub.sendMessageAtFrontOfQueue(Message.obtain(null,EventHub.VIEW_SIZE_CHANGED,data));
+  }
+ else   if (mSettings.getUseWideViewPort() && mCurrentViewWidth > 0) {
+    WebView.ViewSizeData data=new WebView.ViewSizeData();
+    data.mScale=mRestoreState.mViewScale == 0 ? (mRestoredScale > 0 ? mRestoredScale : mRestoreState.mTextWrapScale) : mRestoreState.mViewScale;
+    data.mWidth=Math.round(webViewWidth / data.mScale);
+    data.mHeight=mCurrentViewHeight * data.mWidth / mCurrentViewWidth;
+    data.mTextWrapWidth=Math.round(webViewWidth / mRestoreState.mTextWrapScale);
+    mEventHub.sendMessageAtFrontOfQueue(Message.obtain(null,EventHub.VIEW_SIZE_CHANGED,data));
+  }
+  mRestoredX=mRestoredY=mRestoredScale=mRestoredScreenWidthScale=0;
 }
