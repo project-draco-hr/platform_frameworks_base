@@ -1,0 +1,98 @@
+{
+  final int[] lastData=mLastData;
+  final int[] nextData=mNextData;
+  final int nextNumPointers=mNextNumPointers;
+  final int lastNumPointers=mLastNumPointers;
+  if (nextNumPointers == 1 && lastNumPointers == 1) {
+    System.arraycopy(nextData,0,lastData,0,MotionEvent.NUM_SAMPLE_DATA);
+    return -1;
+  }
+  final int[] last2Next=mLast2Next;
+  for (int i=0; i < lastNumPointers; i++) {
+    last2Next[i]=-1;
+  }
+  if (DEBUG_POINTERS)   Log.v("InputDevice","Update pointers: lastNumPointers=" + lastNumPointers + " nextNumPointers="+ nextNumPointers);
+  final int[] next2Last=mNext2Last;
+  final long[] next2LastDistance=mNext2LastDistance;
+  boolean conflicts=false;
+  for (int i=0; i < nextNumPointers; i++) {
+    conflicts|=assignPointer(i,true);
+  }
+  if (conflicts) {
+    if (DEBUG_POINTERS)     Log.v("InputDevice","Resolving conflicts");
+    for (int i=0; i < lastNumPointers; i++) {
+      if (last2Next[i] != -2) {
+        continue;
+      }
+      if (DEBUG_POINTERS)       Log.v("InputDevice","Resolving last index #" + i);
+      int numFound;
+      do {
+        numFound=0;
+        long worstDistance=0;
+        int worstJ=-1;
+        for (int j=0; j < nextNumPointers; j++) {
+          if (next2Last[j] != i) {
+            continue;
+          }
+          numFound++;
+          if (worstDistance < next2LastDistance[j]) {
+            worstDistance=next2LastDistance[j];
+            worstJ=j;
+          }
+        }
+        if (worstJ >= 0) {
+          if (DEBUG_POINTERS)           Log.v("InputDevice","Worst new pointer: " + worstJ + " (distance="+ worstDistance+ ")");
+          if (assignPointer(worstJ,false)) {
+            next2Last[worstJ]=-1;
+          }
+        }
+      }
+ while (numFound > 2);
+    }
+  }
+  int retIndex=-1;
+  if (lastNumPointers < nextNumPointers) {
+    if (DEBUG_POINTERS)     Log.v("InputDevice","Adding new pointer");
+    int nextId=0;
+    int i=0;
+    while (i < lastNumPointers) {
+      if (mPointerIds[i] > nextId) {
+        if (DEBUG_POINTERS)         Log.v("InputDevice","Inserting new pointer at hole " + i);
+        System.arraycopy(mPointerIds,i,mPointerIds,i + 1,lastNumPointers - i);
+        System.arraycopy(lastData,i * MotionEvent.NUM_SAMPLE_DATA,lastData,(i + 1) * MotionEvent.NUM_SAMPLE_DATA,(lastNumPointers - i) * MotionEvent.NUM_SAMPLE_DATA);
+        break;
+      }
+      i++;
+      nextId++;
+    }
+    if (DEBUG_POINTERS)     Log.v("InputDevice","New pointer id " + nextId + " at index "+ i);
+    mLastNumPointers++;
+    retIndex=i;
+    mPointerIds[i]=nextId;
+    for (int j=0; j < nextNumPointers; j++) {
+      if (next2Last[j] < 0) {
+        if (DEBUG_POINTERS)         Log.v("InputDevice","Assigning new id to new pointer index " + j);
+        next2Last[j]=i;
+        break;
+      }
+    }
+  }
+  for (int i=0; i < nextNumPointers; i++) {
+    int lastIndex=next2Last[i];
+    if (lastIndex >= 0) {
+      if (DEBUG_POINTERS)       Log.v("InputDevice","Copying next pointer index " + i + " to last index "+ lastIndex);
+      System.arraycopy(nextData,i * MotionEvent.NUM_SAMPLE_DATA,lastData,lastIndex * MotionEvent.NUM_SAMPLE_DATA,MotionEvent.NUM_SAMPLE_DATA);
+    }
+  }
+  if (lastNumPointers > nextNumPointers) {
+    if (DEBUG_POINTERS)     Log.v("InputDevice","Removing old pointer");
+    for (int i=0; i < lastNumPointers; i++) {
+      if (last2Next[i] == -1) {
+        if (DEBUG_POINTERS)         Log.v("InputDevice","Removing old pointer at index " + i);
+        retIndex=i;
+        break;
+      }
+    }
+  }
+  return retIndex;
+}
