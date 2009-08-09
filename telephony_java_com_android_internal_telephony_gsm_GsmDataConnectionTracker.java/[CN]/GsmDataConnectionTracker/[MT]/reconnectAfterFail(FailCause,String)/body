@@ -1,24 +1,25 @@
 {
   if (state == State.FAILED) {
-    if (nextReconnectDelay > RECONNECT_DELAY_MAX_MILLIS) {
+    if (!mRetryMgr.isRetryNeeded()) {
       if (mReregisterOnReconnectFailure) {
-        nextReconnectDelay=RECONNECT_DELAY_MAX_MILLIS;
+        mRetryMgr.retryForeverUsingLastTimeout();
       }
  else {
         Log.d(LOG_TAG,"PDP activate failed, Reregistering to the network");
         mReregisterOnReconnectFailure=true;
         mGsmPhone.mSST.reRegisterNetwork(null);
-        nextReconnectDelay=RECONNECT_DELAY_INITIAL_MILLIS;
+        mRetryMgr.resetRetryCount();
         return;
       }
     }
+    int nextReconnectDelay=mRetryMgr.getRetryTimer();
     Log.d(LOG_TAG,"PDP activate failed. Scheduling next attempt for " + (nextReconnectDelay / 1000) + "s");
     AlarmManager am=(AlarmManager)phone.getContext().getSystemService(Context.ALARM_SERVICE);
     Intent intent=new Intent(INTENT_RECONNECT_ALARM);
     intent.putExtra(INTENT_RECONNECT_ALARM_EXTRA_REASON,reason);
     mReconnectIntent=PendingIntent.getBroadcast(phone.getContext(),0,intent,0);
     am.set(AlarmManager.ELAPSED_REALTIME_WAKEUP,SystemClock.elapsedRealtime() + nextReconnectDelay,mReconnectIntent);
-    nextReconnectDelay*=2;
+    mRetryMgr.increaseRetryCount();
     if (!shouldPostNotification(lastFailCauseCode)) {
       Log.d(LOG_TAG,"NOT Posting GPRS Unavailable notification " + "-- likely transient error");
     }
