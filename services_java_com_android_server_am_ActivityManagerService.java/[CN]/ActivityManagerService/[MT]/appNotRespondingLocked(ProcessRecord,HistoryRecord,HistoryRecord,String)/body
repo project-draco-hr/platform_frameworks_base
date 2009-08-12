@@ -17,8 +17,13 @@ synchronized (mProcessStatsThread) {
   }
   StringBuilder info=mStringBuilder;
   info.setLength(0);
-  info.append("ANR (application not responding) in process: ");
+  info.append("ANR in process: ");
   info.append(app.processName);
+  if (reportedActivity != null && reportedActivity.app != null) {
+    info.append(" (last in ");
+    info.append(reportedActivity.app.processName);
+    info.append(")");
+  }
   if (annotation != null) {
     info.append("\nAnnotation: ");
     info.append(annotation);
@@ -34,10 +39,43 @@ synchronized (mProcessStatsThread) {
   }
  else {
 synchronized (this) {
-      for (int i=mLRUProcesses.size() - 1; i >= 0; i--) {
+      final int[] imppids=new int[3];
+      int i=0;
+      imppids[0]=app.pid;
+      i++;
+      if (reportedActivity != null && reportedActivity.app != null && reportedActivity.app.thread != null && reportedActivity.app.pid != app.pid) {
+        imppids[i]=reportedActivity.app.pid;
+        i++;
+      }
+      imppids[i]=Process.myPid();
+      for (i=0; i < imppids.length && imppids[i] != 0; i++) {
+        Process.sendSignal(imppids[i],Process.SIGNAL_QUIT);
+synchronized (this) {
+          try {
+            wait(200);
+          }
+ catch (          InterruptedException e) {
+          }
+        }
+      }
+      for (i=mLRUProcesses.size() - 1; i >= 0; i--) {
         ProcessRecord r=mLRUProcesses.get(i);
-        if (r.thread != null) {
+        boolean done=false;
+        for (int j=0; j < imppids.length && imppids[j] != 0; j++) {
+          if (imppids[j] == r.pid) {
+            done=true;
+            break;
+          }
+        }
+        if (!done && r.thread != null) {
           Process.sendSignal(r.pid,Process.SIGNAL_QUIT);
+synchronized (this) {
+            try {
+              wait(200);
+            }
+ catch (            InterruptedException e) {
+            }
+          }
         }
       }
     }
