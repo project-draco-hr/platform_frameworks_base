@@ -1,40 +1,33 @@
 {
-  if (DBG)   Log.v(TAG,"Handle CONNECT for " + info.getTypeName());
+  if (DBG)   Log.d(TAG,"Handle CONNECT for " + info.getTypeName());
+  int type=info.getType();
   boolean isFailover=info.isFailover();
-  NetworkStateTracker thisNet=mNetTrackers[info.getType()];
-  NetworkStateTracker deadnet=null;
-  NetworkStateTracker otherNet;
-  if (info.getType() == ConnectivityManager.TYPE_MOBILE) {
-    otherNet=mWifiStateTracker;
-  }
+  NetworkStateTracker thisNet=mNetTrackers[type];
+  if (mNetAttributes[type].isDefault()) {
+    if (DBG)     Log.d(TAG,"connecting to a default network");
+    if (mActiveDefaultNetwork != -1 && mActiveDefaultNetwork != type) {
+      if ((type != mNetworkPreference && mNetAttributes[mActiveDefaultNetwork].mPriority > mNetAttributes[type].mPriority) || mNetworkPreference == mActiveDefaultNetwork) {
+        if (DBG)         Log.v(TAG,"Not broadcasting CONNECT_ACTION " + "to torn down network " + info.getTypeName());
+        teardown(thisNet);
+        return;
+      }
  else {
-    otherNet=mMobileDataStateTracker;
+        NetworkStateTracker otherNet=mNetTrackers[mActiveDefaultNetwork];
+        if (DBG)         Log.v(TAG,"Policy requires " + otherNet.getNetworkInfo().getTypeName() + " teardown");
+        if (!teardown(otherNet)) {
+          Log.e(TAG,"Network declined teardown request");
+          return;
+        }
+        if (isFailover) {
+          otherNet.releaseWakeLock();
+        }
+      }
+    }
+    mActiveDefaultNetwork=type;
   }
-  NetworkInfo wifiInfo=mWifiStateTracker.getNetworkInfo();
-  NetworkInfo mobileInfo=mMobileDataStateTracker.getNetworkInfo();
-  if (wifiInfo.isConnected() && mobileInfo.isConnected()) {
-    if (mNetworkPreference == ConnectivityManager.TYPE_WIFI)     deadnet=mMobileDataStateTracker;
- else     deadnet=mWifiStateTracker;
-  }
-  boolean toredown=false;
   thisNet.setTeardownRequested(false);
-  if (!mTestMode && deadnet != null) {
-    if (DBG)     Log.v(TAG,"Policy requires " + deadnet.getNetworkInfo().getTypeName() + " teardown");
-    toredown=teardown(deadnet);
-    if (DBG && !toredown) {
-      Log.d(TAG,"Network declined teardown request");
-    }
-  }
-  if (!toredown || deadnet.getNetworkInfo().getType() != info.getType()) {
-    mActiveNetwork=thisNet;
-    if (DBG)     Log.v(TAG,"Sending CONNECT bcast for " + info.getTypeName());
-    thisNet.updateNetworkSettings();
-    sendConnectedBroadcast(info);
-    if (isFailover) {
-      otherNet.releaseWakeLock();
-    }
-  }
- else {
-    if (DBG)     Log.v(TAG,"Not broadcasting CONNECT_ACTION to torn " + "down network " + info.getTypeName());
-  }
+  if (DBG)   Log.d(TAG,"Sending CONNECT bcast for " + info.getTypeName());
+  thisNet.updateNetworkSettings();
+  handleConnectivityChange();
+  sendConnectedBroadcast(info);
 }
