@@ -1,19 +1,51 @@
 {
   if (DBG)   Log.v(TAG,"ConnectivityService starting up");
   mContext=context;
-  mNetTrackers=new NetworkStateTracker[2];
-  Handler handler=new MyHandler();
+  mNetTrackers=new NetworkStateTracker[ConnectivityManager.MAX_NETWORK_TYPE + 1];
+  mHandler=new MyHandler();
   mNetworkPreference=getPersistedNetworkPreference();
+  mNetAttributes=new NetworkAttributes[ConnectivityManager.MAX_NETWORK_TYPE + 1];
+  mRadioAttributes=new RadioAttributes[ConnectivityManager.MAX_RADIO_TYPE + 1];
+  String[] naStrings=context.getResources().getStringArray(com.android.internal.R.array.networkAttributes);
+  for (  String a : naStrings) {
+    NetworkAttributes n=new NetworkAttributes(a);
+    mNetAttributes[n.mType]=n;
+  }
+  String[] raStrings=context.getResources().getStringArray(com.android.internal.R.array.radioAttributes);
+  for (  String a : raStrings) {
+    RadioAttributes r=new RadioAttributes(a);
+    mRadioAttributes[r.mType]=r;
+  }
+  mPriorityList=new int[naStrings.length];
+{
+    int priority=0;
+    int nextPos=naStrings.length - 1;
+    while (nextPos > -1) {
+      for (int i=0; i < mNetAttributes.length; i++) {
+        if (mNetAttributes[i].mPriority == priority) {
+          mPriorityList[nextPos--]=i;
+        }
+      }
+      priority++;
+    }
+  }
+  mNetRequestersPids=new ArrayList[ConnectivityManager.MAX_NETWORK_TYPE + 1];
+  for (int i=0; i <= ConnectivityManager.MAX_NETWORK_TYPE; i++) {
+    mNetRequestersPids[i]=new ArrayList();
+  }
+  mFeatureUsers=new ArrayList();
   if (DBG)   Log.v(TAG,"Starting Wifi Service.");
-  mWifiStateTracker=new WifiStateTracker(context,handler);
-  WifiService wifiService=new WifiService(context,mWifiStateTracker);
+  WifiStateTracker wst=new WifiStateTracker(context,mHandler);
+  WifiService wifiService=new WifiService(context,wst);
   ServiceManager.addService(Context.WIFI_SERVICE,wifiService);
-  mNetTrackers[ConnectivityManager.TYPE_WIFI]=mWifiStateTracker;
-  mMobileDataStateTracker=new MobileDataStateTracker(context,handler);
-  mNetTrackers[ConnectivityManager.TYPE_MOBILE]=mMobileDataStateTracker;
-  mActiveNetwork=null;
+  mNetTrackers[ConnectivityManager.TYPE_WIFI]=wst;
+  mNetTrackers[ConnectivityManager.TYPE_MOBILE]=new MobileDataStateTracker(context,mHandler,ConnectivityManager.TYPE_MOBILE,Phone.APN_TYPE_DEFAULT,"MOBILE");
+  mNetTrackers[ConnectivityManager.TYPE_MOBILE_MMS]=new MobileDataStateTracker(context,mHandler,ConnectivityManager.TYPE_MOBILE_MMS,Phone.APN_TYPE_MMS,"MOBILE_MMS");
+  mNetTrackers[ConnectivityManager.TYPE_MOBILE_SUPL]=new MobileDataStateTracker(context,mHandler,ConnectivityManager.TYPE_MOBILE_SUPL,Phone.APN_TYPE_SUPL,"MOBILE_SUPL");
+  mNetTrackers[ConnectivityManager.TYPE_MOBILE_DUN]=new MobileDataStateTracker(context,mHandler,ConnectivityManager.TYPE_MOBILE_DUN,Phone.APN_TYPE_DUN,"MOBILE_DUN");
+  mNetTrackers[ConnectivityManager.TYPE_MOBILE_HIPRI]=new MobileDataStateTracker(context,mHandler,ConnectivityManager.TYPE_MOBILE_HIPRI,Phone.APN_TYPE_HIPRI,"MOBILE_HIPRI");
   mNumDnsEntries=0;
   mTestMode=SystemProperties.get("cm.test.mode").equals("true") && SystemProperties.get("ro.build.type").equals("eng");
   for (  NetworkStateTracker t : mNetTrackers)   t.startMonitoring();
-  mWifiWatchdogService=new WifiWatchdogService(context,mWifiStateTracker);
+  mWifiWatchdogService=new WifiWatchdogService(context,wst);
 }

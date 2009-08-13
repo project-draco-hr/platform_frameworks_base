@@ -1,0 +1,62 @@
+{
+  if (DBG) {
+    Log.d(TAG,"startUsingNetworkFeature for net " + networkType + ": "+ feature);
+  }
+  enforceChangePermission();
+  if (!ConnectivityManager.isNetworkTypeValid(networkType)) {
+    return Phone.APN_REQUEST_FAILED;
+  }
+synchronized (mFeatureUsers) {
+    mFeatureUsers.add(new FeatureUser(networkType,feature,binder));
+  }
+  int usedNetworkType=networkType;
+  if (networkType == ConnectivityManager.TYPE_MOBILE) {
+    if (TextUtils.equals(feature,Phone.FEATURE_ENABLE_MMS)) {
+      usedNetworkType=ConnectivityManager.TYPE_MOBILE_MMS;
+    }
+ else     if (TextUtils.equals(feature,Phone.FEATURE_ENABLE_SUPL)) {
+      usedNetworkType=ConnectivityManager.TYPE_MOBILE_SUPL;
+    }
+ else     if (TextUtils.equals(feature,Phone.FEATURE_ENABLE_DUN)) {
+      usedNetworkType=ConnectivityManager.TYPE_MOBILE_DUN;
+    }
+ else     if (TextUtils.equals(feature,Phone.FEATURE_ENABLE_HIPRI)) {
+      usedNetworkType=ConnectivityManager.TYPE_MOBILE_HIPRI;
+    }
+  }
+  NetworkStateTracker network=mNetTrackers[usedNetworkType];
+  if (network != null) {
+    if (usedNetworkType != networkType) {
+      Integer currentPid=new Integer(getCallingPid());
+      NetworkStateTracker radio=mNetTrackers[networkType];
+      NetworkInfo ni=network.getNetworkInfo();
+      if (ni.isAvailable() == false) {
+        if (DBG)         Log.d(TAG,"special network not available");
+        return Phone.APN_TYPE_NOT_AVAILABLE;
+      }
+      if (!mNetRequestersPids[usedNetworkType].contains(currentPid)) {
+        mNetRequestersPids[usedNetworkType].add(currentPid);
+      }
+      if (ni.isConnectedOrConnecting() == true) {
+        if (ni.isConnected() == true) {
+          handleDnsConfigurationChange();
+          if (DBG)           Log.d(TAG,"special network already active");
+          return Phone.APN_ALREADY_ACTIVE;
+        }
+        if (DBG)         Log.d(TAG,"special network already connecting");
+        return Phone.APN_REQUEST_STARTED;
+      }
+      if (mHandler.hasMessages(NetworkStateTracker.EVENT_RESTORE_DEFAULT_NETWORK,radio) || radio.getNetworkInfo().isConnectedOrConnecting()) {
+        mHandler.removeMessages(NetworkStateTracker.EVENT_RESTORE_DEFAULT_NETWORK,radio);
+        mHandler.sendMessageDelayed(mHandler.obtainMessage(NetworkStateTracker.EVENT_RESTORE_DEFAULT_NETWORK,radio),getRestoreDefaultNetworkDelay());
+      }
+      if (DBG)       Log.d(TAG,"reconnecting to special network");
+      network.reconnect();
+      return Phone.APN_REQUEST_STARTED;
+    }
+ else {
+      return network.startUsingNetworkFeature(feature,getCallingPid(),getCallingUid());
+    }
+  }
+  return Phone.APN_TYPE_NOT_AVAILABLE;
+}

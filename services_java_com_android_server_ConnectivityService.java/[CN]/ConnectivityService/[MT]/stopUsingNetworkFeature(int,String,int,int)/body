@@ -1,0 +1,55 @@
+{
+  if (DBG) {
+    Log.d(TAG,"stopUsingNetworkFeature for net " + networkType + ": "+ feature);
+  }
+  enforceChangePermission();
+  if (!ConnectivityManager.isNetworkTypeValid(networkType)) {
+    return -1;
+  }
+synchronized (mFeatureUsers) {
+    for (int i=0; i < mFeatureUsers.size(); i++) {
+      FeatureUser u=(FeatureUser)mFeatureUsers.get(i);
+      if (uid == u.mUid && pid == u.mPid && networkType == u.mNetworkType && TextUtils.equals(feature,u.mFeature)) {
+        u.unlinkDeathRecipient();
+        mFeatureUsers.remove(i);
+        break;
+      }
+    }
+  }
+  int usedNetworkType=networkType;
+  if (networkType == ConnectivityManager.TYPE_MOBILE) {
+    if (TextUtils.equals(feature,Phone.FEATURE_ENABLE_MMS)) {
+      usedNetworkType=ConnectivityManager.TYPE_MOBILE_MMS;
+    }
+ else     if (TextUtils.equals(feature,Phone.FEATURE_ENABLE_SUPL)) {
+      usedNetworkType=ConnectivityManager.TYPE_MOBILE_SUPL;
+    }
+ else     if (TextUtils.equals(feature,Phone.FEATURE_ENABLE_DUN)) {
+      usedNetworkType=ConnectivityManager.TYPE_MOBILE_DUN;
+    }
+ else     if (TextUtils.equals(feature,Phone.FEATURE_ENABLE_HIPRI)) {
+      usedNetworkType=ConnectivityManager.TYPE_MOBILE_HIPRI;
+    }
+  }
+  NetworkStateTracker tracker=mNetTrackers[usedNetworkType];
+  if (usedNetworkType != networkType) {
+    Integer currentPid=new Integer(pid);
+    if (mNetRequestersPids[usedNetworkType].remove(currentPid)) {
+      reassessPidDns(pid,true);
+    }
+    if (mNetRequestersPids[usedNetworkType].size() != 0) {
+      if (DBG)       Log.d(TAG,"not tearing down special network - " + "others still using it");
+      return 1;
+    }
+    tracker.teardown();
+    NetworkStateTracker radio=mNetTrackers[networkType];
+    if (mHandler.hasMessages(NetworkStateTracker.EVENT_RESTORE_DEFAULT_NETWORK,radio)) {
+      mHandler.removeMessages(NetworkStateTracker.EVENT_RESTORE_DEFAULT_NETWORK,radio);
+      radio.reconnect();
+    }
+    return 1;
+  }
+ else {
+    return tracker.stopUsingNetworkFeature(feature,pid,uid);
+  }
+}

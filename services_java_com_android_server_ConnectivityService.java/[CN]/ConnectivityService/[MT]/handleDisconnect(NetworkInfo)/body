@@ -1,27 +1,14 @@
 {
   if (DBG)   Log.v(TAG,"Handle DISCONNECT for " + info.getTypeName());
-  mNetTrackers[info.getType()].setTeardownRequested(false);
-  if (mActiveNetwork == null || info.getType() != mActiveNetwork.getNetworkInfo().getType())   return;
-  NetworkStateTracker newNet;
-  if (info.getType() == ConnectivityManager.TYPE_MOBILE) {
-    newNet=mWifiStateTracker;
-  }
- else {
-    newNet=mMobileDataStateTracker;
-  }
-  NetworkInfo switchTo=null;
-  if (newNet.isAvailable()) {
-    mActiveNetwork=newNet;
-    switchTo=newNet.getNetworkInfo();
-    switchTo.setFailover(true);
-    if (!switchTo.isConnectedOrConnecting()) {
-      newNet.reconnect();
+  int prevNetType=info.getType();
+  mNetTrackers[prevNetType].setTeardownRequested(false);
+  if (!mNetAttributes[prevNetType].isDefault()) {
+    List pids=mNetRequestersPids[prevNetType];
+    for (int i=0; i < pids.size(); i++) {
+      Integer pid=(Integer)pids.get(i);
+      reassessPidDns(pid.intValue(),false);
     }
   }
- else {
-    newNet.reconnect();
-  }
-  boolean otherNetworkConnected=false;
   Intent intent=new Intent(ConnectivityManager.CONNECTIVITY_ACTION);
   intent.putExtra(ConnectivityManager.EXTRA_NETWORK_INFO,info);
   if (info.isFailover()) {
@@ -34,22 +21,57 @@
   if (info.getExtraInfo() != null) {
     intent.putExtra(ConnectivityManager.EXTRA_EXTRA_INFO,info.getExtraInfo());
   }
-  if (switchTo != null) {
-    otherNetworkConnected=switchTo.isConnected();
-    if (DBG) {
-      if (otherNetworkConnected) {
-        Log.v(TAG,"Switching to already connected " + switchTo.getTypeName());
+  NetworkStateTracker newNet=null;
+  if (mNetAttributes[prevNetType].isDefault()) {
+    if (DBG)     Log.d(TAG,"disconnecting a default network");
+    if (mActiveDefaultNetwork == prevNetType) {
+      mActiveDefaultNetwork=-1;
+    }
+    int newType=-1;
+    int newPriority=-1;
+    for (int checkType=0; checkType <= ConnectivityManager.MAX_NETWORK_TYPE; checkType++) {
+      if (checkType == prevNetType) {
+        continue;
       }
- else {
-        Log.v(TAG,"Attempting to switch to " + switchTo.getTypeName());
+      if (mNetAttributes[checkType].isDefault()) {
+        if (checkType == mNetworkPreference) {
+          newType=checkType;
+          break;
+        }
+        if (mRadioAttributes[mNetAttributes[checkType].mRadio].mPriority > newPriority) {
+          newType=checkType;
+          newPriority=mRadioAttributes[mNetAttributes[newType].mRadio].mPriority;
+        }
       }
     }
-    intent.putExtra(ConnectivityManager.EXTRA_OTHER_NETWORK_INFO,switchTo);
-  }
+    if (newType != -1) {
+      newNet=mNetTrackers[newType];
+      if (newNet.isAvailable()) {
+        NetworkInfo switchTo=newNet.getNetworkInfo();
+        switchTo.setFailover(true);
+        if (!switchTo.isConnectedOrConnecting()) {
+          newNet.reconnect();
+        }
+        if (DBG) {
+          if (switchTo.isConnected()) {
+            Log.v(TAG,"Switching to already connected " + switchTo.getTypeName());
+          }
  else {
-    intent.putExtra(ConnectivityManager.EXTRA_NO_CONNECTIVITY,true);
+            Log.v(TAG,"Attempting to switch to " + switchTo.getTypeName());
+          }
+        }
+        intent.putExtra(ConnectivityManager.EXTRA_OTHER_NETWORK_INFO,switchTo);
+      }
+ else {
+        newNet.reconnect();
+      }
+    }
+ else {
+      intent.putExtra(ConnectivityManager.EXTRA_NO_CONNECTIVITY,true);
+    }
   }
-  if (DBG)   Log.v(TAG,"Sending DISCONNECT bcast for " + info.getTypeName() + (switchTo == null ? "" : " other=" + switchTo.getTypeName()));
+  handleConnectivityChange();
+  if (DBG)   Log.v(TAG,"Sending DISCONNECT bcast for " + info.getTypeName() + (newNet == null || !newNet.isAvailable() ? "" : " other=" + newNet.getNetworkInfo().getTypeName()));
   mContext.sendStickyBroadcast(intent);
-  if (switchTo != null && otherNetworkConnected)   sendConnectedBroadcast(switchTo);
+  if (newNet != null && newNet.getNetworkInfo().isConnected())   sendConnectedBroadcast(newNet.getNetworkInfo());
 }
