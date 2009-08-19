@@ -1,37 +1,84 @@
 {
   boolean changed=false;
+  mUpcomingWallpaperTarget=null;
   final ArrayList localmWindows=mWindows;
   int N=localmWindows.size();
   WindowState w=null;
+  WindowState foundW=null;
+  int foundI=0;
+  AppWindowToken topToken=null;
+  AppWindowToken behindToken=null;
   int i=N;
-  boolean visible=false;
   while (i > 0) {
     i--;
     w=(WindowState)localmWindows.get(i);
+    if (topToken != null) {
+      if (w.mAppToken == topToken) {
+        continue;
+      }
+      if (w.mAppToken != null) {
+        if (behindToken == null) {
+          if (w.mAppToken.hidden && w.mAppToken.animation == null) {
+            continue;
+          }
+          behindToken=w.mAppToken;
+        }
+        if (w.mAppToken != behindToken) {
+          break;
+        }
+      }
+    }
     if ((w.mAttrs.flags & FLAG_SHOW_WALLPAPER) != 0 && w.isReadyForDisplay() && !w.mDrawPending && !w.mCommitDrawPending) {
-      visible=true;
+      if (behindToken != null && w.mAppToken == behindToken) {
+        if (mWallpaperTarget == w || mWallpaperTarget == foundW) {
+          if (DEBUG_WALLPAPER)           Log.v(TAG,"Switching wallpaper activities: cur#" + i + "="+ w+ " upcoming#"+ foundI+ "="+ foundW);
+          mUpcomingWallpaperTarget=foundW;
+          foundW=w;
+          foundI=i;
+          break;
+        }
+      }
+      foundW=w;
+      foundI=i;
+      if (w.mAppToken != null && w.mAppToken.animation != null) {
+        topToken=w.mAppToken;
+        continue;
+      }
       break;
     }
   }
-  if (!visible)   w=null;
-  if (DEBUG_WALLPAPER && mWallpaperTarget != w) {
-    Log.v(TAG,"New wallpaper target: " + w);
-  }
-  mWallpaperTarget=w;
-  if (visible) {
-    visible=!w.mObscured;
-    if (DEBUG_WALLPAPER)     Log.v(TAG,"Wallpaper visibility: " + visible);
-    mWallpaperAnimLayerAdjustment=w.mAppToken != null ? w.mAppToken.animLayerAdjustment : 0;
-    while (i > 0) {
-      WindowState wb=(WindowState)localmWindows.get(i - 1);
-      if (wb.mAttachedWindow != w && (wb.mAttrs.type != TYPE_APPLICATION_STARTING || wb.mToken != w.mToken)) {
-        break;
-      }
-      w=wb;
-      i--;
+  if (mNextAppTransition != WindowManagerPolicy.TRANSIT_NONE) {
+    if (mWallpaperTarget != null && mWallpaperTarget.mAppToken != null) {
+      return false;
+    }
+    if (foundW != null && foundW.mAppToken != null) {
+      return false;
+    }
+    if (mUpcomingWallpaperTarget != null && mUpcomingWallpaperTarget.mAppToken != null) {
+      return false;
     }
   }
-  w=i > 0 ? (WindowState)localmWindows.get(i - 1) : null;
+  if (mWallpaperTarget != foundW) {
+    mWallpaperTarget=foundW;
+    if (DEBUG_WALLPAPER) {
+      Log.v(TAG,"New wallpaper target: " + foundW);
+    }
+  }
+  boolean visible=foundW != null;
+  if (visible) {
+    visible=!foundW.mObscured;
+    if (DEBUG_WALLPAPER)     Log.v(TAG,"Wallpaper visibility: " + visible);
+    mWallpaperAnimLayerAdjustment=(mUpcomingWallpaperTarget == null && foundW.mAppToken != null) ? foundW.mAppToken.animLayerAdjustment : 0;
+    while (foundI > 0) {
+      WindowState wb=(WindowState)localmWindows.get(foundI - 1);
+      if (wb.mAttachedWindow != foundW && (wb.mAttrs.type != TYPE_APPLICATION_STARTING || wb.mToken != foundW.mToken)) {
+        break;
+      }
+      foundW=wb;
+      foundI--;
+    }
+  }
+  foundW=foundI > 0 ? (WindowState)localmWindows.get(foundI - 1) : null;
   final int dw=mDisplay.getWidth();
   final int dh=mDisplay.getHeight();
   int curTokenIndex=mWallpaperTokens.size();
@@ -56,20 +103,20 @@
       }
       wallpaper.mAnimLayer=wallpaper.mLayer + mWallpaperAnimLayerAdjustment;
       if (DEBUG_LAYERS || DEBUG_WALLPAPER)       Log.v(TAG,"Wallpaper win " + wallpaper + " anim layer: "+ wallpaper.mAnimLayer);
-      if (wallpaper == w) {
-        i--;
-        w=i > 0 ? (WindowState)localmWindows.get(i - 1) : null;
+      if (wallpaper == foundW) {
+        foundI--;
+        foundW=foundI > 0 ? (WindowState)localmWindows.get(foundI - 1) : null;
         continue;
       }
       int oldIndex=localmWindows.indexOf(wallpaper);
       if (oldIndex >= 0) {
         localmWindows.remove(oldIndex);
-        if (oldIndex < i) {
-          i--;
+        if (oldIndex < foundI) {
+          foundI--;
         }
       }
-      if (DEBUG_WALLPAPER)       Log.v(TAG,"Moving wallpaper " + wallpaper + " from "+ oldIndex+ " to "+ i);
-      localmWindows.add(i,wallpaper);
+      if (DEBUG_WALLPAPER)       Log.v(TAG,"Moving wallpaper " + wallpaper + " from "+ oldIndex+ " to "+ foundI);
+      localmWindows.add(foundI,wallpaper);
       changed=true;
     }
   }
