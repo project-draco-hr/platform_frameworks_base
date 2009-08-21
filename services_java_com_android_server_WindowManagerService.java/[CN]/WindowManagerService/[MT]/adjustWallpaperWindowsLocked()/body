@@ -1,47 +1,33 @@
 {
   boolean changed=false;
-  mUpcomingWallpaperTarget=null;
+  final int dw=mDisplay.getWidth();
+  final int dh=mDisplay.getHeight();
   final ArrayList localmWindows=mWindows;
   int N=localmWindows.size();
   WindowState w=null;
   WindowState foundW=null;
   int foundI=0;
-  AppWindowToken topToken=null;
-  AppWindowToken behindToken=null;
   int i=N;
   while (i > 0) {
     i--;
     w=(WindowState)localmWindows.get(i);
-    if (topToken != null) {
-      if (w.mAppToken == topToken) {
+    if (w.mAppToken != null) {
+      if (w.mAppToken.hidden && w.mAppToken.animation == null) {
+        if (DEBUG_WALLPAPER)         Log.v(TAG,"Skipping hidden or animating token: " + w);
         continue;
       }
-      if (w.mAppToken != null) {
-        if (behindToken == null) {
-          if (w.mAppToken.hidden && w.mAppToken.animation == null) {
-            continue;
-          }
-          behindToken=w.mAppToken;
-        }
-        if (w.mAppToken != behindToken) {
-          break;
-        }
+      if (!w.mAppToken.appFullscreen) {
+        if (DEBUG_WALLPAPER)         Log.v(TAG,"Skipping non-fullscreen token: " + w);
+        continue;
       }
     }
+    if (DEBUG_WALLPAPER)     Log.v(TAG,"Win " + w + ": readyfordisplay="+ w.isReadyForDisplay()+ " drawpending="+ w.mDrawPending+ " commitdrawpending="+ w.mCommitDrawPending);
     if ((w.mAttrs.flags & FLAG_SHOW_WALLPAPER) != 0 && w.isReadyForDisplay() && !w.mDrawPending && !w.mCommitDrawPending) {
-      if (behindToken != null && w.mAppToken == behindToken) {
-        if (mWallpaperTarget == w || mWallpaperTarget == foundW) {
-          if (DEBUG_WALLPAPER)           Log.v(TAG,"Switching wallpaper activities: cur#" + i + "="+ w+ " upcoming#"+ foundI+ "="+ foundW);
-          mUpcomingWallpaperTarget=foundW;
-          foundW=w;
-          foundI=i;
-          break;
-        }
-      }
+      if (DEBUG_WALLPAPER)       Log.v(TAG,"Found wallpaper activity: #" + i + "="+ w);
       foundW=w;
       foundI=i;
-      if (w.mAppToken != null && w.mAppToken.animation != null) {
-        topToken=w.mAppToken;
+      if (w == mWallpaperTarget && w.mAppToken != null && w.mAppToken.animation != null) {
+        if (DEBUG_WALLPAPER)         Log.v(TAG,"Win " + w + ": token animating, looking behind.");
         continue;
       }
       break;
@@ -49,26 +35,75 @@
   }
   if (mNextAppTransition != WindowManagerPolicy.TRANSIT_NONE) {
     if (mWallpaperTarget != null && mWallpaperTarget.mAppToken != null) {
+      if (DEBUG_WALLPAPER)       Log.v(TAG,"Wallpaper not changing: waiting for app anim in current target");
       return false;
     }
     if (foundW != null && foundW.mAppToken != null) {
-      return false;
-    }
-    if (mUpcomingWallpaperTarget != null && mUpcomingWallpaperTarget.mAppToken != null) {
+      if (DEBUG_WALLPAPER)       Log.v(TAG,"Wallpaper not changing: waiting for app anim in found target");
       return false;
     }
   }
   if (mWallpaperTarget != foundW) {
-    mWallpaperTarget=foundW;
     if (DEBUG_WALLPAPER) {
-      Log.v(TAG,"New wallpaper target: " + foundW);
+      Log.v(TAG,"New wallpaper target: " + foundW + " oldTarget: "+ mWallpaperTarget);
+    }
+    mLowerWallpaperTarget=null;
+    mUpperWallpaperTarget=null;
+    WindowState oldW=mWallpaperTarget;
+    mWallpaperTarget=foundW;
+    if (foundW != null && foundW.mAppToken != null && oldW != null && oldW.mAppToken != null) {
+      if (DEBUG_WALLPAPER) {
+        Log.v(TAG,"New animation: " + foundW.mAppToken.animation + " old animation: "+ oldW.mAppToken.animation);
+      }
+      if (foundW.mAppToken.animation != null && oldW.mAppToken.animation != null) {
+        int oldI=localmWindows.indexOf(oldW);
+        if (DEBUG_WALLPAPER) {
+          Log.v(TAG,"New i: " + foundI + " old i: "+ oldI);
+        }
+        if (oldI >= 0) {
+          if (DEBUG_WALLPAPER) {
+            Log.v(TAG,"Animating wallpapers: old#" + oldI + "="+ oldW+ "; new#"+ foundI+ "="+ foundW);
+          }
+          if (foundW.mAppToken.hiddenRequested) {
+            if (DEBUG_WALLPAPER) {
+              Log.v(TAG,"Old wallpaper still the target.");
+            }
+            mWallpaperTarget=oldW;
+          }
+          if (foundI > oldI) {
+            if (DEBUG_WALLPAPER) {
+              Log.v(TAG,"Found target above old target.");
+            }
+            mUpperWallpaperTarget=foundW;
+            mLowerWallpaperTarget=oldW;
+            foundW=oldW;
+            foundI=oldI;
+          }
+ else {
+            if (DEBUG_WALLPAPER) {
+              Log.v(TAG,"Found target below old target.");
+            }
+            mUpperWallpaperTarget=oldW;
+            mLowerWallpaperTarget=foundW;
+          }
+        }
+      }
+    }
+  }
+ else {
+    if (mLowerWallpaperTarget == null || mLowerWallpaperTarget.mAppToken.animation == null || mUpperWallpaperTarget == null || mUpperWallpaperTarget.mAppToken.animation == null) {
+      if (DEBUG_WALLPAPER) {
+        Log.v(TAG,"No longer animating wallpaper targets!");
+      }
+      mLowerWallpaperTarget=null;
+      mUpperWallpaperTarget=null;
     }
   }
   boolean visible=foundW != null;
   if (visible) {
     visible=!foundW.mObscured;
     if (DEBUG_WALLPAPER)     Log.v(TAG,"Wallpaper visibility: " + visible);
-    mWallpaperAnimLayerAdjustment=(mUpcomingWallpaperTarget == null && foundW.mAppToken != null) ? foundW.mAppToken.animLayerAdjustment : 0;
+    mWallpaperAnimLayerAdjustment=(mLowerWallpaperTarget == null && foundW.mAppToken != null) ? foundW.mAppToken.animLayerAdjustment : 0;
     while (foundI > 0) {
       WindowState wb=(WindowState)localmWindows.get(foundI - 1);
       if (wb.mAttachedWindow != foundW && (wb.mAttrs.type != TYPE_APPLICATION_STARTING || wb.mToken != foundW.mToken)) {
@@ -79,8 +114,6 @@
     }
   }
   foundW=foundI > 0 ? (WindowState)localmWindows.get(foundI - 1) : null;
-  final int dw=mDisplay.getWidth();
-  final int dh=mDisplay.getHeight();
   int curTokenIndex=mWallpaperTokens.size();
   while (curTokenIndex > 0) {
     curTokenIndex--;
