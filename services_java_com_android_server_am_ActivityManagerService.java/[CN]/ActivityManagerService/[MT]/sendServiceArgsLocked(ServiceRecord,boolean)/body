@@ -1,33 +1,50 @@
 {
-  final int N=r.startArgs.size();
+  final int N=r.pendingStarts.size();
   if (N == 0) {
     return;
   }
-  final int BASEID=r.lastStartId - N + 1;
   int i=0;
   while (i < N) {
     try {
-      Intent args=r.startArgs.get(i);
-      if (DEBUG_SERVICE)       Log.v(TAG,"Sending arguments to service: " + r.name + " "+ r.intent+ " args="+ args);
+      ServiceRecord.StartItem si=r.pendingStarts.get(i);
+      if (DEBUG_SERVICE)       Log.v(TAG,"Sending arguments to service: " + r.name + " "+ r.intent+ " args="+ si.intent);
+      if (si.intent == null && N > 0) {
+        i++;
+        continue;
+      }
       bumpServiceExecutingLocked(r);
       if (!oomAdjusted) {
         oomAdjusted=true;
         updateOomAdjLocked(r.app);
       }
-      r.app.thread.scheduleServiceArgs(r,BASEID + i,args);
+      int flags=0;
+      if (si.deliveryCount > 0) {
+        flags|=Service.START_FLAG_RETRY;
+      }
+      if (si.doneExecutingCount > 0) {
+        flags|=Service.START_FLAG_REDELIVERY;
+      }
+      r.app.thread.scheduleServiceArgs(r,si.id,flags,si.intent);
+      si.deliveredTime=SystemClock.uptimeMillis();
+      r.deliveredStarts.add(si);
+      si.deliveryCount++;
       i++;
     }
- catch (    Exception e) {
+ catch (    RemoteException e) {
+      break;
+    }
+catch (    Exception e) {
+      Log.w(TAG,"Unexpected exception",e);
       break;
     }
   }
   if (i == N) {
-    r.startArgs.clear();
+    r.pendingStarts.clear();
   }
  else {
     while (i > 0) {
-      r.startArgs.remove(0);
       i--;
+      r.pendingStarts.remove(i);
     }
   }
 }
