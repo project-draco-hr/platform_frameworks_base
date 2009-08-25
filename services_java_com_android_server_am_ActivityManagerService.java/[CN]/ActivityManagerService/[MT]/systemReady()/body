@@ -7,9 +7,75 @@ synchronized (this) {
     if (mSystemReady) {
       return;
     }
+    if (!mDidUpdate) {
+      if (mWaitingUpdate) {
+        return;
+      }
+      Intent intent=new Intent(Intent.ACTION_PRE_BOOT_COMPLETED);
+      List<ResolveInfo> ris=null;
+      try {
+        ris=ActivityThread.getPackageManager().queryIntentReceivers(intent,null,0);
+      }
+ catch (      RemoteException e) {
+      }
+      if (ris != null) {
+        for (int i=ris.size() - 1; i >= 0; i--) {
+          if ((ris.get(i).activityInfo.applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) == 0) {
+            ris.remove(i);
+          }
+        }
+        intent.addFlags(Intent.FLAG_RECEIVER_BOOT_UPGRADE);
+        for (int i=0; i < ris.size(); i++) {
+          ActivityInfo ai=ris.get(i).activityInfo;
+          intent.setComponent(new ComponentName(ai.packageName,ai.name));
+          IIntentReceiver finisher=null;
+          if (i == 0) {
+            finisher=new IIntentReceiver.Stub(){
+              public void performReceive(              Intent intent,              int resultCode,              String data,              Bundle extras,              boolean ordered) throws RemoteException {
+synchronized (ActivityManagerService.this) {
+                  mDidUpdate=true;
+                }
+                systemReady();
+              }
+            }
+;
+          }
+          Log.i(TAG,"Sending system update to: " + intent.getComponent());
+          broadcastIntentLocked(null,null,intent,null,finisher,0,null,null,null,true,false,MY_PID,Process.SYSTEM_UID);
+          if (i == 0) {
+            mWaitingUpdate=true;
+          }
+        }
+      }
+      if (mWaitingUpdate) {
+        return;
+      }
+      mDidUpdate=true;
+    }
     mSystemReady=true;
     if (!mStartRunning) {
       return;
+    }
+  }
+  ArrayList<ProcessRecord> procsToKill=null;
+synchronized (mPidsSelfLocked) {
+    for (int i=mPidsSelfLocked.size() - 1; i >= 0; i--) {
+      ProcessRecord proc=mPidsSelfLocked.valueAt(i);
+      if (!isAllowedWhileBooting(proc.info)) {
+        if (procsToKill == null) {
+          procsToKill=new ArrayList<ProcessRecord>();
+        }
+        procsToKill.add(proc);
+      }
+    }
+  }
+  if (procsToKill != null) {
+synchronized (this) {
+      for (int i=procsToKill.size() - 1; i >= 0; i--) {
+        ProcessRecord proc=procsToKill.get(i);
+        Log.i(TAG,"Removing system update proc: " + proc);
+        removeProcessLocked(proc,true);
+      }
     }
   }
   if (Config.LOGD)   Log.d(TAG,"Start running!");
@@ -63,6 +129,7 @@ synchronized (this) {
  catch (      RemoteException ex) {
       }
     }
+    mBooting=true;
     try {
       if (ActivityThread.getPackageManager().hasSystemUidErrors()) {
         Message msg=Message.obtain();
@@ -72,7 +139,6 @@ synchronized (this) {
     }
  catch (    RemoteException e) {
     }
-    mBooting=true;
     resumeTopActivityLocked(null);
   }
 }
