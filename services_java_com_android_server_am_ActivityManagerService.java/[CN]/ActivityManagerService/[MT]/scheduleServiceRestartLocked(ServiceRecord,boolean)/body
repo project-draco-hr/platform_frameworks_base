@@ -1,0 +1,57 @@
+{
+  boolean canceled=false;
+  long minDuration=SERVICE_RESTART_DURATION;
+  long resetTime=minDuration * 2 * 2* 2;
+  final int N=r.deliveredStarts.size();
+  if (N > 0) {
+    for (int i=N - 1; i >= 0; i--) {
+      ServiceRecord.StartItem si=r.deliveredStarts.get(i);
+      if (si.intent == null) {
+      }
+ else       if (!allowCancel || (si.deliveryCount < ServiceRecord.MAX_DELIVERY_COUNT && si.doneExecutingCount < ServiceRecord.MAX_DONE_EXECUTING_COUNT)) {
+        r.pendingStarts.add(0,si);
+        long dur=SystemClock.uptimeMillis() - si.deliveredTime;
+        dur*=2;
+        if (minDuration < dur)         minDuration=dur;
+        if (resetTime < dur)         resetTime=dur;
+      }
+ else {
+        Log.w(TAG,"Canceling start item " + si.intent + " in service "+ r.name);
+        canceled=true;
+      }
+    }
+    r.deliveredStarts.clear();
+  }
+  r.totalRestartCount++;
+  if (r.restartDelay == 0) {
+    r.restartCount++;
+    r.restartDelay=minDuration;
+  }
+ else {
+    long now=SystemClock.uptimeMillis();
+    if (now > (r.restartTime + resetTime)) {
+      r.restartCount=1;
+      r.restartDelay=minDuration;
+    }
+ else {
+      r.restartDelay*=4;
+      if (r.restartDelay < minDuration) {
+        r.restartDelay=minDuration;
+      }
+    }
+  }
+  if (!mRestartingServices.contains(r)) {
+    mRestartingServices.add(r);
+  }
+  r.cancelNotification();
+  mHandler.removeCallbacks(r.restarter);
+  mHandler.postDelayed(r.restarter,r.restartDelay);
+  r.nextRestartTime=SystemClock.uptimeMillis() + r.restartDelay;
+  Log.w(TAG,"Scheduling restart of crashed service " + r.shortName + " in "+ r.restartDelay+ "ms");
+  EventLog.writeEvent(LOG_AM_SCHEDULE_SERVICE_RESTART,r.shortName,r.restartDelay);
+  Message msg=Message.obtain();
+  msg.what=SERVICE_ERROR_MSG;
+  msg.obj=r;
+  mHandler.sendMessage(msg);
+  return canceled;
+}
