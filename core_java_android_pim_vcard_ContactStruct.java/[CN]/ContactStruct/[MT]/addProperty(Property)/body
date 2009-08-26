@@ -6,38 +6,29 @@
   if (propValueList.size() == 0) {
     return;
   }
-  String propValue=listToString(propValueList);
+  final String propValue=listToString(propValueList).trim();
   if (propName.equals("VERSION")) {
   }
  else   if (propName.equals("FN")) {
-    mTmpFullName=propValue;
+    mFullName=propValue;
   }
- else   if (propName.equals("NAME") && mTmpFullName == null) {
-    mTmpFullName=propValue;
+ else   if (propName.equals("NAME") && mFullName == null) {
+    mFullName=propValue;
   }
  else   if (propName.equals("N")) {
-    mTmpNameFromNProperty=getNameFromNProperty(propValueList,mNameOrderType);
+    handleNProperty(propValueList);
   }
  else   if (propName.equals("SORT-STRING")) {
-    mPhoneticName=propValue;
+    mPhoneticFullName=propValue;
+  }
+ else   if (propName.equals("NICKNAME") || propName.equals("X-NICKNAME")) {
+    addNickName(propValue);
   }
  else   if (propName.equals("SOUND")) {
-    if ("X-IRMC-N".equals(paramMap.get("TYPE")) && mPhoneticName == null) {
-      StringBuilder builder=new StringBuilder();
-      String value=propValue;
-      int length=value.length();
-      for (int i=0; i < length; i++) {
-        char ch=value.charAt(i);
-        if (ch != ';') {
-          builder.append(ch);
-        }
-      }
-      if (builder.length() > 0) {
-        mPhoneticName=builder.toString();
-      }
+    if (Constants.ATTR_TYPE_X_IRMC_N.equals(paramMap.get(Constants.ATTR_TYPE))) {
+      handlePhoneticNameFromSound(propValueList);
     }
  else {
-      addExtension(propName,paramMap,propValueList);
     }
   }
  else   if (propName.equals("ADR")) {
@@ -51,92 +42,89 @@
     if (valuesAreAllEmpty) {
       return;
     }
-    int kind=Contacts.KIND_POSTAL;
     int type=-1;
     String label="";
     boolean isPrimary=false;
-    Collection<String> typeCollection=paramMap.get("TYPE");
+    Collection<String> typeCollection=paramMap.get(Constants.ATTR_TYPE);
     if (typeCollection != null) {
       for (      String typeString : typeCollection) {
-        if (typeString.equals("PREF") && !mPrefIsSet_Address) {
+        typeString=typeString.toUpperCase();
+        if (typeString.equals(Constants.ATTR_TYPE_PREF) && !mPrefIsSet_Address) {
           mPrefIsSet_Address=true;
           isPrimary=true;
         }
- else         if (typeString.equalsIgnoreCase("HOME")) {
-          type=Contacts.ContactMethodsColumns.TYPE_HOME;
+ else         if (typeString.equals(Constants.ATTR_TYPE_HOME)) {
+          type=StructuredPostal.TYPE_HOME;
           label="";
         }
- else         if (typeString.equalsIgnoreCase("WORK") || typeString.equalsIgnoreCase("COMPANY")) {
-          type=Contacts.ContactMethodsColumns.TYPE_WORK;
+ else         if (typeString.equals(Constants.ATTR_TYPE_WORK) || typeString.equalsIgnoreCase("COMPANY")) {
+          type=StructuredPostal.TYPE_WORK;
           label="";
         }
- else         if (typeString.equalsIgnoreCase("POSTAL")) {
-          kind=Contacts.KIND_POSTAL;
+ else         if (typeString.equals("PARCEL") || typeString.equals("DOM") || typeString.equals("INTL")) {
         }
- else         if (typeString.equalsIgnoreCase("PARCEL") || typeString.equalsIgnoreCase("DOM") || typeString.equalsIgnoreCase("INTL")) {
-        }
- else         if (typeString.toUpperCase().startsWith("X-") && type < 0) {
-          type=Contacts.ContactMethodsColumns.TYPE_CUSTOM;
-          label=typeString.substring(2);
-        }
- else         if (type < 0) {
-          type=Contacts.ContactMethodsColumns.TYPE_CUSTOM;
+ else {
+          if (typeString.startsWith("X-") && type < 0) {
+            typeString=typeString.substring(2);
+          }
+          type=StructuredPostal.TYPE_CUSTOM;
           label=typeString;
         }
       }
     }
     if (type < 0) {
-      type=Contacts.ContactMethodsColumns.TYPE_HOME;
+      type=StructuredPostal.TYPE_HOME;
     }
-    String address;
-    int size=propValueList.size();
-    if (size > 1) {
-      StringBuilder builder=new StringBuilder();
-      boolean builderIsEmpty=true;
-      if (Locale.getDefault().getCountry().equals(Locale.JAPAN.getCountry())) {
-        for (int i=size - 1; i >= 0; i--) {
-          String addressPart=propValueList.get(i);
-          if (addressPart.length() > 0) {
-            if (!builderIsEmpty) {
-              builder.append(' ');
-            }
-            builder.append(addressPart);
-            builderIsEmpty=false;
-          }
-        }
-      }
- else {
-        for (int i=0; i < size; i++) {
-          String addressPart=propValueList.get(i);
-          if (addressPart.length() > 0) {
-            if (!builderIsEmpty) {
-              builder.append(' ');
-            }
-            builder.append(addressPart);
-            builderIsEmpty=false;
-          }
-        }
-      }
-      address=builder.toString().trim();
-    }
- else {
-      address=propValue;
-    }
-    addContactmethod(kind,type,address,label,isPrimary);
+    addPostal(type,propValueList,label,isPrimary);
   }
- else   if (propName.equals("ORG")) {
-    int type=Contacts.OrganizationColumns.TYPE_WORK;
+ else   if (propName.equals("EMAIL")) {
+    int type=-1;
+    String label=null;
     boolean isPrimary=false;
-    Collection<String> typeCollection=paramMap.get("TYPE");
+    Collection<String> typeCollection=paramMap.get(Constants.ATTR_TYPE);
     if (typeCollection != null) {
       for (      String typeString : typeCollection) {
-        if (typeString.equals("PREF") && !mPrefIsSet_Organization) {
+        typeString=typeString.toUpperCase();
+        if (typeString.equals(Constants.ATTR_TYPE_PREF) && !mPrefIsSet_Email) {
+          mPrefIsSet_Email=true;
+          isPrimary=true;
+        }
+ else         if (typeString.equals(Constants.ATTR_TYPE_HOME)) {
+          type=Email.TYPE_HOME;
+        }
+ else         if (typeString.equals(Constants.ATTR_TYPE_WORK)) {
+          type=Email.TYPE_WORK;
+        }
+ else         if (typeString.equals(Constants.ATTR_TYPE_CELL)) {
+          type=Email.TYPE_CUSTOM;
+          label=android.provider.Contacts.ContactMethodsColumns.MOBILE_EMAIL_TYPE_NAME;
+        }
+ else {
+          if (typeString.startsWith("X-") && type < 0) {
+            typeString=typeString.substring(2);
+          }
+          type=Email.TYPE_CUSTOM;
+          label=typeString;
+        }
+      }
+    }
+    if (type < 0) {
+      type=Email.TYPE_OTHER;
+    }
+    addEmail(type,propValue,label,isPrimary);
+  }
+ else   if (propName.equals("ORG")) {
+    int type=Organization.TYPE_WORK;
+    boolean isPrimary=false;
+    Collection<String> typeCollection=paramMap.get(Constants.ATTR_TYPE);
+    if (typeCollection != null) {
+      for (      String typeString : typeCollection) {
+        if (typeString.equals(Constants.ATTR_TYPE_PREF) && !mPrefIsSet_Organization) {
           mPrefIsSet_Organization=true;
           isPrimary=true;
         }
       }
     }
-    int size=propValueList.size();
     StringBuilder builder=new StringBuilder();
     for (Iterator<String> iter=propValueList.iterator(); iter.hasNext(); ) {
       builder.append(iter.next());
@@ -152,160 +140,99 @@
  else   if (propName.equals("ROLE")) {
     setPosition(propValue);
   }
- else   if ((propName.equals("PHOTO") || (propName.equals("LOGO")) && mPhotoBytes == null)) {
+ else   if (propName.equals("PHOTO") || propName.equals("LOGO")) {
+    String formatName=null;
+    Collection<String> typeCollection=paramMap.get("TYPE");
+    if (typeCollection != null) {
+      formatName=typeCollection.iterator().next();
+    }
     Collection<String> paramMapValue=paramMap.get("VALUE");
     if (paramMapValue != null && paramMapValue.contains("URL")) {
     }
  else {
-      mPhotoBytes=propBytes;
+      addPhotoBytes(formatName,propBytes);
     }
-  }
- else   if (propName.equals("EMAIL")) {
-    int type=-1;
-    String label=null;
-    boolean isPrimary=false;
-    Collection<String> typeCollection=paramMap.get("TYPE");
-    if (typeCollection != null) {
-      for (      String typeString : typeCollection) {
-        if (typeString.equals("PREF") && !mPrefIsSet_Email) {
-          mPrefIsSet_Email=true;
-          isPrimary=true;
-        }
- else         if (typeString.equalsIgnoreCase("HOME")) {
-          type=Contacts.ContactMethodsColumns.TYPE_HOME;
-        }
- else         if (typeString.equalsIgnoreCase("WORK")) {
-          type=Contacts.ContactMethodsColumns.TYPE_WORK;
-        }
- else         if (typeString.equalsIgnoreCase("CELL")) {
-          type=Contacts.ContactMethodsColumns.TYPE_CUSTOM;
-          label=Contacts.ContactMethodsColumns.MOBILE_EMAIL_TYPE_NAME;
-        }
- else         if (typeString.toUpperCase().startsWith("X-") && type < 0) {
-          type=Contacts.ContactMethodsColumns.TYPE_CUSTOM;
-          label=typeString.substring(2);
-        }
- else         if (type < 0) {
-          type=Contacts.ContactMethodsColumns.TYPE_CUSTOM;
-          label=typeString;
-        }
-      }
-    }
-    if (type < 0) {
-      type=Contacts.ContactMethodsColumns.TYPE_OTHER;
-    }
-    addContactmethod(Contacts.KIND_EMAIL,type,propValue,label,isPrimary);
   }
  else   if (propName.equals("TEL")) {
-    int type=-1;
-    String label=null;
-    boolean isPrimary=false;
-    boolean isFax=false;
-    Collection<String> typeCollection=paramMap.get("TYPE");
-    if (typeCollection != null) {
-      for (      String typeString : typeCollection) {
-        if (typeString.equals("PREF") && !mPrefIsSet_Phone) {
-          mPrefIsSet_Phone=true;
-          isPrimary=true;
-        }
- else         if (typeString.equalsIgnoreCase("HOME")) {
-          type=Contacts.PhonesColumns.TYPE_HOME;
-        }
- else         if (typeString.equalsIgnoreCase("WORK")) {
-          type=Contacts.PhonesColumns.TYPE_WORK;
-        }
- else         if (typeString.equalsIgnoreCase("CELL")) {
-          type=Contacts.PhonesColumns.TYPE_MOBILE;
-        }
- else         if (typeString.equalsIgnoreCase("PAGER")) {
-          type=Contacts.PhonesColumns.TYPE_PAGER;
-        }
- else         if (typeString.equalsIgnoreCase("FAX")) {
-          isFax=true;
-        }
- else         if (typeString.equalsIgnoreCase("VOICE") || typeString.equalsIgnoreCase("MSG")) {
-        }
- else         if (typeString.toUpperCase().startsWith("X-") && type < 0) {
-          type=Contacts.PhonesColumns.TYPE_CUSTOM;
-          label=typeString.substring(2);
-        }
- else         if (type < 0) {
-          type=Contacts.PhonesColumns.TYPE_CUSTOM;
-          label=typeString;
-        }
-      }
+    Collection<String> typeCollection=paramMap.get(Constants.ATTR_TYPE);
+    Object typeObject=VCardUtils.getPhoneTypeFromStrings(typeCollection);
+    final int type;
+    final String label;
+    if (typeObject instanceof Integer) {
+      type=(Integer)typeObject;
+      label=null;
     }
-    if (type < 0) {
-      type=Contacts.PhonesColumns.TYPE_HOME;
+ else {
+      type=Phone.TYPE_CUSTOM;
+      label=typeObject.toString();
     }
-    if (isFax) {
-      if (type == Contacts.PhonesColumns.TYPE_HOME) {
-        type=Contacts.PhonesColumns.TYPE_FAX_HOME;
-      }
- else       if (type == Contacts.PhonesColumns.TYPE_WORK) {
-        type=Contacts.PhonesColumns.TYPE_FAX_WORK;
-      }
+    final boolean isPrimary;
+    if (!mPrefIsSet_Phone && typeCollection != null && typeCollection.contains(Constants.ATTR_TYPE_PREF)) {
+      mPrefIsSet_Phone=true;
+      isPrimary=true;
+    }
+ else {
+      isPrimary=false;
     }
     addPhone(type,propValue,label,isPrimary);
   }
- else   if (propName.equals("NOTE")) {
-    if (mNotes == null) {
-      mNotes=new ArrayList<String>(1);
+ else   if (propName.equals(Constants.PROPERTY_X_SKYPE_PSTNNUMBER)) {
+    Collection<String> typeCollection=paramMap.get(Constants.ATTR_TYPE);
+    int type=Phone.TYPE_OTHER;
+    final String label=null;
+    final boolean isPrimary;
+    if (!mPrefIsSet_Phone && typeCollection != null && typeCollection.contains(Constants.ATTR_TYPE_PREF)) {
+      mPrefIsSet_Phone=true;
+      isPrimary=true;
     }
-    mNotes.add(propValue);
+ else {
+      isPrimary=false;
+    }
+    addPhone(type,propValue,label,isPrimary);
   }
- else   if (propName.equals("BDAY")) {
-    addExtension(propName,paramMap,propValueList);
+ else   if (sImMap.containsKey(propName)) {
+    int type=sImMap.get(propName);
+    boolean isPrimary=false;
+    final Collection<String> typeCollection=paramMap.get(Constants.ATTR_TYPE);
+    if (typeCollection != null) {
+      for (      String typeString : typeCollection) {
+        if (typeString.equals(Constants.ATTR_TYPE_PREF)) {
+          isPrimary=true;
+        }
+ else         if (typeString.equalsIgnoreCase(Constants.ATTR_TYPE_HOME)) {
+          type=Phone.TYPE_HOME;
+        }
+ else         if (typeString.equalsIgnoreCase(Constants.ATTR_TYPE_WORK)) {
+          type=Phone.TYPE_WORK;
+        }
+      }
+    }
+    if (type < 0) {
+      type=Phone.TYPE_HOME;
+    }
+    addIm(type,propValue,null,isPrimary);
+  }
+ else   if (propName.equals("NOTE")) {
+    addNote(propValue);
   }
  else   if (propName.equals("URL")) {
-    addExtension(propName,paramMap,propValueList);
-  }
- else   if (propName.equals("REV")) {
-    addExtension(propName,paramMap,propValueList);
-  }
- else   if (propName.equals("UID")) {
-    addExtension(propName,paramMap,propValueList);
-  }
- else   if (propName.equals("KEY")) {
-    addExtension(propName,paramMap,propValueList);
-  }
- else   if (propName.equals("MAILER")) {
-    addExtension(propName,paramMap,propValueList);
-  }
- else   if (propName.equals("TZ")) {
-    addExtension(propName,paramMap,propValueList);
-  }
- else   if (propName.equals("GEO")) {
-    addExtension(propName,paramMap,propValueList);
-  }
- else   if (propName.equals("NICKNAME")) {
-    addExtension(propName,paramMap,propValueList);
-  }
- else   if (propName.equals("CLASS")) {
-    addExtension(propName,paramMap,propValueList);
-  }
- else   if (propName.equals("PROFILE")) {
-    addExtension(propName,paramMap,propValueList);
-  }
- else   if (propName.equals("CATEGORIES")) {
-    addExtension(propName,paramMap,propValueList);
-  }
- else   if (propName.equals("SOURCE")) {
-    addExtension(propName,paramMap,propValueList);
-  }
- else   if (propName.equals("PRODID")) {
-    addExtension(propName,paramMap,propValueList);
+    if (mWebsiteList == null) {
+      mWebsiteList=new ArrayList<String>(1);
+    }
+    mWebsiteList.add(propValue);
   }
  else   if (propName.equals("X-PHONETIC-FIRST-NAME")) {
-    mTmpXPhoneticFirstName=propValue;
+    mPhoneticGivenName=propValue;
   }
  else   if (propName.equals("X-PHONETIC-MIDDLE-NAME")) {
-    mTmpXPhoneticMiddleName=propValue;
+    mPhoneticMiddleName=propValue;
   }
  else   if (propName.equals("X-PHONETIC-LAST-NAME")) {
-    mTmpXPhoneticLastName=propValue;
+    mPhoneticFamilyName=propValue;
+  }
+ else   if (propName.equals("BDAY")) {
+    mBirthday=propValue;
   }
  else {
-    addExtension(propName,paramMap,propValueList);
   }
 }
