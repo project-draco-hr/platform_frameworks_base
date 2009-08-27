@@ -1,24 +1,39 @@
 {
+  final long now=SystemClock.uptimeMillis();
   r.totalRestartCount++;
   if (r.restartDelay == 0) {
     r.restartCount++;
     r.restartDelay=SERVICE_RESTART_DURATION;
   }
  else {
-    long now=SystemClock.uptimeMillis();
-    if (now > (r.restartTime + (SERVICE_RESTART_DURATION * 2 * 2* 2))) {
+    if (now > (r.restartTime + SERVICE_RESET_RUN_DURATION)) {
       r.restartCount=1;
       r.restartDelay=SERVICE_RESTART_DURATION;
     }
  else {
-      r.restartDelay*=2;
+      r.restartDelay*=SERVICE_RESTART_DURATION_FACTOR;
     }
   }
+  r.nextRestartTime=now + r.restartDelay;
+  boolean repeat;
+  do {
+    repeat=false;
+    for (int i=mRestartingServices.size() - 1; i >= 0; i--) {
+      ServiceRecord r2=mRestartingServices.get(i);
+      if (r2 != r && r.nextRestartTime >= (r2.nextRestartTime - SERVICE_MIN_RESTART_TIME_BETWEEN) && r.nextRestartTime < (r2.nextRestartTime + SERVICE_MIN_RESTART_TIME_BETWEEN)) {
+        r.nextRestartTime=r2.nextRestartTime + SERVICE_MIN_RESTART_TIME_BETWEEN;
+        r.restartDelay=r.nextRestartTime - now;
+        repeat=true;
+        break;
+      }
+    }
+  }
+ while (repeat);
   if (!mRestartingServices.contains(r)) {
     mRestartingServices.add(r);
   }
   mHandler.removeCallbacks(r.restarter);
-  mHandler.postDelayed(r.restarter,r.restartDelay);
+  mHandler.postAtTime(r.restarter,r.nextRestartTime);
   r.nextRestartTime=SystemClock.uptimeMillis() + r.restartDelay;
   Log.w(TAG,"Scheduling restart of crashed service " + r.shortName + " in "+ r.restartDelay+ "ms");
   EventLog.writeEvent(LOG_AM_SCHEDULE_SERVICE_RESTART,r.shortName,r.restartDelay);
