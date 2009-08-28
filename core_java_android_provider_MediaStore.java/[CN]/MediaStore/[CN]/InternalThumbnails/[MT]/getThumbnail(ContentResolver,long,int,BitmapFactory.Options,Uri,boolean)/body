@@ -1,0 +1,84 @@
+{
+  Bitmap bitmap=null;
+  String filePath=null;
+  if (kind == MICRO_KIND) {
+    MiniThumbFile thumbFile=MiniThumbFile.instance(baseUri);
+    if (thumbFile.getMagic(origId) != 0) {
+      byte[] data=new byte[MiniThumbFile.BYTES_PER_MINTHUMB];
+      if (thumbFile.getMiniThumbFromFile(origId,data) != null) {
+        bitmap=BitmapFactory.decodeByteArray(data,0,data.length);
+        if (bitmap == null) {
+          Log.w(TAG,"couldn't decode byte array.");
+        }
+      }
+      return bitmap;
+    }
+  }
+  Cursor c=null;
+  try {
+    Uri blockingUri=baseUri.buildUpon().appendQueryParameter("blocking","1").appendQueryParameter("orig_id",String.valueOf(origId)).build();
+    c=cr.query(blockingUri,PROJECTION,null,null,null);
+    if (c == null)     return null;
+    if (kind == MICRO_KIND) {
+      MiniThumbFile thumbFile=MiniThumbFile.instance(baseUri);
+      byte[] data=new byte[MiniThumbFile.BYTES_PER_MINTHUMB];
+      if (thumbFile.getMiniThumbFromFile(origId,data) != null) {
+        bitmap=BitmapFactory.decodeByteArray(data,0,data.length);
+        if (bitmap == null) {
+          Log.w(TAG,"couldn't decode byte array.");
+        }
+      }
+    }
+ else     if (kind == MINI_KIND) {
+      if (c.moveToFirst()) {
+        ParcelFileDescriptor pfdInput;
+        Uri thumbUri=null;
+        try {
+          long thumbId=c.getLong(0);
+          filePath=c.getString(1);
+          thumbUri=ContentUris.withAppendedId(baseUri,thumbId);
+          pfdInput=cr.openFileDescriptor(thumbUri,"r");
+          bitmap=BitmapFactory.decodeFileDescriptor(pfdInput.getFileDescriptor(),null,options);
+          pfdInput.close();
+        }
+ catch (        FileNotFoundException ex) {
+          Log.e(TAG,"couldn't open thumbnail " + thumbUri + "; "+ ex);
+        }
+catch (        IOException ex) {
+          Log.e(TAG,"couldn't open thumbnail " + thumbUri + "; "+ ex);
+        }
+catch (        OutOfMemoryError ex) {
+          Log.e(TAG,"failed to allocate memory for thumbnail " + thumbUri + "; "+ ex);
+        }
+      }
+    }
+ else {
+      throw new IllegalArgumentException("Unsupported kind: " + kind);
+    }
+    if (bitmap == null) {
+      Log.v(TAG,"We probably run out of space, so create the thumbnail in memory.");
+      int targetSize=kind == MINI_KIND ? ThumbnailUtil.THUMBNAIL_TARGET_SIZE : ThumbnailUtil.MINI_THUMB_TARGET_SIZE;
+      int maxPixelNum=kind == MINI_KIND ? ThumbnailUtil.THUMBNAIL_MAX_NUM_PIXELS : ThumbnailUtil.MINI_THUMB_MAX_NUM_PIXELS;
+      Uri uri=Uri.parse(baseUri.buildUpon().appendPath(String.valueOf(origId)).toString().replaceFirst("thumbnails","media"));
+      if (isVideo) {
+        c=cr.query(uri,PROJECTION,null,null,null);
+        if (c != null && c.moveToFirst()) {
+          bitmap=ThumbnailUtil.createVideoThumbnail(c.getString(1));
+          if (kind == MICRO_KIND) {
+            bitmap=ThumbnailUtil.extractMiniThumb(bitmap,targetSize,targetSize,ThumbnailUtil.RECYCLE_INPUT);
+          }
+        }
+      }
+ else {
+        bitmap=ThumbnailUtil.makeBitmap(targetSize,maxPixelNum,uri,cr);
+      }
+    }
+  }
+ catch (  SQLiteException ex) {
+    Log.w(TAG,ex);
+  }
+ finally {
+    if (c != null)     c.close();
+  }
+  return bitmap;
+}
