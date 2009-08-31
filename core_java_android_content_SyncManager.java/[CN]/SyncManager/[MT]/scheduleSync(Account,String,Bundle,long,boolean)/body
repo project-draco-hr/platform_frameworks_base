@@ -7,6 +7,13 @@
     setStatusText("Sync is disabled.");
     return;
   }
+  if (!mConnManager.getBackgroundDataSetting()) {
+    if (isLoggable) {
+      Log.v(TAG,"not syncing because background data usage isn't allowed");
+    }
+    setStatusText("Sync is disabled.");
+    return;
+  }
   if (mAccounts == null)   setStatusText("The accounts aren't known yet.");
   if (!mDataConnectionIsConnected)   setStatusText("No data connection");
   if (mStorageIsLow)   setStatusText("Memory low");
@@ -59,6 +66,7 @@
     syncableAuthorities.clear();
     if (hasSyncAdapter)     syncableAuthorities.add(requestedAuthority);
   }
+  final boolean masterSyncAutomatically=mSyncStorageEngine.getMasterSyncAutomatically();
   for (  String authority : syncableAuthorities) {
     for (    Account account : accounts) {
       int isSyncable=mSyncStorageEngine.getIsSyncable(account,authority);
@@ -74,14 +82,26 @@
           continue;
         }
         Bundle extrasCopy=extras;
+        long delayCopy=delay;
         if (isSyncable < 0) {
           extrasCopy=new Bundle(extras);
           extrasCopy.putBoolean(ContentResolver.SYNC_EXTRAS_INITIALIZE,true);
+          delayCopy=-1;
+        }
+ else {
+          final boolean syncAutomatically=masterSyncAutomatically && mSyncStorageEngine.getSyncAutomatically(account,authority);
+          boolean syncAllowed=manualSync || syncAutomatically;
+          if (!syncAllowed) {
+            if (isLoggable) {
+              Log.d(TAG,"scheduleSync: sync of " + account + ", "+ authority+ " is not allowed, dropping request");
+              continue;
+            }
+          }
         }
         if (isLoggable) {
-          Log.v(TAG,"scheduleSync:" + " delay " + delay + ", source "+ source+ ", account "+ account+ ", authority "+ authority+ ", extras "+ extrasCopy);
+          Log.v(TAG,"scheduleSync:" + " delay " + delayCopy + ", source "+ source+ ", account "+ account+ ", authority "+ authority+ ", extras "+ extrasCopy);
         }
-        scheduleSyncOperation(new SyncOperation(account,source,authority,extrasCopy,delay));
+        scheduleSyncOperation(new SyncOperation(account,source,authority,extrasCopy,delayCopy));
       }
     }
   }
