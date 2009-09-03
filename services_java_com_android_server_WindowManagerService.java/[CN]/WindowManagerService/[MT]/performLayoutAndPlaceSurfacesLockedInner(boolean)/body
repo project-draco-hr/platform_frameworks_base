@@ -143,10 +143,22 @@
           }
           mNextAppTransition=WindowManagerPolicy.TRANSIT_NONE;
           mAppTransitionReady=false;
+          mAppTransitionRunning=true;
           mAppTransitionTimeout=false;
           mStartingIconInTransition=false;
           mSkipAppTransitionAnimation=false;
           mH.removeMessages(H.APP_TRANSITION_TIMEOUT);
+          if (mToTopApps.size() > 0) {
+            NN=mAppTokens.size();
+            for (i=0; i < NN; i++) {
+              AppWindowToken wtoken=mAppTokens.get(i);
+              if (wtoken.sendingToTop) {
+                wtoken.sendingToTop=false;
+                moveAppWindowsLocked(wtoken,NN,false);
+              }
+            }
+            mToTopApps.clear();
+          }
           adjustWallpaperWindowsLocked();
           wallpaperMayChange=false;
           if (DEBUG_APP_TRANSITIONS)           Log.v(TAG,"New wallpaper target=" + mWallpaperTarget + ", lower target="+ mLowerWallpaperTarget+ ", upper target="+ mUpperWallpaperTarget);
@@ -199,6 +211,7 @@ case WindowManagerPolicy.TRANSIT_TASK_TO_BACK:
     wtoken.animation=null;
     setTokenVisibilityLocked(wtoken,lp,true,transit,false);
     wtoken.updateReportedVisibilityLocked();
+    wtoken.waitingToShow=false;
     wtoken.showAllWindowsLocked();
   }
   NN=mClosingApps.size();
@@ -209,6 +222,7 @@ case WindowManagerPolicy.TRANSIT_TASK_TO_BACK:
     wtoken.animation=null;
     setTokenVisibilityLocked(wtoken,lp,false,transit,false);
     wtoken.updateReportedVisibilityLocked();
+    wtoken.waitingToHide=false;
     wtoken.allDrawn=true;
   }
   mOpeningApps.clear();
@@ -222,9 +236,21 @@ case WindowManagerPolicy.TRANSIT_TASK_TO_BACK:
   restart=true;
 }
 }
+if (!animating && mAppTransitionRunning) {
+mAppTransitionRunning=false;
+mToBottomApps.clear();
+rebuildAppWindowListLocked();
+restart=true;
+moveInputMethodWindowsIfNeededLocked(false);
+wallpaperMayChange=true;
+mLayoutNeeded=true;
+}
 if (wallpaperMayChange) {
 if (adjustWallpaperWindowsLocked()) {
   assignLayersLocked();
+}
+if (mLayoutNeeded) {
+  performLayoutLockedInner();
 }
 }
 }
@@ -596,13 +622,20 @@ mAppTokens.remove(token);
 mExitingAppTokens.remove(i);
 }
 }
+boolean needRelayout=false;
+if (!animating && mAppTransitionRunning) {
+mAppTransitionRunning=false;
+needRelayout=true;
+rebuildAppWindowListLocked();
+mToBottomApps.clear();
+}
 if (focusDisplayed) {
 mH.sendEmptyMessage(H.REPORT_LOSING_FOCUS);
 }
 if (wallpaperDestroyed) {
-wallpaperDestroyed=adjustWallpaperWindowsLocked();
+needRelayout=adjustWallpaperWindowsLocked();
 }
-if (wallpaperDestroyed) {
+if (needRelayout) {
 requestAnimationLocked(0);
 }
  else if (animating) {
