@@ -6,36 +6,64 @@
     app.adjSeq=mAdjSeq;
     return (app.curAdj=EMPTY_APP_ADJ);
   }
-  app.isForeground=false;
+  if (app.maxAdj <= FOREGROUND_APP_ADJ) {
+    app.adjType="fixed";
+    app.adjSeq=mAdjSeq;
+    app.curRawAdj=app.maxAdj;
+    app.curSchedGroup=Process.THREAD_GROUP_DEFAULT;
+    return (app.curAdj=app.maxAdj);
+  }
+  app.adjSource=null;
+  app.adjTarget=null;
   int adj;
   int N;
-  if (app == TOP_APP || app.instrumentationClass != null || app.persistentActivities > 0) {
+  if (app == TOP_APP) {
     adj=FOREGROUND_APP_ADJ;
-    app.isForeground=true;
+    app.adjType="top-activity";
+  }
+ else   if (app.instrumentationClass != null) {
+    adj=FOREGROUND_APP_ADJ;
+    app.adjType="instrumentation";
+  }
+ else   if (app.persistentActivities > 0) {
+    adj=FOREGROUND_APP_ADJ;
+    app.adjType="persistent";
   }
  else   if (app.curReceiver != null || (mPendingBroadcast != null && mPendingBroadcast.curApp == app)) {
     adj=FOREGROUND_APP_ADJ;
+    app.adjType="broadcast";
   }
  else   if (app.executingServices.size() > 0) {
     adj=FOREGROUND_APP_ADJ;
+    app.adjType="exec-service";
   }
- else   if (app.foregroundServices || app.forcingToForeground != null) {
+ else   if (app.foregroundServices) {
     adj=VISIBLE_APP_ADJ;
+    app.adjType="foreground-service";
+  }
+ else   if (app.forcingToForeground != null) {
+    adj=VISIBLE_APP_ADJ;
+    app.adjType="force-foreground";
+    app.adjSource=app.forcingToForeground;
   }
  else   if (app == mHomeProcess) {
     adj=HOME_APP_ADJ;
+    app.adjType="home";
   }
  else   if ((N=app.activities.size()) != 0) {
     adj=hiddenAdj;
+    app.adjType="bg-activities";
     for (int j=0; j < N; j++) {
       if (((HistoryRecord)app.activities.get(j)).visible) {
         adj=VISIBLE_APP_ADJ;
+        app.adjType="visible";
         break;
       }
     }
   }
  else {
     adj=EMPTY_APP_ADJ;
+    app.adjType="empty";
   }
   app.adjSeq=mAdjSeq;
   app.curRawAdj=adj;
@@ -44,11 +72,13 @@
     if (adj > BACKUP_APP_ADJ) {
       if (DEBUG_BACKUP)       Log.v(TAG,"oom BACKUP_APP_ADJ for " + app);
       adj=BACKUP_APP_ADJ;
+      app.adjType="backup";
     }
   }
   if (app.services.size() != 0 && adj > FOREGROUND_APP_ADJ) {
     if (adj > hiddenAdj) {
       adj=hiddenAdj;
+      app.adjType="bg-services";
     }
     final long now=SystemClock.uptimeMillis();
     Iterator jt=app.services.iterator();
@@ -58,11 +88,7 @@
         if (now < (s.lastActivity + MAX_SERVICE_INACTIVITY)) {
           if (adj > SECONDARY_SERVER_ADJ) {
             adj=SECONDARY_SERVER_ADJ;
-          }
-        }
- else {
-          if (adj > hiddenAdj) {
-            adj=hiddenAdj;
+            app.adjType="started-services";
           }
         }
       }
@@ -87,11 +113,17 @@
             int clientAdj=computeOomAdjLocked(client,myHiddenAdj,TOP_APP);
             if (adj > clientAdj) {
               adj=clientAdj > VISIBLE_APP_ADJ ? clientAdj : VISIBLE_APP_ADJ;
+              app.adjType="service";
+              app.adjSource=cr.binding.client;
+              app.adjTarget=s.serviceInfo.name;
             }
           }
           HistoryRecord a=cr.activity;
           if (a != null && adj > FOREGROUND_APP_ADJ && (a.state == ActivityState.RESUMED || a.state == ActivityState.PAUSING)) {
             adj=FOREGROUND_APP_ADJ;
+            app.adjType="service";
+            app.adjSource=a;
+            app.adjTarget=s.serviceInfo.name;
           }
         }
       }
@@ -100,6 +132,7 @@
   if (app.pubProviders.size() != 0 && adj > FOREGROUND_APP_ADJ) {
     if (adj > CONTENT_PROVIDER_ADJ) {
       adj=CONTENT_PROVIDER_ADJ;
+      app.adjType="pub-providers";
     }
     Iterator jt=app.pubProviders.values().iterator();
     while (jt.hasNext() && adj > FOREGROUND_APP_ADJ) {
@@ -123,12 +156,17 @@
           int clientAdj=computeOomAdjLocked(client,myHiddenAdj,TOP_APP);
           if (adj > clientAdj) {
             adj=clientAdj > FOREGROUND_APP_ADJ ? clientAdj : FOREGROUND_APP_ADJ;
+            app.adjType="provider";
+            app.adjSource=client;
+            app.adjTarget=cpr.info.name;
           }
         }
       }
       if (cpr.externals != 0) {
         if (adj > FOREGROUND_APP_ADJ) {
           adj=FOREGROUND_APP_ADJ;
+          app.adjType="provider";
+          app.adjTarget=cpr.info.name;
         }
       }
     }
@@ -138,6 +176,6 @@
     adj=app.maxAdj;
   }
   app.curAdj=adj;
-  app.curSchedGroup=(adj > VISIBLE_APP_ADJ && !app.persistent) ? Process.THREAD_GROUP_BG_NONINTERACTIVE : Process.THREAD_GROUP_DEFAULT;
+  app.curSchedGroup=adj > VISIBLE_APP_ADJ ? Process.THREAD_GROUP_BG_NONINTERACTIVE : Process.THREAD_GROUP_DEFAULT;
   return adj;
 }
