@@ -49,6 +49,7 @@
         if (w.mSurface != null) {
           if (w.commitFinishDrawingLocked(currentTime)) {
             if ((w.mAttrs.flags & WindowManager.LayoutParams.FLAG_SHOW_WALLPAPER) != 0) {
+              if (DEBUG_WALLPAPER)               Log.v(TAG,"First draw done in potential wallpaper target " + w);
               wallpaperMayChange=true;
             }
           }
@@ -255,10 +256,21 @@ wallpaperMayChange=true;
 mLayoutNeeded=true;
 }
 if (wallpaperMayChange) {
-if (adjustWallpaperWindowsLocked()) {
+if (DEBUG_WALLPAPER) Log.v(TAG,"Wallpaper may change!  Adjusting");
+int adjResult=adjustWallpaperWindowsLocked();
+if ((adjResult & ADJUST_WALLPAPER_LAYERS_CHANGED) != 0) {
+  if (DEBUG_WALLPAPER)   Log.v(TAG,"Wallpaper layer changed: assigning layers + relayout");
+  restart=true;
+  mLayoutNeeded=true;
   assignLayersLocked();
 }
+ else if ((adjResult & ADJUST_WALLPAPER_VISIBILITY_CHANGED) != 0) {
+  if (DEBUG_WALLPAPER)   Log.v(TAG,"Wallpaper visibility changed: relayout");
+  restart=true;
+  mLayoutNeeded=true;
+}
 if (mLayoutNeeded) {
+  restart=true;
   performLayoutLockedInner();
 }
 }
@@ -290,6 +302,7 @@ if ((w.mAttrs.flags & w.mAttrs.FLAG_SCALED) != 0) {
   w.mLastRequestedHeight=height;
   w.mLastShownFrame.set(w.mShownFrame);
   try {
+    if (SHOW_TRANSACTIONS)     Log.i(TAG,"  SURFACE " + w.mSurface + ": POS "+ w.mShownFrame.left+ ", "+ w.mShownFrame.top);
     w.mSurface.setPosition(w.mShownFrame.left,w.mShownFrame.top);
   }
  catch (  RuntimeException e) {
@@ -304,15 +317,13 @@ if ((w.mAttrs.flags & w.mAttrs.FLAG_SCALED) != 0) {
   width=w.mShownFrame.width();
   height=w.mShownFrame.height();
   w.mLastShownFrame.set(w.mShownFrame);
-  if (resize) {
-    if (SHOW_TRANSACTIONS)     Log.i(TAG,"  SURFACE " + w.mSurface + ": ("+ w.mShownFrame.left+ ","+ w.mShownFrame.top+ ") ("+ w.mShownFrame.width()+ "x"+ w.mShownFrame.height()+ ")");
-  }
 }
 if (resize) {
   if (width < 1)   width=1;
   if (height < 1)   height=1;
   if (w.mSurface != null) {
     try {
+      if (SHOW_TRANSACTIONS)       Log.i(TAG,"  SURFACE " + w.mSurface + ": POS "+ w.mShownFrame.left+ ","+ w.mShownFrame.top+ " SIZE "+ w.mShownFrame.width()+ "x"+ w.mShownFrame.height());
       w.mSurface.setSize(width,height);
       w.mSurface.setPosition(w.mShownFrame.left,w.mShownFrame.top);
     }
@@ -331,6 +342,15 @@ if (!w.mAppFreezing) {
     w.mLastFrame.set(w.mFrame);
     w.mLastContentInsets.set(w.mContentInsets);
     w.mLastVisibleInsets.set(w.mVisibleInsets);
+    if (mDisplayFrozen) {
+      if (DEBUG_ORIENTATION)       Log.v(TAG,"Resizing while display frozen: " + w);
+      w.mOrientationChanging=true;
+      if (mWindowsFreezingScreen) {
+        mWindowsFreezingScreen=true;
+        mH.removeMessages(H.WINDOW_FREEZE_TIMEOUT);
+        mH.sendMessageDelayed(mH.obtainMessage(H.WINDOW_FREEZE_TIMEOUT),2000);
+      }
+    }
     if (w.mOrientationChanging) {
       if (DEBUG_ORIENTATION)       Log.v(TAG,"Orientation start waiting for draw in " + w + ", surface "+ w.mSurface);
       w.mDrawPending=true;
@@ -398,7 +418,7 @@ if (w.mAttachedHidden) {
   w.mLastDtDy=w.mDtDy;
   w.mLastHScale=w.mHScale;
   w.mLastVScale=w.mVScale;
-  if (SHOW_TRANSACTIONS)   Log.i(TAG,"  SURFACE " + w.mSurface + ": alpha="+ w.mShownAlpha+ " layer="+ w.mAnimLayer);
+  if (SHOW_TRANSACTIONS)   Log.i(TAG,"  SURFACE " + w.mSurface + ": alpha="+ w.mShownAlpha+ " layer="+ w.mAnimLayer+ " matrix=["+ (w.mDsDx * w.mHScale)+ ","+ (w.mDtDx * w.mVScale)+ "]["+ (w.mDsDy * w.mHScale)+ ","+ (w.mDtDy * w.mVScale)+ "]");
   if (w.mSurface != null) {
     try {
       w.mSurface.setAlpha(w.mShownAlpha);
@@ -587,6 +607,7 @@ do {
 i--;
 WindowState win=mResizingWindows.get(i);
 try {
+if (DEBUG_ORIENTATION) Log.v(TAG,"Reporting new frame to " + win + ": "+ win.mFrame);
 win.mClient.resized(win.mFrame.width(),win.mFrame.height(),win.mLastContentInsets,win.mLastVisibleInsets,win.mDrawPending);
 win.mContentInsetsChanged=false;
 win.mVisibleInsetsChanged=false;
@@ -643,7 +664,7 @@ if (focusDisplayed) {
 mH.sendEmptyMessage(H.REPORT_LOSING_FOCUS);
 }
 if (wallpaperDestroyed) {
-needRelayout=adjustWallpaperWindowsLocked();
+needRelayout=adjustWallpaperWindowsLocked() != 0;
 }
 if (needRelayout) {
 requestAnimationLocked(0);
