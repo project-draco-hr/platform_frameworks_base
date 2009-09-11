@@ -1,0 +1,53 @@
+{
+  int ageSeconds=Settings.Gservices.getInt(mContentResolver,Settings.Gservices.DROPBOX_AGE_SECONDS,DEFAULT_AGE_SECONDS);
+  long cutoffMillis=System.currentTimeMillis() - ageSeconds * 1000;
+  while (!mAllFiles.contents.isEmpty()) {
+    EntryFile entry=mAllFiles.contents.first();
+    if (entry.timestampMillis > cutoffMillis)     break;
+    FileList tag=mFilesByTag.get(entry.tag);
+    if (tag != null && tag.contents.remove(entry))     tag.blocks-=entry.blocks;
+    if (mAllFiles.contents.remove(entry))     mAllFiles.blocks-=entry.blocks;
+    if (entry.file != null)     entry.file.delete();
+  }
+  long uptimeMillis=SystemClock.uptimeMillis();
+  if (uptimeMillis > mCachedQuotaUptimeMillis + QUOTA_RESCAN_MILLIS) {
+    int quotaPercent=Settings.Gservices.getInt(mContentResolver,Settings.Gservices.DROPBOX_QUOTA_PERCENT,DEFAULT_QUOTA_PERCENT);
+    int reservePercent=Settings.Gservices.getInt(mContentResolver,Settings.Gservices.DROPBOX_RESERVE_PERCENT,DEFAULT_RESERVE_PERCENT);
+    int quotaKb=Settings.Gservices.getInt(mContentResolver,Settings.Gservices.DROPBOX_QUOTA_KB,DEFAULT_QUOTA_KB);
+    mStatFs.restat(mDropBoxDir.getPath());
+    int available=mStatFs.getAvailableBlocks();
+    int nonreserved=available - mStatFs.getBlockCount() * reservePercent / 100;
+    int maximum=quotaKb * 1024 / mBlockSize;
+    mCachedQuotaBlocks=Math.min(maximum,Math.max(0,nonreserved * quotaPercent / 100));
+    mCachedQuotaUptimeMillis=uptimeMillis;
+  }
+  if (mAllFiles.blocks > mCachedQuotaBlocks) {
+    Log.i(TAG,"Usage (" + mAllFiles.blocks + ") > Quota ("+ mCachedQuotaBlocks+ ")");
+    int unsqueezed=mAllFiles.blocks, squeezed=0;
+    TreeSet<FileList> tags=new TreeSet<FileList>(mFilesByTag.values());
+    for (    FileList tag : tags) {
+      if (squeezed > 0 && tag.blocks <= (mCachedQuotaBlocks - unsqueezed) / squeezed) {
+        break;
+      }
+      unsqueezed-=tag.blocks;
+      squeezed++;
+    }
+    int tagQuota=(mCachedQuotaBlocks - unsqueezed) / squeezed;
+    for (    FileList tag : tags) {
+      if (mAllFiles.blocks < mCachedQuotaBlocks)       break;
+      while (tag.blocks > tagQuota && !tag.contents.isEmpty()) {
+        EntryFile entry=tag.contents.first();
+        if (tag.contents.remove(entry))         tag.blocks-=entry.blocks;
+        if (mAllFiles.contents.remove(entry))         mAllFiles.blocks-=entry.blocks;
+        try {
+          if (entry.file != null)           entry.file.delete();
+          enrollEntry(new EntryFile(mDropBoxDir,entry.tag,entry.timestampMillis));
+        }
+ catch (        IOException e) {
+          Log.e(TAG,"Can't write tombstone file",e);
+        }
+      }
+    }
+  }
+  return mCachedQuotaBlocks * mBlockSize;
+}
