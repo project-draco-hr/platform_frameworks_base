@@ -4,33 +4,37 @@
   Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND);
   try {
     EventLog.writeEvent(BACKUP_START_EVENT,mTransport.transportDirName());
-    PackageManagerBackupAgent pmAgent=new PackageManagerBackupAgent(mPackageManager,allAgentPackages());
-    BackupRequest pmRequest=new BackupRequest(new ApplicationInfo(),false);
-    pmRequest.appInfo.packageName=PACKAGE_MANAGER_SENTINEL;
-    boolean needInit=(mEverStoredApps.size() == 0);
-    int result=processOneBackup(pmRequest,IBackupAgent.Stub.asInterface(pmAgent.onBind()),mTransport,needInit);
-    if (result == BackupConstants.TRANSPORT_NOT_INITIALIZED) {
+    int status=BackupConstants.TRANSPORT_OK;
+    if (status == BackupConstants.TRANSPORT_OK && mEverStoredApps.size() == 0) {
+      status=mTransport.initializeDevice();
+    }
+    if (status == BackupConstants.TRANSPORT_OK) {
+      PackageManagerBackupAgent pmAgent=new PackageManagerBackupAgent(mPackageManager,allAgentPackages());
+      BackupRequest pmRequest=new BackupRequest(new ApplicationInfo(),false);
+      pmRequest.appInfo.packageName=PACKAGE_MANAGER_SENTINEL;
+      status=processOneBackup(pmRequest,IBackupAgent.Stub.asInterface(pmAgent.onBind()),mTransport);
+    }
+    if (status == BackupConstants.TRANSPORT_OK) {
+      status=doQueuedBackups(mTransport);
+    }
+    if (status == BackupConstants.TRANSPORT_OK) {
+      status=mTransport.finishBackup();
+      if (status == BackupConstants.TRANSPORT_OK) {
+        int millis=(int)(SystemClock.elapsedRealtime() - startRealtime);
+        EventLog.writeEvent(BACKUP_SUCCESS_EVENT,mQueue.size(),millis);
+      }
+ else {
+        EventLog.writeEvent(BACKUP_TRANSPORT_FAILURE_EVENT,"");
+        Log.e(TAG,"Transport error in finishBackup()");
+      }
+    }
+    if (status == BackupConstants.TRANSPORT_OK && !mJournal.delete()) {
+      Log.e(TAG,"Unable to remove backup journal file " + mJournal);
+    }
+    if (status == BackupConstants.TRANSPORT_NOT_INITIALIZED) {
       EventLog.writeEvent(BACKUP_RESET_EVENT,mTransport.transportDirName());
       resetBackupState(mStateDir);
       backupNow();
-      return;
-    }
- else     if (result != BackupConstants.TRANSPORT_OK) {
-      Log.e(TAG,"Meta backup err " + result);
-      return;
-    }
-    int count=mQueue.size();
-    doQueuedBackups(mTransport);
-    if (mTransport.finishBackup()) {
-      int millis=(int)(SystemClock.elapsedRealtime() - startRealtime);
-      EventLog.writeEvent(BACKUP_SUCCESS_EVENT,count,millis);
-    }
- else {
-      EventLog.writeEvent(BACKUP_TRANSPORT_FAILURE_EVENT,"");
-      Log.e(TAG,"Transport error in finishBackup()");
-    }
-    if (!mJournal.delete()) {
-      Log.e(TAG,"Unable to remove backup journal file " + mJournal);
     }
   }
  catch (  Exception e) {

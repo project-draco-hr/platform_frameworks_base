@@ -1,6 +1,6 @@
 {
   final String packageName=request.appInfo.packageName;
-  if (DEBUG)   Log.d(TAG,"processOneBackup doBackup(" + doInit + ") on "+ packageName);
+  if (DEBUG)   Log.d(TAG,"processOneBackup doBackup() on " + packageName);
   File savedStateName=new File(mStateDir,packageName);
   File backupDataName=new File(mDataDir,packageName + ".data");
   File newStateName=new File(mStateDir,packageName + ".new");
@@ -50,30 +50,34 @@
     }
     savedState=backupData=newState=null;
   }
+  int result=BackupConstants.TRANSPORT_OK;
   try {
     int size=(int)backupDataName.length();
     if (size > 0) {
-      backupData=ParcelFileDescriptor.open(backupDataName,ParcelFileDescriptor.MODE_READ_ONLY);
-      int performOkay=transport.performBackup(packInfo,backupData,doInit);
-      if (performOkay == BackupConstants.TRANSPORT_NOT_INITIALIZED) {
-        Log.i(TAG,"Backend not initialized");
-        return performOkay;
+      if (result == BackupConstants.TRANSPORT_OK) {
+        backupData=ParcelFileDescriptor.open(backupDataName,ParcelFileDescriptor.MODE_READ_ONLY);
+        result=transport.performBackup(packInfo,backupData);
       }
-      if ((performOkay != 0) || !transport.finishBackup()) {
-        throw new Exception("Backup transport failed");
+      if (result == BackupConstants.TRANSPORT_OK) {
+        result=transport.finishBackup();
       }
     }
  else {
       if (DEBUG)       Log.i(TAG,"no backup data written; not calling transport");
     }
-    backupDataName.delete();
-    newStateName.renameTo(savedStateName);
-    EventLog.writeEvent(BACKUP_PACKAGE_EVENT,packageName,size);
+    if (result == BackupConstants.TRANSPORT_OK) {
+      backupDataName.delete();
+      newStateName.renameTo(savedStateName);
+      EventLog.writeEvent(BACKUP_PACKAGE_EVENT,packageName,size);
+    }
+ else {
+      EventLog.writeEvent(BACKUP_TRANSPORT_FAILURE_EVENT,packageName);
+    }
   }
  catch (  Exception e) {
     Log.e(TAG,"Transport error backing up " + packageName,e);
     EventLog.writeEvent(BACKUP_TRANSPORT_FAILURE_EVENT,packageName);
-    return BackupConstants.TRANSPORT_ERROR;
+    result=BackupConstants.TRANSPORT_ERROR;
   }
  finally {
     try {
@@ -82,5 +86,5 @@
  catch (    IOException e) {
     }
   }
-  return BackupConstants.TRANSPORT_OK;
+  return result;
 }
