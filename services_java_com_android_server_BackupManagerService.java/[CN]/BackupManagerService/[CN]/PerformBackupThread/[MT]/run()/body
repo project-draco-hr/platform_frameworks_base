@@ -1,10 +1,10 @@
 {
+  int status=BackupConstants.TRANSPORT_OK;
   long startRealtime=SystemClock.elapsedRealtime();
   if (DEBUG)   Log.v(TAG,"Beginning backup of " + mQueue.size() + " targets");
   Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND);
   try {
     EventLog.writeEvent(BACKUP_START_EVENT,mTransport.transportDirName());
-    int status=BackupConstants.TRANSPORT_OK;
     if (status == BackupConstants.TRANSPORT_OK && mEverStoredApps.size() == 0) {
       status=mTransport.initializeDevice();
     }
@@ -28,9 +28,6 @@
         Log.e(TAG,"Transport error in finishBackup()");
       }
     }
-    if (status == BackupConstants.TRANSPORT_OK && !mJournal.delete()) {
-      Log.e(TAG,"Unable to remove backup journal file " + mJournal);
-    }
     if (status == BackupConstants.TRANSPORT_NOT_INITIALIZED) {
       EventLog.writeEvent(BACKUP_RESET_EVENT,mTransport.transportDirName());
       resetBackupState(mStateDir);
@@ -39,8 +36,22 @@
   }
  catch (  Exception e) {
     Log.e(TAG,"Error in backup thread",e);
+    status=BackupConstants.TRANSPORT_ERROR;
   }
  finally {
+    if (status != BackupConstants.TRANSPORT_OK) {
+      Log.w(TAG,"Backup pass unsuccessful, restaging");
+      for (      BackupRequest req : mQueue) {
+        try {
+          dataChanged(req.appInfo.packageName);
+        }
+ catch (        RemoteException e) {
+        }
+      }
+    }
+    if (!mJournal.delete()) {
+      Log.e(TAG,"Unable to remove backup journal file " + mJournal);
+    }
     mWakelock.release();
   }
 }
