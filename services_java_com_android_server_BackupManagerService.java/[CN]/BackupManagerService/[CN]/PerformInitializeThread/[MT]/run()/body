@@ -1,0 +1,52 @@
+{
+  int status;
+  try {
+    for (    String transportName : mQueue) {
+      IBackupTransport transport=getTransport(transportName);
+      if (transport == null) {
+        Log.e(TAG,"Requested init for " + transportName + " but not found");
+        continue;
+      }
+      status=BackupConstants.TRANSPORT_OK;
+      File stateDir=null;
+      Log.i(TAG,"Device init on " + transport.transportDirName());
+      stateDir=new File(mBaseStateDir,transport.transportDirName());
+      status=transport.initializeDevice();
+      if (status != BackupConstants.TRANSPORT_OK) {
+        Log.e(TAG,"Error from initializeDevice: " + status);
+      }
+      if (status == BackupConstants.TRANSPORT_OK) {
+        status=transport.finishBackup();
+      }
+      if (status == BackupConstants.TRANSPORT_OK) {
+        resetBackupState(stateDir);
+synchronized (mQueueLock) {
+          recordInitPendingLocked(false,transportName);
+        }
+      }
+      if (status != BackupConstants.TRANSPORT_OK) {
+        Log.i(TAG,"Device init failed");
+synchronized (mQueueLock) {
+          recordInitPendingLocked(true,transportName);
+        }
+        long delay=transport.requestBackupTime();
+        if (DEBUG)         Log.w(TAG,"init failed on " + transportName + " resched in "+ delay);
+        mAlarmManager.set(AlarmManager.RTC_WAKEUP,System.currentTimeMillis() + delay,mRunInitIntent);
+      }
+ else {
+        Log.i(TAG,"Device init successful");
+      }
+    }
+  }
+ catch (  RemoteException e) {
+  }
+catch (  Exception e) {
+    Log.e(TAG,"Unexpected error performing init",e);
+  }
+ finally {
+synchronized (mQueueLock) {
+      mInitInProgress=false;
+    }
+    mWakelock.release();
+  }
+}
