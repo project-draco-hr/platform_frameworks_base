@@ -61,6 +61,8 @@ synchronized (mWindowMap) {
         Surface surface=win.createSurfaceLocked();
         if (surface != null) {
           outSurface.copyFrom(surface);
+          win.mReportDestroySurface=false;
+          win.mSurfacePendingDestroy=false;
           if (SHOW_TRANSACTIONS)           Log.i(TAG,"  OUT SURFACE " + outSurface + ": copied");
         }
  else {
@@ -83,12 +85,14 @@ synchronized (mWindowMap) {
  else {
       win.mEnterAnimationPending=false;
       if (win.mSurface != null) {
-        if (!win.mExiting) {
+        if (DEBUG_VISIBILITY)         Log.i(TAG,"Relayout invis " + win + ": mExiting="+ win.mExiting+ " mSurfacePendingDestroy="+ win.mSurfacePendingDestroy);
+        if (!win.mExiting || win.mSurfacePendingDestroy) {
           int transit=WindowManagerPolicy.TRANSIT_EXIT;
           if (win.getAttrs().type == TYPE_APPLICATION_STARTING) {
             transit=WindowManagerPolicy.TRANSIT_PREVIEW_DONE;
           }
-          if (win.isWinVisibleLw() && applyAnimationLocked(win,transit,false)) {
+          if (!win.mSurfacePendingDestroy && win.isWinVisibleLw() && applyAnimationLocked(win,transit,false)) {
+            focusMayChange=true;
             win.mExiting=true;
             mKeyWaiter.finishedKey(session,client,true,KeyWaiter.RETURN_NOTHING);
           }
@@ -107,7 +111,16 @@ synchronized (mWindowMap) {
           }
         }
       }
-      outSurface.release();
+      if (win.mSurface == null || (win.getAttrs().flags & WindowManager.LayoutParams.FLAG_KEEP_SURFACE_WHILE_ANIMATING) == 0 || win.mSurfacePendingDestroy) {
+        win.mSurfacePendingDestroy=false;
+        outSurface.release();
+        if (DEBUG_VISIBILITY)         Log.i(TAG,"Releasing surface in: " + win);
+      }
+ else       if (win.mSurface != null) {
+        if (DEBUG_VISIBILITY)         Log.i(TAG,"Keeping surface, will report destroy: " + win);
+        win.mReportDestroySurface=true;
+        outSurface.copyFrom(win.mSurface);
+      }
     }
     if (focusMayChange) {
       if (updateFocusedWindowLocked(UPDATE_FOCUS_WILL_PLACE_SURFACES)) {
