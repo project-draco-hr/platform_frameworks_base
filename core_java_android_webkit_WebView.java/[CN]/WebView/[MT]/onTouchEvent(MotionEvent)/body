@@ -54,7 +54,7 @@ case MotionEvent.ACTION_DOWN:
       }
  else {
         mTouchMode=TOUCH_INIT_MODE;
-        mPreventDrag=mForwardTouchEvents;
+        mPreventDrag=mForwardTouchEvents ? PREVENT_DRAG_MAYBE_YES : PREVENT_DRAG_NO;
         mWebViewCore.sendMessage(EventHub.UPDATE_FRAME_CACHE_IF_LOADING);
         if (mLogEvent && eventTime - mLastTouchUpTime < 1000) {
           EventLog.writeEvent(EVENT_LOG_DOUBLE_TAP_DURATION,(eventTime - mLastTouchUpTime),eventTime);
@@ -87,7 +87,11 @@ case MotionEvent.ACTION_MOVE:
         invalidate();
         break;
       }
-      if (mPreventDrag || (deltaX * deltaX + deltaY * deltaY) < mTouchSlopSquare) {
+      if ((deltaX * deltaX + deltaY * deltaY) < mTouchSlopSquare) {
+        break;
+      }
+      if (mPreventDrag == PREVENT_DRAG_MAYBE_YES) {
+        mLastTouchTime=eventTime;
         break;
       }
       if (mTouchMode == TOUCH_SHORTPRESS_MODE || mTouchMode == TOUCH_SHORTPRESS_START_MODE) {
@@ -192,12 +196,6 @@ case TOUCH_DOUBLE_TAP_MODE:
   mTouchMode=TOUCH_DONE_MODE;
 doDoubleTap();
 break;
-case TOUCH_INIT_MODE:
-mPrivateHandler.removeMessages(SWITCH_TO_SHORTPRESS);
-if (!mPreventDrag) {
-mPrivateHandler.sendMessageDelayed(mPrivateHandler.obtainMessage(RELEASE_SINGLE_TAP),ViewConfiguration.getDoubleTapTimeout());
-}
-break;
 case TOUCH_SHORTPRESS_START_MODE:
 case TOUCH_SHORTPRESS_MODE:
 mPrivateHandler.removeMessages(SWITCH_TO_SHORTPRESS);
@@ -209,6 +207,26 @@ case TOUCH_SELECT_MODE:
 commitCopy();
 mTouchSelection=false;
 break;
+case TOUCH_INIT_MODE:
+mPrivateHandler.removeMessages(SWITCH_TO_SHORTPRESS);
+if ((deltaX * deltaX + deltaY * deltaY) > mTouchSlopSquare) {
+Log.w(LOGTAG,"Miss a drag as we are waiting for" + " WebCore's response for touch down.");
+if (computeHorizontalScrollExtent() < computeHorizontalScrollRange() || computeVerticalScrollExtent() < computeVerticalScrollRange()) {
+WebViewCore.pauseUpdate(mWebViewCore);
+}
+ else {
+break;
+}
+}
+ else {
+if (mPreventDrag == PREVENT_DRAG_MAYBE_YES) {
+mPreventDrag=PREVENT_DRAG_NO;
+}
+if (mPreventDrag == PREVENT_DRAG_NO) {
+mPrivateHandler.sendMessageDelayed(mPrivateHandler.obtainMessage(RELEASE_SINGLE_TAP),ViewConfiguration.getDoubleTapTimeout());
+}
+break;
+}
 case TOUCH_DRAG_MODE:
 invalidate();
 if (eventTime - mLastTouchTime <= MIN_FLING_TIME) {
