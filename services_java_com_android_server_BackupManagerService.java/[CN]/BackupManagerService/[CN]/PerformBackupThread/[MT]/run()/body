@@ -5,8 +5,10 @@
   Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND);
   try {
     EventLog.writeEvent(BACKUP_START_EVENT,mTransport.transportDirName());
-    if (status == BackupConstants.TRANSPORT_OK && mEverStoredApps.size() == 0) {
-      Log.i(TAG,"Initializing (wiping) backup transport storage");
+    File pmState=new File(mStateDir,PACKAGE_MANAGER_SENTINEL);
+    if (status == BackupConstants.TRANSPORT_OK && pmState.length() <= 0) {
+      Log.i(TAG,"Initializing (wiping) backup state and transport storage");
+      resetBackupState(mStateDir);
       status=mTransport.initializeDevice();
       if (status == BackupConstants.TRANSPORT_OK) {
         EventLog.writeEvent(BACKUP_INITIALIZE_EVENT);
@@ -39,7 +41,6 @@
     if (status == BackupConstants.TRANSPORT_NOT_INITIALIZED) {
       EventLog.writeEvent(BACKUP_RESET_EVENT,mTransport.transportDirName());
       resetBackupState(mStateDir);
-      backupNow();
     }
   }
  catch (  Exception e) {
@@ -50,11 +51,7 @@
     if (status != BackupConstants.TRANSPORT_OK) {
       Log.w(TAG,"Backup pass unsuccessful, restaging");
       for (      BackupRequest req : mQueue) {
-        try {
-          dataChanged(req.appInfo.packageName);
-        }
- catch (        RemoteException e) {
-        }
+        dataChanged(req.appInfo.packageName);
       }
       try {
         startBackupAlarmsLocked(mTransport.requestBackupTime());
@@ -62,11 +59,14 @@
  catch (      RemoteException e) {
       }
     }
-    if (!mJournal.delete()) {
+    if (mJournal != null && !mJournal.delete()) {
       Log.e(TAG,"Unable to remove backup journal file " + mJournal);
     }
 synchronized (mQueueLock) {
       mBackupOrRestoreInProgress=false;
+    }
+    if (status == BackupConstants.TRANSPORT_NOT_INITIALIZED) {
+      backupNow();
     }
     mWakelock.release();
   }
