@@ -23,8 +23,10 @@
     mWebViewCore.sendMessage(EventHub.TOUCH_EVENT,ted);
     mLastSentTouchTime=eventTime;
   }
-  int deltaX=(int)(mLastTouchX - x);
-  int deltaY=(int)(mLastTouchY - y);
+  float fDeltaX=mLastTouchX - x;
+  float fDeltaY=mLastTouchY - y;
+  int deltaX=(int)fDeltaX;
+  int deltaY=(int)fDeltaY;
 switch (action) {
 case MotionEvent.ACTION_DOWN:
 {
@@ -127,14 +129,28 @@ case MotionEvent.ACTION_MOVE:
       }
     }
     int newScrollX=pinLocX(mScrollX + deltaX);
-    deltaX=newScrollX - mScrollX;
+    int newDeltaX=newScrollX - mScrollX;
+    if (deltaX != newDeltaX) {
+      deltaX=newDeltaX;
+      fDeltaX=(float)newDeltaX;
+    }
     int newScrollY=pinLocY(mScrollY + deltaY);
-    deltaY=newScrollY - mScrollY;
+    int newDeltaY=newScrollY - mScrollY;
+    if (deltaY != newDeltaY) {
+      deltaY=newDeltaY;
+      fDeltaY=(float)newDeltaY;
+    }
     boolean done=false;
-    if (deltaX == 0 && deltaY == 0) {
-      done=true;
+    boolean keepScrollBarsVisible=false;
+    if (Math.abs(fDeltaX) < 1.0f && Math.abs(fDeltaY) < 1.0f) {
+      keepScrollBarsVisible=done=true;
     }
  else {
+      if (mHeldMotionless != MOTIONLESS_FALSE) {
+        mPrivateHandler.removeMessages(DRAG_HELD_MOTIONLESS);
+        mPrivateHandler.removeMessages(AWAKEN_SCROLL_BARS);
+        mHeldMotionless=MOTIONLESS_FALSE;
+      }
       if (mSnapScrollMode == SNAP_X || mSnapScrollMode == SNAP_Y) {
         int ax=Math.abs(deltaX);
         int ay=Math.abs(deltaY);
@@ -157,7 +173,7 @@ case MotionEvent.ACTION_MOVE:
       }
       if (mSnapScrollMode == SNAP_X || mSnapScrollMode == SNAP_X_LOCK) {
         if (deltaX == 0) {
-          awakenScrollBars(ViewConfiguration.getScrollDefaultDelay(),false);
+          keepScrollBarsVisible=true;
         }
  else {
           scrollBy(deltaX,0);
@@ -166,7 +182,7 @@ case MotionEvent.ACTION_MOVE:
       }
  else       if (mSnapScrollMode == SNAP_Y || mSnapScrollMode == SNAP_Y_LOCK) {
         if (deltaY == 0) {
-          awakenScrollBars(ViewConfiguration.getScrollDefaultDelay(),false);
+          keepScrollBarsVisible=true;
         }
  else {
           scrollBy(0,deltaY);
@@ -193,9 +209,13 @@ case MotionEvent.ACTION_MOVE:
         mPrivateHandler.postDelayed(mZoomControlRunnable,ZOOM_CONTROLS_TIMEOUT);
       }
     }
-    if (done) {
+    if (keepScrollBarsVisible) {
+      if (mHeldMotionless != MOTIONLESS_TRUE) {
+        mHeldMotionless=MOTIONLESS_TRUE;
+        invalidate();
+      }
       awakenScrollBars(ViewConfiguration.getScrollDefaultDelay(),false);
-      return false;
+      return !done;
     }
     break;
   }
@@ -242,6 +262,9 @@ doShortPress();
 break;
 }
 case TOUCH_DRAG_MODE:
+mPrivateHandler.removeMessages(DRAG_HELD_MOTIONLESS);
+mPrivateHandler.removeMessages(AWAKEN_SCROLL_BARS);
+mHeldMotionless=MOTIONLESS_TRUE;
 invalidate();
 if (eventTime - mLastTouchTime <= MIN_FLING_TIME) {
 mVelocityTracker.addMovement(ev);
@@ -272,6 +295,9 @@ WebViewCore.resumeUpdate(mWebViewCore);
 }
 mPrivateHandler.removeMessages(SWITCH_TO_SHORTPRESS);
 mPrivateHandler.removeMessages(SWITCH_TO_LONGPRESS);
+mPrivateHandler.removeMessages(DRAG_HELD_MOTIONLESS);
+mPrivateHandler.removeMessages(AWAKEN_SCROLL_BARS);
+mHeldMotionless=MOTIONLESS_TRUE;
 mTouchMode=TOUCH_DONE_MODE;
 nativeHideCursor();
 break;
