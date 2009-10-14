@@ -1,18 +1,33 @@
 {
   ContentValues primaryContentValues=null;
+  ContentValues subprimaryContentValues=null;
   for (  ContentValues contentValues : contentValuesList) {
+    if (contentValues == null) {
+      continue;
+    }
     Integer isSuperPrimary=contentValues.getAsInteger(StructuredName.IS_SUPER_PRIMARY);
-    if (isSuperPrimary != null && isSuperPrimary != 0) {
+    if (isSuperPrimary != null && isSuperPrimary > 0) {
       primaryContentValues=contentValues;
       break;
     }
- else     if (primaryContentValues == null && contentValues != null) {
-      primaryContentValues=contentValues;
+ else     if (primaryContentValues == null) {
+      Integer primary=contentValues.getAsInteger(StructuredName.IS_PRIMARY);
+      if (primary != null && primary > 0) {
+        primaryContentValues=contentValues;
+      }
+ else       if (subprimaryContentValues == null) {
+        subprimaryContentValues=contentValues;
+      }
     }
   }
   if (primaryContentValues == null) {
-    Log.e(LOG_TAG,"All ContentValues given from database is empty.");
-    primaryContentValues=new ContentValues();
+    if (subprimaryContentValues != null) {
+      primaryContentValues=subprimaryContentValues;
+    }
+ else {
+      Log.e(LOG_TAG,"All ContentValues given from database is empty.");
+      primaryContentValues=new ContentValues();
+    }
   }
   final String familyName=primaryContentValues.getAsString(StructuredName.FAMILY_NAME);
   final String middleName=primaryContentValues.getAsString(StructuredName.MIDDLE_NAME);
@@ -26,7 +41,7 @@
     final String encodedMiddle;
     final String encodedPrefix;
     final String encodedSuffix;
-    final boolean reallyUseQuotedPrintableToName=(mUsesQPToPrimaryProperties && !(VCardUtils.containsOnlyNonCrLfPrintableAscii(familyName) && VCardUtils.containsOnlyNonCrLfPrintableAscii(givenName) && VCardUtils.containsOnlyNonCrLfPrintableAscii(middleName)&& VCardUtils.containsOnlyNonCrLfPrintableAscii(prefix)&& VCardUtils.containsOnlyNonCrLfPrintableAscii(suffix)));
+    final boolean reallyUseQuotedPrintableToName=(!mRefrainsQPToPrimaryProperties && !(VCardUtils.containsOnlyNonCrLfPrintableAscii(familyName) && VCardUtils.containsOnlyNonCrLfPrintableAscii(givenName) && VCardUtils.containsOnlyNonCrLfPrintableAscii(middleName)&& VCardUtils.containsOnlyNonCrLfPrintableAscii(prefix)&& VCardUtils.containsOnlyNonCrLfPrintableAscii(suffix)));
     if (reallyUseQuotedPrintableToName) {
       encodedFamily=encodeQuotedPrintable(familyName);
       encodedGiven=encodeQuotedPrintable(givenName);
@@ -61,9 +76,9 @@
     builder.append(VCARD_ITEM_SEPARATOR);
     builder.append(encodedSuffix);
     builder.append(VCARD_COL_SEPARATOR);
-    final String fullname=VCardUtils.constructNameFromElements(VCardConfig.getNameOrderType(mVCardType),encodedFamily,encodedMiddle,encodedGiven,encodedPrefix,encodedSuffix);
-    final boolean reallyUseQuotedPrintableToFullname=mUsesQPToPrimaryProperties && !VCardUtils.containsOnlyNonCrLfPrintableAscii(fullname);
-    final String encodedFullname=reallyUseQuotedPrintableToFullname ? encodeQuotedPrintable(fullname) : escapeCharacters(fullname);
+    final String formattedName=VCardUtils.constructNameFromElements(VCardConfig.getNameOrderType(mVCardType),encodedFamily,encodedMiddle,encodedGiven,encodedPrefix,encodedSuffix);
+    final boolean reallyUseQuotedPrintableToFullname=!mRefrainsQPToPrimaryProperties && !VCardUtils.containsOnlyNonCrLfPrintableAscii(formattedName);
+    final String encodedFullname=reallyUseQuotedPrintableToFullname ? encodeQuotedPrintable(formattedName) : escapeCharacters(formattedName);
     builder.append(Constants.PROPERTY_FN);
     if (shouldAppendCharsetAttribute(encodedFullname)) {
       builder.append(VCARD_ATTR_SEPARATOR);
@@ -78,7 +93,7 @@
     builder.append(VCARD_COL_SEPARATOR);
   }
  else   if (!TextUtils.isEmpty(displayName)) {
-    final boolean reallyUseQuotedPrintableToDisplayName=(mUsesQPToPrimaryProperties && !VCardUtils.containsOnlyNonCrLfPrintableAscii(displayName));
+    final boolean reallyUseQuotedPrintableToDisplayName=(!mRefrainsQPToPrimaryProperties && !VCardUtils.containsOnlyNonCrLfPrintableAscii(displayName));
     final String encodedDisplayName=reallyUseQuotedPrintableToDisplayName ? encodeQuotedPrintable(displayName) : escapeCharacters(displayName);
     builder.append(Constants.PROPERTY_N);
     if (shouldAppendCharsetAttribute(encodedDisplayName)) {
@@ -96,23 +111,43 @@
     builder.append(VCARD_ITEM_SEPARATOR);
     builder.append(VCARD_ITEM_SEPARATOR);
     builder.append(VCARD_COL_SEPARATOR);
-  }
- else   if (mIsDoCoMo) {
-    appendVCardLine(builder,Constants.PROPERTY_N,"");
+    if (mIsV30) {
+      builder.append(Constants.PROPERTY_FN);
+      if (shouldAppendCharsetAttribute(encodedDisplayName)) {
+        builder.append(VCARD_ATTR_SEPARATOR);
+        builder.append(mVCardAttributeCharset);
+      }
+      builder.append(VCARD_DATA_SEPARATOR);
+      builder.append(encodedDisplayName);
+      builder.append(VCARD_COL_SEPARATOR);
+    }
   }
  else   if (mIsV30) {
     appendVCardLine(builder,Constants.PROPERTY_N,"");
     appendVCardLine(builder,Constants.PROPERTY_FN,"");
   }
-  String phoneticFamilyName=primaryContentValues.getAsString(StructuredName.PHONETIC_FAMILY_NAME);
-  String phoneticMiddleName=primaryContentValues.getAsString(StructuredName.PHONETIC_MIDDLE_NAME);
-  String phoneticGivenName=primaryContentValues.getAsString(StructuredName.PHONETIC_GIVEN_NAME);
-  if (!(TextUtils.isEmpty(phoneticFamilyName) && TextUtils.isEmpty(phoneticMiddleName) && TextUtils.isEmpty(phoneticGivenName))) {
-    if (mIsJapaneseMobilePhone) {
-      phoneticFamilyName=VCardUtils.toHalfWidthString(phoneticFamilyName);
-      phoneticMiddleName=VCardUtils.toHalfWidthString(phoneticMiddleName);
-      phoneticGivenName=VCardUtils.toHalfWidthString(phoneticGivenName);
+ else   if (mIsDoCoMo) {
+    appendVCardLine(builder,Constants.PROPERTY_N,"");
+  }
+  final String phoneticFamilyName;
+  final String phoneticMiddleName;
+  final String phoneticGivenName;
+{
+    String tmpPhoneticFamilyName=primaryContentValues.getAsString(StructuredName.PHONETIC_FAMILY_NAME);
+    String tmpPhoneticMiddleName=primaryContentValues.getAsString(StructuredName.PHONETIC_MIDDLE_NAME);
+    String tmpPhoneticGivenName=primaryContentValues.getAsString(StructuredName.PHONETIC_GIVEN_NAME);
+    if (mNeedsToConvertPhoneticString) {
+      phoneticFamilyName=VCardUtils.toHalfWidthString(tmpPhoneticFamilyName);
+      phoneticMiddleName=VCardUtils.toHalfWidthString(tmpPhoneticMiddleName);
+      phoneticGivenName=VCardUtils.toHalfWidthString(tmpPhoneticGivenName);
     }
+ else {
+      phoneticFamilyName=tmpPhoneticFamilyName;
+      phoneticMiddleName=tmpPhoneticMiddleName;
+      phoneticGivenName=tmpPhoneticGivenName;
+    }
+  }
+  if (!(TextUtils.isEmpty(phoneticFamilyName) && TextUtils.isEmpty(phoneticMiddleName) && TextUtils.isEmpty(phoneticGivenName))) {
     if (mIsV30) {
       final String sortString=VCardUtils.constructNameFromElements(mVCardType,phoneticFamilyName,phoneticMiddleName,phoneticGivenName);
       builder.append(Constants.PROPERTY_SORT_STRING);
@@ -125,11 +160,11 @@
       builder.append(encodedSortString);
       builder.append(VCARD_COL_SEPARATOR);
     }
- else {
+ else     if (mIsJapaneseMobilePhone) {
       builder.append(Constants.PROPERTY_SOUND);
       builder.append(VCARD_ATTR_SEPARATOR);
       builder.append(Constants.ATTR_TYPE_X_IRMC_N);
-      boolean reallyUseQuotedPrintable=(mUsesQPToPrimaryProperties && !(VCardUtils.containsOnlyNonCrLfPrintableAscii(phoneticFamilyName) && VCardUtils.containsOnlyNonCrLfPrintableAscii(phoneticMiddleName) && VCardUtils.containsOnlyNonCrLfPrintableAscii(phoneticGivenName)));
+      boolean reallyUseQuotedPrintable=(!mRefrainsQPToPrimaryProperties && !(VCardUtils.containsOnlyNonCrLfPrintableAscii(phoneticFamilyName) && VCardUtils.containsOnlyNonCrLfPrintableAscii(phoneticMiddleName) && VCardUtils.containsOnlyNonCrLfPrintableAscii(phoneticGivenName)));
       final String encodedPhoneticFamilyName;
       final String encodedPhoneticMiddleName;
       final String encodedPhoneticGivenName;
@@ -171,7 +206,7 @@
   }
   if (mUsesDefactProperty) {
     if (!TextUtils.isEmpty(phoneticGivenName)) {
-      final boolean reallyUseQuotedPrintable=(mUsesQPToPrimaryProperties && !VCardUtils.containsOnlyNonCrLfPrintableAscii(phoneticGivenName));
+      final boolean reallyUseQuotedPrintable=!VCardUtils.containsOnlyNonCrLfPrintableAscii(phoneticGivenName);
       final String encodedPhoneticGivenName;
       if (reallyUseQuotedPrintable) {
         encodedPhoneticGivenName=encodeQuotedPrintable(phoneticGivenName);
@@ -193,7 +228,7 @@
       builder.append(VCARD_COL_SEPARATOR);
     }
     if (!TextUtils.isEmpty(phoneticMiddleName)) {
-      final boolean reallyUseQuotedPrintable=(mUsesQPToPrimaryProperties && !VCardUtils.containsOnlyNonCrLfPrintableAscii(phoneticMiddleName));
+      final boolean reallyUseQuotedPrintable=!VCardUtils.containsOnlyNonCrLfPrintableAscii(phoneticMiddleName);
       final String encodedPhoneticMiddleName;
       if (reallyUseQuotedPrintable) {
         encodedPhoneticMiddleName=encodeQuotedPrintable(phoneticMiddleName);
@@ -215,7 +250,7 @@
       builder.append(VCARD_COL_SEPARATOR);
     }
     if (!TextUtils.isEmpty(phoneticFamilyName)) {
-      final boolean reallyUseQuotedPrintable=(mUsesQPToPrimaryProperties && !VCardUtils.containsOnlyNonCrLfPrintableAscii(phoneticFamilyName));
+      final boolean reallyUseQuotedPrintable=!VCardUtils.containsOnlyNonCrLfPrintableAscii(phoneticFamilyName);
       final String encodedPhoneticFamilyName;
       if (reallyUseQuotedPrintable) {
         encodedPhoneticFamilyName=encodeQuotedPrintable(phoneticFamilyName);
