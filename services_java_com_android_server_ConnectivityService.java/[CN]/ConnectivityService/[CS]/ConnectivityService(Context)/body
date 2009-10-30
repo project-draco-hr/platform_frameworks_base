@@ -4,48 +4,89 @@
   mNetTrackers=new NetworkStateTracker[ConnectivityManager.MAX_NETWORK_TYPE + 1];
   mHandler=new MyHandler();
   mNetworkPreference=getPersistedNetworkPreference();
-  mNetAttributes=new NetworkAttributes[ConnectivityManager.MAX_NETWORK_TYPE + 1];
   mRadioAttributes=new RadioAttributes[ConnectivityManager.MAX_RADIO_TYPE + 1];
-  String[] naStrings=context.getResources().getStringArray(com.android.internal.R.array.networkAttributes);
-  for (  String a : naStrings) {
-    NetworkAttributes n=new NetworkAttributes(a);
-    mNetAttributes[n.mType]=n;
-  }
+  mNetAttributes=new NetworkAttributes[ConnectivityManager.MAX_NETWORK_TYPE + 1];
   String[] raStrings=context.getResources().getStringArray(com.android.internal.R.array.radioAttributes);
-  for (  String a : raStrings) {
-    RadioAttributes r=new RadioAttributes(a);
+  for (  String raString : raStrings) {
+    RadioAttributes r=new RadioAttributes(raString);
+    if (r.mType > ConnectivityManager.MAX_RADIO_TYPE) {
+      Log.e(TAG,"Error in radioAttributes - ignoring attempt to define type " + r.mType);
+      continue;
+    }
+    if (mRadioAttributes[r.mType] != null) {
+      Log.e(TAG,"Error in radioAttributes - ignoring attempt to redefine type " + r.mType);
+      continue;
+    }
     mRadioAttributes[r.mType]=r;
   }
-  mPriorityList=new int[naStrings.length];
-{
-    int priority=0;
-    int nextPos=naStrings.length - 1;
-    while (nextPos > -1) {
-      for (int i=0; i < mNetAttributes.length; i++) {
-        if (mNetAttributes[i].mPriority == priority) {
-          mPriorityList[nextPos--]=i;
-        }
+  String[] naStrings=context.getResources().getStringArray(com.android.internal.R.array.networkAttributes);
+  for (  String naString : naStrings) {
+    try {
+      NetworkAttributes n=new NetworkAttributes(naString);
+      if (n.mType > ConnectivityManager.MAX_NETWORK_TYPE) {
+        Log.e(TAG,"Error in networkAttributes - ignoring attempt to define type " + n.mType);
+        continue;
       }
-      priority++;
+      if (mNetAttributes[n.mType] != null) {
+        Log.e(TAG,"Error in networkAttributes - ignoring attempt to redefine type " + n.mType);
+        continue;
+      }
+      if (mRadioAttributes[n.mRadio] == null) {
+        Log.e(TAG,"Error in networkAttributes - ignoring attempt to use undefined " + "radio " + n.mRadio + " in network type "+ n.mType);
+        continue;
+      }
+      mNetAttributes[n.mType]=n;
+      mNetworksDefined++;
+    }
+ catch (    Exception e) {
+    }
+  }
+  mPriorityList=new int[mNetworksDefined];
+{
+    int insertionPoint=mNetworksDefined - 1;
+    int currentLowest=0;
+    int nextLowest=0;
+    while (insertionPoint > -1) {
+      for (      NetworkAttributes na : mNetAttributes) {
+        if (na == null)         continue;
+        if (na.mPriority < currentLowest)         continue;
+        if (na.mPriority > currentLowest) {
+          if (na.mPriority < nextLowest || nextLowest == 0) {
+            nextLowest=na.mPriority;
+          }
+          continue;
+        }
+        mPriorityList[insertionPoint--]=na.mType;
+      }
+      currentLowest=nextLowest;
+      nextLowest=0;
     }
   }
   mNetRequestersPids=new ArrayList[ConnectivityManager.MAX_NETWORK_TYPE + 1];
-  for (int i=0; i <= ConnectivityManager.MAX_NETWORK_TYPE; i++) {
+  for (  int i : mPriorityList) {
     mNetRequestersPids[i]=new ArrayList();
   }
   mFeatureUsers=new ArrayList();
-  if (DBG)   Log.v(TAG,"Starting Wifi Service.");
-  WifiStateTracker wst=new WifiStateTracker(context,mHandler);
-  WifiService wifiService=new WifiService(context,wst);
-  ServiceManager.addService(Context.WIFI_SERVICE,wifiService);
-  mNetTrackers[ConnectivityManager.TYPE_WIFI]=wst;
-  mNetTrackers[ConnectivityManager.TYPE_MOBILE]=new MobileDataStateTracker(context,mHandler,ConnectivityManager.TYPE_MOBILE,Phone.APN_TYPE_DEFAULT,"MOBILE");
-  mNetTrackers[ConnectivityManager.TYPE_MOBILE_MMS]=new MobileDataStateTracker(context,mHandler,ConnectivityManager.TYPE_MOBILE_MMS,Phone.APN_TYPE_MMS,"MOBILE_MMS");
-  mNetTrackers[ConnectivityManager.TYPE_MOBILE_SUPL]=new MobileDataStateTracker(context,mHandler,ConnectivityManager.TYPE_MOBILE_SUPL,Phone.APN_TYPE_SUPL,"MOBILE_SUPL");
-  mNetTrackers[ConnectivityManager.TYPE_MOBILE_DUN]=new MobileDataStateTracker(context,mHandler,ConnectivityManager.TYPE_MOBILE_DUN,Phone.APN_TYPE_DUN,"MOBILE_DUN");
-  mNetTrackers[ConnectivityManager.TYPE_MOBILE_HIPRI]=new MobileDataStateTracker(context,mHandler,ConnectivityManager.TYPE_MOBILE_HIPRI,Phone.APN_TYPE_HIPRI,"MOBILE_HIPRI");
   mNumDnsEntries=0;
   mTestMode=SystemProperties.get("cm.test.mode").equals("true") && SystemProperties.get("ro.build.type").equals("eng");
-  for (  NetworkStateTracker t : mNetTrackers)   t.startMonitoring();
-  mWifiWatchdogService=new WifiWatchdogService(context,wst);
+  for (  int netType : mPriorityList) {
+switch (mNetAttributes[netType].mRadio) {
+case ConnectivityManager.TYPE_WIFI:
+      if (DBG)       Log.v(TAG,"Starting Wifi Service.");
+    WifiStateTracker wst=new WifiStateTracker(context,mHandler);
+  WifiService wifiService=new WifiService(context,wst);
+ServiceManager.addService(Context.WIFI_SERVICE,wifiService);
+mNetTrackers[ConnectivityManager.TYPE_WIFI]=wst;
+wst.startMonitoring();
+mWifiWatchdogService=new WifiWatchdogService(context,wst);
+break;
+case ConnectivityManager.TYPE_MOBILE:
+mNetTrackers[netType]=new MobileDataStateTracker(context,mHandler,netType,mNetAttributes[netType].mName);
+mNetTrackers[netType].startMonitoring();
+break;
+default :
+Log.e(TAG,"Trying to create a DataStateTracker for an unknown radio type " + mNetAttributes[netType].mRadio);
+continue;
+}
+}
 }
