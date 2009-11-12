@@ -8,6 +8,7 @@ synchronized (this) {
     }
     while (mParallelBroadcasts.size() > 0) {
       r=mParallelBroadcasts.remove(0);
+      r.dispatchTime=SystemClock.uptimeMillis();
       final int N=r.receivers.size();
       if (DEBUG_BROADCAST_LIGHT)       Log.v(TAG,"Processing parallel broadcast " + r);
       for (int i=0; i < N; i++) {
@@ -15,6 +16,7 @@ synchronized (this) {
         if (DEBUG_BROADCAST)         Log.v(TAG,"Delivering non-serialized to registered " + target + ": "+ r);
         deliverToRegisteredReceiver(r,(BroadcastFilter)target,false);
       }
+      addBroadcastToHistoryLocked(r);
       if (DEBUG_BROADCAST_LIGHT)       Log.v(TAG,"Done with parallel broadcast " + r);
     }
     if (mPendingBroadcast != null) {
@@ -48,7 +50,7 @@ synchronized (mPidsSelfLocked) {
       long now=SystemClock.uptimeMillis();
       if (r.dispatchTime > 0) {
         if ((numReceivers > 0) && (now > r.dispatchTime + (2 * BROADCAST_TIMEOUT * numReceivers))) {
-          Log.w(TAG,"Hung broadcast discarded after timeout failure:" + " now=" + now + " dispatchTime="+ r.dispatchTime+ " startTime="+ r.startTime+ " intent="+ r.intent+ " numReceivers="+ numReceivers+ " nextReceiver="+ r.nextReceiver+ " state="+ r.state);
+          Log.w(TAG,"Hung broadcast discarded after timeout failure:" + " now=" + now + " dispatchTime="+ r.dispatchTime+ " startTime="+ r.receiverTime+ " intent="+ r.intent+ " numReceivers="+ numReceivers+ " nextReceiver="+ r.nextReceiver+ " state="+ r.state);
           broadcastTimeout();
           forceReceive=true;
           r.state=BroadcastRecord.IDLE;
@@ -74,6 +76,7 @@ synchronized (mPidsSelfLocked) {
         if (DEBUG_BROADCAST)         Log.v(TAG,"Cancelling BROADCAST_TIMEOUT_MSG");
         mHandler.removeMessages(BROADCAST_TIMEOUT_MSG);
         if (DEBUG_BROADCAST_LIGHT)         Log.v(TAG,"Finished with ordered broadcast " + r);
+        addBroadcastToHistoryLocked(r);
         mOrderedBroadcasts.remove(0);
         r=null;
         looped=true;
@@ -82,13 +85,13 @@ synchronized (mPidsSelfLocked) {
     }
  while (r == null);
     int recIdx=r.nextReceiver++;
-    r.startTime=SystemClock.uptimeMillis();
+    r.receiverTime=SystemClock.uptimeMillis();
     if (recIdx == 0) {
-      r.dispatchTime=r.startTime;
+      r.dispatchTime=r.receiverTime;
       if (DEBUG_BROADCAST_LIGHT)       Log.v(TAG,"Processing ordered broadcast " + r);
-      if (DEBUG_BROADCAST)       Log.v(TAG,"Submitting BROADCAST_TIMEOUT_MSG for " + (r.startTime + BROADCAST_TIMEOUT));
+      if (DEBUG_BROADCAST)       Log.v(TAG,"Submitting BROADCAST_TIMEOUT_MSG for " + (r.receiverTime + BROADCAST_TIMEOUT));
       Message msg=mHandler.obtainMessage(BROADCAST_TIMEOUT_MSG);
-      mHandler.sendMessageAtTime(msg,r.startTime + BROADCAST_TIMEOUT);
+      mHandler.sendMessageAtTime(msg,r.receiverTime + BROADCAST_TIMEOUT);
     }
     Object nextReceiver=r.receivers.get(recIdx);
     if (nextReceiver instanceof BroadcastFilter) {
