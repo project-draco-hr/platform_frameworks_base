@@ -1,0 +1,80 @@
+{
+  if (mDrawHistory) {
+    canvas.scale(mActualScale,mActualScale);
+    canvas.drawPicture(mHistoryPicture);
+    return;
+  }
+  boolean animateZoom=mZoomScale != 0;
+  boolean animateScroll=!mScroller.isFinished() || mVelocityTracker != null;
+  if (animateZoom) {
+    float zoomScale;
+    int interval=(int)(SystemClock.uptimeMillis() - mZoomStart);
+    if (interval < ZOOM_ANIMATION_LENGTH) {
+      float ratio=(float)interval / ZOOM_ANIMATION_LENGTH;
+      zoomScale=1.0f / (mInvInitialZoomScale + (mInvFinalZoomScale - mInvInitialZoomScale) * ratio);
+      invalidate();
+    }
+ else {
+      zoomScale=mZoomScale;
+      mZoomScale=0;
+      invalidate();
+      if (mNeedToAdjustWebTextView) {
+        mNeedToAdjustWebTextView=false;
+        Rect contentBounds=nativeFocusCandidateNodeBounds();
+        Rect vBox=contentToViewRect(contentBounds);
+        Rect visibleRect=new Rect();
+        calcOurVisibleRect(visibleRect);
+        if (visibleRect.contains(vBox)) {
+          mWebTextView.setTextSize(TypedValue.COMPLEX_UNIT_PX,contentToViewDimension(nativeFocusCandidateTextSize()));
+          mWebTextView.setRect(vBox.left,vBox.top,vBox.width(),vBox.height());
+          if (nativeFocusCandidateIsPassword()) {
+            mWebTextView.setInPassword(true);
+          }
+        }
+ else {
+          mWebTextView.remove();
+        }
+      }
+    }
+    float scale=zoomScale * mInvInitialZoomScale;
+    int tx=Math.round(scale * (mInitialScrollX + mZoomCenterX) - mZoomCenterX);
+    tx=-pinLoc(tx,getViewWidth(),Math.round(mContentWidth * zoomScale)) + mScrollX;
+    int titleHeight=getTitleHeight();
+    int ty=Math.round(scale * (mInitialScrollY + mZoomCenterY - titleHeight) - (mZoomCenterY - titleHeight));
+    ty=-(ty <= titleHeight ? Math.max(ty,0) : pinLoc(ty - titleHeight,getViewHeight(),Math.round(mContentHeight * zoomScale)) + titleHeight) + mScrollY;
+    canvas.translate(tx,ty);
+    canvas.scale(zoomScale,zoomScale);
+    if (inEditingMode() && !mNeedToAdjustWebTextView && mZoomScale != 0) {
+      mNeedToAdjustWebTextView=true;
+      if (nativeFocusCandidateIsPassword()) {
+        mWebTextView.setInPassword(false);
+      }
+    }
+  }
+ else {
+    canvas.scale(mActualScale,mActualScale);
+  }
+  mWebViewCore.drawContentPicture(canvas,color,animateZoom,animateScroll);
+  if (mNativeClass == 0)   return;
+  if (mShiftIsPressed && !animateZoom) {
+    if (mTouchSelection) {
+      nativeDrawSelectionRegion(canvas);
+    }
+ else {
+      nativeDrawSelection(canvas,mInvActualScale,getTitleHeight(),mSelectX,mSelectY,mExtendSelection);
+    }
+  }
+ else   if (drawCursorRing) {
+    if (mTouchMode == TOUCH_SHORTPRESS_START_MODE) {
+      mTouchMode=TOUCH_SHORTPRESS_MODE;
+      HitTestResult hitTest=getHitTestResult();
+      if (hitTest != null && hitTest.mType != HitTestResult.UNKNOWN_TYPE) {
+        mPrivateHandler.sendMessageDelayed(mPrivateHandler.obtainMessage(SWITCH_TO_LONGPRESS),LONG_PRESS_TIMEOUT);
+      }
+    }
+    nativeDrawCursorRing(canvas);
+  }
+  if (mFindIsUp && !animateScroll) {
+    nativeDrawMatches(canvas);
+  }
+}

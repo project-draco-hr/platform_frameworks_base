@@ -3,6 +3,7 @@
   KeyEvent lastKey=null;
   long lastKeyTime=SystemClock.uptimeMillis();
   long nextKeyTime=lastKeyTime + LONG_WAIT;
+  long downTime=0;
   int keyRepeatCount=0;
   boolean configChanged=false;
   while (true) {
@@ -10,9 +11,18 @@
     if (DEBUG_INPUT)     Log.v(TAG,"Waiting for next key: now=" + curTime + ", repeat @ "+ nextKeyTime);
     QueuedEvent ev=mQueue.getEvent((int)((!configChanged && curTime < nextKeyTime) ? (nextKeyTime - curTime) : 0));
     if (DEBUG_INPUT && ev != null)     Log.v(TAG,"Event: type=" + ev.classType + " data="+ ev.event);
+    if (MEASURE_LATENCY) {
+      lt.sample("2 got event              ",System.nanoTime() - ev.whenNano);
+    }
+    if (lastKey != null && !mPolicy.allowKeyRepeat()) {
+      lastKey=null;
+      downTime=0;
+      lastKeyTime=curTime;
+      nextKeyTime=curTime + LONG_WAIT;
+    }
     try {
       if (ev != null) {
-        curTime=ev.when;
+        curTime=SystemClock.uptimeMillis();
         int eventType;
         if (ev.classType == RawInputEvent.CLASS_TOUCHSCREEN) {
           eventType=eventType((MotionEvent)ev.event);
@@ -24,27 +34,35 @@
           eventType=LocalPowerManager.OTHER_EVENT;
         }
         try {
-          long now=SystemClock.uptimeMillis();
-          if ((now - mLastBatteryStatsCallTime) >= MIN_TIME_BETWEEN_USERACTIVITIES) {
-            mLastBatteryStatsCallTime=now;
+          if ((curTime - mLastBatteryStatsCallTime) >= MIN_TIME_BETWEEN_USERACTIVITIES) {
+            mLastBatteryStatsCallTime=curTime;
             mBatteryStats.noteInputEvent();
           }
         }
  catch (        RemoteException e) {
         }
-        mPowerManager.userActivity(curTime,false,eventType,false);
+        if (eventType != TOUCH_EVENT && eventType != LONG_TOUCH_EVENT && eventType != CHEEK_EVENT) {
+          mPowerManager.userActivity(curTime,false,eventType,false);
+        }
+ else         if (mLastTouchEventType != eventType || (curTime - mLastUserActivityCallTime) >= MIN_TIME_BETWEEN_USERACTIVITIES) {
+          mLastUserActivityCallTime=curTime;
+          mLastTouchEventType=eventType;
+          mPowerManager.userActivity(curTime,false,eventType,false);
+        }
 switch (ev.classType) {
 case RawInputEvent.CLASS_KEYBOARD:
           KeyEvent ke=(KeyEvent)ev.event;
         if (ke.isDown()) {
           lastKey=ke;
+          downTime=curTime;
           keyRepeatCount=0;
           lastKeyTime=curTime;
-          nextKeyTime=lastKeyTime + KEY_REPEAT_FIRST_DELAY;
+          nextKeyTime=lastKeyTime + ViewConfiguration.getLongPressTimeout();
           if (DEBUG_INPUT)           Log.v(TAG,"Received key down: first repeat @ " + nextKeyTime);
         }
  else {
           lastKey=null;
+          downTime=0;
           lastKeyTime=curTime;
           nextKeyTime=curTime + LONG_WAIT;
           if (DEBUG_INPUT)           Log.v(TAG,"Received key up: ignore repeat @ " + nextKeyTime);
@@ -80,7 +98,15 @@ lastKeyTime=nextKeyTime;
 nextKeyTime=nextKeyTime + KEY_REPEAT_DELAY;
 keyRepeatCount++;
 if (DEBUG_INPUT) Log.v(TAG,"Key repeat: count=" + keyRepeatCount + ", next @ "+ nextKeyTime);
-dispatchKey(KeyEvent.changeTimeRepeat(lastKey,curTime,keyRepeatCount),0,0);
+KeyEvent newEvent;
+if (downTime != 0 && (downTime + ViewConfiguration.getLongPressTimeout()) <= curTime) {
+newEvent=KeyEvent.changeTimeRepeat(lastKey,curTime,keyRepeatCount,lastKey.getFlags() | KeyEvent.FLAG_LONG_PRESS);
+downTime=0;
+}
+ else {
+newEvent=KeyEvent.changeTimeRepeat(lastKey,curTime,keyRepeatCount);
+}
+dispatchKey(newEvent,0,0);
 }
  else {
 curTime=SystemClock.uptimeMillis();

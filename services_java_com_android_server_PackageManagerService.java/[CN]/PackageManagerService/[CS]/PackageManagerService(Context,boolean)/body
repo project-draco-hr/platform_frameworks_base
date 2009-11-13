@@ -10,6 +10,7 @@
   mSettings=new Settings();
   mSettings.addSharedUserLP("android.uid.system",Process.SYSTEM_UID,ApplicationInfo.FLAG_SYSTEM);
   mSettings.addSharedUserLP("android.uid.phone",MULTIPLE_APPLICATION_UIDS ? RADIO_UID : FIRST_APPLICATION_UID,ApplicationInfo.FLAG_SYSTEM);
+  mSettings.addSharedUserLP("android.uid.log",MULTIPLE_APPLICATION_UIDS ? LOG_UID : FIRST_APPLICATION_UID,ApplicationInfo.FLAG_SYSTEM);
   String separateProcesses=SystemProperties.get("debug.separate_processes");
   if (separateProcesses != null && separateProcesses.length() > 0) {
     if ("*".equals(separateProcesses)) {
@@ -40,7 +41,7 @@
 synchronized (mInstallLock) {
 synchronized (mPackages) {
       mHandlerThread.start();
-      mHandler=new Handler(mHandlerThread.getLooper());
+      mHandler=new PackageHandler(mHandlerThread.getLooper());
       File dataDir=Environment.getDataDirectory();
       mAppDataDir=new File(dataDir,"data");
       mDrmAppPrivateInstallDir=new File(dataDir,"app-private");
@@ -61,7 +62,9 @@ synchronized (mPackages) {
       }
       final HashSet<String> libFiles=new HashSet<String>();
       mFrameworkDir=new File(Environment.getRootDirectory(),"framework");
+      mDalvikCacheDir=new File(dataDir,"dalvik-cache");
       if (mInstaller != null) {
+        boolean didDexOpt=false;
         String bootClassPath=System.getProperty("java.boot.class.path");
         if (bootClassPath != null) {
           String[] paths=splitString(bootClassPath,':');
@@ -70,6 +73,7 @@ synchronized (mPackages) {
               if (dalvik.system.DexFile.isDexOptNeeded(paths[i])) {
                 libFiles.add(paths[i]);
                 mInstaller.dexopt(paths[i],Process.SYSTEM_UID,true);
+                didDexOpt=true;
               }
             }
  catch (            FileNotFoundException e) {
@@ -91,6 +95,7 @@ catch (            IOException e) {
               if (dalvik.system.DexFile.isDexOptNeeded(lib)) {
                 libFiles.add(lib);
                 mInstaller.dexopt(lib,Process.SYSTEM_UID,true);
+                didDexOpt=true;
               }
             }
  catch (            FileNotFoundException e) {
@@ -103,7 +108,7 @@ catch (            IOException e) {
         }
         libFiles.add(mFrameworkDir.getPath() + "/framework-res.apk");
         String[] frameworkFiles=mFrameworkDir.list();
-        if (frameworkFiles != null && mInstaller != null) {
+        if (frameworkFiles != null) {
           for (int i=0; i < frameworkFiles.length; i++) {
             File libPath=new File(mFrameworkDir,frameworkFiles[i]);
             String path=libPath.getPath();
@@ -116,6 +121,7 @@ catch (            IOException e) {
             try {
               if (dalvik.system.DexFile.isDexOptNeeded(path)) {
                 mInstaller.dexopt(path,Process.SYSTEM_UID,true);
+                didDexOpt=true;
               }
             }
  catch (            FileNotFoundException e) {
@@ -123,6 +129,18 @@ catch (            IOException e) {
             }
 catch (            IOException e) {
               Log.w(TAG,"Exception reading jar: " + path,e);
+            }
+          }
+        }
+        if (didDexOpt) {
+          String[] files=mDalvikCacheDir.list();
+          if (files != null) {
+            for (int i=0; i < files.length; i++) {
+              String fn=files[i];
+              if (fn.startsWith("data@app@") || fn.startsWith("data@app-private@")) {
+                Log.i(TAG,"Pruning dalvik file: " + fn);
+                (new File(mDalvikCacheDir,fn)).delete();
+              }
             }
           }
         }

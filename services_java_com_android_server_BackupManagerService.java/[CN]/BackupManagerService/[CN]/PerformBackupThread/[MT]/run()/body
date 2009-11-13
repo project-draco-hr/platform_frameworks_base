@@ -1,21 +1,73 @@
 {
+  int status=BackupConstants.TRANSPORT_OK;
+  long startRealtime=SystemClock.elapsedRealtime();
   if (DEBUG)   Log.v(TAG,"Beginning backup of " + mQueue.size() + " targets");
   Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND);
-  PackageManagerBackupAgent pmAgent=new PackageManagerBackupAgent(mPackageManager,allAgentPackages());
-  BackupRequest pmRequest=new BackupRequest(new ApplicationInfo(),false);
-  pmRequest.appInfo.packageName=PACKAGE_MANAGER_SENTINEL;
-  processOneBackup(pmRequest,IBackupAgent.Stub.asInterface(pmAgent.onBind()),mTransport);
-  doQueuedBackups(mTransport);
   try {
-    if (!mTransport.finishBackup()) {
-      Log.e(TAG,"Backup failure in finishBackup()");
+    EventLog.writeEvent(BACKUP_START_EVENT,mTransport.transportDirName());
+    File pmState=new File(mStateDir,PACKAGE_MANAGER_SENTINEL);
+    if (status == BackupConstants.TRANSPORT_OK && pmState.length() <= 0) {
+      Log.i(TAG,"Initializing (wiping) backup state and transport storage");
+      resetBackupState(mStateDir);
+      status=mTransport.initializeDevice();
+      if (status == BackupConstants.TRANSPORT_OK) {
+        EventLog.writeEvent(BACKUP_INITIALIZE_EVENT);
+      }
+ else {
+        EventLog.writeEvent(BACKUP_TRANSPORT_FAILURE_EVENT,"(initialize)");
+        Log.e(TAG,"Transport error in initializeDevice()");
+      }
+    }
+    if (status == BackupConstants.TRANSPORT_OK) {
+      PackageManagerBackupAgent pmAgent=new PackageManagerBackupAgent(mPackageManager,allAgentPackages());
+      BackupRequest pmRequest=new BackupRequest(new ApplicationInfo(),false);
+      pmRequest.appInfo.packageName=PACKAGE_MANAGER_SENTINEL;
+      status=processOneBackup(pmRequest,IBackupAgent.Stub.asInterface(pmAgent.onBind()),mTransport);
+    }
+    if (status == BackupConstants.TRANSPORT_OK) {
+      status=doQueuedBackups(mTransport);
+    }
+    if (status == BackupConstants.TRANSPORT_OK) {
+      status=mTransport.finishBackup();
+      if (status == BackupConstants.TRANSPORT_OK) {
+        int millis=(int)(SystemClock.elapsedRealtime() - startRealtime);
+        EventLog.writeEvent(BACKUP_SUCCESS_EVENT,mQueue.size(),millis);
+      }
+ else {
+        EventLog.writeEvent(BACKUP_TRANSPORT_FAILURE_EVENT,"(finish)");
+        Log.e(TAG,"Transport error in finishBackup()");
+      }
+    }
+    if (status == BackupConstants.TRANSPORT_NOT_INITIALIZED) {
+      EventLog.writeEvent(BACKUP_RESET_EVENT,mTransport.transportDirName());
+      resetBackupState(mStateDir);
     }
   }
- catch (  RemoteException e) {
-    Log.e(TAG,"Error in finishBackup()",e);
+ catch (  Exception e) {
+    Log.e(TAG,"Error in backup thread",e);
+    status=BackupConstants.TRANSPORT_ERROR;
   }
-  if (!mJournal.delete()) {
-    Log.e(TAG,"Unable to remove backup journal file " + mJournal.getAbsolutePath());
+ finally {
+    if (status != BackupConstants.TRANSPORT_OK) {
+      Log.w(TAG,"Backup pass unsuccessful, restaging");
+      for (      BackupRequest req : mQueue) {
+        dataChanged(req.appInfo.packageName);
+      }
+      try {
+        startBackupAlarmsLocked(mTransport.requestBackupTime());
+      }
+ catch (      RemoteException e) {
+      }
+    }
+    if (mJournal != null && !mJournal.delete()) {
+      Log.e(TAG,"Unable to remove backup journal file " + mJournal);
+    }
+synchronized (mQueueLock) {
+      mBackupOrRestoreInProgress=false;
+    }
+    if (status == BackupConstants.TRANSPORT_NOT_INITIALIZED) {
+      backupNow();
+    }
+    mWakelock.release();
   }
-  mWakelock.release();
 }

@@ -1,0 +1,97 @@
+{
+  int length;
+  int flags;
+  @SuppressWarnings("unused") int constants;
+  int totalLength=3;
+  byte[] head=null;
+  int code=-1;
+  int bytesReceived;
+  HeaderSet request=new HeaderSet();
+  HeaderSet reply=new HeaderSet();
+  length=mInput.read();
+  length=(length << 8) + mInput.read();
+  flags=mInput.read();
+  constants=mInput.read();
+  if (length > ObexHelper.MAX_PACKET_SIZE_INT) {
+    code=ResponseCodes.OBEX_HTTP_REQ_TOO_LARGE;
+    totalLength=3;
+  }
+ else {
+    if (length > 5) {
+      byte[] headers=new byte[length - 5];
+      bytesReceived=mInput.read(headers);
+      while (bytesReceived != headers.length) {
+        bytesReceived+=mInput.read(headers,bytesReceived,headers.length - bytesReceived);
+      }
+      ObexHelper.updateHeaderSet(request,headers);
+      if (mListener.getConnectionId() != -1 && request.mConnectionID != null) {
+        mListener.setConnectionId(ObexHelper.convertToLong(request.mConnectionID));
+      }
+ else {
+        mListener.setConnectionId(1);
+      }
+      if (request.mAuthResp != null) {
+        if (!handleAuthResp(request.mAuthResp)) {
+          code=ResponseCodes.OBEX_HTTP_UNAUTHORIZED;
+          mListener.onAuthenticationFailure(ObexHelper.getTagValue((byte)0x01,request.mAuthResp));
+        }
+        request.mAuthResp=null;
+      }
+    }
+    if (code != ResponseCodes.OBEX_HTTP_UNAUTHORIZED) {
+      if (request.mAuthChall != null) {
+        handleAuthChall(request);
+        reply.mAuthResp=new byte[request.mAuthResp.length];
+        System.arraycopy(request.mAuthResp,0,reply.mAuthResp,0,reply.mAuthResp.length);
+        request.mAuthChall=null;
+        request.mAuthResp=null;
+      }
+      boolean backup=false;
+      boolean create=true;
+      if (!((flags & 1) == 0)) {
+        backup=true;
+      }
+      if ((flags & 2) == 0) {
+        create=false;
+      }
+      try {
+        code=mListener.onSetPath(request,reply,backup,create);
+      }
+ catch (      Exception e) {
+        sendResponse(ResponseCodes.OBEX_HTTP_INTERNAL_ERROR,null);
+        return;
+      }
+      code=validateResponseCode(code);
+      if (reply.nonce != null) {
+        mChallengeDigest=new byte[16];
+        System.arraycopy(reply.nonce,0,mChallengeDigest,0,16);
+      }
+ else {
+        mChallengeDigest=null;
+      }
+      long id=mListener.getConnectionId();
+      if (id == -1) {
+        reply.mConnectionID=null;
+      }
+ else {
+        reply.mConnectionID=ObexHelper.convertToByteArray(id);
+      }
+      head=ObexHelper.createHeader(reply,false);
+      totalLength+=head.length;
+      if (totalLength > mMaxPacketLength) {
+        totalLength=3;
+        head=null;
+        code=ResponseCodes.OBEX_HTTP_INTERNAL_ERROR;
+      }
+    }
+  }
+  byte[] replyData=new byte[totalLength];
+  replyData[0]=(byte)code;
+  replyData[1]=(byte)(totalLength >> 8);
+  replyData[2]=(byte)totalLength;
+  if (head != null) {
+    System.arraycopy(head,0,replyData,3,head.length);
+  }
+  mOutput.write(replyData);
+  mOutput.flush();
+}

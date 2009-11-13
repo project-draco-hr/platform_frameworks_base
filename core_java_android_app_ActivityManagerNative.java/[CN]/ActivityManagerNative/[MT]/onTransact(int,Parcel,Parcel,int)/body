@@ -19,29 +19,50 @@ case START_ACTIVITY_TRANSACTION:
       reply.writeInt(result);
       return true;
     }
-case START_NEXT_MATCHING_ACTIVITY_TRANSACTION:
+case START_ACTIVITY_INTENT_SENDER_TRANSACTION:
 {
     data.enforceInterface(IActivityManager.descriptor);
-    IBinder callingActivity=data.readStrongBinder();
-    Intent intent=Intent.CREATOR.createFromParcel(data);
-    boolean result=startNextMatchingActivity(callingActivity,intent);
+    IBinder b=data.readStrongBinder();
+    IApplicationThread app=ApplicationThreadNative.asInterface(b);
+    IntentSender intent=IntentSender.CREATOR.createFromParcel(data);
+    Intent fillInIntent=null;
+    if (data.readInt() != 0) {
+      fillInIntent=Intent.CREATOR.createFromParcel(data);
+    }
+    String resolvedType=data.readString();
+    IBinder resultTo=data.readStrongBinder();
+    String resultWho=data.readString();
+    int requestCode=data.readInt();
+    int flagsMask=data.readInt();
+    int flagsValues=data.readInt();
+    int result=startActivityIntentSender(app,intent,fillInIntent,resolvedType,resultTo,resultWho,requestCode,flagsMask,flagsValues);
     reply.writeNoException();
-    reply.writeInt(result ? 1 : 0);
+    reply.writeInt(result);
     return true;
   }
-case FINISH_ACTIVITY_TRANSACTION:
+case START_NEXT_MATCHING_ACTIVITY_TRANSACTION:
 {
   data.enforceInterface(IActivityManager.descriptor);
-  IBinder token=data.readStrongBinder();
-  Intent resultData=null;
-  int resultCode=data.readInt();
-  if (data.readInt() != 0) {
-    resultData=Intent.CREATOR.createFromParcel(data);
-  }
-  boolean res=finishActivity(token,resultCode,resultData);
+  IBinder callingActivity=data.readStrongBinder();
+  Intent intent=Intent.CREATOR.createFromParcel(data);
+  boolean result=startNextMatchingActivity(callingActivity,intent);
   reply.writeNoException();
-  reply.writeInt(res ? 1 : 0);
+  reply.writeInt(result ? 1 : 0);
   return true;
+}
+case FINISH_ACTIVITY_TRANSACTION:
+{
+data.enforceInterface(IActivityManager.descriptor);
+IBinder token=data.readStrongBinder();
+Intent resultData=null;
+int resultCode=data.readInt();
+if (data.readInt() != 0) {
+  resultData=Intent.CREATOR.createFromParcel(data);
+}
+boolean res=finishActivity(token,resultCode,resultData);
+reply.writeNoException();
+reply.writeInt(res ? 1 : 0);
+return true;
 }
 case FINISH_SUB_ACTIVITY_TRANSACTION:
 {
@@ -154,8 +175,12 @@ case ACTIVITY_IDLE_TRANSACTION:
 {
 data.enforceInterface(IActivityManager.descriptor);
 IBinder token=data.readStrongBinder();
+Configuration config=null;
+if (data.readInt() != 0) {
+config=Configuration.CREATOR.createFromParcel(data);
+}
 if (token != null) {
-activityIdle(token);
+activityIdle(token,config);
 }
 reply.writeNoException();
 return true;
@@ -365,6 +390,15 @@ removeContentProvider(app,name);
 reply.writeNoException();
 return true;
 }
+case GET_RUNNING_SERVICE_CONTROL_PANEL_TRANSACTION:
+{
+data.enforceInterface(IActivityManager.descriptor);
+ComponentName comp=ComponentName.CREATOR.createFromParcel(data);
+PendingIntent pi=getRunningServiceControlPanel(comp);
+reply.writeNoException();
+PendingIntent.writePendingIntentOrNullToParcel(pi,reply);
+return true;
+}
 case START_SERVICE_TRANSACTION:
 {
 data.enforceInterface(IActivityManager.descriptor);
@@ -405,8 +439,13 @@ case SET_SERVICE_FOREGROUND_TRANSACTION:
 data.enforceInterface(IActivityManager.descriptor);
 ComponentName className=ComponentName.readFromParcel(data);
 IBinder token=data.readStrongBinder();
-boolean isForeground=data.readInt() != 0;
-setServiceForeground(className,token,isForeground);
+int id=data.readInt();
+Notification notification=null;
+if (data.readInt() != 0) {
+notification=Notification.CREATOR.createFromParcel(data);
+}
+boolean removeNotification=data.readInt() != 0;
+setServiceForeground(className,token,id,notification,removeNotification);
 reply.writeNoException();
 return true;
 }
@@ -460,7 +499,10 @@ case SERVICE_DONE_EXECUTING_TRANSACTION:
 {
 data.enforceInterface(IActivityManager.descriptor);
 IBinder token=data.readStrongBinder();
-serviceDoneExecuting(token);
+int type=data.readInt();
+int startId=data.readInt();
+int res=data.readInt();
+serviceDoneExecuting(token,type,startId,res);
 reply.writeNoException();
 return true;
 }
@@ -780,13 +822,6 @@ startRunning(pkg,cls,action,indata);
 reply.writeNoException();
 return true;
 }
-case SYSTEM_READY_TRANSACTION:
-{
-data.enforceInterface(IActivityManager.descriptor);
-systemReady();
-reply.writeNoException();
-return true;
-}
 case HANDLE_APPLICATION_ERROR_TRANSACTION:
 {
 data.enforceInterface(IActivityManager.descriptor);
@@ -940,6 +975,34 @@ data.enforceInterface(IActivityManager.descriptor);
 String reason=data.readString();
 closeSystemDialogs(reason);
 reply.writeNoException();
+return true;
+}
+case GET_PROCESS_MEMORY_INFO_TRANSACTION:
+{
+data.enforceInterface(IActivityManager.descriptor);
+int[] pids=data.createIntArray();
+Debug.MemoryInfo[] res=getProcessMemoryInfo(pids);
+reply.writeNoException();
+reply.writeTypedArray(res,Parcelable.PARCELABLE_WRITE_RETURN_VALUE);
+return true;
+}
+case KILL_APPLICATION_PROCESS_TRANSACTION:
+{
+data.enforceInterface(IActivityManager.descriptor);
+String processName=data.readString();
+int uid=data.readInt();
+killApplicationProcess(processName,uid);
+reply.writeNoException();
+return true;
+}
+case OVERRIDE_PENDING_TRANSITION_TRANSACTION:
+{
+data.enforceInterface(IActivityManager.descriptor);
+IBinder token=data.readStrongBinder();
+String packageName=data.readString();
+int enterAnim=data.readInt();
+int exitAnim=data.readInt();
+overridePendingTransition(token,packageName,enterAnim,exitAnim);
 return true;
 }
 }

@@ -1,0 +1,99 @@
+{
+  if (mDestroyed) {
+    Log.w(TAG,"Ignoring updateSurface: destroyed");
+  }
+  int myWidth=mSurfaceHolder.getRequestedWidth();
+  if (myWidth <= 0)   myWidth=ViewGroup.LayoutParams.FILL_PARENT;
+  int myHeight=mSurfaceHolder.getRequestedHeight();
+  if (myHeight <= 0)   myHeight=ViewGroup.LayoutParams.FILL_PARENT;
+  final boolean creating=!mCreated;
+  final boolean formatChanged=mFormat != mSurfaceHolder.getRequestedFormat();
+  boolean sizeChanged=mWidth != myWidth || mHeight != myHeight;
+  final boolean typeChanged=mType != mSurfaceHolder.getRequestedType();
+  final boolean flagsChanged=mCurWindowFlags != mWindowFlags;
+  if (forceRelayout || creating || formatChanged|| sizeChanged|| typeChanged|| flagsChanged) {
+    if (DEBUG)     Log.v(TAG,"Changes: creating=" + creating + " format="+ formatChanged+ " size="+ sizeChanged);
+    try {
+      mWidth=myWidth;
+      mHeight=myHeight;
+      mFormat=mSurfaceHolder.getRequestedFormat();
+      mType=mSurfaceHolder.getRequestedType();
+      mLayout.x=0;
+      mLayout.y=0;
+      mLayout.width=myWidth;
+      mLayout.height=myHeight;
+      mLayout.format=mFormat;
+      mCurWindowFlags=mWindowFlags;
+      mLayout.flags=mWindowFlags | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN| WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
+      mLayout.memoryType=mType;
+      mLayout.token=mWindowToken;
+      if (!mCreated) {
+        mLayout.type=mIWallpaperEngine.mWindowType;
+        mLayout.gravity=Gravity.LEFT | Gravity.TOP;
+        mLayout.setTitle(WallpaperService.this.getClass().getName());
+        mLayout.windowAnimations=com.android.internal.R.style.Animation_Wallpaper;
+        mSession.add(mWindow,mLayout,View.VISIBLE,mContentInsets);
+      }
+      mSurfaceHolder.mSurfaceLock.lock();
+      mDrawingAllowed=true;
+      final int relayoutResult=mSession.relayout(mWindow,mLayout,mWidth,mHeight,View.VISIBLE,false,mWinFrame,mContentInsets,mVisibleInsets,mSurfaceHolder.mSurface);
+      if (DEBUG)       Log.v(TAG,"New surface: " + mSurfaceHolder.mSurface + ", frame="+ mWinFrame);
+      int w=mWinFrame.width();
+      if (mCurWidth != w) {
+        sizeChanged=true;
+        mCurWidth=w;
+      }
+      int h=mWinFrame.height();
+      if (mCurHeight != h) {
+        sizeChanged=true;
+        mCurHeight=h;
+      }
+      mSurfaceHolder.mSurfaceLock.unlock();
+      try {
+        mDestroyReportNeeded=true;
+        SurfaceHolder.Callback callbacks[]=null;
+synchronized (mSurfaceHolder.mCallbacks) {
+          final int N=mSurfaceHolder.mCallbacks.size();
+          if (N > 0) {
+            callbacks=new SurfaceHolder.Callback[N];
+            mSurfaceHolder.mCallbacks.toArray(callbacks);
+          }
+        }
+        if (!mCreated) {
+          mIsCreating=true;
+          if (DEBUG)           Log.v(TAG,"onSurfaceCreated(" + mSurfaceHolder + "): "+ this);
+          onSurfaceCreated(mSurfaceHolder);
+          if (callbacks != null) {
+            for (            SurfaceHolder.Callback c : callbacks) {
+              c.surfaceCreated(mSurfaceHolder);
+            }
+          }
+        }
+        if (forceReport || creating || formatChanged|| sizeChanged) {
+          if (DEBUG) {
+            RuntimeException e=new RuntimeException();
+            e.fillInStackTrace();
+            Log.w(TAG,"forceReport=" + forceReport + " creating="+ creating+ " formatChanged="+ formatChanged+ " sizeChanged="+ sizeChanged,e);
+          }
+          if (DEBUG)           Log.v(TAG,"onSurfaceChanged(" + mSurfaceHolder + ", "+ mFormat+ ", "+ mCurWidth+ ", "+ mCurHeight+ "): "+ this);
+          onSurfaceChanged(mSurfaceHolder,mFormat,mCurWidth,mCurHeight);
+          if (callbacks != null) {
+            for (            SurfaceHolder.Callback c : callbacks) {
+              c.surfaceChanged(mSurfaceHolder,mFormat,mCurWidth,mCurHeight);
+            }
+          }
+        }
+      }
+  finally {
+        mIsCreating=false;
+        mCreated=true;
+        if (creating || (relayoutResult & WindowManagerImpl.RELAYOUT_FIRST_TIME) != 0) {
+          mSession.finishDrawing(mWindow);
+        }
+      }
+    }
+ catch (    RemoteException ex) {
+    }
+    if (DEBUG)     Log.v(TAG,"Layout: x=" + mLayout.x + " y="+ mLayout.y+ " w="+ mLayout.width+ " h="+ mLayout.height);
+  }
+}

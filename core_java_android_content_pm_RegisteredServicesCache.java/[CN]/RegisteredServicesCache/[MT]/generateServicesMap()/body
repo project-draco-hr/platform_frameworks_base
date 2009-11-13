@@ -1,0 +1,96 @@
+{
+  PackageManager pm=mContext.getPackageManager();
+  ArrayList<ServiceInfo<V>> serviceInfos=new ArrayList<ServiceInfo<V>>();
+  List<ResolveInfo> resolveInfos=pm.queryIntentServices(new Intent(mInterfaceName),PackageManager.GET_META_DATA);
+  for (  ResolveInfo resolveInfo : resolveInfos) {
+    try {
+      ServiceInfo<V> info=parseServiceInfo(resolveInfo);
+      if (info == null) {
+        Log.w(TAG,"Unable to load service info " + resolveInfo.toString());
+        continue;
+      }
+      serviceInfos.add(info);
+    }
+ catch (    XmlPullParserException e) {
+      Log.w(TAG,"Unable to load service info " + resolveInfo.toString(),e);
+    }
+catch (    IOException e) {
+      Log.w(TAG,"Unable to load service info " + resolveInfo.toString(),e);
+    }
+  }
+synchronized (mServicesLock) {
+    if (Log.isLoggable(TAG,Log.VERBOSE)) {
+      Log.d(TAG,"generateServicesMap: " + mInterfaceName);
+    }
+    if (mPersistentServices == null) {
+      readPersistentServicesLocked();
+    }
+    mServices=Maps.newHashMap();
+    boolean changed=false;
+    if (Log.isLoggable(TAG,Log.VERBOSE)) {
+      Log.d(TAG,"found " + serviceInfos.size() + " services");
+    }
+    for (    ServiceInfo<V> info : serviceInfos) {
+      Integer previousUid=mPersistentServices.get(info.type);
+      if (previousUid == null) {
+        if (Log.isLoggable(TAG,Log.VERBOSE)) {
+          Log.d(TAG,"encountered new type: " + info);
+        }
+        changed=true;
+        mServices.put(info.type,info);
+        mPersistentServices.put(info.type,info.uid);
+        if (!mPersistentServicesFileDidNotExist) {
+          notifyListener(info.type,false);
+        }
+      }
+ else       if (previousUid == info.uid) {
+        if (Log.isLoggable(TAG,Log.VERBOSE)) {
+          Log.d(TAG,"encountered existing type with the same uid: " + info);
+        }
+        mServices.put(info.type,info);
+      }
+ else       if (inSystemImage(info.uid) || !containsTypeAndUid(serviceInfos,info.type,previousUid)) {
+        if (Log.isLoggable(TAG,Log.VERBOSE)) {
+          if (inSystemImage(info.uid)) {
+            Log.d(TAG,"encountered existing type with a new uid but from" + " the system: " + info);
+          }
+ else {
+            Log.d(TAG,"encountered existing type with a new uid but existing was" + " removed: " + info);
+          }
+        }
+        changed=true;
+        mServices.put(info.type,info);
+        mPersistentServices.put(info.type,info.uid);
+        notifyListener(info.type,false);
+      }
+ else {
+        if (Log.isLoggable(TAG,Log.VERBOSE)) {
+          Log.d(TAG,"encountered existing type with a new uid, ignoring: " + info);
+        }
+      }
+    }
+    ArrayList<V> toBeRemoved=Lists.newArrayList();
+    for (    V v1 : mPersistentServices.keySet()) {
+      if (!containsType(serviceInfos,v1)) {
+        toBeRemoved.add(v1);
+      }
+    }
+    for (    V v1 : toBeRemoved) {
+      mPersistentServices.remove(v1);
+      changed=true;
+      notifyListener(v1,true);
+    }
+    if (changed) {
+      if (Log.isLoggable(TAG,Log.VERBOSE)) {
+        Log.d(TAG,"writing updated list of persistent services");
+      }
+      writePersistentServicesLocked();
+    }
+ else {
+      if (Log.isLoggable(TAG,Log.VERBOSE)) {
+        Log.d(TAG,"persistent services did not change, so not writing anything");
+      }
+    }
+    mPersistentServicesFileDidNotExist=false;
+  }
+}

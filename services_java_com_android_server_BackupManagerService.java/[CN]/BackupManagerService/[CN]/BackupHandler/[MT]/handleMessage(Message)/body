@@ -2,14 +2,18 @@
 switch (msg.what) {
 case MSG_RUN_BACKUP:
 {
+      mLastBackupPass=System.currentTimeMillis();
+      mNextBackupPass=mLastBackupPass + BACKUP_INTERVAL;
       IBackupTransport transport=getTransport(mCurrentTransport);
       if (transport == null) {
         Log.v(TAG,"Backup requested but no transport available");
+synchronized (mQueueLock) {
+          mBackupOrRestoreInProgress=false;
+        }
         mWakelock.release();
         break;
       }
       ArrayList<BackupRequest> queue=new ArrayList<BackupRequest>();
-      File oldJournal=mJournal;
 synchronized (mQueueLock) {
         if (mPendingBackups.size() > 0) {
           for (          BackupRequest b : mPendingBackups.values()) {
@@ -17,18 +21,15 @@ synchronized (mQueueLock) {
           }
           Log.v(TAG,"clearing pending backups");
           mPendingBackups.clear();
-          if (mJournalStream != null) {
-            try {
-              mJournalStream.close();
-            }
- catch (            IOException e) {
-            }
-            makeJournalLocked();
-          }
+          File oldJournal=mJournal;
+          mJournal=null;
           (new PerformBackupThread(transport,queue,oldJournal)).start();
         }
  else {
           Log.v(TAG,"Backup requested but nothing pending");
+synchronized (mQueueLock) {
+            mBackupOrRestoreInProgress=false;
+          }
           mWakelock.release();
         }
       }
@@ -47,6 +48,16 @@ case MSG_RUN_CLEAR:
 {
 ClearParams params=(ClearParams)msg.obj;
 (new PerformClearThread(params.transport,params.packageInfo)).start();
+break;
+}
+case MSG_RUN_INITIALIZE:
+{
+HashSet<String> queue;
+synchronized (mQueueLock) {
+queue=new HashSet<String>(mPendingInits);
+mPendingInits.clear();
+}
+(new PerformInitializeThread(queue)).start();
 break;
 }
 }

@@ -1,0 +1,62 @@
+{
+  String pkgName=null;
+  boolean forwardLocked=false;
+  boolean replacingExistingPackage=false;
+  res.returnCode=PackageManager.INSTALL_SUCCEEDED;
+  main_flow:   try {
+    pkgName=PackageParser.parsePackageName(tmpPackageFile.getAbsolutePath(),0);
+    if (pkgName == null) {
+      Log.e(TAG,"Couldn't find a package name in : " + tmpPackageFile);
+      res.returnCode=PackageManager.INSTALL_FAILED_INVALID_APK;
+      break main_flow;
+    }
+    res.name=pkgName;
+    final String pkgFileName=pkgName + ".apk";
+    final File destDir=((pFlags & PackageManager.INSTALL_FORWARD_LOCK) != 0) ? mDrmAppPrivateInstallDir : mAppInstallDir;
+    final File destPackageFile=new File(destDir,pkgFileName);
+    final String destFilePath=destPackageFile.getAbsolutePath();
+    File destResourceFile;
+    if ((pFlags & PackageManager.INSTALL_FORWARD_LOCK) != 0) {
+      destResourceFile=getFwdLockedResource(pkgName);
+      forwardLocked=true;
+    }
+ else {
+      destResourceFile=destPackageFile;
+    }
+    int parseFlags=PackageParser.PARSE_CHATTY;
+    parseFlags|=mDefParseFlags;
+    PackageParser pp=new PackageParser(tmpPackageFile.getPath());
+    pp.setSeparateProcesses(mSeparateProcesses);
+    final PackageParser.Package pkg=pp.parsePackage(tmpPackageFile,destPackageFile.getAbsolutePath(),mMetrics,parseFlags);
+    if (pkg == null) {
+      res.returnCode=pp.getParseError();
+      break main_flow;
+    }
+    if ((pkg.applicationInfo.flags & ApplicationInfo.FLAG_TEST_ONLY) != 0) {
+      if ((pFlags & PackageManager.INSTALL_ALLOW_TEST) == 0) {
+        res.returnCode=PackageManager.INSTALL_FAILED_TEST_ONLY;
+        break main_flow;
+      }
+    }
+    if (GET_CERTIFICATES && !pp.collectCertificates(pkg,parseFlags)) {
+      res.returnCode=pp.getParseError();
+      break main_flow;
+    }
+synchronized (mPackages) {
+      if ((pFlags & PackageManager.INSTALL_REPLACE_EXISTING) != 0 && mPackages.containsKey(pkgName)) {
+        replacingExistingPackage=true;
+      }
+    }
+    if (replacingExistingPackage) {
+      replacePackageLI(pkgName,tmpPackageFile,destFilePath,destPackageFile,destResourceFile,pkg,forwardLocked,newInstall,installerPackageName,res);
+    }
+ else {
+      installNewPackageLI(pkgName,tmpPackageFile,destFilePath,destPackageFile,destResourceFile,pkg,forwardLocked,newInstall,installerPackageName,res);
+    }
+  }
+  finally {
+    if (tmpPackageFile != null && tmpPackageFile.exists()) {
+      tmpPackageFile.delete();
+    }
+  }
+}

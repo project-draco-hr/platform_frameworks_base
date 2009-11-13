@@ -49,15 +49,52 @@ synchronized (mPackages) {
   PackageSetting pkgSetting=null;
   boolean removeExisting=false;
 synchronized (mPackages) {
-    if (pkg.usesLibraryFiles != null) {
-      for (int i=0; i < pkg.usesLibraryFiles.length; i++) {
-        String file=mSharedLibraries.get(pkg.usesLibraryFiles[i]);
+    if (pkg.usesLibraries != null || pkg.usesOptionalLibraries != null) {
+      if (mTmpSharedLibraries == null || mTmpSharedLibraries.length < mSharedLibraries.size()) {
+        mTmpSharedLibraries=new String[mSharedLibraries.size()];
+      }
+      int num=0;
+      int N=pkg.usesLibraries != null ? pkg.usesLibraries.size() : 0;
+      for (int i=0; i < N; i++) {
+        String file=mSharedLibraries.get(pkg.usesLibraries.get(i));
         if (file == null) {
-          Log.e(TAG,"Package " + pkg.packageName + " requires unavailable shared library "+ pkg.usesLibraryFiles[i]+ "; ignoring!");
+          Log.e(TAG,"Package " + pkg.packageName + " requires unavailable shared library "+ pkg.usesLibraries.get(i)+ "; failing!");
           mLastScanError=PackageManager.INSTALL_FAILED_MISSING_SHARED_LIBRARY;
           return null;
         }
-        pkg.usesLibraryFiles[i]=file;
+        mTmpSharedLibraries[num]=file;
+        num++;
+      }
+      N=pkg.usesOptionalLibraries != null ? pkg.usesOptionalLibraries.size() : 0;
+      for (int i=0; i < N; i++) {
+        String file=mSharedLibraries.get(pkg.usesOptionalLibraries.get(i));
+        if (file == null) {
+          Log.w(TAG,"Package " + pkg.packageName + " desires unavailable shared library "+ pkg.usesOptionalLibraries.get(i)+ "; ignoring!");
+        }
+ else {
+          mTmpSharedLibraries[num]=file;
+          num++;
+        }
+      }
+      if (num > 0) {
+        pkg.usesLibraryFiles=new String[num];
+        System.arraycopy(mTmpSharedLibraries,0,pkg.usesLibraryFiles,0,num);
+      }
+      if (pkg.reqFeatures != null) {
+        N=pkg.reqFeatures.size();
+        for (int i=0; i < N; i++) {
+          FeatureInfo fi=pkg.reqFeatures.get(i);
+          if ((fi.flags & FeatureInfo.FLAG_REQUIRED) == 0) {
+            continue;
+          }
+          if (fi.name != null) {
+            if (mAvailableFeatures.get(fi.name) == null) {
+              Log.e(TAG,"Package " + pkg.packageName + " requires unavailable feature "+ fi.name+ "; failing!");
+              mLastScanError=PackageManager.INSTALL_FAILED_MISSING_FEATURE;
+              return null;
+            }
+          }
+        }
       }
     }
     if (pkg.mSharedUserId != null) {

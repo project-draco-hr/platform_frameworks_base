@@ -1,6 +1,9 @@
 {
-  if (LOGV_ENABLED) {
+  if (DebugFlags.WEB_VIEW) {
     Log.v(LOGTAG,msg.what < REMEMBER_PASSWORD || msg.what > INVAL_RECT_MSG_ID ? Integer.toString(msg.what) : HandlerDebugString[msg.what - REMEMBER_PASSWORD]);
+  }
+  if (mWebViewCore == null) {
+    return;
   }
 switch (msg.what) {
 case REMEMBER_PASSWORD:
@@ -17,26 +20,35 @@ case NEVER_REMEMBER_PASSWORD:
   }
 case SWITCH_TO_SHORTPRESS:
 {
+  if (mPreventDrag == PREVENT_DRAG_MAYBE_YES) {
+    mPreventDrag=PREVENT_DRAG_NO;
+  }
   if (mTouchMode == TOUCH_INIT_MODE) {
     mTouchMode=TOUCH_SHORTPRESS_START_MODE;
     updateSelection();
+  }
+ else   if (mTouchMode == TOUCH_DOUBLE_TAP_MODE) {
+    mTouchMode=TOUCH_DONE_MODE;
   }
   break;
 }
 case SWITCH_TO_LONGPRESS:
 {
-if (!mPreventDrag) {
+if (mPreventDrag == PREVENT_DRAG_NO) {
   mTouchMode=TOUCH_DONE_MODE;
   performLongClick();
-  updateTextEntry();
+  rebuildWebTextView();
 }
 break;
 }
-case SWITCH_TO_ENTER:
-if (LOGV_ENABLED) Log.v(LOGTAG,"SWITCH_TO_ENTER");
+case RELEASE_SINGLE_TAP:
+{
+if (mPreventDrag == PREVENT_DRAG_NO) {
 mTouchMode=TOUCH_DONE_MODE;
-onKeyUp(KeyEvent.KEYCODE_ENTER,new KeyEvent(KeyEvent.ACTION_UP,KeyEvent.KEYCODE_ENTER));
+doShortPress();
+}
 break;
+}
 case SCROLL_BY_MSG_ID:
 setContentScrollBy(msg.arg1,msg.arg2,(Boolean)msg.obj);
 break;
@@ -55,117 +67,111 @@ case SPAWN_SCROLL_TO_MSG_ID:
 spawnContentScrollTo(msg.arg1,msg.arg2);
 break;
 case NEW_PICTURE_MSG_ID:
+{
+WebSettings settings=mWebViewCore.getSettings();
+final int viewWidth=getViewWidth();
 final WebViewCore.DrawData draw=(WebViewCore.DrawData)msg.obj;
 final Point viewSize=draw.mViewPoint;
-if (mZoomScale > 0) {
-if (Math.round(getViewWidth() / mZoomScale) == viewSize.x) {
-mZoomScale=0;
-mWebViewCore.sendMessage(EventHub.SET_SNAP_ANCHOR,0,0);
+boolean useWideViewport=settings.getUseWideViewPort();
+WebViewCore.RestoreState restoreState=draw.mRestoreState;
+if (restoreState != null) {
+mInZoomOverview=false;
+mLastScale=restoreState.mTextWrapScale;
+if (restoreState.mMinScale == 0) {
+if (restoreState.mMobileSite) {
+if (draw.mMinPrefWidth > Math.max(0,draw.mViewPoint.x)) {
+mMinZoomScale=(float)viewWidth / draw.mMinPrefWidth;
+mMinZoomScaleFixed=false;
+}
+ else {
+mMinZoomScale=restoreState.mDefaultScale;
+mMinZoomScaleFixed=true;
 }
 }
-if (!mMinZoomScaleFixed) {
-mMinZoomScale=(float)getViewWidth() / Math.max(ZOOM_OUT_WIDTH,draw.mWidthHeight.x);
+ else {
+mMinZoomScale=DEFAULT_MIN_ZOOM_SCALE;
+mMinZoomScaleFixed=false;
+}
+}
+ else {
+mMinZoomScale=restoreState.mMinScale;
+mMinZoomScaleFixed=true;
+}
+if (restoreState.mMaxScale == 0) {
+mMaxZoomScale=DEFAULT_MAX_ZOOM_SCALE;
+}
+ else {
+mMaxZoomScale=restoreState.mMaxScale;
+}
+setNewZoomScale(mLastScale,false);
+setContentScrollTo(restoreState.mScrollX,restoreState.mScrollY);
+if (useWideViewport && settings.getLoadWithOverviewMode()) {
+if (restoreState.mViewScale == 0 || (restoreState.mMobileSite && mMinZoomScale < restoreState.mDefaultScale)) {
+mInZoomOverview=true;
+}
+}
+clearTextEntry();
 }
 final boolean updateLayout=viewSize.x == mLastWidthSent && viewSize.y == mLastHeightSent;
-recordNewContentSize(draw.mWidthHeight.x,draw.mWidthHeight.y,updateLayout);
-if (LOGV_ENABLED) {
+recordNewContentSize(draw.mWidthHeight.x,draw.mWidthHeight.y + (mFindIsUp ? mFindHeight : 0),updateLayout);
+if (DebugFlags.WEB_VIEW) {
 Rect b=draw.mInvalRegion.getBounds();
 Log.v(LOGTAG,"NEW_PICTURE_MSG_ID {" + b.left + ","+ b.top+ ","+ b.right+ ","+ b.bottom+ "}");
 }
-invalidate(contentToView(draw.mInvalRegion.getBounds()));
+invalidateContentRect(draw.mInvalRegion.getBounds());
 if (mPictureListener != null) {
 mPictureListener.onNewPicture(WebView.this,capturePicture());
 }
+if (useWideViewport) {
+mZoomOverviewWidth=Math.max(draw.mMinPrefWidth,draw.mViewPoint.x);
+}
+if (!mMinZoomScaleFixed) {
+mMinZoomScale=(float)viewWidth / mZoomOverviewWidth;
+}
+if (!mDrawHistory && mInZoomOverview) {
+if (Math.abs((viewWidth * mInvActualScale) - mZoomOverviewWidth) > 1) {
+setNewZoomScale((float)viewWidth / mZoomOverviewWidth,false);
+}
+}
 break;
+}
 case WEBCORE_INITIALIZED_MSG_ID:
 nativeCreate(msg.arg1);
 break;
 case UPDATE_TEXTFIELD_TEXT_MSG_ID:
-if (inEditingMode() && mTextEntry.isSameTextField(msg.arg1)) {
+if (inEditingMode() && mWebTextView.isSameTextField(msg.arg1)) {
 if (msg.getData().getBoolean("password")) {
-Spannable text=(Spannable)mTextEntry.getText();
+Spannable text=(Spannable)mWebTextView.getText();
 int start=Selection.getSelectionStart(text);
 int end=Selection.getSelectionEnd(text);
-mTextEntry.setInPassword(true);
-Spannable pword=(Spannable)mTextEntry.getText();
+mWebTextView.setInPassword(true);
+Spannable pword=(Spannable)mWebTextView.getText();
 Selection.setSelection(pword,start,end);
 }
  else if (msg.arg2 == mTextGeneration) {
-mTextEntry.setTextAndKeepSelection((String)msg.obj);
+mWebTextView.setTextAndKeepSelection((String)msg.obj);
 }
 }
 break;
-case DID_FIRST_LAYOUT_MSG_ID:
-if (mNativeClass == 0) {
+case UPDATE_TEXT_SELECTION_MSG_ID:
+if (inEditingMode() && mWebTextView.isSameTextField(msg.arg1) && msg.arg2 == mTextGeneration) {
+WebViewCore.TextSelectionData tData=(WebViewCore.TextSelectionData)msg.obj;
+mWebTextView.setSelectionFromWebKit(tData.mStart,tData.mEnd);
+}
 break;
-}
-HashMap scaleLimit=(HashMap)msg.obj;
-int minScale=(Integer)scaleLimit.get("minScale");
-if (minScale == 0) {
-mMinZoomScale=DEFAULT_MIN_ZOOM_SCALE;
-mMinZoomScaleFixed=false;
-}
- else {
-mMinZoomScale=(float)(minScale / 100.0);
-mMinZoomScaleFixed=true;
-}
-int maxScale=(Integer)scaleLimit.get("maxScale");
-if (maxScale == 0) {
-mMaxZoomScale=DEFAULT_MAX_ZOOM_SCALE;
-}
- else {
-mMaxZoomScale=(float)(maxScale / 100.0);
-}
-if (mDrawHistory) {
-break;
-}
-int width=getViewWidth();
-if (width == 0) {
-break;
-}
-int initialScale=msg.arg1;
-int viewportWidth=msg.arg2;
-float scale=mDefaultScale;
-if (mInitialScale > 0) {
-scale=mInitialScale / 100.0f;
-}
- else {
-if (mWebViewCore.getSettings().getUseWideViewPort()) {
-mLastWidthSent=0;
-}
-if (initialScale == 0) {
-if (viewportWidth > 0 && viewportWidth < width) {
-scale=(float)width / viewportWidth;
-}
-}
- else {
-scale=initialScale / 100.0f;
-}
-}
-setNewZoomScale(scale,false);
-break;
-case MARK_NODE_INVALID_ID:
-nativeMarkNodeInvalid(msg.arg1);
-break;
-case NOTIFY_FOCUS_SET_MSG_ID:
-if (mNativeClass != 0) {
-nativeNotifyFocusSet(inEditingMode());
+case MOVE_OUT_OF_PLUGIN:
+if (nativePluginEatsNavKey()) {
+navHandledKey(msg.arg1,1,false,0,true);
 }
 break;
 case UPDATE_TEXT_ENTRY_MSG_ID:
-boolean alreadyThere=inEditingMode();
-if (alreadyThere && nativeUpdateFocusNode()) {
-FocusNode node=mFocusNode;
-if (node.mIsTextField || node.mIsTextArea) {
-mTextEntry.bringIntoView();
+if (inEditingMode() && nativeCursorIsTextInput()) {
+mWebTextView.bringIntoView();
+rebuildWebTextView();
 }
-}
-updateTextEntry();
 break;
-case RECOMPUTE_FOCUS_MSG_ID:
-if (mNativeClass != 0) {
-nativeRecomputeFocus();
-}
+case CLEAR_TEXT_ENTRY:
+clearTextEntry();
 break;
 case INVAL_RECT_MSG_ID:
 {
@@ -178,16 +184,15 @@ viewInvalidate(r.left,r.top,r.right,r.bottom);
 }
 break;
 }
-case UPDATE_TEXT_ENTRY_ADAPTER:
-HashMap data=(HashMap)msg.obj;
-if (mTextEntry.isSameTextField(msg.arg1)) {
-AutoCompleteAdapter adapter=(AutoCompleteAdapter)data.get("adapter");
-mTextEntry.setAdapterCustom(adapter);
+case REQUEST_FORM_DATA:
+AutoCompleteAdapter adapter=(AutoCompleteAdapter)msg.obj;
+if (mWebTextView.isSameTextField(msg.arg1)) {
+mWebTextView.setAdapterCustom(adapter);
 }
 break;
 case UPDATE_CLIPBOARD:
 String str=(String)msg.obj;
-if (LOGV_ENABLED) {
+if (DebugFlags.WEB_VIEW) {
 Log.v(LOGTAG,"UPDATE_CLIPBOARD " + str);
 }
 try {
@@ -201,8 +206,8 @@ break;
 case RESUME_WEBCORE_UPDATE:
 WebViewCore.resumeUpdate(mWebViewCore);
 break;
-case LONG_PRESS_ENTER:
-mGotEnterDown=false;
+case LONG_PRESS_CENTER:
+mGotCenterDown=false;
 mTrackballDown=false;
 if (getParent() != null) {
 performLongClick();
@@ -213,10 +218,20 @@ mForwardTouchEvents=(msg.arg1 != 0);
 break;
 case PREVENT_TOUCH_ID:
 if (msg.arg1 == MotionEvent.ACTION_DOWN) {
-mPreventDrag=msg.arg2 == 1;
-if (mPreventDrag) {
+if (mPreventDrag == PREVENT_DRAG_MAYBE_YES) {
+mPreventDrag=msg.arg2 == 1 ? PREVENT_DRAG_YES : PREVENT_DRAG_NO;
+if (mPreventDrag == PREVENT_DRAG_YES) {
 mTouchMode=TOUCH_DONE_MODE;
 }
+}
+}
+break;
+case REQUEST_KEYBOARD:
+if (msg.arg1 == 0) {
+hideSoftKeyboard();
+}
+ else {
+displaySoftKeyboard(false);
 }
 break;
 default :
