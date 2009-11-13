@@ -18,13 +18,17 @@
             mKeyguardMediator.pokeWakelock();
           }
  else           if (isMusicActive()) {
-            sendVolToMusic(event.keycode);
+            handleVolumeKey(AudioManager.STREAM_MUSIC,event.keycode);
           }
         }
       }
     }
   }
  else   if (!screenIsOn) {
+    if (isInCall() && event.type == RawInputEvent.EV_KEY && (event.keycode == KeyEvent.KEYCODE_VOLUME_DOWN || event.keycode == KeyEvent.KEYCODE_VOLUME_UP)) {
+      result&=~ACTION_PASS_TO_USER;
+      handleVolumeKey(AudioManager.STREAM_VOICE_CALL,event.keycode);
+    }
     if (isWakeKey) {
       result|=ACTION_POKE_USER_ACTIVITY;
       result&=~ACTION_PASS_TO_USER;
@@ -34,32 +38,38 @@
   int code=event.keycode;
   boolean down=event.value != 0;
   if (type == RawInputEvent.EV_KEY) {
-    if (code == KeyEvent.KEYCODE_ENDCALL) {
+    if (code == KeyEvent.KEYCODE_ENDCALL || code == KeyEvent.KEYCODE_POWER) {
       if (down) {
-        boolean hungUp=false;
-        try {
-          ITelephony phoneServ=getPhoneInterface();
-          if (phoneServ != null) {
-            hungUp=phoneServ.endCall();
+        boolean handled=false;
+        ITelephony phoneServ=getPhoneInterface();
+        if (phoneServ != null) {
+          try {
+            if (code == KeyEvent.KEYCODE_ENDCALL) {
+              handled=phoneServ.endCall();
+            }
+ else             if (code == KeyEvent.KEYCODE_POWER && phoneServ.isRinging()) {
+              phoneServ.silenceRinger();
+              handled=true;
+            }
           }
+ catch (          RemoteException ex) {
+            Log.w(TAG,"ITelephony threw RemoteException" + ex);
+          }
+        }
  else {
-            Log.w(TAG,"!!! Unable to find ITelephony interface !!!");
-          }
+          Log.w(TAG,"!!! Unable to find ITelephony interface !!!");
         }
- catch (        RemoteException ex) {
-          Log.w(TAG,"ITelephony.endCall() threw RemoteException" + ex);
-        }
-        if (hungUp || !screenIsOn) {
+        if ((handled && code != KeyEvent.KEYCODE_POWER) || !screenIsOn) {
           mShouldTurnOffOnKeyUp=false;
         }
  else {
           mShouldTurnOffOnKeyUp=true;
-          mHandler.postDelayed(mEndCallLongPress,ViewConfiguration.getGlobalActionKeyTimeout());
+          mHandler.postDelayed(mPowerLongPress,ViewConfiguration.getGlobalActionKeyTimeout());
           result&=~ACTION_PASS_TO_USER;
         }
       }
  else {
-        mHandler.removeCallbacks(mEndCallLongPress);
+        mHandler.removeCallbacks(mPowerLongPress);
         if (mShouldTurnOffOnKeyUp) {
           mShouldTurnOffOnKeyUp=false;
           boolean gohome=(mEndcallBehavior & ENDCALL_HOME) != 0;
