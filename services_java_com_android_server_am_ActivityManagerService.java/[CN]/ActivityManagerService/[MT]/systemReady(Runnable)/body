@@ -1,0 +1,146 @@
+{
+  if (!Process.supportsProcesses()) {
+    mStartRunning=true;
+    mTopAction=Intent.ACTION_MAIN;
+  }
+synchronized (this) {
+    if (mSystemReady) {
+      if (goingCallback != null)       goingCallback.run();
+      return;
+    }
+    if (!mDidUpdate) {
+      if (mWaitingUpdate) {
+        return;
+      }
+      Intent intent=new Intent(Intent.ACTION_PRE_BOOT_COMPLETED);
+      List<ResolveInfo> ris=null;
+      try {
+        ris=ActivityThread.getPackageManager().queryIntentReceivers(intent,null,0);
+      }
+ catch (      RemoteException e) {
+      }
+      if (ris != null) {
+        for (int i=ris.size() - 1; i >= 0; i--) {
+          if ((ris.get(i).activityInfo.applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) == 0) {
+            ris.remove(i);
+          }
+        }
+        intent.addFlags(Intent.FLAG_RECEIVER_BOOT_UPGRADE);
+        for (int i=0; i < ris.size(); i++) {
+          ActivityInfo ai=ris.get(i).activityInfo;
+          intent.setComponent(new ComponentName(ai.packageName,ai.name));
+          IIntentReceiver finisher=null;
+          if (i == 0) {
+            finisher=new IIntentReceiver.Stub(){
+              public void performReceive(              Intent intent,              int resultCode,              String data,              Bundle extras,              boolean ordered,              boolean sticky) throws RemoteException {
+synchronized (ActivityManagerService.this) {
+                  mDidUpdate=true;
+                }
+                systemReady(goingCallback);
+              }
+            }
+;
+          }
+          Log.i(TAG,"Sending system update to: " + intent.getComponent());
+          broadcastIntentLocked(null,null,intent,null,finisher,0,null,null,null,true,false,MY_PID,Process.SYSTEM_UID);
+          if (i == 0) {
+            mWaitingUpdate=true;
+          }
+        }
+      }
+      if (mWaitingUpdate) {
+        return;
+      }
+      mDidUpdate=true;
+    }
+    mSystemReady=true;
+    if (!mStartRunning) {
+      return;
+    }
+  }
+  ArrayList<ProcessRecord> procsToKill=null;
+synchronized (mPidsSelfLocked) {
+    for (int i=mPidsSelfLocked.size() - 1; i >= 0; i--) {
+      ProcessRecord proc=mPidsSelfLocked.valueAt(i);
+      if (!isAllowedWhileBooting(proc.info)) {
+        if (procsToKill == null) {
+          procsToKill=new ArrayList<ProcessRecord>();
+        }
+        procsToKill.add(proc);
+      }
+    }
+  }
+  if (procsToKill != null) {
+synchronized (this) {
+      for (int i=procsToKill.size() - 1; i >= 0; i--) {
+        ProcessRecord proc=procsToKill.get(i);
+        Log.i(TAG,"Removing system update proc: " + proc);
+        removeProcessLocked(proc,true);
+      }
+    }
+  }
+  Log.i(TAG,"System now ready");
+  EventLog.writeEvent(LOG_BOOT_PROGRESS_AMS_READY,SystemClock.uptimeMillis());
+synchronized (this) {
+    if (mFactoryTest == SystemServer.FACTORY_TEST_LOW_LEVEL) {
+      ResolveInfo ri=mContext.getPackageManager().resolveActivity(new Intent(Intent.ACTION_FACTORY_TEST),STOCK_PM_FLAGS);
+      CharSequence errorMsg=null;
+      if (ri != null) {
+        ActivityInfo ai=ri.activityInfo;
+        ApplicationInfo app=ai.applicationInfo;
+        if ((app.flags & ApplicationInfo.FLAG_SYSTEM) != 0) {
+          mTopAction=Intent.ACTION_FACTORY_TEST;
+          mTopData=null;
+          mTopComponent=new ComponentName(app.packageName,ai.name);
+        }
+ else {
+          errorMsg=mContext.getResources().getText(com.android.internal.R.string.factorytest_not_system);
+        }
+      }
+ else {
+        errorMsg=mContext.getResources().getText(com.android.internal.R.string.factorytest_no_action);
+      }
+      if (errorMsg != null) {
+        mTopAction=null;
+        mTopData=null;
+        mTopComponent=null;
+        Message msg=Message.obtain();
+        msg.what=SHOW_FACTORY_ERROR_MSG;
+        msg.getData().putCharSequence("msg",errorMsg);
+        mHandler.sendMessage(msg);
+      }
+    }
+  }
+  retrieveSettings();
+  if (goingCallback != null)   goingCallback.run();
+synchronized (this) {
+    if (mFactoryTest != SystemServer.FACTORY_TEST_LOW_LEVEL) {
+      try {
+        List apps=ActivityThread.getPackageManager().getPersistentApplications(STOCK_PM_FLAGS);
+        if (apps != null) {
+          int N=apps.size();
+          int i;
+          for (i=0; i < N; i++) {
+            ApplicationInfo info=(ApplicationInfo)apps.get(i);
+            if (info != null && !info.packageName.equals("android")) {
+              addAppLocked(info);
+            }
+          }
+        }
+      }
+ catch (      RemoteException ex) {
+      }
+    }
+    mBooting=true;
+    try {
+      if (ActivityThread.getPackageManager().hasSystemUidErrors()) {
+        Message msg=Message.obtain();
+        msg.what=SHOW_UID_ERROR_MSG;
+        mHandler.sendMessage(msg);
+      }
+    }
+ catch (    RemoteException e) {
+    }
+    resumeTopActivityLocked(null);
+  }
+}

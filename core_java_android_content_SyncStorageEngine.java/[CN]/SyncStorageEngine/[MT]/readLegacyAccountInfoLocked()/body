@@ -11,12 +11,16 @@
  catch (  SQLiteException e) {
   }
   if (db != null) {
+    final boolean hasType=db.getVersion() >= 11;
     if (DEBUG_FILE)     Log.v(TAG,"Reading legacy sync accounts db");
     SQLiteQueryBuilder qb=new SQLiteQueryBuilder();
     qb.setTables("stats, status");
     HashMap<String,String> map=new HashMap<String,String>();
     map.put("_id","status._id as _id");
     map.put("account","stats.account as account");
+    if (hasType) {
+      map.put("account_type","stats.account_type as account_type");
+    }
     map.put("authority","stats.authority as authority");
     map.put("totalElapsedTime","totalElapsedTime");
     map.put("numSyncs","numSyncs");
@@ -35,15 +39,19 @@
     Cursor c=qb.query(db,null,null,null,null,null,null);
     while (c.moveToNext()) {
       String accountName=c.getString(c.getColumnIndex("account"));
+      String accountType=hasType ? c.getString(c.getColumnIndex("account_type")) : null;
+      if (accountType == null) {
+        accountType="com.google";
+      }
       String authorityName=c.getString(c.getColumnIndex("authority"));
-      AuthorityInfo authority=this.getOrCreateAuthorityLocked(accountName,authorityName,-1,false);
+      AuthorityInfo authority=this.getOrCreateAuthorityLocked(new Account(accountName,accountType),authorityName,-1,false);
       if (authority != null) {
         int i=mSyncStatus.size();
         boolean found=false;
         SyncStatusInfo st=null;
         while (i > 0) {
           i--;
-          st=mSyncStatus.get(i);
+          st=mSyncStatus.valueAt(i);
           if (st.authorityId == authority.ident) {
             found=true;
             break;
@@ -76,11 +84,19 @@
       String value=c.getString(c.getColumnIndex("value"));
       if (name == null)       continue;
       if (name.equals("listen_for_tickles")) {
-        setListenForNetworkTickles(value == null || Boolean.parseBoolean(value));
+        setMasterSyncAutomatically(value == null || Boolean.parseBoolean(value));
       }
  else       if (name.startsWith("sync_provider_")) {
         String provider=name.substring("sync_provider_".length(),name.length());
-        setSyncProviderAutomatically(null,provider,value == null || Boolean.parseBoolean(value));
+        int i=mAuthorities.size();
+        while (i > 0) {
+          i--;
+          AuthorityInfo authority=mAuthorities.valueAt(i);
+          if (authority.authority.equals(provider)) {
+            authority.enabled=value == null || Boolean.parseBoolean(value);
+            authority.syncable=1;
+          }
+        }
       }
     }
     c.close();

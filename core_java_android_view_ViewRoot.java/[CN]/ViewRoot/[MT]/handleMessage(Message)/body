@@ -28,17 +28,22 @@ break;
 case DISPATCH_POINTER:
 {
 MotionEvent event=(MotionEvent)msg.obj;
-boolean didFinish;
+boolean callWhenDone=msg.arg1 != 0;
 if (event == null) {
 try {
+long timeBeforeGettingEvents;
+if (MEASURE_LATENCY) {
+timeBeforeGettingEvents=System.nanoTime();
+}
 event=sWindowSession.getPendingPointerMove(mWindow);
+if (MEASURE_LATENCY && event != null) {
+lt.sample("9 Client got events      ",System.nanoTime() - event.getEventTimeNano());
+lt.sample("8 Client getting events  ",timeBeforeGettingEvents - event.getEventTimeNano());
+}
 }
  catch (RemoteException e) {
 }
-didFinish=true;
-}
- else {
-didFinish=event.getAction() == MotionEvent.ACTION_OUTSIDE;
+callWhenDone=false;
 }
 if (event != null && mTranslator != null) {
 mTranslator.translateEventInScreenToAppWindow(event);
@@ -53,8 +58,16 @@ ensureTouchMode(true);
 if (Config.LOGV) {
 captureMotionLog("captureDispatchPointer",event);
 }
+if (mCurScrollY != 0) {
 event.offsetLocation(0,mCurScrollY);
+}
+if (MEASURE_LATENCY) {
+lt.sample("A Dispatching TouchEvents",System.nanoTime() - event.getEventTimeNano());
+}
 handled=mView.dispatchTouchEvent(event);
+if (MEASURE_LATENCY) {
+lt.sample("B Dispatched TouchEvents ",System.nanoTime() - event.getEventTimeNano());
+}
 if (!handled && isDown) {
 int edgeSlop=mViewConfiguration.getScaledEdgeSlop();
 final int edgeFlags=event.getEdgeFlags();
@@ -102,7 +115,7 @@ mView.dispatchTouchEvent(event);
 }
 }
   finally {
-if (!didFinish) {
+if (callWhenDone) {
 try {
 sWindowSession.finishKey(mWindow);
 }
@@ -117,7 +130,7 @@ if (LOCAL_LOGV || WATCH_POINTER) Log.i(TAG,"Done dispatching!");
 }
 break;
 case DISPATCH_TRACKBALL:
-deliverTrackballEvent((MotionEvent)msg.obj);
+deliverTrackballEvent((MotionEvent)msg.obj,msg.arg1 != 0);
 break;
 case DISPATCH_APP_VISIBILITY:
 handleAppVisibility(msg.arg1 != 0);
@@ -170,6 +183,7 @@ if (mView != null) {
 if (hasWindowFocus && imm != null && mLastWasImTarget) {
 imm.startGettingWindowFocus(mView);
 }
+mAttachInfo.mKeyDispatchState.reset();
 mView.dispatchWindowFocusChanged(hasWindowFocus);
 }
 if (hasWindowFocus) {
@@ -187,7 +201,7 @@ sendAccessibilityEvents();
 }
 break;
 case DIE:
-dispatchDetachedFromWindow();
+doDie();
 break;
 case DISPATCH_KEY_FROM_IME:
 {
@@ -212,6 +226,13 @@ case CHECK_FOCUS:
 InputMethodManager imm=InputMethodManager.peekInstance();
 if (imm != null) {
 imm.checkFocus();
+}
+}
+break;
+case CLOSE_SYSTEM_DIALOGS:
+{
+if (mView != null) {
+mView.onCloseSystemDialogs((String)msg.obj);
 }
 }
 break;

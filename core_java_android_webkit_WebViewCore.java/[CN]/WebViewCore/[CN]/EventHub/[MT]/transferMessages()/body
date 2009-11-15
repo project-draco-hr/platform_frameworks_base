@@ -3,32 +3,40 @@
   mSavedPriority=Process.getThreadPriority(mTid);
   mHandler=new Handler(){
     @Override public void handleMessage(    Message msg){
-      if (LOGV_ENABLED) {
-        Log.v(LOGTAG,msg.what < LOAD_URL || msg.what > TOUCH_EVENT ? Integer.toString(msg.what) : HandlerDebugString[msg.what - LOAD_URL]);
+      if (DebugFlags.WEB_VIEW_CORE) {
+        Log.v(LOGTAG,(msg.what < UPDATE_FRAME_CACHE_IF_LOADING || msg.what > FREE_MEMORY ? Integer.toString(msg.what) : HandlerDebugString[msg.what - UPDATE_FRAME_CACHE_IF_LOADING]) + " arg1=" + msg.arg1+ " arg2="+ msg.arg2+ " obj="+ msg.obj);
       }
 switch (msg.what) {
 case WEBKIT_DRAW:
         webkitDraw();
       break;
 case DESTROY:
-    mBrowserFrame.destroy();
-  mBrowserFrame=null;
-mNativeClass=0;
+synchronized (WebViewCore.this) {
+      mBrowserFrame.destroy();
+      mBrowserFrame=null;
+      mSettings.onDestroyed();
+      mNativeClass=0;
+      mWebView=null;
+    }
+  break;
+case UPDATE_FRAME_CACHE_IF_LOADING:
+nativeUpdateFrameCacheIfLoading();
+break;
+case SCROLL_TEXT_INPUT:
+nativeScrollFocusedTextInput(((Float)msg.obj).floatValue(),msg.arg1);
 break;
 case LOAD_URL:
 loadUrl((String)msg.obj);
 break;
 case POST_URL:
 {
-HashMap param=(HashMap)msg.obj;
-String url=(String)param.get("url");
-byte[] data=(byte[])param.get("data");
-mBrowserFrame.postUrl(url,data);
+PostUrlData param=(PostUrlData)msg.obj;
+mBrowserFrame.postUrl(param.mUrl,param.mPostData);
 break;
 }
 case LOAD_DATA:
-HashMap loadParams=(HashMap)msg.obj;
-String baseUrl=(String)loadParams.get("baseUrl");
+BaseUrlData loadParams=(BaseUrlData)msg.obj;
+String baseUrl=loadParams.mBaseUrl;
 if (baseUrl != null) {
 int i=baseUrl.indexOf(':');
 if (i > 0) {
@@ -38,7 +46,7 @@ nativeRegisterURLSchemeAsLocal(scheme);
 }
 }
 }
-mBrowserFrame.loadData(baseUrl,(String)loadParams.get("data"),(String)loadParams.get("mimeType"),(String)loadParams.get("encoding"),(String)loadParams.get("failUrl"));
+mBrowserFrame.loadData(baseUrl,loadParams.mData,loadParams.mMimeType,loadParams.mEncoding,loadParams.mFailUrl);
 break;
 case STOP_LOADING:
 if (mBrowserFrame.committed() && !mBrowserFrame.firstLayoutDone()) {
@@ -56,13 +64,17 @@ case KEY_UP:
 key((KeyEvent)msg.obj,false);
 break;
 case CLICK:
-nativeClick();
+nativeClick(msg.arg1,msg.arg2);
 break;
 case VIEW_SIZE_CHANGED:
-viewSizeChanged(msg.arg1,msg.arg2,((Float)msg.obj).floatValue());
+{
+WebView.ViewSizeData data=(WebView.ViewSizeData)msg.obj;
+viewSizeChanged(data.mWidth,data.mHeight,data.mTextWrapWidth,data.mScale,data.mIgnoreHeight);
 break;
+}
 case SET_SCROLL_OFFSET:
-nativeSetScrollOffset(msg.arg1,msg.arg2);
+Point pt=(Point)msg.obj;
+nativeSetScrollOffset(msg.arg1,pt.x,pt.y);
 break;
 case SET_GLOBAL_BOUNDS:
 Rect r=(Rect)msg.obj;
@@ -97,6 +109,20 @@ WebCoreThread.mCacheTickersBlocked=false;
 sWebCoreHandler.sendMessageDelayed(sWebCoreHandler.obtainMessage(WebCoreThread.CACHE_TICKER),WebCoreThread.CACHE_TICKER_INTERVAL);
 }
 break;
+case ON_PAUSE:
+nativePause();
+break;
+case ON_RESUME:
+nativeResume();
+break;
+case FREE_MEMORY:
+clearCache(false);
+nativeFreeMemory();
+break;
+case PLUGIN_STATE:
+PluginStateData psd=(PluginStateData)msg.obj;
+nativeUpdatePluginState(psd.mFrame,psd.mNode,psd.mState);
+break;
 case SET_NETWORK_STATE:
 if (BrowserFrame.sJavaBridge == null) {
 throw new IllegalStateException("No WebView " + "has been created in this process!");
@@ -104,37 +130,29 @@ throw new IllegalStateException("No WebView " + "has been created in this proces
 BrowserFrame.sJavaBridge.setNetworkOnLine(msg.arg1 == 1);
 break;
 case CLEAR_CACHE:
-mBrowserFrame.clearCache();
-if (msg.arg1 == 1) {
-CacheManager.removeAllCacheFiles();
-}
+clearCache(msg.arg1 == 1);
 break;
 case CLEAR_HISTORY:
 mCallbackProxy.getBackForwardList().close(mBrowserFrame.mNativeFrame);
 break;
 case REPLACE_TEXT:
-HashMap jMap=(HashMap)msg.obj;
-FocusData fData=(FocusData)jMap.get("focusData");
-String replace=(String)jMap.get("replace");
-int newStart=((Integer)jMap.get("start")).intValue();
-int newEnd=((Integer)jMap.get("end")).intValue();
-nativeReplaceTextfieldText(fData.mFrame,fData.mNode,fData.mX,fData.mY,msg.arg1,msg.arg2,replace,newStart,newEnd);
+ReplaceTextData rep=(ReplaceTextData)msg.obj;
+nativeReplaceTextfieldText(msg.arg1,msg.arg2,rep.mReplace,rep.mNewStart,rep.mNewEnd,rep.mTextGeneration);
 break;
 case PASS_TO_JS:
 {
-HashMap jsMap=(HashMap)msg.obj;
-FocusData fDat=(FocusData)jsMap.get("focusData");
-KeyEvent evt=(KeyEvent)jsMap.get("event");
+JSKeyData jsData=(JSKeyData)msg.obj;
+KeyEvent evt=jsData.mEvent;
 int keyCode=evt.getKeyCode();
 int keyValue=evt.getUnicodeChar();
 int generation=msg.arg1;
-passToJs(fDat.mFrame,fDat.mNode,fDat.mX,fDat.mY,generation,(String)jsMap.get("currentText"),keyCode,keyValue,evt.isDown(),evt.isShiftPressed(),evt.isAltPressed(),evt.isSymPressed());
+passToJs(generation,jsData.mCurrentText,keyCode,keyValue,evt.isDown(),evt.isShiftPressed(),evt.isAltPressed(),evt.isSymPressed());
 break;
 }
 case SAVE_DOCUMENT_STATE:
 {
-FocusData fDat=(FocusData)msg.obj;
-nativeSaveDocumentState(fDat.mFrame);
+CursorData cDat=(CursorData)msg.obj;
+nativeSaveDocumentState(cDat.mFrame);
 break;
 }
 case CLEAR_SSL_PREF_TABLE:
@@ -142,7 +160,7 @@ Network.getInstance(mContext).clearUserSslPrefTable();
 break;
 case TOUCH_UP:
 TouchUpData touchUpData=(TouchUpData)msg.obj;
-nativeTouchUp(touchUpData.mMoveGeneration,touchUpData.mBuildGeneration,touchUpData.mFrame,touchUpData.mNode,touchUpData.mX,touchUpData.mY,touchUpData.mSize,touchUpData.mIsClick,touchUpData.mRetry);
+nativeTouchUp(touchUpData.mMoveGeneration,touchUpData.mFrame,touchUpData.mNode,touchUpData.mX,touchUpData.mY);
 break;
 case TOUCH_EVENT:
 {
@@ -150,11 +168,12 @@ TouchEventData ted=(TouchEventData)msg.obj;
 Message.obtain(mWebView.mPrivateHandler,WebView.PREVENT_TOUCH_ID,ted.mAction,nativeHandleTouchEvent(ted.mAction,ted.mX,ted.mY) ? 1 : 0).sendToTarget();
 break;
 }
+case SET_ACTIVE:
+nativeSetFocusControllerActive(msg.arg1 == 1);
+break;
 case ADD_JS_INTERFACE:
-HashMap map=(HashMap)msg.obj;
-Object obj=map.get("object");
-String interfaceName=(String)map.get("interfaceName");
-mBrowserFrame.addJavascriptInterface(obj,interfaceName);
+JSInterfaceData jsData=(JSInterfaceData)msg.obj;
+mBrowserFrame.addJavascriptInterface(jsData.mObject,jsData.mInterfaceName);
 break;
 case REQUEST_EXT_REPRESENTATION:
 mBrowserFrame.externalRepresentation((Message)msg.obj);
@@ -162,18 +181,15 @@ break;
 case REQUEST_DOC_AS_TEXT:
 mBrowserFrame.documentAsText((Message)msg.obj);
 break;
-case SET_FINAL_FOCUS:
-FocusData finalData=(FocusData)msg.obj;
-nativeSetFinalFocus(finalData.mFrame,finalData.mNode,finalData.mX,finalData.mY,msg.arg1 != EventHub.NO_FOCUS_CHANGE_BLOCK);
+case SET_MOVE_MOUSE:
+CursorData cursorData=(CursorData)msg.obj;
+nativeMoveMouse(cursorData.mFrame,cursorData.mX,cursorData.mY);
 break;
-case UNBLOCK_FOCUS:
-nativeUnblockFocus();
+case SET_MOVE_MOUSE_IF_LATEST:
+CursorData cData=(CursorData)msg.obj;
+nativeMoveMouseIfLatest(cData.mMoveGeneration,cData.mFrame,cData.mX,cData.mY);
 break;
-case SET_KIT_FOCUS:
-FocusData focusData=(FocusData)msg.obj;
-nativeSetKitFocus(focusData.mMoveGeneration,focusData.mBuildGeneration,focusData.mFrame,focusData.mNode,focusData.mX,focusData.mY,focusData.mIgnoreNullFocus);
-break;
-case REQUEST_FOCUS_HREF:
+case REQUEST_CURSOR_HREF:
 {
 Message hrefMsg=(Message)msg.obj;
 String res=nativeRetrieveHref(msg.arg1,msg.arg2);
@@ -193,16 +209,12 @@ Message imageResult=(Message)msg.obj;
 imageResult.arg1=mBrowserFrame.documentHasImages() ? 1 : 0;
 imageResult.sendToTarget();
 break;
-case SET_SNAP_ANCHOR:
-nativeSetSnapAnchor(msg.arg1,msg.arg2);
-break;
 case DELETE_SELECTION:
-FocusData delData=(FocusData)msg.obj;
-nativeDeleteSelection(delData.mFrame,delData.mNode,delData.mX,delData.mY,msg.arg1,msg.arg2);
+TextSelectionData deleteSelectionData=(TextSelectionData)msg.obj;
+nativeDeleteSelection(deleteSelectionData.mStart,deleteSelectionData.mEnd,msg.arg1);
 break;
 case SET_SELECTION:
-FocusData selData=(FocusData)msg.obj;
-nativeSetSelection(selData.mFrame,selData.mNode,selData.mX,selData.mY,msg.arg1,msg.arg2);
+nativeSetSelection(msg.arg1,msg.arg2);
 break;
 case LISTBOX_CHOICES:
 SparseBooleanArray choices=(SparseBooleanArray)msg.obj;
@@ -232,12 +244,16 @@ break;
 case DUMP_NAVTREE:
 nativeDumpNavTree();
 break;
+case SET_JS_FLAGS:
+nativeSetJsFlags((String)msg.obj);
+break;
+case GEOLOCATION_PERMISSIONS_PROVIDE:
+GeolocationPermissionsData data=(GeolocationPermissionsData)msg.obj;
+nativeGeolocationPermissionsProvide(data.mOrigin,data.mAllow,data.mRemember);
+break;
 case SYNC_SCROLL:
 mWebkitScrollX=msg.arg1;
 mWebkitScrollY=msg.arg2;
-break;
-case REFRESH_PLUGINS:
-nativeRefreshPlugins(msg.arg1 != 0);
 break;
 case SPLIT_PICTURE_SET:
 nativeSplitContent();
@@ -245,6 +261,14 @@ mSplitPictureIsScheduled=false;
 break;
 case CLEAR_CONTENT:
 nativeClearContent();
+break;
+case MESSAGE_RELAY:
+if (msg.obj instanceof Message) {
+((Message)msg.obj).sendToTarget();
+}
+break;
+case POPULATE_VISITED_LINKS:
+nativeProvideVisitedHistory((String[])msg.obj);
 break;
 }
 }

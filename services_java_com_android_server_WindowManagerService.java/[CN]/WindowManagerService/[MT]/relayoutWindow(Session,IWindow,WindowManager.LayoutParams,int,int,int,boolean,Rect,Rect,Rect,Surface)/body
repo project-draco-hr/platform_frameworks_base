@@ -30,6 +30,7 @@ synchronized (mWindowMap) {
     }
     boolean imMayMove=(flagChanges & (WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)) != 0;
     boolean focusMayChange=win.mViewVisibility != viewVisibility || ((flagChanges & WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE) != 0) || (!win.mRelayoutCalled);
+    boolean wallpaperMayMove=win.mViewVisibility != viewVisibility && (win.mAttrs.flags & FLAG_SHOW_WALLPAPER) != 0;
     win.mRelayoutCalled=true;
     final int oldVisibility=win.mViewVisibility;
     win.mViewVisibility=viewVisibility;
@@ -49,6 +50,9 @@ synchronized (mWindowMap) {
       if (displayed && win.mSurface != null && !win.mDrawPending && !win.mCommitDrawPending && !mDisplayFrozen) {
         applyEnterAnimationLocked(win);
       }
+      if (displayed && (win.mAttrs.flags & WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON) != 0) {
+        win.mTurnOnScreen=true;
+      }
       if ((attrChanges & WindowManager.LayoutParams.FORMAT_CHANGED) != 0) {
         win.destroySurfaceLocked();
         displayed=true;
@@ -57,9 +61,12 @@ synchronized (mWindowMap) {
         Surface surface=win.createSurfaceLocked();
         if (surface != null) {
           outSurface.copyFrom(surface);
+          win.mReportDestroySurface=false;
+          win.mSurfacePendingDestroy=false;
+          if (SHOW_TRANSACTIONS)           Log.i(TAG,"  OUT SURFACE " + outSurface + ": copied");
         }
  else {
-          outSurface.clear();
+          outSurface.release();
         }
       }
  catch (      Exception e) {
@@ -78,17 +85,23 @@ synchronized (mWindowMap) {
  else {
       win.mEnterAnimationPending=false;
       if (win.mSurface != null) {
-        if (!win.mExiting) {
+        if (DEBUG_VISIBILITY)         Log.i(TAG,"Relayout invis " + win + ": mExiting="+ win.mExiting+ " mSurfacePendingDestroy="+ win.mSurfacePendingDestroy);
+        if (!win.mExiting || win.mSurfacePendingDestroy) {
           int transit=WindowManagerPolicy.TRANSIT_EXIT;
           if (win.getAttrs().type == TYPE_APPLICATION_STARTING) {
             transit=WindowManagerPolicy.TRANSIT_PREVIEW_DONE;
           }
-          if (win.isWinVisibleLw() && applyAnimationLocked(win,transit,false)) {
+          if (!win.mSurfacePendingDestroy && win.isWinVisibleLw() && applyAnimationLocked(win,transit,false)) {
+            focusMayChange=true;
             win.mExiting=true;
             mKeyWaiter.finishedKey(session,client,true,KeyWaiter.RETURN_NOTHING);
           }
  else           if (win.isAnimating()) {
             win.mExiting=true;
+          }
+ else           if (win == mWallpaperTarget) {
+            win.mExiting=true;
+            win.mAnimating=true;
           }
  else {
             if (mInputMethodWindow == win) {
@@ -98,7 +111,16 @@ synchronized (mWindowMap) {
           }
         }
       }
-      outSurface.clear();
+      if (win.mSurface == null || (win.getAttrs().flags & WindowManager.LayoutParams.FLAG_KEEP_SURFACE_WHILE_ANIMATING) == 0 || win.mSurfacePendingDestroy) {
+        win.mSurfacePendingDestroy=false;
+        outSurface.release();
+        if (DEBUG_VISIBILITY)         Log.i(TAG,"Releasing surface in: " + win);
+      }
+ else       if (win.mSurface != null) {
+        if (DEBUG_VISIBILITY)         Log.i(TAG,"Keeping surface, will report destroy: " + win);
+        win.mReportDestroySurface=true;
+        outSurface.copyFrom(win.mSurface);
+      }
     }
     if (focusMayChange) {
       if (updateFocusedWindowLocked(UPDATE_FOCUS_WILL_PLACE_SURFACES)) {
@@ -111,6 +133,11 @@ synchronized (mWindowMap) {
         assignLayers=true;
       }
     }
+    if (wallpaperMayMove) {
+      if ((adjustWallpaperWindowsLocked() & ADJUST_WALLPAPER_LAYERS_CHANGED) != 0) {
+        assignLayers=true;
+      }
+    }
     mLayoutNeeded=true;
     win.mGivenInsetsPending=insetsPending;
     if (assignLayers) {
@@ -118,6 +145,9 @@ synchronized (mWindowMap) {
     }
     newConfig=updateOrientationFromAppTokensLocked(null,null);
     performLayoutAndPlaceSurfacesLocked();
+    if (displayed && win.mIsWallpaper) {
+      updateWallpaperOffsetLocked(win,mDisplay.getWidth(),mDisplay.getHeight(),false);
+    }
     if (win.mAppToken != null) {
       win.mAppToken.updateReportedVisibilityLocked();
     }

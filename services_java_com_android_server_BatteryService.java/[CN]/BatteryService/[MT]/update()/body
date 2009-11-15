@@ -2,6 +2,7 @@
   native_update();
   boolean logOutlier=false;
   long dischargeDuration=0;
+  shutdownIfNoPower();
   mBatteryLevelCritical=mBatteryLevel <= CRITICAL_BATTERY_LEVEL;
   if (mAcOnline) {
     mPlugType=BatteryManager.BATTERY_PLUGGED_AC;
@@ -44,15 +45,32 @@
       dischargeDuration=SystemClock.elapsedRealtime() - mDischargeStartTime;
       logOutlier=true;
     }
+    final boolean plugged=mPlugType != BATTERY_PLUGGED_NONE;
+    final boolean oldPlugged=mLastPlugType != BATTERY_PLUGGED_NONE;
+    final boolean sendBatteryLow=!plugged && mBatteryStatus != BatteryManager.BATTERY_STATUS_UNKNOWN && mBatteryLevel <= mLowBatteryWarningLevel && (oldPlugged || mLastBatteryLevel > mLowBatteryWarningLevel);
+    sendIntent();
+    Intent statusIntent=new Intent();
+    statusIntent.setFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY_BEFORE_BOOT);
     if (mPlugType != 0 && mLastPlugType == 0) {
-      Intent intent=new Intent(Intent.ACTION_POWER_CONNECTED);
-      intent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY_BEFORE_BOOT);
-      mContext.sendBroadcast(intent);
+      statusIntent.setAction(Intent.ACTION_POWER_CONNECTED);
+      mContext.sendBroadcast(statusIntent);
     }
  else     if (mPlugType == 0 && mLastPlugType != 0) {
-      Intent intent=new Intent(Intent.ACTION_POWER_DISCONNECTED);
-      intent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY_BEFORE_BOOT);
-      mContext.sendBroadcast(intent);
+      statusIntent.setAction(Intent.ACTION_POWER_DISCONNECTED);
+      mContext.sendBroadcast(statusIntent);
+    }
+    if (sendBatteryLow) {
+      mSentLowBatteryBroadcast=true;
+      statusIntent.setAction(Intent.ACTION_BATTERY_LOW);
+      mContext.sendBroadcast(statusIntent);
+    }
+ else     if (mSentLowBatteryBroadcast && mLastBatteryLevel >= mLowBatteryCloseWarningLevel) {
+      mSentLowBatteryBroadcast=false;
+      statusIntent.setAction(Intent.ACTION_BATTERY_OKAY);
+      mContext.sendBroadcast(statusIntent);
+    }
+    if (logOutlier && dischargeDuration != 0) {
+      logOutlier(dischargeDuration);
     }
     mLastBatteryStatus=mBatteryStatus;
     mLastBatteryHealth=mBatteryHealth;
@@ -62,9 +80,5 @@
     mLastBatteryVoltage=mBatteryVoltage;
     mLastBatteryTemperature=mBatteryTemperature;
     mLastBatteryLevelCritical=mBatteryLevelCritical;
-    sendIntent();
-    if (logOutlier && dischargeDuration != 0) {
-      logOutlier(dischargeDuration);
-    }
   }
 }

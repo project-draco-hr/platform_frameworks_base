@@ -11,11 +11,14 @@ if (mNeedToRegForRuimLoaded) {
   phone.mRuimRecords.registerForRecordsLoaded(this,EVENT_RUIM_RECORDS_LOADED,null);
   mNeedToRegForRuimLoaded=false;
 }
+cm.getCDMASubscription(obtainMessage(EVENT_POLL_STATE_CDMA_SUBSCRIPTION));
+if (DBG) log("Receive EVENT_RUIM_READY and Send Request getCDMASubscription.");
 pollState();
 queueNextSignalStrengthPoll();
 break;
 case EVENT_NV_READY:
 isSubscriptionFromRuim=false;
+cm.getCDMASubscription(obtainMessage(EVENT_POLL_STATE_CDMA_SUBSCRIPTION));
 pollState();
 queueNextSignalStrengthPoll();
 break;
@@ -39,36 +42,89 @@ ar=(AsyncResult)msg.obj;
 if (ar.exception == null) {
 String states[]=(String[])ar.result;
 int baseStationId=-1;
-int baseStationLongitude=-1;
-int baseStationLatitude=-1;
-int baseStationData[]={-1,-1,-1};
-if (states.length == 3) {
-for (int i=0; i < states.length; i++) {
+int baseStationLatitude=Integer.MAX_VALUE;
+int baseStationLongitude=Integer.MAX_VALUE;
+int systemId=-1;
+int networkId=-1;
+if (states.length > 9) {
 try {
-if (states[i] != null && states[i].length() > 0) {
-baseStationData[i]=Integer.parseInt(states[i],16);
+if (states[4] != null) {
+baseStationId=Integer.parseInt(states[4]);
+}
+if (states[5] != null) {
+baseStationLatitude=Integer.parseInt(states[5]);
+}
+if (states[6] != null) {
+baseStationLongitude=Integer.parseInt(states[6]);
+}
+if (states[8] != null) {
+systemId=Integer.parseInt(states[8]);
+}
+if (states[9] != null) {
+networkId=Integer.parseInt(states[9]);
 }
 }
  catch (NumberFormatException ex) {
 Log.w(LOG_TAG,"error parsing cell location data: " + ex);
 }
 }
-}
-if (cellLoc.getBaseStationId() != baseStationData[0] || cellLoc.getBaseStationLatitude() != baseStationData[1] || cellLoc.getBaseStationLongitude() != baseStationData[2]) {
-cellLoc.setCellLocationData(baseStationData[0],baseStationData[1],baseStationData[2]);
+cellLoc.setCellLocationData(baseStationId,baseStationLatitude,baseStationLongitude,systemId,networkId);
 phone.notifyLocationChanged();
 }
-}
-if (ar.userObj != null) {
-AsyncResult.forMessage(((Message)ar.userObj)).exception=ar.exception;
-((Message)ar.userObj).sendToTarget();
-}
+disableSingleLocationUpdate();
 break;
 case EVENT_POLL_STATE_REGISTRATION_CDMA:
 case EVENT_POLL_STATE_OPERATOR_CDMA:
-case EVENT_POLL_STATE_CDMA_SUBSCRIPTION:
 ar=(AsyncResult)msg.obj;
 handlePollStateResult(msg.what,ar);
+break;
+case EVENT_POLL_STATE_CDMA_SUBSCRIPTION:
+ar=(AsyncResult)msg.obj;
+if (ar.exception == null) {
+String cdmaSubscription[]=(String[])ar.result;
+if (cdmaSubscription != null && cdmaSubscription.length >= 5) {
+mMdn=cdmaSubscription[0];
+if (cdmaSubscription[1] != null) {
+String[] sid=cdmaSubscription[1].split(",");
+mHomeSystemId=new int[sid.length];
+for (int i=0; i < sid.length; i++) {
+try {
+mHomeSystemId[i]=Integer.parseInt(sid[i]);
+}
+ catch (NumberFormatException ex) {
+Log.e(LOG_TAG,"error parsing system id: ",ex);
+}
+}
+}
+Log.d(LOG_TAG,"GET_CDMA_SUBSCRIPTION SID=" + cdmaSubscription[1]);
+if (cdmaSubscription[2] != null) {
+String[] nid=cdmaSubscription[2].split(",");
+mHomeNetworkId=new int[nid.length];
+for (int i=0; i < nid.length; i++) {
+try {
+mHomeNetworkId[i]=Integer.parseInt(nid[i]);
+}
+ catch (NumberFormatException ex) {
+Log.e(LOG_TAG,"error parsing network id: ",ex);
+}
+}
+}
+Log.d(LOG_TAG,"GET_CDMA_SUBSCRIPTION NID=" + cdmaSubscription[2]);
+mMin=cdmaSubscription[3];
+mPrlVersion=cdmaSubscription[4];
+Log.d(LOG_TAG,"GET_CDMA_SUBSCRIPTION MDN=" + mMdn);
+if (cdmaForSubscriptionInfoReadyRegistrants != null) {
+cdmaForSubscriptionInfoReadyRegistrants.notifyRegistrants();
+}
+if (!mIsMinInfoReady) {
+mIsMinInfoReady=true;
+}
+phone.getIccCard().broadcastIccStateChangedIntent(IccCard.INTENT_VALUE_ICC_IMSI,null);
+}
+ else {
+Log.w(LOG_TAG,"error parsing cdmaSubscription params num=" + cdmaSubscription.length);
+}
+}
 break;
 case EVENT_POLL_SIGNAL_STRENGTH:
 cm.getSignalStrength(obtainMessage(EVENT_GET_SIGNAL_STRENGTH));
@@ -90,12 +146,32 @@ break;
 case EVENT_LOCATION_UPDATES_ENABLED:
 ar=(AsyncResult)msg.obj;
 if (ar.exception == null) {
-getLacAndCid(null);
+cm.getRegistrationState(obtainMessage(EVENT_GET_LOC_DONE_CDMA,null));
 }
 break;
 case EVENT_ERI_FILE_LOADED:
 if (DBG) log("[CdmaServiceStateTracker] ERI file has been loaded, repolling.");
 pollState();
+break;
+case EVENT_OTA_PROVISION_STATUS_CHANGE:
+ar=(AsyncResult)msg.obj;
+if (ar.exception == null) {
+ints=(int[])ar.result;
+int otaStatus=ints[0];
+if (otaStatus == phone.CDMA_OTA_PROVISION_STATUS_COMMITTED || otaStatus == phone.CDMA_OTA_PROVISION_STATUS_OTAPA_STOPPED) {
+Log.d(LOG_TAG,"Received OTA_PROGRAMMING Complete,Reload MDN ");
+cm.getCDMASubscription(obtainMessage(EVENT_POLL_STATE_CDMA_SUBSCRIPTION));
+}
+}
+break;
+case EVENT_SET_RADIO_POWER_OFF:
+synchronized (this) {
+if (mPendingRadioPowerOffAfterDataOff) {
+if (DBG) log("EVENT_SET_RADIO_OFF, turn radio off now.");
+cm.setRadioPower(false,null);
+mPendingRadioPowerOffAfterDataOff=false;
+}
+}
 break;
 default :
 Log.e(LOG_TAG,"Unhandled message with number: " + msg.what);

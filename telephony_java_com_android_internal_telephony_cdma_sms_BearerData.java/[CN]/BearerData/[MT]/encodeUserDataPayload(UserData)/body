@@ -1,19 +1,22 @@
 {
-  byte[] headerData=null;
-  if (uData.userDataHeader != null)   headerData=SmsHeader.toByteArray(uData.userDataHeader);
-  int headerDataLen=(headerData == null) ? 0 : headerData.length + 1;
-  byte[] payloadData;
-  int codeUnitCount;
+  if ((uData.payloadStr == null) && (uData.msgEncoding != UserData.ENCODING_OCTET)) {
+    Log.e(LOG_TAG,"user data with null payloadStr");
+    uData.payloadStr="";
+  }
+  if (uData.userDataHeader != null) {
+    encodeEmsUserDataPayload(uData);
+    return;
+  }
   if (uData.msgEncodingSet) {
     if (uData.msgEncoding == UserData.ENCODING_OCTET) {
       if (uData.payload == null) {
         Log.e(LOG_TAG,"user data with octet encoding but null payload");
-        payloadData=new byte[0];
-        codeUnitCount=0;
+        uData.payload=new byte[0];
+        uData.numFields=0;
       }
  else {
-        payloadData=uData.payload;
-        codeUnitCount=uData.payload.length;
+        uData.payload=uData.payload;
+        uData.numFields=uData.payload.length;
       }
     }
  else {
@@ -22,17 +25,17 @@
         uData.payloadStr="";
       }
       if (uData.msgEncoding == UserData.ENCODING_GSM_7BIT_ALPHABET) {
-        int paddingBits=calcUdhSeptetPadding(headerDataLen);
-        payloadData=encode7bitGsm(uData.payloadStr,paddingBits);
-        codeUnitCount=((payloadData.length + headerDataLen) * 8) / 7;
+        Gsm7bitCodingResult gcr=encode7bitGsm(uData.payloadStr,0,true);
+        uData.payload=gcr.data;
+        uData.numFields=gcr.septets;
       }
  else       if (uData.msgEncoding == UserData.ENCODING_7BIT_ASCII) {
-        payloadData=encode7bitAscii(uData.payloadStr,true);
-        codeUnitCount=uData.payloadStr.length();
+        uData.payload=encode7bitAscii(uData.payloadStr,true);
+        uData.numFields=uData.payloadStr.length();
       }
  else       if (uData.msgEncoding == UserData.ENCODING_UNICODE_16) {
-        payloadData=encodeUtf16(uData.payloadStr);
-        codeUnitCount=uData.payloadStr.length();
+        uData.payload=encodeUtf16(uData.payloadStr);
+        uData.numFields=uData.payloadStr.length();
       }
  else {
         throw new CodingException("unsupported user data encoding (" + uData.msgEncoding + ")");
@@ -40,39 +43,15 @@
     }
   }
  else {
-    if (uData.payloadStr == null) {
-      Log.e(LOG_TAG,"user data with null payloadStr");
-      uData.payloadStr="";
-    }
     try {
-      if (headerData == null) {
-        payloadData=encode7bitAscii(uData.payloadStr,false);
-        codeUnitCount=uData.payloadStr.length();
-        uData.msgEncoding=UserData.ENCODING_7BIT_ASCII;
-      }
- else {
-        int paddingBits=calcUdhSeptetPadding(headerDataLen);
-        payloadData=encode7bitGsm(uData.payloadStr,paddingBits);
-        codeUnitCount=((payloadData.length + headerDataLen) * 8) / 7;
-        uData.msgEncoding=UserData.ENCODING_GSM_7BIT_ALPHABET;
-      }
+      uData.payload=encode7bitAscii(uData.payloadStr,false);
+      uData.msgEncoding=UserData.ENCODING_7BIT_ASCII;
     }
  catch (    CodingException ex) {
-      payloadData=encodeUtf16(uData.payloadStr);
-      codeUnitCount=uData.payloadStr.length();
+      uData.payload=encodeUtf16(uData.payloadStr);
       uData.msgEncoding=UserData.ENCODING_UNICODE_16;
     }
+    uData.numFields=uData.payloadStr.length();
     uData.msgEncodingSet=true;
   }
-  int totalLength=payloadData.length + headerDataLen;
-  if (totalLength > SmsMessage.MAX_USER_DATA_BYTES) {
-    throw new CodingException("encoded user data too large (" + totalLength + " > "+ SmsMessage.MAX_USER_DATA_BYTES+ " bytes)");
-  }
-  uData.numFields=codeUnitCount;
-  uData.payload=new byte[totalLength];
-  if (headerData != null) {
-    uData.payload[0]=(byte)headerData.length;
-    System.arraycopy(headerData,0,uData.payload,1,headerData.length);
-  }
-  System.arraycopy(payloadData,0,uData.payload,headerDataLen,payloadData.length);
 }

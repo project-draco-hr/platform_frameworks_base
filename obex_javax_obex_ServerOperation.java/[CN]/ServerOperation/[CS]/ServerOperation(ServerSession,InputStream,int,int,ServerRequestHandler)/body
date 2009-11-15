@@ -1,0 +1,95 @@
+{
+  isAborted=false;
+  mParent=p;
+  mInput=in;
+  mMaxPacketLength=maxSize;
+  mClosed=false;
+  requestHeader=new HeaderSet();
+  replyHeader=new HeaderSet();
+  mPrivateInput=new PrivateInputStream(this);
+  mResponseSize=3;
+  mListener=listen;
+  mRequestFinished=false;
+  mPrivateOutputOpen=false;
+  mHasBody=false;
+  int bytesReceived;
+  if ((request == 0x02) || (request == 0x82)) {
+    mGetOperation=false;
+    if ((request & 0x80) == 0) {
+      finalBitSet=false;
+    }
+ else {
+      finalBitSet=true;
+      mRequestFinished=true;
+    }
+  }
+ else   if ((request == 0x03) || (request == 0x83)) {
+    mGetOperation=true;
+    finalBitSet=false;
+    if (request == 0x83) {
+      mRequestFinished=true;
+    }
+  }
+ else {
+    throw new IOException("ServerOperation can not handle such request");
+  }
+  int length=in.read();
+  length=(length << 8) + in.read();
+  if (length > ObexHelper.MAX_PACKET_SIZE_INT) {
+    mParent.sendResponse(ResponseCodes.OBEX_HTTP_REQ_TOO_LARGE,null);
+    throw new IOException("Packet received was too large");
+  }
+  if (length > 3) {
+    byte[] data=new byte[length - 3];
+    bytesReceived=in.read(data);
+    while (bytesReceived != data.length) {
+      bytesReceived+=in.read(data,bytesReceived,data.length - bytesReceived);
+    }
+    byte[] body=ObexHelper.updateHeaderSet(requestHeader,data);
+    if (body != null) {
+      mHasBody=true;
+    }
+    if (mListener.getConnectionId() != -1 && requestHeader.mConnectionID != null) {
+      mListener.setConnectionId(ObexHelper.convertToLong(requestHeader.mConnectionID));
+    }
+ else {
+      mListener.setConnectionId(1);
+    }
+    if (requestHeader.mAuthResp != null) {
+      if (!mParent.handleAuthResp(requestHeader.mAuthResp)) {
+        mExceptionString="Authentication Failed";
+        mParent.sendResponse(ResponseCodes.OBEX_HTTP_UNAUTHORIZED,null);
+        mClosed=true;
+        requestHeader.mAuthResp=null;
+        return;
+      }
+    }
+    if (requestHeader.mAuthChall != null) {
+      mParent.handleAuthChall(requestHeader);
+      replyHeader.mAuthResp=new byte[requestHeader.mAuthResp.length];
+      System.arraycopy(requestHeader.mAuthResp,0,replyHeader.mAuthResp,0,replyHeader.mAuthResp.length);
+      requestHeader.mAuthResp=null;
+      requestHeader.mAuthChall=null;
+    }
+    if (body != null) {
+      mPrivateInput.writeBytes(body,1);
+    }
+ else {
+      while ((!mGetOperation) && (!finalBitSet)) {
+        sendReply(ResponseCodes.OBEX_HTTP_CONTINUE);
+        if (mPrivateInput.available() > 0) {
+          break;
+        }
+      }
+    }
+  }
+  while ((!mGetOperation) && (!finalBitSet) && (mPrivateInput.available() == 0)) {
+    sendReply(ResponseCodes.OBEX_HTTP_CONTINUE);
+    if (mPrivateInput.available() > 0) {
+      break;
+    }
+  }
+  while (mGetOperation && !mRequestFinished) {
+    sendReply(ResponseCodes.OBEX_HTTP_CONTINUE);
+  }
+}

@@ -7,6 +7,9 @@ synchronized (mLocks) {
     if (noChangeLights) {
       newState=(newState & ~LIGHTS_MASK) | (mPowerState & LIGHTS_MASK);
     }
+    if (mProximitySensorActive) {
+      newState=(newState & ~SCREEN_BRIGHT);
+    }
     if (batteryIsLow()) {
       newState|=BATTERY_LOW_BIT;
     }
@@ -16,12 +19,12 @@ synchronized (mLocks) {
     if (newState == mPowerState) {
       return;
     }
-    if (!mDoneBooting) {
+    if (!mDoneBooting && !mUseSoftwareAutoBrightness) {
       newState|=ALL_BRIGHT;
     }
     boolean oldScreenOn=(mPowerState & SCREEN_ON_BIT) != 0;
     boolean newScreenOn=(newState & SCREEN_ON_BIT) != 0;
-    if (mSpew) {
+    if (mPowerState != newState) {
       Log.d(TAG,"setPowerState: mPowerState=" + mPowerState + " newState="+ newState+ " noChangeLights="+ noChangeLights);
       Log.d(TAG,"  oldKeyboardBright=" + ((mPowerState & KEYBOARD_BRIGHT_BIT) != 0) + " newKeyboardBright="+ ((newState & KEYBOARD_BRIGHT_BIT) != 0));
       Log.d(TAG,"  oldScreenBright=" + ((mPowerState & SCREEN_BRIGHT_BIT) != 0) + " newScreenBright="+ ((newState & SCREEN_BRIGHT_BIT) != 0));
@@ -49,7 +52,7 @@ synchronized (mLocks) {
           reallyTurnScreenOn=false;
         }
         if (reallyTurnScreenOn) {
-          err=Power.setScreenState(true);
+          err=setScreenStateLocked(true);
           long identity=Binder.clearCallingIdentity();
           try {
             mBatteryStats.noteScreenBrightness(getPreferredBrightness());
@@ -63,7 +66,7 @@ synchronized (mLocks) {
           }
         }
  else {
-          Power.setScreenState(false);
+          setScreenStateLocked(false);
           err=0;
         }
         mScreenOnStartTime=SystemClock.elapsedRealtime();
@@ -77,6 +80,7 @@ synchronized (mLocks) {
         }
       }
  else {
+        mHandler.removeCallbacks(mAutoBrightnessTask);
         mScreenOffTime=SystemClock.elapsedRealtime();
         long identity=Binder.clearCallingIdentity();
         try {

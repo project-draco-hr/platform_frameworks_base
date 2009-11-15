@@ -2,7 +2,6 @@
   final long currentTime=SystemClock.uptimeMillis();
   final int dw=mDisplay.getWidth();
   final int dh=mDisplay.getHeight();
-  final int N=mWindows.size();
   int i;
   performLayoutLockedInner();
   if (mFxSession == null) {
@@ -23,6 +22,7 @@
   Surface.openTransaction();
   try {
     boolean restart;
+    boolean forceHiding=false;
     do {
       final int transactionSequence=++mTransactionSequence;
       boolean tokensAnimating=false;
@@ -41,14 +41,57 @@
       animating=tokensAnimating;
       restart=false;
       boolean tokenMayBeDrawn=false;
+      boolean wallpaperMayChange=false;
+      boolean focusMayChange=false;
+      boolean wallpaperForceHidingChanged=false;
       mPolicy.beginAnimationLw(dw,dh);
+      final int N=mWindows.size();
       for (i=N - 1; i >= 0; i--) {
         WindowState w=(WindowState)mWindows.get(i);
         final WindowManager.LayoutParams attrs=w.mAttrs;
         if (w.mSurface != null) {
-          w.commitFinishDrawingLocked(currentTime);
+          if (w.commitFinishDrawingLocked(currentTime)) {
+            if ((w.mAttrs.flags & WindowManager.LayoutParams.FLAG_SHOW_WALLPAPER) != 0) {
+              if (DEBUG_WALLPAPER)               Log.v(TAG,"First draw done in potential wallpaper target " + w);
+              wallpaperMayChange=true;
+            }
+          }
+          boolean wasAnimating=w.mAnimating;
           if (w.stepAnimationLocked(currentTime,dw,dh)) {
             animating=true;
+          }
+          if (wasAnimating && !w.mAnimating && mWallpaperTarget == w) {
+            wallpaperMayChange=true;
+          }
+          if (mPolicy.doesForceHide(w,attrs)) {
+            if (!wasAnimating && animating) {
+              wallpaperForceHidingChanged=true;
+              focusMayChange=true;
+            }
+ else             if (w.isReadyForDisplay() && w.mAnimation == null) {
+              forceHiding=true;
+            }
+          }
+ else           if (mPolicy.canBeForceHidden(w,attrs)) {
+            boolean changed;
+            if (forceHiding) {
+              changed=w.hideLw(false,false);
+            }
+ else {
+              changed=w.showLw(false,false);
+              if (changed && wallpaperForceHidingChanged && w.isReadyForDisplay()) {
+                Animation a=mPolicy.createForceHideEnterAnimation();
+                if (a != null) {
+                  w.setAnimation(a);
+                }
+              }
+            }
+            if (changed && (attrs.flags & WindowManager.LayoutParams.FLAG_SHOW_WALLPAPER) != 0) {
+              wallpaperMayChange=true;
+            }
+            if (changed && !forceHiding && (mCurrentFocus == null)&& (mFocusedApp != null)) {
+              focusMayChange=true;
+            }
           }
           mPolicy.animatingWindowLw(w,attrs);
         }
@@ -61,22 +104,22 @@
           }
           if ((w.isOnScreen() || w.mAttrs.type == WindowManager.LayoutParams.TYPE_BASE_APPLICATION) && !w.mExiting && !w.mDestroying) {
             if (DEBUG_VISIBILITY || DEBUG_ORIENTATION) {
-              Log.v(TAG,"Eval win " + w + ": isDisplayed="+ w.isDisplayedLw()+ ", isAnimating="+ w.isAnimating());
-              if (!w.isDisplayedLw()) {
+              Log.v(TAG,"Eval win " + w + ": isDrawn="+ w.isDrawnLw()+ ", isAnimating="+ w.isAnimating());
+              if (!w.isDrawnLw()) {
                 Log.v(TAG,"Not displayed: s=" + w.mSurface + " pv="+ w.mPolicyVisibility+ " dp="+ w.mDrawPending+ " cdp="+ w.mCommitDrawPending+ " ah="+ w.mAttachedHidden+ " th="+ atoken.hiddenRequested+ " a="+ w.mAnimating);
               }
             }
             if (w != atoken.startingWindow) {
               if (!atoken.freezingScreen || !w.mAppFreezing) {
                 atoken.numInterestingWindows++;
-                if (w.isDisplayedLw()) {
+                if (w.isDrawnLw()) {
                   atoken.numDrawnWindows++;
                   if (DEBUG_VISIBILITY || DEBUG_ORIENTATION)                   Log.v(TAG,"tokenMayBeDrawn: " + atoken + " freezingScreen="+ atoken.freezingScreen+ " mAppFreezing="+ w.mAppFreezing);
                   tokenMayBeDrawn=true;
                 }
               }
             }
- else             if (w.isDisplayedLw()) {
+ else             if (w.isDrawnLw()) {
               atoken.startingDisplayed=true;
             }
           }
@@ -134,419 +177,596 @@
           if (DEBUG_APP_TRANSITIONS)           Log.v(TAG,"**** GOOD TO GO");
           int transit=mNextAppTransition;
           if (mSkipAppTransitionAnimation) {
-            transit=WindowManagerPolicy.TRANSIT_NONE;
+            transit=WindowManagerPolicy.TRANSIT_UNSET;
           }
-          mNextAppTransition=WindowManagerPolicy.TRANSIT_NONE;
+          mNextAppTransition=WindowManagerPolicy.TRANSIT_UNSET;
           mAppTransitionReady=false;
+          mAppTransitionRunning=true;
           mAppTransitionTimeout=false;
           mStartingIconInTransition=false;
           mSkipAppTransitionAnimation=false;
           mH.removeMessages(H.APP_TRANSITION_TIMEOUT);
-          WindowManager.LayoutParams lp=findAnimations(mAppTokens,mOpeningApps,mClosingApps);
-          NN=mOpeningApps.size();
+          if (mToTopApps.size() > 0) {
+            NN=mAppTokens.size();
+            for (i=0; i < NN; i++) {
+              AppWindowToken wtoken=mAppTokens.get(i);
+              if (wtoken.sendingToTop) {
+                wtoken.sendingToTop=false;
+                moveAppWindowsLocked(wtoken,NN,false);
+              }
+            }
+            mToTopApps.clear();
+          }
+          WindowState oldWallpaper=mWallpaperTarget;
+          adjustWallpaperWindowsLocked();
+          wallpaperMayChange=false;
+          LayoutParams animLp=null;
+          AppWindowToken animToken=null;
+          int bestAnimLayer=-1;
+          if (DEBUG_APP_TRANSITIONS)           Log.v(TAG,"New wallpaper target=" + mWallpaperTarget + ", lower target="+ mLowerWallpaperTarget+ ", upper target="+ mUpperWallpaperTarget);
+          int foundWallpapers=0;
+          final int NC=mClosingApps.size();
+          NN=NC + mOpeningApps.size();
           for (i=0; i < NN; i++) {
-            AppWindowToken wtoken=mOpeningApps.get(i);
-            if (DEBUG_APP_TRANSITIONS)             Log.v(TAG,"Now opening app" + wtoken);
-            wtoken.reportedVisible=false;
-            wtoken.inPendingTransaction=false;
-            setTokenVisibilityLocked(wtoken,lp,true,transit,false);
-            wtoken.updateReportedVisibilityLocked();
-            wtoken.showAllWindowsLocked();
+            AppWindowToken wtoken;
+            int mode;
+            if (i < NC) {
+              wtoken=mClosingApps.get(i);
+              mode=1;
+            }
+ else {
+              wtoken=mOpeningApps.get(i - NC);
+              mode=2;
+            }
+            if (mLowerWallpaperTarget != null) {
+              if (mLowerWallpaperTarget.mAppToken == wtoken || mUpperWallpaperTarget.mAppToken == wtoken) {
+                foundWallpapers|=mode;
+              }
+            }
+            if (wtoken.appFullscreen) {
+              WindowState ws=wtoken.findMainWindow();
+              if (ws != null) {
+                if ((ws.mAttrs.flags & FLAG_COMPATIBLE_WINDOW) != 0) {
+                  animLp=ws.mAttrs;
+                  animToken=ws.mAppToken;
+                  bestAnimLayer=Integer.MAX_VALUE;
+                }
+ else                 if (ws.mLayer > bestAnimLayer) {
+                  animLp=ws.mAttrs;
+                  animToken=ws.mAppToken;
+                  bestAnimLayer=ws.mLayer;
+                }
+              }
+            }
           }
-          NN=mClosingApps.size();
-          for (i=0; i < NN; i++) {
-            AppWindowToken wtoken=mClosingApps.get(i);
-            if (DEBUG_APP_TRANSITIONS)             Log.v(TAG,"Now closing app" + wtoken);
-            wtoken.inPendingTransaction=false;
-            setTokenVisibilityLocked(wtoken,lp,false,transit,false);
-            wtoken.updateReportedVisibilityLocked();
-            wtoken.allDrawn=true;
-          }
-          mOpeningApps.clear();
-          mClosingApps.clear();
-          mLayoutNeeded=true;
-          if (!moveInputMethodWindowsIfNeededLocked(true)) {
-            assignLayersLocked();
-          }
-          performLayoutLockedInner();
-          updateFocusedWindowLocked(UPDATE_FOCUS_PLACING_SURFACES);
-          restart=true;
-        }
-      }
+          if (foundWallpapers == 3) {
+            if (DEBUG_APP_TRANSITIONS)             Log.v(TAG,"Wallpaper animation!");
+switch (transit) {
+case WindowManagerPolicy.TRANSIT_ACTIVITY_OPEN:
+case WindowManagerPolicy.TRANSIT_TASK_OPEN:
+case WindowManagerPolicy.TRANSIT_TASK_TO_FRONT:
+              transit=WindowManagerPolicy.TRANSIT_WALLPAPER_INTRA_OPEN;
+            break;
+case WindowManagerPolicy.TRANSIT_ACTIVITY_CLOSE:
+case WindowManagerPolicy.TRANSIT_TASK_CLOSE:
+case WindowManagerPolicy.TRANSIT_TASK_TO_BACK:
+          transit=WindowManagerPolicy.TRANSIT_WALLPAPER_INTRA_CLOSE;
+        break;
     }
- while (restart);
-    final boolean someoneLosingFocus=mLosingFocus.size() != 0;
-    boolean obscured=false;
-    boolean blurring=false;
-    boolean dimming=false;
-    boolean covered=false;
-    boolean syswin=false;
-    boolean backgroundFillerShown=false;
-    for (i=N - 1; i >= 0; i--) {
-      WindowState w=(WindowState)mWindows.get(i);
-      boolean displayed=false;
+    if (DEBUG_APP_TRANSITIONS)     Log.v(TAG,"New transit: " + transit);
+  }
+ else   if (oldWallpaper != null) {
+    transit=WindowManagerPolicy.TRANSIT_WALLPAPER_CLOSE;
+    if (DEBUG_APP_TRANSITIONS)     Log.v(TAG,"New transit away from wallpaper: " + transit);
+  }
+ else   if (mWallpaperTarget != null) {
+    transit=WindowManagerPolicy.TRANSIT_WALLPAPER_OPEN;
+    if (DEBUG_APP_TRANSITIONS)     Log.v(TAG,"New transit into wallpaper: " + transit);
+  }
+  if ((transit & WindowManagerPolicy.TRANSIT_ENTER_MASK) != 0) {
+    mLastEnterAnimToken=animToken;
+    mLastEnterAnimParams=animLp;
+  }
+ else   if (mLastEnterAnimParams != null) {
+    animLp=mLastEnterAnimParams;
+    mLastEnterAnimToken=null;
+    mLastEnterAnimParams=null;
+  }
+  NN=mOpeningApps.size();
+  for (i=0; i < NN; i++) {
+    AppWindowToken wtoken=mOpeningApps.get(i);
+    if (DEBUG_APP_TRANSITIONS)     Log.v(TAG,"Now opening app" + wtoken);
+    wtoken.reportedVisible=false;
+    wtoken.inPendingTransaction=false;
+    wtoken.animation=null;
+    setTokenVisibilityLocked(wtoken,animLp,true,transit,false);
+    wtoken.updateReportedVisibilityLocked();
+    wtoken.waitingToShow=false;
+    wtoken.showAllWindowsLocked();
+  }
+  NN=mClosingApps.size();
+  for (i=0; i < NN; i++) {
+    AppWindowToken wtoken=mClosingApps.get(i);
+    if (DEBUG_APP_TRANSITIONS)     Log.v(TAG,"Now closing app" + wtoken);
+    wtoken.inPendingTransaction=false;
+    wtoken.animation=null;
+    setTokenVisibilityLocked(wtoken,animLp,false,transit,false);
+    wtoken.updateReportedVisibilityLocked();
+    wtoken.waitingToHide=false;
+    wtoken.allDrawn=true;
+  }
+  mNextAppTransitionPackage=null;
+  mOpeningApps.clear();
+  mClosingApps.clear();
+  mLayoutNeeded=true;
+  if (!moveInputMethodWindowsIfNeededLocked(true)) {
+    assignLayersLocked();
+  }
+  performLayoutLockedInner();
+  updateFocusedWindowLocked(UPDATE_FOCUS_PLACING_SURFACES);
+  focusMayChange=false;
+  restart=true;
+}
+}
+if (!animating && mAppTransitionRunning) {
+mAppTransitionRunning=false;
+mToBottomApps.clear();
+rebuildAppWindowListLocked();
+restart=true;
+moveInputMethodWindowsIfNeededLocked(false);
+wallpaperMayChange=true;
+mLayoutNeeded=true;
+focusMayChange=true;
+}
+int adjResult=0;
+if (wallpaperForceHidingChanged) {
+WindowState oldWallpaper=mWallpaperTarget;
+adjResult=adjustWallpaperWindowsLocked();
+wallpaperMayChange=false;
+if (false) Log.v(TAG,"****** OLD: " + oldWallpaper + " NEW: "+ mWallpaperTarget);
+if (mLowerWallpaperTarget == null) {
+  forceHiding=false;
+  for (i=N - 1; i >= 0; i--) {
+    WindowState w=(WindowState)mWindows.get(i);
+    if (w.mSurface != null) {
       final WindowManager.LayoutParams attrs=w.mAttrs;
-      final int attrFlags=attrs.flags;
-      if (w.mSurface != null) {
-        w.computeShownFrameLocked();
-        if (localLOGV)         Log.v(TAG,"Placing surface #" + i + " "+ w.mSurface+ ": new="+ w.mShownFrame+ ", old="+ w.mLastShownFrame);
-        boolean resize;
-        int width, height;
-        if ((w.mAttrs.flags & w.mAttrs.FLAG_SCALED) != 0) {
-          resize=w.mLastRequestedWidth != w.mRequestedWidth || w.mLastRequestedHeight != w.mRequestedHeight;
-          width=w.mRequestedWidth;
-          height=w.mRequestedHeight;
-          w.mLastRequestedWidth=width;
-          w.mLastRequestedHeight=height;
-          w.mLastShownFrame.set(w.mShownFrame);
-          try {
-            w.mSurface.setPosition(w.mShownFrame.left,w.mShownFrame.top);
-          }
- catch (          RuntimeException e) {
-            Log.w(TAG,"Error positioning surface in " + w,e);
-            if (!recoveringMemory) {
-              reclaimSomeSurfaceMemoryLocked(w,"position");
-            }
-          }
-        }
- else {
-          resize=!w.mLastShownFrame.equals(w.mShownFrame);
-          width=w.mShownFrame.width();
-          height=w.mShownFrame.height();
-          w.mLastShownFrame.set(w.mShownFrame);
-          if (resize) {
-            if (SHOW_TRANSACTIONS)             Log.i(TAG,"  SURFACE " + w.mSurface + ": ("+ w.mShownFrame.left+ ","+ w.mShownFrame.top+ ") ("+ w.mShownFrame.width()+ "x"+ w.mShownFrame.height()+ ")");
-          }
-        }
-        if (resize) {
-          if (width < 1)           width=1;
-          if (height < 1)           height=1;
-          if (w.mSurface != null) {
-            try {
-              w.mSurface.setSize(width,height);
-              w.mSurface.setPosition(w.mShownFrame.left,w.mShownFrame.top);
-            }
- catch (            RuntimeException e) {
-              Log.e(TAG,"Failure updating surface of " + w + "size=("+ width+ "x"+ height+ "), pos=("+ w.mShownFrame.left+ ","+ w.mShownFrame.top+ ")",e);
-              if (!recoveringMemory) {
-                reclaimSomeSurfaceMemoryLocked(w,"size");
-              }
-            }
-          }
-        }
-        if (!w.mAppFreezing) {
-          w.mContentInsetsChanged=!w.mLastContentInsets.equals(w.mContentInsets);
-          w.mVisibleInsetsChanged=!w.mLastVisibleInsets.equals(w.mVisibleInsets);
-          if (!w.mLastFrame.equals(w.mFrame) || w.mContentInsetsChanged || w.mVisibleInsetsChanged) {
-            w.mLastFrame.set(w.mFrame);
-            w.mLastContentInsets.set(w.mContentInsets);
-            w.mLastVisibleInsets.set(w.mVisibleInsets);
-            if (w.mOrientationChanging) {
-              if (DEBUG_ORIENTATION)               Log.v(TAG,"Orientation start waiting for draw in " + w + ", surface "+ w.mSurface);
-              w.mDrawPending=true;
-              w.mCommitDrawPending=false;
-              w.mReadyToShow=false;
-              if (w.mAppToken != null) {
-                w.mAppToken.allDrawn=false;
-              }
-            }
-            if (DEBUG_ORIENTATION)             Log.v(TAG,"Resizing window " + w + " to "+ w.mFrame);
-            mResizingWindows.add(w);
-          }
- else           if (w.mOrientationChanging) {
-            if (!w.mDrawPending && !w.mCommitDrawPending) {
-              if (DEBUG_ORIENTATION)               Log.v(TAG,"Orientation not waiting for draw in " + w + ", surface "+ w.mSurface);
-              w.mOrientationChanging=false;
-            }
-          }
-        }
-        if (w.mAttachedHidden) {
-          if (!w.mLastHidden) {
-            w.mLastHidden=true;
-            if (SHOW_TRANSACTIONS)             Log.i(TAG,"  SURFACE " + w.mSurface + ": HIDE (performLayout-attached)");
-            if (w.mSurface != null) {
-              try {
-                w.mSurface.hide();
-              }
- catch (              RuntimeException e) {
-                Log.w(TAG,"Exception hiding surface in " + w);
-              }
-            }
-            mKeyWaiter.releasePendingPointerLocked(w.mSession);
-          }
-          if (w.mOrientationChanging) {
-            w.mOrientationChanging=false;
-            if (DEBUG_ORIENTATION)             Log.v(TAG,"Orientation change skips hidden " + w);
-          }
-        }
- else         if (!w.isReadyForDisplay()) {
-          if (!w.mLastHidden) {
-            w.mLastHidden=true;
-            if (SHOW_TRANSACTIONS)             Log.i(TAG,"  SURFACE " + w.mSurface + ": HIDE (performLayout-ready)");
-            if (w.mSurface != null) {
-              try {
-                w.mSurface.hide();
-              }
- catch (              RuntimeException e) {
-                Log.w(TAG,"Exception exception hiding surface in " + w);
-              }
-            }
-            mKeyWaiter.releasePendingPointerLocked(w.mSession);
-          }
-          if (w.mOrientationChanging) {
-            w.mOrientationChanging=false;
-            if (DEBUG_ORIENTATION)             Log.v(TAG,"Orientation change skips hidden " + w);
-          }
-        }
- else         if (w.mLastLayer != w.mAnimLayer || w.mLastAlpha != w.mShownAlpha || w.mLastDsDx != w.mDsDx || w.mLastDtDx != w.mDtDx || w.mLastDsDy != w.mDsDy || w.mLastDtDy != w.mDtDy || w.mLastHScale != w.mHScale || w.mLastVScale != w.mVScale || w.mLastHidden) {
-          displayed=true;
-          w.mLastAlpha=w.mShownAlpha;
-          w.mLastLayer=w.mAnimLayer;
-          w.mLastDsDx=w.mDsDx;
-          w.mLastDtDx=w.mDtDx;
-          w.mLastDsDy=w.mDsDy;
-          w.mLastDtDy=w.mDtDy;
-          w.mLastHScale=w.mHScale;
-          w.mLastVScale=w.mVScale;
-          if (SHOW_TRANSACTIONS)           Log.i(TAG,"  SURFACE " + w.mSurface + ": alpha="+ w.mShownAlpha+ " layer="+ w.mAnimLayer);
-          if (w.mSurface != null) {
-            try {
-              w.mSurface.setAlpha(w.mShownAlpha);
-              w.mSurface.setLayer(w.mAnimLayer);
-              w.mSurface.setMatrix(w.mDsDx * w.mHScale,w.mDtDx * w.mVScale,w.mDsDy * w.mHScale,w.mDtDy * w.mVScale);
-            }
- catch (            RuntimeException e) {
-              Log.w(TAG,"Error updating surface in " + w,e);
-              if (!recoveringMemory) {
-                reclaimSomeSurfaceMemoryLocked(w,"update");
-              }
-            }
-          }
-          if (w.mLastHidden && !w.mDrawPending && !w.mCommitDrawPending&& !w.mReadyToShow) {
-            if (SHOW_TRANSACTIONS)             Log.i(TAG,"  SURFACE " + w.mSurface + ": SHOW (performLayout)");
-            if (DEBUG_VISIBILITY)             Log.v(TAG,"Showing " + w + " during relayout");
-            if (showSurfaceRobustlyLocked(w)) {
-              w.mHasDrawn=true;
-              w.mLastHidden=false;
-            }
- else {
-              w.mOrientationChanging=false;
-            }
-          }
-          if (w.mSurface != null) {
-            w.mToken.hasVisible=true;
-          }
-        }
- else {
-          displayed=true;
-        }
-        if (displayed) {
-          if (!covered) {
-            if (attrs.width == LayoutParams.FILL_PARENT && attrs.height == LayoutParams.FILL_PARENT) {
-              covered=true;
-            }
-          }
-          if (w.mOrientationChanging) {
-            if (w.mDrawPending || w.mCommitDrawPending) {
-              orientationChangeComplete=false;
-              if (DEBUG_ORIENTATION)               Log.v(TAG,"Orientation continue waiting for draw in " + w);
-            }
- else {
-              w.mOrientationChanging=false;
-              if (DEBUG_ORIENTATION)               Log.v(TAG,"Orientation change complete in " + w);
-            }
-          }
-          w.mToken.hasVisible=true;
-        }
+      if (mPolicy.doesForceHide(w,attrs) && w.isVisibleLw()) {
+        if (DEBUG_FOCUS)         Log.i(TAG,"win=" + w + " force hides other windows");
+        forceHiding=true;
       }
- else       if (w.mOrientationChanging) {
-        if (DEBUG_ORIENTATION)         Log.v(TAG,"Orientation change skips hidden " + w);
-        w.mOrientationChanging=false;
-      }
-      final boolean canBeSeen=w.isDisplayedLw();
-      if (someoneLosingFocus && w == mCurrentFocus && canBeSeen) {
-        focusDisplayed=true;
-      }
-      if (!obscured) {
-        if (w.mSurface != null) {
-          if ((attrFlags & FLAG_KEEP_SCREEN_ON) != 0) {
-            holdScreen=w.mSession;
-          }
-          if (!syswin && w.mAttrs.screenBrightness >= 0 && screenBrightness < 0) {
-            screenBrightness=w.mAttrs.screenBrightness;
-          }
-          if (attrs.type == WindowManager.LayoutParams.TYPE_SYSTEM_DIALOG || attrs.type == WindowManager.LayoutParams.TYPE_KEYGUARD || attrs.type == WindowManager.LayoutParams.TYPE_SYSTEM_ERROR) {
-            syswin=true;
-          }
-        }
-        boolean opaqueDrawn=w.isOpaqueDrawn();
-        if (opaqueDrawn && w.isFullscreen(dw,dh)) {
-          obscured=true;
-        }
- else         if (opaqueDrawn && w.needsBackgroundFiller(dw,dh)) {
-          if (SHOW_TRANSACTIONS)           Log.d(TAG,"showing background filler");
-          obscured=true;
-          if (mBackgroundFillerSurface == null) {
-            try {
-              mBackgroundFillerSurface=new Surface(mFxSession,0,0,dw,dh,PixelFormat.OPAQUE,Surface.FX_SURFACE_NORMAL);
-            }
- catch (            Exception e) {
-              Log.e(TAG,"Exception creating filler surface",e);
-            }
-          }
-          try {
-            mBackgroundFillerSurface.setPosition(0,0);
-            mBackgroundFillerSurface.setSize(dw,dh);
-            mBackgroundFillerSurface.setLayer(w.mAnimLayer - 1);
-            mBackgroundFillerSurface.show();
-          }
- catch (          RuntimeException e) {
-            Log.e(TAG,"Exception showing filler surface");
-          }
-          backgroundFillerShown=true;
-          mBackgroundFillerShown=true;
-        }
- else         if (canBeSeen && !obscured && (attrFlags & FLAG_BLUR_BEHIND | FLAG_DIM_BEHIND) != 0) {
-          if (localLOGV)           Log.v(TAG,"Win " + w + ": blurring="+ blurring+ " obscured="+ obscured+ " displayed="+ displayed);
-          if ((attrFlags & FLAG_DIM_BEHIND) != 0) {
-            if (!dimming) {
-              dimming=true;
-              if (mDimAnimator == null) {
-                mDimAnimator=new DimAnimator(mFxSession);
-              }
-              mDimAnimator.show(dw,dh);
-            }
-            mDimAnimator.updateParameters(w,currentTime);
-          }
-          if ((attrFlags & FLAG_BLUR_BEHIND) != 0) {
-            if (!blurring) {
-              blurring=true;
-              mBlurShown=true;
-              if (mBlurSurface == null) {
-                if (SHOW_TRANSACTIONS)                 Log.i(TAG,"  BLUR " + mBlurSurface + ": CREATE");
-                try {
-                  mBlurSurface=new Surface(mFxSession,0,-1,16,16,PixelFormat.OPAQUE,Surface.FX_SURFACE_BLUR);
-                }
- catch (                Exception e) {
-                  Log.e(TAG,"Exception creating Blur surface",e);
-                }
-              }
-              if (SHOW_TRANSACTIONS)               Log.i(TAG,"  BLUR " + mBlurSurface + ": SHOW pos=(0,0) ("+ dw+ "x"+ dh+ "), layer="+ (w.mAnimLayer - 1));
-              if (mBlurSurface != null) {
-                mBlurSurface.setPosition(0,0);
-                mBlurSurface.setSize(dw,dh);
-                try {
-                  mBlurSurface.show();
-                }
- catch (                RuntimeException e) {
-                  Log.w(TAG,"Failure showing blur surface",e);
-                }
-              }
-            }
-            mBlurSurface.setLayer(w.mAnimLayer - 2);
-          }
+ else       if (mPolicy.canBeForceHidden(w,attrs)) {
+        if (!w.mAnimating) {
+          w.clearAnimation();
         }
       }
     }
-    if (backgroundFillerShown == false && mBackgroundFillerShown) {
-      mBackgroundFillerShown=false;
-      if (SHOW_TRANSACTIONS)       Log.d(TAG,"hiding background filler");
-      try {
-        mBackgroundFillerSurface.hide();
-      }
- catch (      RuntimeException e) {
-        Log.e(TAG,"Exception hiding filler surface",e);
-      }
-    }
-    if (mDimAnimator != null && mDimAnimator.mDimShown) {
-      animating|=mDimAnimator.updateSurface(dimming,currentTime,mDisplayFrozen);
-    }
-    if (!blurring && mBlurShown) {
-      if (SHOW_TRANSACTIONS)       Log.i(TAG,"  BLUR " + mBlurSurface + ": HIDE");
-      try {
-        mBlurSurface.hide();
-      }
- catch (      IllegalArgumentException e) {
-        Log.w(TAG,"Illegal argument exception hiding blur surface");
-      }
-      mBlurShown=false;
-    }
-    if (SHOW_TRANSACTIONS)     Log.i(TAG,"<<< CLOSE TRANSACTION");
+  }
+}
+}
+if (wallpaperMayChange) {
+if (DEBUG_WALLPAPER) Log.v(TAG,"Wallpaper may change!  Adjusting");
+adjResult=adjustWallpaperWindowsLocked();
+}
+if ((adjResult & ADJUST_WALLPAPER_LAYERS_CHANGED) != 0) {
+if (DEBUG_WALLPAPER) Log.v(TAG,"Wallpaper layer changed: assigning layers + relayout");
+restart=true;
+mLayoutNeeded=true;
+assignLayersLocked();
+}
+ else if ((adjResult & ADJUST_WALLPAPER_VISIBILITY_CHANGED) != 0) {
+if (DEBUG_WALLPAPER) Log.v(TAG,"Wallpaper visibility changed: relayout");
+restart=true;
+mLayoutNeeded=true;
+}
+if (focusMayChange) {
+if (updateFocusedWindowLocked(UPDATE_FOCUS_PLACING_SURFACES)) {
+  restart=true;
+  adjResult=0;
+}
+}
+if (mLayoutNeeded) {
+restart=true;
+performLayoutLockedInner();
+}
+}
+ while (restart);
+final boolean someoneLosingFocus=mLosingFocus.size() != 0;
+boolean obscured=false;
+boolean blurring=false;
+boolean dimming=false;
+boolean covered=false;
+boolean syswin=false;
+boolean backgroundFillerShown=false;
+final int N=mWindows.size();
+for (i=N - 1; i >= 0; i--) {
+WindowState w=(WindowState)mWindows.get(i);
+boolean displayed=false;
+final WindowManager.LayoutParams attrs=w.mAttrs;
+final int attrFlags=attrs.flags;
+if (w.mSurface != null) {
+w.computeShownFrameLocked();
+if (localLOGV) Log.v(TAG,"Placing surface #" + i + " "+ w.mSurface+ ": new="+ w.mShownFrame+ ", old="+ w.mLastShownFrame);
+boolean resize;
+int width, height;
+if ((w.mAttrs.flags & w.mAttrs.FLAG_SCALED) != 0) {
+  resize=w.mLastRequestedWidth != w.mRequestedWidth || w.mLastRequestedHeight != w.mRequestedHeight;
+  width=w.mRequestedWidth;
+  height=w.mRequestedHeight;
+  w.mLastRequestedWidth=width;
+  w.mLastRequestedHeight=height;
+  w.mLastShownFrame.set(w.mShownFrame);
+  try {
+    if (SHOW_TRANSACTIONS)     Log.i(TAG,"  SURFACE " + w.mSurface + ": POS "+ w.mShownFrame.left+ ", "+ w.mShownFrame.top);
+    w.mSurface.setPosition(w.mShownFrame.left,w.mShownFrame.top);
   }
  catch (  RuntimeException e) {
-    Log.e(TAG,"Unhandled exception in Window Manager",e);
-  }
-  Surface.closeTransaction();
-  if (DEBUG_ORIENTATION && mDisplayFrozen)   Log.v(TAG,"With display frozen, orientationChangeComplete=" + orientationChangeComplete);
-  if (orientationChangeComplete) {
-    if (mWindowsFreezingScreen) {
-      mWindowsFreezingScreen=false;
-      mH.removeMessages(H.WINDOW_FREEZE_TIMEOUT);
-    }
-    if (mAppsFreezingScreen == 0) {
-      stopFreezingDisplayLocked();
+    Log.w(TAG,"Error positioning surface in " + w,e);
+    if (!recoveringMemory) {
+      reclaimSomeSurfaceMemoryLocked(w,"position");
     }
   }
-  i=mResizingWindows.size();
-  if (i > 0) {
-    do {
-      i--;
-      WindowState win=mResizingWindows.get(i);
-      try {
-        win.mClient.resized(win.mFrame.width(),win.mFrame.height(),win.mLastContentInsets,win.mLastVisibleInsets,win.mDrawPending);
-        win.mContentInsetsChanged=false;
-        win.mVisibleInsetsChanged=false;
-      }
- catch (      RemoteException e) {
-        win.mOrientationChanging=false;
-      }
-    }
- while (i > 0);
-    mResizingWindows.clear();
-  }
-  i=mDestroySurface.size();
-  if (i > 0) {
-    do {
-      i--;
-      WindowState win=mDestroySurface.get(i);
-      win.mDestroying=false;
-      if (mInputMethodWindow == win) {
-        mInputMethodWindow=null;
-      }
-      win.destroySurfaceLocked();
-    }
- while (i > 0);
-    mDestroySurface.clear();
-  }
-  for (i=mExitingTokens.size() - 1; i >= 0; i--) {
-    WindowToken token=mExitingTokens.get(i);
-    if (!token.hasVisible) {
-      mExitingTokens.remove(i);
-    }
-  }
-  for (i=mExitingAppTokens.size() - 1; i >= 0; i--) {
-    AppWindowToken token=mExitingAppTokens.get(i);
-    if (!token.hasVisible && !mClosingApps.contains(token)) {
-      mAppTokens.remove(token);
-      mExitingAppTokens.remove(i);
-    }
-  }
-  if (focusDisplayed) {
-    mH.sendEmptyMessage(H.REPORT_LOSING_FOCUS);
-  }
-  if (animating) {
-    requestAnimationLocked(currentTime + (1000 / 60) - SystemClock.uptimeMillis());
-  }
-  mQueue.setHoldScreenLocked(holdScreen != null);
-  if (screenBrightness < 0 || screenBrightness > 1.0f) {
-    mPowerManager.setScreenBrightnessOverride(-1);
-  }
+}
  else {
-    mPowerManager.setScreenBrightnessOverride((int)(screenBrightness * Power.BRIGHTNESS_ON));
+  resize=!w.mLastShownFrame.equals(w.mShownFrame);
+  width=w.mShownFrame.width();
+  height=w.mShownFrame.height();
+  w.mLastShownFrame.set(w.mShownFrame);
+}
+if (resize) {
+  if (width < 1)   width=1;
+  if (height < 1)   height=1;
+  if (w.mSurface != null) {
+    try {
+      if (SHOW_TRANSACTIONS)       Log.i(TAG,"  SURFACE " + w.mSurface + ": POS "+ w.mShownFrame.left+ ","+ w.mShownFrame.top+ " SIZE "+ w.mShownFrame.width()+ "x"+ w.mShownFrame.height());
+      w.mSurface.setSize(width,height);
+      w.mSurface.setPosition(w.mShownFrame.left,w.mShownFrame.top);
+    }
+ catch (    RuntimeException e) {
+      Log.e(TAG,"Failure updating surface of " + w + "size=("+ width+ "x"+ height+ "), pos=("+ w.mShownFrame.left+ ","+ w.mShownFrame.top+ ")",e);
+      if (!recoveringMemory) {
+        reclaimSomeSurfaceMemoryLocked(w,"size");
+      }
+    }
   }
-  if (holdScreen != mHoldingScreenOn) {
-    mHoldingScreenOn=holdScreen;
-    Message m=mH.obtainMessage(H.HOLD_SCREEN_CHANGED,holdScreen);
-    mH.sendMessage(m);
+}
+if (!w.mAppFreezing) {
+  w.mContentInsetsChanged=!w.mLastContentInsets.equals(w.mContentInsets);
+  w.mVisibleInsetsChanged=!w.mLastVisibleInsets.equals(w.mVisibleInsets);
+  if (!w.mLastFrame.equals(w.mFrame) || w.mContentInsetsChanged || w.mVisibleInsetsChanged) {
+    w.mLastFrame.set(w.mFrame);
+    w.mLastContentInsets.set(w.mContentInsets);
+    w.mLastVisibleInsets.set(w.mVisibleInsets);
+    if (mDisplayFrozen) {
+      if (DEBUG_ORIENTATION)       Log.v(TAG,"Resizing while display frozen: " + w);
+      w.mOrientationChanging=true;
+      if (mWindowsFreezingScreen) {
+        mWindowsFreezingScreen=true;
+        mH.removeMessages(H.WINDOW_FREEZE_TIMEOUT);
+        mH.sendMessageDelayed(mH.obtainMessage(H.WINDOW_FREEZE_TIMEOUT),2000);
+      }
+    }
+    if (w.mOrientationChanging) {
+      if (DEBUG_ORIENTATION)       Log.v(TAG,"Orientation start waiting for draw in " + w + ", surface "+ w.mSurface);
+      w.mDrawPending=true;
+      w.mCommitDrawPending=false;
+      w.mReadyToShow=false;
+      if (w.mAppToken != null) {
+        w.mAppToken.allDrawn=false;
+      }
+    }
+    if (DEBUG_ORIENTATION)     Log.v(TAG,"Resizing window " + w + " to "+ w.mFrame);
+    mResizingWindows.add(w);
   }
+ else   if (w.mOrientationChanging) {
+    if (!w.mDrawPending && !w.mCommitDrawPending) {
+      if (DEBUG_ORIENTATION)       Log.v(TAG,"Orientation not waiting for draw in " + w + ", surface "+ w.mSurface);
+      w.mOrientationChanging=false;
+    }
+  }
+}
+if (w.mAttachedHidden || !w.isReadyForDisplay()) {
+  if (!w.mLastHidden) {
+    w.mLastHidden=true;
+    if (SHOW_TRANSACTIONS)     Log.i(TAG,"  SURFACE " + w.mSurface + ": HIDE (performLayout)");
+    if (w.mSurface != null) {
+      try {
+        w.mSurface.hide();
+      }
+ catch (      RuntimeException e) {
+        Log.w(TAG,"Exception hiding surface in " + w);
+      }
+    }
+    mKeyWaiter.releasePendingPointerLocked(w.mSession);
+  }
+  if (w.mOrientationChanging) {
+    w.mOrientationChanging=false;
+    if (DEBUG_ORIENTATION)     Log.v(TAG,"Orientation change skips hidden " + w);
+  }
+}
+ else if (w.mLastLayer != w.mAnimLayer || w.mLastAlpha != w.mShownAlpha || w.mLastDsDx != w.mDsDx || w.mLastDtDx != w.mDtDx || w.mLastDsDy != w.mDsDy || w.mLastDtDy != w.mDtDy || w.mLastHScale != w.mHScale || w.mLastVScale != w.mVScale || w.mLastHidden) {
+  displayed=true;
+  w.mLastAlpha=w.mShownAlpha;
+  w.mLastLayer=w.mAnimLayer;
+  w.mLastDsDx=w.mDsDx;
+  w.mLastDtDx=w.mDtDx;
+  w.mLastDsDy=w.mDsDy;
+  w.mLastDtDy=w.mDtDy;
+  w.mLastHScale=w.mHScale;
+  w.mLastVScale=w.mVScale;
+  if (SHOW_TRANSACTIONS)   Log.i(TAG,"  SURFACE " + w.mSurface + ": alpha="+ w.mShownAlpha+ " layer="+ w.mAnimLayer+ " matrix=["+ (w.mDsDx * w.mHScale)+ ","+ (w.mDtDx * w.mVScale)+ "]["+ (w.mDsDy * w.mHScale)+ ","+ (w.mDtDy * w.mVScale)+ "]");
+  if (w.mSurface != null) {
+    try {
+      w.mSurface.setAlpha(w.mShownAlpha);
+      w.mSurface.setLayer(w.mAnimLayer);
+      w.mSurface.setMatrix(w.mDsDx * w.mHScale,w.mDtDx * w.mVScale,w.mDsDy * w.mHScale,w.mDtDy * w.mVScale);
+    }
+ catch (    RuntimeException e) {
+      Log.w(TAG,"Error updating surface in " + w,e);
+      if (!recoveringMemory) {
+        reclaimSomeSurfaceMemoryLocked(w,"update");
+      }
+    }
+  }
+  if (w.mLastHidden && !w.mDrawPending && !w.mCommitDrawPending&& !w.mReadyToShow) {
+    if (SHOW_TRANSACTIONS)     Log.i(TAG,"  SURFACE " + w.mSurface + ": SHOW (performLayout)");
+    if (DEBUG_VISIBILITY)     Log.v(TAG,"Showing " + w + " during relayout");
+    if (showSurfaceRobustlyLocked(w)) {
+      w.mHasDrawn=true;
+      w.mLastHidden=false;
+    }
+ else {
+      w.mOrientationChanging=false;
+    }
+  }
+  if (w.mSurface != null) {
+    w.mToken.hasVisible=true;
+  }
+}
+ else {
+  displayed=true;
+}
+if (displayed) {
+  if (!covered) {
+    if (attrs.width == LayoutParams.FILL_PARENT && attrs.height == LayoutParams.FILL_PARENT) {
+      covered=true;
+    }
+  }
+  if (w.mOrientationChanging) {
+    if (w.mDrawPending || w.mCommitDrawPending) {
+      orientationChangeComplete=false;
+      if (DEBUG_ORIENTATION)       Log.v(TAG,"Orientation continue waiting for draw in " + w);
+    }
+ else {
+      w.mOrientationChanging=false;
+      if (DEBUG_ORIENTATION)       Log.v(TAG,"Orientation change complete in " + w);
+    }
+  }
+  w.mToken.hasVisible=true;
+}
+}
+ else if (w.mOrientationChanging) {
+if (DEBUG_ORIENTATION) Log.v(TAG,"Orientation change skips hidden " + w);
+w.mOrientationChanging=false;
+}
+final boolean canBeSeen=w.isDisplayedLw();
+if (someoneLosingFocus && w == mCurrentFocus && canBeSeen) {
+focusDisplayed=true;
+}
+final boolean obscuredChanged=w.mObscured != obscured;
+if (!(w.mObscured=obscured)) {
+if (w.mSurface != null) {
+  if ((attrFlags & FLAG_KEEP_SCREEN_ON) != 0) {
+    holdScreen=w.mSession;
+  }
+  if (!syswin && w.mAttrs.screenBrightness >= 0 && screenBrightness < 0) {
+    screenBrightness=w.mAttrs.screenBrightness;
+  }
+  if (attrs.type == WindowManager.LayoutParams.TYPE_SYSTEM_DIALOG || attrs.type == WindowManager.LayoutParams.TYPE_KEYGUARD || attrs.type == WindowManager.LayoutParams.TYPE_SYSTEM_ERROR) {
+    syswin=true;
+  }
+}
+boolean opaqueDrawn=canBeSeen && w.isOpaqueDrawn();
+if (opaqueDrawn && w.isFullscreen(dw,dh)) {
+  obscured=true;
+}
+ else if (opaqueDrawn && w.needsBackgroundFiller(dw,dh)) {
+  if (SHOW_TRANSACTIONS)   Log.d(TAG,"showing background filler");
+  obscured=true;
+  if (mBackgroundFillerSurface == null) {
+    try {
+      mBackgroundFillerSurface=new Surface(mFxSession,0,0,dw,dh,PixelFormat.OPAQUE,Surface.FX_SURFACE_NORMAL);
+    }
+ catch (    Exception e) {
+      Log.e(TAG,"Exception creating filler surface",e);
+    }
+  }
+  try {
+    mBackgroundFillerSurface.setPosition(0,0);
+    mBackgroundFillerSurface.setSize(dw,dh);
+    mBackgroundFillerSurface.setLayer(w.mAnimLayer - 1);
+    mBackgroundFillerSurface.show();
+  }
+ catch (  RuntimeException e) {
+    Log.e(TAG,"Exception showing filler surface");
+  }
+  backgroundFillerShown=true;
+  mBackgroundFillerShown=true;
+}
+ else if (canBeSeen && !obscured && (attrFlags & FLAG_BLUR_BEHIND | FLAG_DIM_BEHIND) != 0) {
+  if (localLOGV)   Log.v(TAG,"Win " + w + ": blurring="+ blurring+ " obscured="+ obscured+ " displayed="+ displayed);
+  if ((attrFlags & FLAG_DIM_BEHIND) != 0) {
+    if (!dimming) {
+      dimming=true;
+      if (mDimAnimator == null) {
+        mDimAnimator=new DimAnimator(mFxSession);
+      }
+      mDimAnimator.show(dw,dh);
+    }
+    mDimAnimator.updateParameters(w,currentTime);
+  }
+  if ((attrFlags & FLAG_BLUR_BEHIND) != 0) {
+    if (!blurring) {
+      blurring=true;
+      mBlurShown=true;
+      if (mBlurSurface == null) {
+        if (SHOW_TRANSACTIONS)         Log.i(TAG,"  BLUR " + mBlurSurface + ": CREATE");
+        try {
+          mBlurSurface=new Surface(mFxSession,0,-1,16,16,PixelFormat.OPAQUE,Surface.FX_SURFACE_BLUR);
+        }
+ catch (        Exception e) {
+          Log.e(TAG,"Exception creating Blur surface",e);
+        }
+      }
+      if (SHOW_TRANSACTIONS)       Log.i(TAG,"  BLUR " + mBlurSurface + ": SHOW pos=(0,0) ("+ dw+ "x"+ dh+ "), layer="+ (w.mAnimLayer - 1));
+      if (mBlurSurface != null) {
+        mBlurSurface.setPosition(0,0);
+        mBlurSurface.setSize(dw,dh);
+        try {
+          mBlurSurface.show();
+        }
+ catch (        RuntimeException e) {
+          Log.w(TAG,"Failure showing blur surface",e);
+        }
+      }
+    }
+    mBlurSurface.setLayer(w.mAnimLayer - 2);
+  }
+}
+}
+if (obscuredChanged && mWallpaperTarget == w) {
+updateWallpaperVisibilityLocked();
+}
+}
+if (backgroundFillerShown == false && mBackgroundFillerShown) {
+mBackgroundFillerShown=false;
+if (SHOW_TRANSACTIONS) Log.d(TAG,"hiding background filler");
+try {
+mBackgroundFillerSurface.hide();
+}
+ catch (RuntimeException e) {
+Log.e(TAG,"Exception hiding filler surface",e);
+}
+}
+if (mDimAnimator != null && mDimAnimator.mDimShown) {
+animating|=mDimAnimator.updateSurface(dimming,currentTime,mDisplayFrozen);
+}
+if (!blurring && mBlurShown) {
+if (SHOW_TRANSACTIONS) Log.i(TAG,"  BLUR " + mBlurSurface + ": HIDE");
+try {
+mBlurSurface.hide();
+}
+ catch (IllegalArgumentException e) {
+Log.w(TAG,"Illegal argument exception hiding blur surface");
+}
+mBlurShown=false;
+}
+if (SHOW_TRANSACTIONS) Log.i(TAG,"<<< CLOSE TRANSACTION");
+}
+ catch (RuntimeException e) {
+Log.e(TAG,"Unhandled exception in Window Manager",e);
+}
+Surface.closeTransaction();
+if (DEBUG_ORIENTATION && mDisplayFrozen) Log.v(TAG,"With display frozen, orientationChangeComplete=" + orientationChangeComplete);
+if (orientationChangeComplete) {
+if (mWindowsFreezingScreen) {
+mWindowsFreezingScreen=false;
+mH.removeMessages(H.WINDOW_FREEZE_TIMEOUT);
+}
+if (mAppsFreezingScreen == 0) {
+stopFreezingDisplayLocked();
+}
+}
+i=mResizingWindows.size();
+if (i > 0) {
+do {
+i--;
+WindowState win=mResizingWindows.get(i);
+try {
+if (DEBUG_ORIENTATION) Log.v(TAG,"Reporting new frame to " + win + ": "+ win.mFrame);
+win.mClient.resized(win.mFrame.width(),win.mFrame.height(),win.mLastContentInsets,win.mLastVisibleInsets,win.mDrawPending);
+win.mContentInsetsChanged=false;
+win.mVisibleInsetsChanged=false;
+}
+ catch (RemoteException e) {
+win.mOrientationChanging=false;
+}
+}
+ while (i > 0);
+mResizingWindows.clear();
+}
+boolean wallpaperDestroyed=false;
+i=mDestroySurface.size();
+if (i > 0) {
+do {
+i--;
+WindowState win=mDestroySurface.get(i);
+win.mDestroying=false;
+if (mInputMethodWindow == win) {
+mInputMethodWindow=null;
+}
+if (win == mWallpaperTarget) {
+wallpaperDestroyed=true;
+}
+win.destroySurfaceLocked();
+}
+ while (i > 0);
+mDestroySurface.clear();
+}
+for (i=mExitingTokens.size() - 1; i >= 0; i--) {
+WindowToken token=mExitingTokens.get(i);
+if (!token.hasVisible) {
+mExitingTokens.remove(i);
+if (token.windowType == TYPE_WALLPAPER) {
+mWallpaperTokens.remove(token);
+}
+}
+}
+for (i=mExitingAppTokens.size() - 1; i >= 0; i--) {
+AppWindowToken token=mExitingAppTokens.get(i);
+if (!token.hasVisible && !mClosingApps.contains(token)) {
+token.animation=null;
+token.animating=false;
+mAppTokens.remove(token);
+mExitingAppTokens.remove(i);
+if (mLastEnterAnimToken == token) {
+mLastEnterAnimToken=null;
+mLastEnterAnimParams=null;
+}
+}
+}
+boolean needRelayout=false;
+if (!animating && mAppTransitionRunning) {
+mAppTransitionRunning=false;
+needRelayout=true;
+rebuildAppWindowListLocked();
+mToBottomApps.clear();
+}
+if (focusDisplayed) {
+mH.sendEmptyMessage(H.REPORT_LOSING_FOCUS);
+}
+if (wallpaperDestroyed) {
+needRelayout=adjustWallpaperWindowsLocked() != 0;
+}
+if (needRelayout) {
+requestAnimationLocked(0);
+}
+ else if (animating) {
+requestAnimationLocked(currentTime + (1000 / 60) - SystemClock.uptimeMillis());
+}
+mQueue.setHoldScreenLocked(holdScreen != null);
+if (screenBrightness < 0 || screenBrightness > 1.0f) {
+mPowerManager.setScreenBrightnessOverride(-1);
+}
+ else {
+mPowerManager.setScreenBrightnessOverride((int)(screenBrightness * Power.BRIGHTNESS_ON));
+}
+if (holdScreen != mHoldingScreenOn) {
+mHoldingScreenOn=holdScreen;
+Message m=mH.obtainMessage(H.HOLD_SCREEN_CHANGED,holdScreen);
+mH.sendMessage(m);
+}
+if (mTurnOnScreen) {
+mPowerManager.userActivity(SystemClock.uptimeMillis(),false,LocalPowerManager.BUTTON_EVENT,true);
+mTurnOnScreen=false;
+}
 }

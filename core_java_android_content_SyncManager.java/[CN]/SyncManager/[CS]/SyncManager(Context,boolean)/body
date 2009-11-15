@@ -1,4 +1,5 @@
 {
+  mFactoryTest=factoryTest;
   SyncStorageEngine.init(context);
   mSyncStorageEngine=SyncStorageEngine.getSingleton();
   mSyncQueue=new SyncQueue(mSyncStorageEngine);
@@ -7,10 +8,17 @@
   mSyncThread.start();
   mSyncHandler=new SyncHandler(mSyncThread.getLooper());
   mPackageManager=null;
+  mSyncAdapters=new SyncAdaptersCache(mContext);
   mSyncAlarmIntent=PendingIntent.getBroadcast(mContext,0,new Intent(ACTION_SYNC_ALARM),0);
   mSyncPollAlarmIntent=PendingIntent.getBroadcast(mContext,0,new Intent(SYNC_POLL_ALARM),0);
   IntentFilter intentFilter=new IntentFilter(ConnectivityManager.CONNECTIVITY_ACTION);
   context.registerReceiver(mConnectivityIntentReceiver,intentFilter);
+  if (!factoryTest) {
+    intentFilter=new IntentFilter(Intent.ACTION_BOOT_COMPLETED);
+    context.registerReceiver(mBootCompletedReceiver,intentFilter);
+  }
+  intentFilter=new IntentFilter(ConnectivityManager.ACTION_BACKGROUND_DATA_SETTING_CHANGED);
+  context.registerReceiver(mBackgroundDataSettingChanged,intentFilter);
   intentFilter=new IntentFilter(Intent.ACTION_DEVICE_STORAGE_LOW);
   intentFilter.addAction(Intent.ACTION_DEVICE_STORAGE_OK);
   context.registerReceiver(mStorageIntentReceiver,intentFilter);
@@ -29,34 +37,14 @@
   mSyncWakeLock.setReferenceCounted(false);
   mHandleAlarmWakeLock=pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,HANDLE_SYNC_ALARM_WAKE_LOCK);
   mHandleAlarmWakeLock.setReferenceCounted(false);
-  mSyncStorageEngine.addStatusChangeListener(SyncStorageEngine.CHANGE_SETTINGS,new ISyncStatusObserver.Stub(){
+  mSyncStorageEngine.addStatusChangeListener(ContentResolver.SYNC_OBSERVER_TYPE_SETTINGS,new ISyncStatusObserver.Stub(){
     public void onStatusChanged(    int which){
       sendCheckAlarmsMessage();
     }
   }
 );
   if (!factoryTest) {
-    AccountMonitorListener listener=new AccountMonitorListener(){
-      public void onAccountsUpdated(      String[] accounts){
-        final boolean hadAccountsAlready=mAccounts != null;
-        String[] newAccounts=new String[accounts.length];
-        System.arraycopy(accounts,0,newAccounts,0,accounts.length);
-        mAccounts=newAccounts;
-        ActiveSyncContext activeSyncContext=mActiveSyncContext;
-        if (activeSyncContext != null) {
-          if (!ArrayUtils.contains(newAccounts,activeSyncContext.mSyncOperation.account)) {
-            Log.d(TAG,"canceling sync since the account has been removed");
-            sendSyncFinishedOrCanceledMessage(activeSyncContext,null);
-          }
-        }
-        sendCheckAlarmsMessage();
-        mSyncStorageEngine.doDatabaseCleanup(accounts);
-        if (hadAccountsAlready && mAccounts.length > 0) {
-          startSync(null,null);
-        }
-      }
-    }
-;
-    mAccountMonitor=new AccountMonitor(context,listener);
+    AccountManager.get(mContext).addOnAccountsUpdatedListener(SyncManager.this,mSyncHandler,false);
+    onAccountsUpdated(AccountManager.get(mContext).getAccounts());
   }
 }

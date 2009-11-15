@@ -36,6 +36,9 @@
         pendingMO=null;
         if (hangupPendingMO) {
           hangupPendingMO=false;
+          if (mIsEcmTimerCanceled) {
+            handleEcmTimer(phone.RESTART_ECM_TIMER);
+          }
           try {
             if (Phone.DEBUG_PHONE)             log("poll: hangupPendingMO, hangup conn " + i);
             hangup(connections[i]);
@@ -47,46 +50,57 @@
         }
       }
  else {
-        connections[i]=new CdmaConnection(phone.getContext(),dc,this,i);
-        if (connections[i].getCall() == ringingCall) {
-          newRinging=connections[i];
+        if (Phone.DEBUG_PHONE) {
+          log("pendingMo=" + pendingMO + ", dc="+ dc);
         }
- else {
-          Log.i(LOG_TAG,"Phantom call appeared " + dc);
-          if (dc.state != DriverCall.State.ALERTING && dc.state != DriverCall.State.DIALING) {
-            connections[i].connectTime=System.currentTimeMillis();
-          }
+        newRinging=checkMtFindNewRinging(dc,i);
+        if (newRinging == null) {
           unknownConnectionAppeared=true;
         }
+        checkAndEnableDataCallAfterEmergencyCallDropped();
       }
       hasNonHangupStateChanged=true;
     }
  else     if (conn != null && dc == null) {
       int count=foregroundCall.connections.size();
-      if (count == 0) {
-        droppedDuringPoll.add(conn);
+      for (int n=0; n < count; n++) {
+        if (Phone.DEBUG_PHONE)         log("adding fgCall cn " + n + " to droppedDuringPoll");
+        CdmaConnection cn=(CdmaConnection)foregroundCall.connections.get(n);
+        droppedDuringPoll.add(cn);
       }
- else {
-        for (int n=0; n < count; n++) {
-          CdmaConnection cn=(CdmaConnection)foregroundCall.connections.get(n);
-          droppedDuringPoll.add(cn);
-        }
+      count=ringingCall.connections.size();
+      for (int n=0; n < count; n++) {
+        if (Phone.DEBUG_PHONE)         log("adding rgCall cn " + n + " to droppedDuringPoll");
+        CdmaConnection cn=(CdmaConnection)ringingCall.connections.get(n);
+        droppedDuringPoll.add(cn);
       }
       foregroundCall.setGeneric(false);
+      ringingCall.setGeneric(false);
+      if (mIsEcmTimerCanceled) {
+        handleEcmTimer(phone.RESTART_ECM_TIMER);
+      }
+      checkAndEnableDataCallAfterEmergencyCallDropped();
       connections[i]=null;
     }
- else     if (conn != null && dc != null && !conn.compareTo(dc)) {
-      droppedDuringPoll.add(conn);
-      connections[i]=new CdmaConnection(phone.getContext(),dc,this,i);
-      if (connections[i].getCall() == ringingCall) {
-        newRinging=connections[i];
-      }
-      hasNonHangupStateChanged=true;
-    }
  else     if (conn != null && dc != null) {
-      boolean changed;
-      changed=conn.update(dc);
-      hasNonHangupStateChanged=hasNonHangupStateChanged || changed;
+      if (conn.isIncoming != dc.isMT) {
+        if (dc.isMT == true) {
+          droppedDuringPoll.add(conn);
+          newRinging=checkMtFindNewRinging(dc,i);
+          if (newRinging == null) {
+            unknownConnectionAppeared=true;
+          }
+          checkAndEnableDataCallAfterEmergencyCallDropped();
+        }
+ else {
+          Log.e(LOG_TAG,"Error in RIL, Phantom call appeared " + dc);
+        }
+      }
+ else {
+        boolean changed;
+        changed=conn.update(dc);
+        hasNonHangupStateChanged=hasNonHangupStateChanged || changed;
+      }
     }
     if (REPEAT_POLLING) {
       if (dc != null) {
@@ -101,8 +115,8 @@
     droppedDuringPoll.add(pendingMO);
     pendingMO=null;
     hangupPendingMO=false;
-    if (pendingCallInECM) {
-      pendingCallInECM=false;
+    if (pendingCallInEcm) {
+      pendingCallInEcm=false;
     }
   }
   if (newRinging != null) {
@@ -148,6 +162,6 @@
     phone.notifyUnknownConnection();
   }
   if (hasNonHangupStateChanged || newRinging != null) {
-    phone.notifyCallStateChanged();
+    phone.notifyPreciseCallStateChanged();
   }
 }

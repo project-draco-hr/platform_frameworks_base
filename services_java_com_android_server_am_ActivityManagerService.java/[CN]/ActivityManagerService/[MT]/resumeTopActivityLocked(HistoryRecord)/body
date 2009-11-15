@@ -8,10 +8,12 @@
   next.delayedResume=false;
   if (mResumedActivity == next && next.state == ActivityState.RESUMED) {
     mWindowManager.executeAppTransition();
+    mNoAnimActivities.clear();
     return false;
   }
   if ((mSleeping || mShuttingDown) && mLastPausedActivity == next && next.state == ActivityState.PAUSED) {
     mWindowManager.executeAppTransition();
+    mNoAnimActivities.clear();
     return false;
   }
   mStoppingActivities.remove(next);
@@ -45,13 +47,23 @@
   if (prev != null) {
     if (prev.finishing) {
       if (DEBUG_TRANSITION)       Log.v(TAG,"Prepare close transition: prev=" + prev);
-      mWindowManager.prepareAppTransition(prev.task == next.task ? WindowManagerPolicy.TRANSIT_ACTIVITY_CLOSE : WindowManagerPolicy.TRANSIT_TASK_CLOSE);
+      if (mNoAnimActivities.contains(prev)) {
+        mWindowManager.prepareAppTransition(WindowManagerPolicy.TRANSIT_NONE);
+      }
+ else {
+        mWindowManager.prepareAppTransition(prev.task == next.task ? WindowManagerPolicy.TRANSIT_ACTIVITY_CLOSE : WindowManagerPolicy.TRANSIT_TASK_CLOSE);
+      }
       mWindowManager.setAppWillBeHidden(prev);
       mWindowManager.setAppVisibility(prev,false);
     }
  else {
       if (DEBUG_TRANSITION)       Log.v(TAG,"Prepare open transition: prev=" + prev);
-      mWindowManager.prepareAppTransition(prev.task == next.task ? WindowManagerPolicy.TRANSIT_ACTIVITY_OPEN : WindowManagerPolicy.TRANSIT_TASK_OPEN);
+      if (mNoAnimActivities.contains(next)) {
+        mWindowManager.prepareAppTransition(WindowManagerPolicy.TRANSIT_NONE);
+      }
+ else {
+        mWindowManager.prepareAppTransition(prev.task == next.task ? WindowManagerPolicy.TRANSIT_ACTIVITY_OPEN : WindowManagerPolicy.TRANSIT_TASK_OPEN);
+      }
     }
     if (false) {
       mWindowManager.setAppWillBeHidden(prev);
@@ -60,7 +72,12 @@
   }
  else   if (mHistory.size() > 1) {
     if (DEBUG_TRANSITION)     Log.v(TAG,"Prepare open transition: no previous");
-    mWindowManager.prepareAppTransition(WindowManagerPolicy.TRANSIT_ACTIVITY_OPEN);
+    if (mNoAnimActivities.contains(next)) {
+      mWindowManager.prepareAppTransition(WindowManagerPolicy.TRANSIT_NONE);
+    }
+ else {
+      mWindowManager.prepareAppTransition(WindowManagerPolicy.TRANSIT_ACTIVITY_OPEN);
+    }
   }
   if (next.app != null && next.app.thread != null) {
     if (DEBUG_SWITCH)     Log.v(TAG,"Resume running: " + next);
@@ -73,17 +90,25 @@
     next.task.touchActiveTime();
     updateLRUListLocked(next.app,true);
     updateLRUListLocked(next);
-    Configuration config=mWindowManager.updateOrientationFromAppTokens(mConfiguration,next.mayFreezeScreenLocked(next.app) ? next : null);
-    if (config != null) {
-      next.frozenBeforeDestroy=true;
+    boolean updated;
+synchronized (this) {
+      Configuration config=mWindowManager.updateOrientationFromAppTokens(mConfiguration,next.mayFreezeScreenLocked(next.app) ? next : null);
+      if (config != null) {
+        config.locale=mConfiguration.locale;
+        next.frozenBeforeDestroy=true;
+      }
+      updated=updateConfigurationLocked(config,next);
     }
-    if (!updateConfigurationLocked(config,next)) {
+    if (!updated) {
       HistoryRecord nextNext=topRunningActivityLocked(null);
       if (DEBUG_SWITCH)       Log.i(TAG,"Activity config changed during resume: " + next + ", new next: "+ nextNext);
       if (nextNext != next) {
         mHandler.sendEmptyMessage(RESUME_TOP_ACTIVITY_MSG);
       }
+      setFocusedActivityLocked(next);
+      ensureActivitiesVisibleLocked(null,0);
       mWindowManager.executeAppTransition();
+      mNoAnimActivities.clear();
       return true;
     }
     try {
