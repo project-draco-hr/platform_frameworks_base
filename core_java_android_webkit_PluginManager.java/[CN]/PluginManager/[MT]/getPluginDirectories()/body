@@ -1,9 +1,9 @@
 {
   ArrayList<String> directories=new ArrayList<String>();
   PackageManager pm=mContext.getPackageManager();
-  List<ResolveInfo> plugins=pm.queryIntentServices(new Intent(PLUGIN_ACTION),PackageManager.GET_SERVICES);
-synchronized (mPackageInfoCache) {
-    mPackageInfoCache.clear();
+  List<ResolveInfo> plugins=pm.queryIntentServices(new Intent(PLUGIN_ACTION),PackageManager.GET_SERVICES | PackageManager.GET_META_DATA);
+synchronized (mPluginInfoCache) {
+    mPluginInfoCache.clear();
     for (    ResolveInfo info : plugins) {
       ServiceInfo serviceInfo=info.serviceInfo;
       if (serviceInfo == null) {
@@ -15,7 +15,7 @@ synchronized (mPackageInfoCache) {
         pkgInfo=pm.getPackageInfo(serviceInfo.packageName,PackageManager.GET_PERMISSIONS | PackageManager.GET_SIGNATURES);
       }
  catch (      NameNotFoundException e) {
-        Log.w(LOGTAG,"Cant find plugin: " + serviceInfo.packageName);
+        Log.w(LOGTAG,"Can't find plugin: " + serviceInfo.packageName);
         continue;
       }
       if (pkgInfo == null) {
@@ -57,7 +57,44 @@ synchronized (mPackageInfoCache) {
           continue;
         }
       }
-      mPackageInfoCache.add(pkgInfo);
+      PluginInfo pluginInfo=new PluginInfo();
+      pluginInfo.packageInfo=pkgInfo;
+      if (serviceInfo.metaData == null) {
+        Log.e(LOGTAG,"The plugin '" + serviceInfo.name + "' has no type defined");
+        continue;
+      }
+      String pluginType=serviceInfo.metaData.getString(PLUGIN_TYPE);
+      if (TYPE_NATIVE.equals(pluginType)) {
+        pluginInfo.isNative=true;
+      }
+ else {
+        Log.e(LOGTAG,"Unrecognized plugin type: " + pluginType);
+        continue;
+      }
+      try {
+        Class<?> cls=getPluginClass(serviceInfo.packageName,serviceInfo.name);
+        boolean classFound=false;
+        for (        Class<?> implemented : cls.getInterfaces()) {
+          if (pluginInfo.isNative && implemented.equals(NativePlugin.class)) {
+            pluginInfo.pluginClass=cls.asSubclass(WebkitPlugin.class);
+            classFound=true;
+            break;
+          }
+        }
+        if (!classFound) {
+          Log.e(LOGTAG,"The plugin's class'" + serviceInfo.name + "' does not extend the appropriate interface.");
+          continue;
+        }
+      }
+ catch (      NameNotFoundException e) {
+        Log.e(LOGTAG,"Can't find plugin: " + serviceInfo.packageName);
+        continue;
+      }
+catch (      ClassNotFoundException e) {
+        Log.e(LOGTAG,"Can't find plugin's class: " + serviceInfo.name);
+        continue;
+      }
+      mPluginInfoCache.add(pluginInfo);
       directories.add(directory);
     }
   }
