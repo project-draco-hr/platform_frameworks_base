@@ -1,5 +1,8 @@
 {
   if (mAdjSeq == app.adjSeq) {
+    if (!recursed && app.hidden) {
+      app.curAdj=hiddenAdj;
+    }
     return app.curAdj;
   }
   if (app.thread == null) {
@@ -17,6 +20,8 @@
   app.adjTypeCode=ActivityManager.RunningAppProcessInfo.REASON_UNKNOWN;
   app.adjSource=null;
   app.adjTarget=null;
+  app.empty=false;
+  app.hidden=false;
   int adj;
   int schedGroup;
   int N;
@@ -62,11 +67,14 @@
     app.adjType="home";
   }
  else   if ((N=app.activities.size()) != 0) {
+    app.hidden=true;
     adj=hiddenAdj;
     schedGroup=Process.THREAD_GROUP_BG_NONINTERACTIVE;
     app.adjType="bg-activities";
+    N=app.activities.size();
     for (int j=0; j < N; j++) {
       if (((HistoryRecord)app.activities.get(j)).visible) {
+        app.hidden=false;
         adj=VISIBLE_APP_ADJ;
         schedGroup=Process.THREAD_GROUP_DEFAULT;
         app.adjType="visible";
@@ -75,9 +83,11 @@
     }
   }
  else {
-    adj=EMPTY_APP_ADJ;
+    app.hidden=true;
+    app.empty=true;
     schedGroup=Process.THREAD_GROUP_BG_NONINTERACTIVE;
-    app.adjType="empty";
+    adj=hiddenAdj;
+    app.adjType="bg-empty";
   }
   app.adjSeq=mAdjSeq;
   app.curRawAdj=adj;
@@ -86,6 +96,7 @@
       if (DEBUG_BACKUP)       Log.v(TAG,"oom BACKUP_APP_ADJ for " + app);
       adj=BACKUP_APP_ADJ;
       app.adjType="backup";
+      app.hidden=false;
     }
   }
   if (app.services.size() != 0 && (adj > FOREGROUND_APP_ADJ || schedGroup == Process.THREAD_GROUP_BG_NONINTERACTIVE)) {
@@ -98,6 +109,7 @@
           if (adj > SECONDARY_SERVER_ADJ) {
             adj=SECONDARY_SERVER_ADJ;
             app.adjType="started-services";
+            app.hidden=false;
           }
         }
       }
@@ -119,9 +131,12 @@
                 myHiddenAdj=VISIBLE_APP_ADJ;
               }
             }
-            int clientAdj=computeOomAdjLocked(client,myHiddenAdj,TOP_APP);
+            int clientAdj=computeOomAdjLocked(client,myHiddenAdj,TOP_APP,true);
             if (adj > clientAdj) {
               adj=clientAdj > VISIBLE_APP_ADJ ? clientAdj : VISIBLE_APP_ADJ;
+              if (!client.hidden) {
+                app.hidden=false;
+              }
               app.adjType="service";
               app.adjTypeCode=ActivityManager.RunningAppProcessInfo.REASON_SERVICE_IN_USE;
               app.adjSource=cr.binding.client;
@@ -137,6 +152,7 @@
           if (a != null && adj > FOREGROUND_APP_ADJ && (a.state == ActivityState.RESUMED || a.state == ActivityState.PAUSING)) {
             adj=FOREGROUND_APP_ADJ;
             schedGroup=Process.THREAD_GROUP_DEFAULT;
+            app.hidden=false;
             app.adjType="service";
             app.adjTypeCode=ActivityManager.RunningAppProcessInfo.REASON_SERVICE_IN_USE;
             app.adjSource=a;
@@ -147,6 +163,7 @@
     }
     if (adj > hiddenAdj) {
       adj=hiddenAdj;
+      app.hidden=false;
       app.adjType="bg-services";
     }
   }
@@ -170,9 +187,12 @@
               myHiddenAdj=FOREGROUND_APP_ADJ;
             }
           }
-          int clientAdj=computeOomAdjLocked(client,myHiddenAdj,TOP_APP);
+          int clientAdj=computeOomAdjLocked(client,myHiddenAdj,TOP_APP,true);
           if (adj > clientAdj) {
             adj=clientAdj > FOREGROUND_APP_ADJ ? clientAdj : FOREGROUND_APP_ADJ;
+            if (!client.hidden) {
+              app.hidden=false;
+            }
             app.adjType="provider";
             app.adjTypeCode=ActivityManager.RunningAppProcessInfo.REASON_PROVIDER_IN_USE;
             app.adjSource=client;
@@ -187,14 +207,11 @@
         if (adj > FOREGROUND_APP_ADJ) {
           adj=FOREGROUND_APP_ADJ;
           schedGroup=Process.THREAD_GROUP_DEFAULT;
+          app.hidden=false;
           app.adjType="provider";
           app.adjTarget=cpr.info.name;
         }
       }
-    }
-    if (adj > CONTENT_PROVIDER_ADJ) {
-      adj=CONTENT_PROVIDER_ADJ;
-      app.adjType="pub-providers";
     }
   }
   app.curRawAdj=adj;
