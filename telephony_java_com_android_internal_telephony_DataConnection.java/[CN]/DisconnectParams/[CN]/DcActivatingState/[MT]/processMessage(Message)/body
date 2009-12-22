@@ -1,0 +1,66 @@
+{
+  boolean retVal;
+  AsyncResult ar;
+  ConnectionParams cp;
+switch (msg.what) {
+case EVENT_DISCONNECT:
+    if (DBG)     log("DcActivatingState deferring msg.what=EVENT_DISCONNECT");
+  deferMessage(msg);
+retVal=true;
+break;
+case EVENT_SETUP_DATA_CONNECTION_DONE:
+if (DBG) log("DcActivatingState msg.what=EVENT_SETUP_DATA_CONNECTION_DONE");
+ar=(AsyncResult)msg.obj;
+cp=(ConnectionParams)ar.userObj;
+SetupResult result=onSetupConnectionCompleted(ar);
+switch (result) {
+case SUCCESS:
+notifyConnectCompleted(cp,FailCause.NONE);
+transitionTo(mActiveState);
+break;
+case ERR_BadCommand:
+notifyConnectCompleted(cp,result.mFailCause);
+transitionTo(mInactiveState);
+break;
+case ERR_BadDns:
+EventLog.writeEvent(TelephonyEventLog.EVENT_LOG_BAD_DNS_ADDRESS,dnsServers[0]);
+tearDownData(cp);
+transitionTo(mDisconnectingBadDnsState);
+break;
+case ERR_Other:
+phone.mCM.getLastDataCallFailCause(obtainMessage(EVENT_GET_LAST_FAIL_DONE,cp));
+break;
+case ERR_Stale:
+break;
+default :
+throw new RuntimeException("Unkown SetupResult, should not happen");
+}
+retVal=true;
+break;
+case EVENT_GET_LAST_FAIL_DONE:
+ar=(AsyncResult)msg.obj;
+cp=(ConnectionParams)ar.userObj;
+FailCause cause=FailCause.UNKNOWN;
+if (cp.tag == mTag) {
+if (DBG) log("DcActivatingState msg.what=EVENT_GET_LAST_FAIL_DONE");
+if (ar.exception == null) {
+int rilFailCause=((int[])(ar.result))[0];
+cause=getFailCauseFromRequest(rilFailCause);
+}
+notifyConnectCompleted(cp,cause);
+transitionTo(mInactiveState);
+}
+ else {
+if (DBG) {
+log("DcActivatingState EVENT_GET_LAST_FAIL_DONE is stale cp.tag=" + cp.tag + ", mTag="+ mTag);
+}
+}
+retVal=true;
+break;
+default :
+if (DBG) log("DcActivatingState not handled msg.what=" + msg.what);
+retVal=false;
+break;
+}
+return retVal;
+}
