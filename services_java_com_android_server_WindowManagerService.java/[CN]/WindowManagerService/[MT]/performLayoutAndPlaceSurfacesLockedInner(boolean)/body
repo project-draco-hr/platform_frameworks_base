@@ -24,6 +24,7 @@
   try {
     boolean restart;
     boolean forceHiding=false;
+    boolean wallpaperForceHidingChanged=false;
     do {
       final int transactionSequence=++mTransactionSequence;
       boolean tokensAnimating=false;
@@ -39,12 +40,12 @@
           tokensAnimating=true;
         }
       }
+      if (DEBUG_APP_TRANSITIONS)       Log.v(TAG,"*** ANIM STEP: seq=" + transactionSequence + " tokensAnimating="+ tokensAnimating);
       animating=tokensAnimating;
       restart=false;
       boolean tokenMayBeDrawn=false;
       boolean wallpaperMayChange=false;
       boolean focusMayChange=false;
-      boolean wallpaperForceHidingChanged=false;
       mPolicy.beginAnimationLw(dw,dh);
       final int N=mWindows.size();
       for (i=N - 1; i >= 0; i--) {
@@ -270,6 +271,9 @@ case WindowManagerPolicy.TRANSIT_TASK_TO_BACK:
     mLastEnterAnimToken=null;
     mLastEnterAnimParams=null;
   }
+  if (!mPolicy.allowAppAnimationsLw()) {
+    animLp=null;
+  }
   NN=mOpeningApps.size();
   for (i=0; i < NN; i++) {
     AppWindowToken wtoken=mOpeningApps.get(i);
@@ -317,11 +321,20 @@ mLayoutNeeded=true;
 focusMayChange=true;
 }
 int adjResult=0;
-if (wallpaperForceHidingChanged) {
+if (wallpaperForceHidingChanged && !restart && !mAppTransitionReady) {
 WindowState oldWallpaper=mWallpaperTarget;
+if (mLowerWallpaperTarget != null && mLowerWallpaperTarget.mAppToken != null) {
+  if (DEBUG_WALLPAPER)   Log.v(TAG,"wallpaperForceHiding changed with lower=" + mLowerWallpaperTarget);
+  if (DEBUG_WALLPAPER)   Log.v(TAG,"hidden=" + mLowerWallpaperTarget.mAppToken.hidden + " hiddenRequested="+ mLowerWallpaperTarget.mAppToken.hiddenRequested);
+  if (mLowerWallpaperTarget.mAppToken.hidden) {
+    mLowerWallpaperTarget=mUpperWallpaperTarget=null;
+    restart=true;
+  }
+}
 adjResult=adjustWallpaperWindowsLocked();
 wallpaperMayChange=false;
-if (false) Log.v(TAG,"****** OLD: " + oldWallpaper + " NEW: "+ mWallpaperTarget);
+wallpaperForceHidingChanged=false;
+if (DEBUG_WALLPAPER) Log.v(TAG,"****** OLD: " + oldWallpaper + " NEW: "+ mWallpaperTarget+ " LOWER: "+ mLowerWallpaperTarget);
 if (mLowerWallpaperTarget == null) {
   forceHiding=false;
   for (i=N - 1; i >= 0; i--) {
@@ -366,6 +379,7 @@ if (mLayoutNeeded) {
 restart=true;
 performLayoutLockedInner();
 }
+if (DEBUG_APP_TRANSITIONS) Log.v(TAG,"*** ANIM STEP: restart=" + restart);
 }
  while (restart);
 final boolean someoneLosingFocus=mLosingFocus.size() != 0;
@@ -649,7 +663,7 @@ Log.e(TAG,"Exception hiding filler surface",e);
 }
 }
 if (mDimAnimator != null && mDimAnimator.mDimShown) {
-animating|=mDimAnimator.updateSurface(dimming,currentTime,mDisplayFrozen);
+animating|=mDimAnimator.updateSurface(dimming,currentTime,mDisplayFrozen || !mPolicy.isScreenOn());
 }
 if (!blurring && mBlurShown) {
 if (SHOW_TRANSACTIONS) Log.i(TAG,"  BLUR " + mBlurSurface + ": HIDE");
