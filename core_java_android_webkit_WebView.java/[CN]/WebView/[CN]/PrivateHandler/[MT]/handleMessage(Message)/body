@@ -1,6 +1,6 @@
 {
   if (DebugFlags.WEB_VIEW) {
-    Log.v(LOGTAG,msg.what < REMEMBER_PASSWORD || msg.what > INVAL_RECT_MSG_ID ? Integer.toString(msg.what) : HandlerDebugString[msg.what - REMEMBER_PASSWORD]);
+    Log.v(LOGTAG,msg.what < REMEMBER_PASSWORD || msg.what > SHOW_RECT_MSG_ID ? Integer.toString(msg.what) : HandlerDebugString[msg.what - REMEMBER_PASSWORD]);
   }
   if (mWebViewCore == null) {
     return;
@@ -76,12 +76,12 @@ boolean useWideViewport=settings.getUseWideViewPort();
 WebViewCore.RestoreState restoreState=draw.mRestoreState;
 if (restoreState != null) {
 mInZoomOverview=false;
-mLastScale=mInitialScaleInPercent > 0 ? mInitialScaleInPercent / 100.0f : restoreState.mTextWrapScale;
 if (restoreState.mMinScale == 0) {
 if (restoreState.mMobileSite) {
 if (draw.mMinPrefWidth > Math.max(0,draw.mViewPoint.x)) {
 mMinZoomScale=(float)viewWidth / draw.mMinPrefWidth;
 mMinZoomScaleFixed=false;
+mInZoomOverview=useWideViewport && settings.getLoadWithOverviewMode();
 }
  else {
 mMinZoomScale=restoreState.mDefaultScale;
@@ -103,13 +103,23 @@ mMaxZoomScale=DEFAULT_MAX_ZOOM_SCALE;
  else {
 mMaxZoomScale=restoreState.mMaxScale;
 }
-setNewZoomScale(mLastScale,false);
+if (mInitialScaleInPercent > 0) {
+setNewZoomScale(mInitialScaleInPercent / 100.0f,true,false);
+}
+ else if (restoreState.mViewScale > 0) {
+mTextWrapScale=restoreState.mTextWrapScale;
+setNewZoomScale(restoreState.mViewScale,false,false);
+}
+ else {
+mInZoomOverview=useWideViewport && settings.getLoadWithOverviewMode();
+if (mInZoomOverview) {
+setNewZoomScale((float)viewWidth / WebViewCore.DEFAULT_VIEWPORT_WIDTH,true,false);
+}
+ else {
+setNewZoomScale(restoreState.mTextWrapScale,true,false);
+}
+}
 setContentScrollTo(restoreState.mScrollX,restoreState.mScrollY);
-if (useWideViewport && settings.getLoadWithOverviewMode()) {
-if (restoreState.mViewScale == 0 || (restoreState.mMobileSite && mMinZoomScale < restoreState.mDefaultScale)) {
-mInZoomOverview=true;
-}
-}
 clearTextEntry();
 }
 final boolean updateLayout=viewSize.x == mLastWidthSent && viewSize.y == mLastHeightSent;
@@ -130,7 +140,7 @@ mMinZoomScale=(float)viewWidth / mZoomOverviewWidth;
 }
 if (!mDrawHistory && mInZoomOverview) {
 if (Math.abs((viewWidth * mInvActualScale) - mZoomOverviewWidth) > 1) {
-setNewZoomScale((float)viewWidth / mZoomOverviewWidth,false);
+setNewZoomScale((float)viewWidth / mZoomOverviewWidth,true,false);
 }
 }
 break;
@@ -233,6 +243,34 @@ hideSoftKeyboard();
  else {
 displaySoftKeyboard(false);
 }
+break;
+case SHOW_RECT_MSG_ID:
+WebViewCore.ShowRectData data=(WebViewCore.ShowRectData)msg.obj;
+int x=mScrollX;
+int left=contentToViewDimension(data.mLeft);
+int width=contentToViewDimension(data.mWidth);
+int maxWidth=contentToViewDimension(data.mContentWidth);
+int viewWidth=getViewWidth();
+if (width < viewWidth) {
+x+=left + width / 2 - mScrollX - viewWidth / 2;
+}
+ else {
+x+=(int)(left + data.mXPercentInDoc * width - mScrollX - data.mXPercentInView * viewWidth);
+}
+x=Math.max(0,(Math.min(maxWidth,x + viewWidth)) - viewWidth);
+int y=mScrollY;
+int top=contentToViewDimension(data.mTop);
+int height=contentToViewDimension(data.mHeight);
+int maxHeight=contentToViewDimension(data.mContentHeight);
+int viewHeight=getViewHeight();
+if (height < viewHeight) {
+y+=top + height / 2 - mScrollY - viewHeight / 2;
+}
+ else {
+y+=(int)(top + data.mYPercentInDoc * height - mScrollY - data.mYPercentInView * viewHeight);
+}
+y=Math.max(0,(Math.min(maxHeight,y + viewHeight) - viewHeight));
+scrollTo(x,y);
 break;
 default :
 super.handleMessage(msg);

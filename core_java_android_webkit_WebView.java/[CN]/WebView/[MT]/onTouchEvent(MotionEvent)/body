@@ -5,6 +5,9 @@
   if (DebugFlags.WEB_VIEW) {
     Log.v(LOGTAG,ev + " at " + ev.getEventTime()+ " mTouchMode="+ mTouchMode);
   }
+  if (mSupportMultiTouch && getSettings().supportZoom() && ev.getPointerCount() > 1) {
+    return doMultiTouch(ev);
+  }
   int action=ev.getAction();
   float x=ev.getX();
   float y=ev.getY();
@@ -54,6 +57,7 @@ case MotionEvent.ACTION_DOWN:
         }
       }
  else {
+        mPreviewZoomOnly=false;
         mTouchMode=TOUCH_INIT_MODE;
         mPreventDrag=mForwardTouchEvents ? PREVENT_DRAG_MAYBE_YES : PREVENT_DRAG_NO;
         mWebViewCore.sendMessage(EventHub.UPDATE_FRAME_CACHE_IF_LOADING);
@@ -64,11 +68,7 @@ case MotionEvent.ACTION_DOWN:
       if (mTouchMode == TOUCH_INIT_MODE || mTouchMode == TOUCH_DOUBLE_TAP_MODE) {
         mPrivateHandler.sendMessageDelayed(mPrivateHandler.obtainMessage(SWITCH_TO_SHORTPRESS),TAP_TIMEOUT);
       }
-      mLastTouchX=x;
-      mLastTouchY=y;
-      mLastTouchTime=eventTime;
-      mVelocityTracker=VelocityTracker.obtain();
-      mSnapScrollMode=SNAP_NONE;
+      startTouch(x,y,eventTime);
       break;
     }
 case MotionEvent.ACTION_MOVE:
@@ -116,13 +116,15 @@ case MotionEvent.ACTION_MOVE:
       if (!mDragFromTextInput) {
         nativeHideCursor();
       }
-      WebSettings settings=getSettings();
-      if (settings.supportZoom() && settings.getBuiltInZoomControls() && !mZoomButtonsController.isVisible()&& mMinZoomScale < mMaxZoomScale) {
-        mZoomButtonsController.setVisible(true);
-        int count=settings.getDoubleTapToastCount();
-        if (mInZoomOverview && count > 0) {
-          settings.setDoubleTapToastCount(--count);
-          Toast.makeText(mContext,com.android.internal.R.string.double_tap_toast,Toast.LENGTH_LONG).show();
+      if (!mSupportMultiTouch) {
+        WebSettings settings=getSettings();
+        if (settings.supportZoom() && settings.getBuiltInZoomControls() && !mZoomButtonsController.isVisible()&& mMinZoomScale < mMaxZoomScale) {
+          mZoomButtonsController.setVisible(true);
+          int count=settings.getDoubleTapToastCount();
+          if (mInZoomOverview && count > 0) {
+            settings.setDoubleTapToastCount(--count);
+            Toast.makeText(mContext,com.android.internal.R.string.double_tap_toast,Toast.LENGTH_LONG).show();
+          }
         }
       }
     }
@@ -181,7 +183,7 @@ case MotionEvent.ACTION_MOVE:
       mLastTouchTime=eventTime;
       mUserScroll=true;
     }
-    if (!getSettings().getBuiltInZoomControls()) {
+    if (!mSupportMultiTouch && !getSettings().getBuiltInZoomControls()) {
       boolean showPlusMinus=mMinZoomScale < mMaxZoomScale;
       if (mZoomControls != null && showPlusMinus) {
         if (mZoomControls.getVisibility() == View.VISIBLE) {
@@ -263,17 +265,7 @@ break;
 }
 case MotionEvent.ACTION_CANCEL:
 {
-if (mVelocityTracker != null) {
-mVelocityTracker.recycle();
-mVelocityTracker=null;
-}
-if (mTouchMode == TOUCH_DRAG_MODE) {
-WebViewCore.resumeUpdate(mWebViewCore);
-}
-mPrivateHandler.removeMessages(SWITCH_TO_SHORTPRESS);
-mPrivateHandler.removeMessages(SWITCH_TO_LONGPRESS);
-mTouchMode=TOUCH_DONE_MODE;
-nativeHideCursor();
+cancelTouch();
 break;
 }
 }
