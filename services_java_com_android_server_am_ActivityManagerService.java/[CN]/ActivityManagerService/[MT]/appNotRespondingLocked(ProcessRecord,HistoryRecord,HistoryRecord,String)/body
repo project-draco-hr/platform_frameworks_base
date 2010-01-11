@@ -3,101 +3,61 @@
     return;
   }
   EventLog.writeEvent(EventLogTags.ANR,app.pid,app.processName,annotation);
-  boolean isSecure="1".equals(SystemProperties.get(SYSTEM_SECURE,"0"));
-  if (isSecure && !app.isInterestingToUserLocked() && Process.myPid() != app.pid) {
-    Process.killProcess(app.pid);
-    return;
+  ArrayList<Integer> pids=new ArrayList<Integer>(20);
+  pids.add(app.pid);
+  int parentPid=app.pid;
+  if (parent != null && parent.app != null && parent.app.pid > 0)   parentPid=parent.app.pid;
+  if (parentPid != app.pid)   pids.add(parentPid);
+  if (MY_PID != app.pid && MY_PID != parentPid)   pids.add(MY_PID);
+  for (int i=mLruProcesses.size() - 1; i >= 0; i--) {
+    ProcessRecord r=mLruProcesses.get(i);
+    if (r != null && r.thread != null) {
+      int pid=r.pid;
+      if (pid > 0 && pid != app.pid && pid != parentPid && pid != MY_PID)       pids.add(pid);
+    }
   }
-  String processInfo=null;
+  File tracesFile=dumpStackTraces(pids);
+  StringBuilder info=mStringBuilder;
+  info.setLength(0);
+  info.append("ANR in ").append(app.processName);
+  if (activity != null && activity.shortComponentName != null) {
+    info.append(" (").append(activity.shortComponentName).append(")");
+  }
+  if (annotation != null) {
+    info.append("\nReason: ").append(annotation).append("\n");
+  }
+  if (parent != null && parent != activity) {
+    info.append("\nParent: ").append(parent.shortComponentName);
+  }
+  String cpuInfo=null;
   if (MONITOR_CPU_USAGE) {
     updateCpuStatsNow();
 synchronized (mProcessStatsThread) {
-      processInfo=mProcessStats.printCurrentState();
+      cpuInfo=mProcessStats.printCurrentState();
     }
+    info.append(cpuInfo);
   }
-  StringBuilder info=mStringBuilder;
-  info.setLength(0);
-  info.append("ANR in process: ");
-  info.append(app.processName);
-  if (reportedActivity != null && reportedActivity.app != null) {
-    info.append(" (last in ");
-    info.append(reportedActivity.app.processName);
-    info.append(")");
-  }
-  if (annotation != null) {
-    info.append("\nAnnotation: ");
-    info.append(annotation);
-  }
-  if (MONITOR_CPU_USAGE) {
-    info.append("\nCPU usage:\n");
-    info.append(processInfo);
-  }
-  Log.i(TAG,info.toString());
-  boolean fileDump=prepareTraceFile(true);
-  if (!fileDump) {
+  Log.e(TAG,info.toString());
+  if (tracesFile == null) {
     Process.sendSignal(app.pid,Process.SIGNAL_QUIT);
   }
- else {
-synchronized (this) {
-      final int[] imppids=new int[3];
-      int i=0;
-      imppids[0]=app.pid;
-      i++;
-      if (reportedActivity != null && reportedActivity.app != null && reportedActivity.app.thread != null && reportedActivity.app.pid != app.pid) {
-        imppids[i]=reportedActivity.app.pid;
-        i++;
-      }
-      imppids[i]=Process.myPid();
-      for (i=0; i < imppids.length && imppids[i] != 0; i++) {
-        Process.sendSignal(imppids[i],Process.SIGNAL_QUIT);
-synchronized (this) {
-          try {
-            wait(200);
-          }
- catch (          InterruptedException e) {
-          }
-        }
-      }
-      for (i=mLruProcesses.size() - 1; i >= 0; i--) {
-        ProcessRecord r=mLruProcesses.get(i);
-        boolean done=false;
-        for (int j=0; j < imppids.length && imppids[j] != 0; j++) {
-          if (imppids[j] == r.pid) {
-            done=true;
-            break;
-          }
-        }
-        if (!done && r.thread != null) {
-          Process.sendSignal(r.pid,Process.SIGNAL_QUIT);
-synchronized (this) {
-            try {
-              wait(200);
-            }
- catch (            InterruptedException e) {
-            }
-          }
-        }
-      }
-    }
-  }
+  addErrorToDropBox("anr",app,activity,parent,annotation,cpuInfo,tracesFile,null);
   if (mController != null) {
     try {
       int res=mController.appNotResponding(app.processName,app.pid,info.toString());
       if (res != 0) {
-        if (res < 0) {
-          try {
-            wait(2000);
-          }
- catch (          InterruptedException e) {
-          }
-          Process.killProcess(app.pid);
-          return;
-        }
+        if (res < 0 && app.pid != MY_PID)         Process.killProcess(app.pid);
+        return;
       }
     }
  catch (    RemoteException e) {
       mController=null;
     }
+  }
+  boolean showBackground=Settings.Secure.getInt(mContext.getContentResolver(),Settings.Secure.ANR_SHOW_BACKGROUND,0) != 0;
+  if (!showBackground && !app.isInterestingToUserLocked() && app.pid != MY_PID) {
+    Process.killProcess(app.pid);
+    return;
   }
   makeAppNotRespondingLocked(app,activity != null ? activity.shortComponentName : null,annotation != null ? "ANR " + annotation : "ANR",info.toString());
   Message msg=Message.obtain();
