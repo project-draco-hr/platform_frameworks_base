@@ -1,0 +1,107 @@
+{
+synchronized (mLocks) {
+    int err;
+    if (mSpew) {
+      Log.d(TAG,"setPowerState: mPowerState=0x" + Integer.toHexString(mPowerState) + " newState=0x"+ Integer.toHexString(newState)+ " noChangeLights="+ noChangeLights+ " reason="+ reason);
+    }
+    if (noChangeLights) {
+      newState=(newState & ~LIGHTS_MASK) | (mPowerState & LIGHTS_MASK);
+    }
+    if (mProximitySensorActive) {
+      newState=(newState & ~SCREEN_BRIGHT);
+    }
+    if (batteryIsLow()) {
+      newState|=BATTERY_LOW_BIT;
+    }
+ else {
+      newState&=~BATTERY_LOW_BIT;
+    }
+    if (newState == mPowerState) {
+      return;
+    }
+    if (!mBootCompleted && !mUseSoftwareAutoBrightness) {
+      newState|=ALL_BRIGHT;
+    }
+    boolean oldScreenOn=(mPowerState & SCREEN_ON_BIT) != 0;
+    boolean newScreenOn=(newState & SCREEN_ON_BIT) != 0;
+    if (mSpew) {
+      Log.d(TAG,"setPowerState: mPowerState=" + mPowerState + " newState="+ newState+ " noChangeLights="+ noChangeLights);
+      Log.d(TAG,"  oldKeyboardBright=" + ((mPowerState & KEYBOARD_BRIGHT_BIT) != 0) + " newKeyboardBright="+ ((newState & KEYBOARD_BRIGHT_BIT) != 0));
+      Log.d(TAG,"  oldScreenBright=" + ((mPowerState & SCREEN_BRIGHT_BIT) != 0) + " newScreenBright="+ ((newState & SCREEN_BRIGHT_BIT) != 0));
+      Log.d(TAG,"  oldButtonBright=" + ((mPowerState & BUTTON_BRIGHT_BIT) != 0) + " newButtonBright="+ ((newState & BUTTON_BRIGHT_BIT) != 0));
+      Log.d(TAG,"  oldScreenOn=" + oldScreenOn + " newScreenOn="+ newScreenOn);
+      Log.d(TAG,"  oldBatteryLow=" + ((mPowerState & BATTERY_LOW_BIT) != 0) + " newBatteryLow="+ ((newState & BATTERY_LOW_BIT) != 0));
+    }
+    if (mPowerState != newState) {
+      updateLightsLocked(newState,0);
+      mPowerState=(mPowerState & ~LIGHTS_MASK) | (newState & LIGHTS_MASK);
+    }
+    if (oldScreenOn != newScreenOn) {
+      if (newScreenOn) {
+        if (mStillNeedSleepNotification) {
+          sendNotificationLocked(false,WindowManagerPolicy.OFF_BECAUSE_OF_USER);
+        }
+        boolean reallyTurnScreenOn=true;
+        if (mSpew) {
+          Log.d(TAG,"- turning screen on...  mPreventScreenOn = " + mPreventScreenOn);
+        }
+        if (mPreventScreenOn) {
+          if (mSpew) {
+            Log.d(TAG,"- PREVENTING screen from really turning on!");
+          }
+          reallyTurnScreenOn=false;
+        }
+        if (reallyTurnScreenOn) {
+          err=setScreenStateLocked(true);
+          long identity=Binder.clearCallingIdentity();
+          try {
+            mBatteryStats.noteScreenBrightness(getPreferredBrightness());
+            mBatteryStats.noteScreenOn();
+          }
+ catch (          RemoteException e) {
+            Log.w(TAG,"RemoteException calling noteScreenOn on BatteryStatsService",e);
+          }
+ finally {
+            Binder.restoreCallingIdentity(identity);
+          }
+        }
+ else {
+          setScreenStateLocked(false);
+          err=0;
+        }
+        mScreenOnStartTime=SystemClock.elapsedRealtime();
+        mLastTouchDown=0;
+        mTotalTouchDownTime=0;
+        mTouchCycles=0;
+        EventLog.writeEvent(LOG_POWER_SCREEN_STATE,1,reason,mTotalTouchDownTime,mTouchCycles);
+        if (err == 0) {
+          mPowerState|=SCREEN_ON_BIT;
+          sendNotificationLocked(true,-1);
+        }
+      }
+ else {
+        mHandler.removeCallbacks(mAutoBrightnessTask);
+        mScreenOffTime=SystemClock.elapsedRealtime();
+        long identity=Binder.clearCallingIdentity();
+        try {
+          mBatteryStats.noteScreenOff();
+        }
+ catch (        RemoteException e) {
+          Log.w(TAG,"RemoteException calling noteScreenOff on BatteryStatsService",e);
+        }
+ finally {
+          Binder.restoreCallingIdentity(identity);
+        }
+        mPowerState&=~SCREEN_ON_BIT;
+        mScreenOffReason=reason;
+        if (!mScreenBrightness.animating) {
+          err=screenOffFinishedAnimatingLocked(reason);
+        }
+ else {
+          err=0;
+          mLastTouchDown=0;
+        }
+      }
+    }
+  }
+}

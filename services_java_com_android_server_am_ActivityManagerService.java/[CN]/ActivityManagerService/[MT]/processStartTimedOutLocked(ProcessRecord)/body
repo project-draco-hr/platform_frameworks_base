@@ -10,13 +10,19 @@ synchronized (mPidsSelfLocked) {
   }
   if (gone) {
     Log.w(TAG,"Process " + app + " failed to attach");
+    EventLog.writeEvent(LOG_AM_PROCESS_START_TIMEOUT,pid,app.info.uid,app.processName);
     mProcessNames.remove(app.processName,app.info.uid);
-    Process.killProcess(pid);
-    if (mPendingBroadcast != null && mPendingBroadcast.curApp.pid == pid) {
-      Log.w(TAG,"Unattached app died before broadcast acknowledged, skipping");
-      mPendingBroadcast=null;
-      scheduleBroadcastsLocked();
+    checkAppInLaunchingProvidersLocked(app,true);
+    for (int i=0; i < mPendingServices.size(); i++) {
+      ServiceRecord sr=mPendingServices.get(i);
+      if (app.info.uid == sr.appInfo.uid && app.processName.equals(sr.processName)) {
+        Log.w(TAG,"Forcing bringing down service: " + sr);
+        mPendingServices.remove(i);
+        i--;
+        bringDownServiceLocked(sr,true);
+      }
     }
+    Process.killProcess(pid);
     if (mBackupTarget != null && mBackupTarget.app.pid == pid) {
       Log.w(TAG,"Unattached app died before backup, skipping");
       try {
@@ -25,6 +31,11 @@ synchronized (mPidsSelfLocked) {
       }
  catch (      RemoteException e) {
       }
+    }
+    if (mPendingBroadcast != null && mPendingBroadcast.curApp.pid == pid) {
+      Log.w(TAG,"Unattached app died before broadcast acknowledged, skipping");
+      mPendingBroadcast=null;
+      scheduleBroadcastsLocked();
     }
   }
  else {
