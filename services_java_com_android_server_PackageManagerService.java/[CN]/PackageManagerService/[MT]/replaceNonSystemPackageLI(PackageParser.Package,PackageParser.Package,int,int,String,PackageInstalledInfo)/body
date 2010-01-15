@@ -1,0 +1,64 @@
+{
+  PackageParser.Package newPackage=null;
+  String pkgName=deletedPackage.packageName;
+  boolean deletedPkg=true;
+  boolean updatedSettings=false;
+  String oldInstallerPackageName=null;
+synchronized (mPackages) {
+    oldInstallerPackageName=mSettings.getInstallerPackageName(pkgName);
+  }
+  parseFlags|=PackageManager.INSTALL_REPLACE_EXISTING;
+  if (!deletePackageLI(pkgName,false,PackageManager.DONT_DELETE_DATA,res.removedInfo)) {
+    res.returnCode=PackageManager.INSTALL_FAILED_REPLACE_COULDNT_DELETE;
+    deletedPkg=false;
+  }
+ else {
+    mLastScanError=PackageManager.INSTALL_SUCCEEDED;
+    newPackage=scanPackageLI(pkg,parseFlags,scanMode);
+    if (newPackage == null) {
+      Log.w(TAG,"Package couldn't be installed in " + pkg.mPath);
+      if ((res.returnCode=mLastScanError) == PackageManager.INSTALL_SUCCEEDED) {
+        res.returnCode=PackageManager.INSTALL_FAILED_INVALID_APK;
+      }
+    }
+ else {
+      updateSettingsLI(newPackage,installerPackageName,res);
+      updatedSettings=true;
+    }
+  }
+  if (res.returnCode == PackageManager.INSTALL_SUCCEEDED) {
+    final ApplicationInfo deletedPackageAppInfo=deletedPackage.applicationInfo;
+    final ApplicationInfo installedPackageAppInfo=newPackage.applicationInfo;
+    deletePackageResourcesLI(pkgName,!deletedPackageAppInfo.sourceDir.equals(installedPackageAppInfo.sourceDir) ? deletedPackageAppInfo.sourceDir : null,!deletedPackageAppInfo.publicSourceDir.equals(installedPackageAppInfo.publicSourceDir) ? deletedPackageAppInfo.publicSourceDir : null);
+synchronized (mPackages) {
+      verifySignaturesLP(mSettings.mPackages.get(pkgName),pkg,parseFlags,true);
+    }
+  }
+ else {
+    if (updatedSettings) {
+      deletePackageLI(pkgName,true,PackageManager.DONT_DELETE_DATA,res.removedInfo);
+    }
+    if (deletedPkg) {
+      File restoreFile=new File(deletedPackage.mPath);
+      if (restoreFile == null) {
+        Log.e(TAG,"Failed allocating storage when restoring pkg : " + pkgName);
+        return;
+      }
+      File restoreTmpFile=createTempPackageFile();
+      if (restoreTmpFile == null) {
+        Log.e(TAG,"Failed creating temp file when restoring pkg :  " + pkgName);
+        return;
+      }
+      if (!FileUtils.copyFile(restoreFile,restoreTmpFile)) {
+        Log.e(TAG,"Failed copying temp file when restoring pkg : " + pkgName);
+        return;
+      }
+      PackageInstalledInfo restoreRes=new PackageInstalledInfo();
+      restoreRes.removedInfo=new PackageRemovedInfo();
+      installPackageLI(Uri.fromFile(restoreFile),isForwardLocked(deletedPackage) ? PackageManager.INSTALL_FORWARD_LOCK : 0,false,oldInstallerPackageName,restoreTmpFile,restoreRes);
+      if (restoreRes.returnCode != PackageManager.INSTALL_SUCCEEDED) {
+        Log.e(TAG,"Failed restoring pkg : " + pkgName + " after failed upgrade");
+      }
+    }
+  }
+}
