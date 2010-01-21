@@ -5,14 +5,12 @@
     if (isLoggable) {
       Log.v(TAG,"runStateIdle: no data connection, skipping");
     }
-    setStatusText("No data connection");
     return;
   }
   if (mStorageIsLow) {
     if (isLoggable) {
       Log.v(TAG,"runStateIdle: memory low, skipping");
     }
-    setStatusText("Memory low");
     return;
   }
   Account[] accounts=mAccounts;
@@ -20,74 +18,57 @@
     if (isLoggable) {
       Log.v(TAG,"runStateIdle: accounts not known, skipping");
     }
-    setStatusText("Accounts not known yet");
     return;
   }
   SyncOperation op;
   final boolean backgroundDataUsageAllowed=getConnectivityManager().getBackgroundDataSetting();
 synchronized (mSyncQueue) {
+    final long now=SystemClock.elapsedRealtime();
     while (true) {
-      op=mSyncQueue.head();
+      op=mSyncQueue.nextReadyToRun(now);
       if (op == null) {
         if (isLoggable) {
           Log.v(TAG,"runStateIdle: no more sync operations, returning");
         }
         return;
       }
+      mSyncQueue.remove(op);
       if (!isSyncEnabled()) {
         if (isLoggable) {
           Log.v(TAG,"runStateIdle: sync disabled, dropping " + op);
         }
-        mSyncQueue.popHead();
-        continue;
-      }
-      final boolean manualSync=op.extras.getBoolean(ContentResolver.SYNC_EXTRAS_MANUAL,false);
-      final boolean syncAutomatically=mSyncStorageEngine.getSyncAutomatically(op.account,op.authority) && mSyncStorageEngine.getMasterSyncAutomatically();
-      boolean syncAllowed=manualSync || (backgroundDataUsageAllowed && syncAutomatically);
-      int isSyncable=mSyncStorageEngine.getIsSyncable(op.account,op.authority);
-      if (isSyncable == 0) {
-        syncAllowed=false;
-      }
- else       if (isSyncable < 0) {
-        syncAllowed=op.extras.getBoolean(ContentResolver.SYNC_EXTRAS_INITIALIZE,false);
-      }
-      if (!syncAllowed) {
-        if (isLoggable) {
-          Log.v(TAG,"runStateIdle: sync off, dropping " + op);
-        }
-        mSyncQueue.popHead();
         continue;
       }
       if (!ArrayUtils.contains(accounts,op.account)) {
-        mSyncQueue.popHead();
         if (isLoggable) {
           Log.v(TAG,"runStateIdle: account not present, dropping " + op);
         }
         continue;
       }
-      if (isLoggable) {
-        Log.v(TAG,"runStateIdle: found sync candidate: " + op);
+      final boolean manualSync=op.extras.getBoolean(ContentResolver.SYNC_EXTRAS_MANUAL,false);
+      final boolean syncAutomatically=mSyncStorageEngine.getSyncAutomatically(op.account,op.authority) && mSyncStorageEngine.getMasterSyncAutomatically();
+      if (!(manualSync || (backgroundDataUsageAllowed && syncAutomatically))) {
+        if (isLoggable) {
+          Log.v(TAG,"runStateIdle: sync of this operation is not allowed, " + "dropping " + op);
+        }
+        continue;
+      }
+      if (mSyncStorageEngine.getIsSyncable(op.account,op.authority) <= 0) {
+        if (isLoggable) {
+          Log.v(TAG,"runStateIdle: sync of this operation is not allowed, " + "dropping " + op);
+        }
+        continue;
       }
       break;
-    }
-    final long now=SystemClock.elapsedRealtime();
-    if (op.earliestRunTime > now) {
-      if (Log.isLoggable(TAG,Log.DEBUG)) {
-        Log.d(TAG,"runStateIdle: the time is " + now + " yet the next "+ "sync operation is for "+ op.earliestRunTime+ ": "+ op);
-      }
-      return;
     }
     if (isLoggable) {
       Log.v(TAG,"runStateIdle: we are going to sync " + op);
     }
-    mSyncQueue.popHead();
   }
   SyncAdapterType syncAdapterType=SyncAdapterType.newKey(op.authority,op.account.type);
   RegisteredServicesCache.ServiceInfo<SyncAdapterType> syncAdapterInfo=mSyncAdapters.getServiceInfo(syncAdapterType);
   if (syncAdapterInfo == null) {
-    if (Config.LOGD) {
-      Log.d(TAG,"can't find a sync adapter for " + syncAdapterType);
-    }
+    Log.d(TAG,"can't find a sync adapter for " + syncAdapterType);
     runStateIdle();
     return;
   }
