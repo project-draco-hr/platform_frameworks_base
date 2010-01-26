@@ -5,10 +5,42 @@
   if (DebugFlags.WEB_VIEW) {
     Log.v(LOGTAG,ev + " at " + ev.getEventTime()+ " mTouchMode="+ mTouchMode);
   }
-  int action=ev.getAction();
-  float x=ev.getX();
-  float y=ev.getY();
+  int action;
+  float x, y;
   long eventTime=ev.getEventTime();
+  if (mSupportMultiTouch && ev.getPointerCount() > 1) {
+    if (mMinZoomScale < mMaxZoomScale) {
+      mScaleDetector.onTouchEvent(ev);
+      if (mScaleDetector.isInProgress()) {
+        mLastTouchTime=eventTime;
+        return true;
+      }
+      x=mScaleDetector.getFocusX();
+      y=mScaleDetector.getFocusY();
+      action=ev.getAction() & MotionEvent.ACTION_MASK;
+      if (action == MotionEvent.ACTION_POINTER_DOWN) {
+        cancelTouch();
+        action=MotionEvent.ACTION_DOWN;
+      }
+ else       if (action == MotionEvent.ACTION_POINTER_UP) {
+        mLastTouchX=x;
+        mLastTouchY=y;
+      }
+ else       if (action == MotionEvent.ACTION_MOVE) {
+        if (x < 0 || y < 0) {
+          return true;
+        }
+      }
+    }
+ else {
+      return true;
+    }
+  }
+ else {
+    action=ev.getAction();
+    x=ev.getX();
+    y=ev.getY();
+  }
   if (x > getViewWidth() - 1) {
     x=getViewWidth() - 1;
   }
@@ -34,7 +66,7 @@ case MotionEvent.ACTION_DOWN:
       if (!mScroller.isFinished()) {
         mScroller.abortAnimation();
         mTouchMode=TOUCH_DRAG_START_MODE;
-        mPrivateHandler.removeMessages(RESUME_WEBCORE_UPDATE);
+        mPrivateHandler.removeMessages(RESUME_WEBCORE_PRIORITY);
       }
  else       if (mShiftIsPressed) {
         mSelectX=mScrollX + (int)x;
@@ -57,6 +89,7 @@ case MotionEvent.ACTION_DOWN:
         }
       }
  else {
+        mPreviewZoomOnly=false;
         mTouchMode=TOUCH_INIT_MODE;
         mPreventDrag=mForwardTouchEvents ? PREVENT_DRAG_MAYBE_YES : PREVENT_DRAG_NO;
         mPreventLongPress=false;
@@ -69,14 +102,7 @@ case MotionEvent.ACTION_DOWN:
       if (mTouchMode == TOUCH_INIT_MODE || mTouchMode == TOUCH_DOUBLE_TAP_MODE) {
         mPrivateHandler.sendMessageDelayed(mPrivateHandler.obtainMessage(SWITCH_TO_SHORTPRESS),TAP_TIMEOUT);
       }
-      mLastTouchX=x;
-      mLastTouchY=y;
-      mLastTouchTime=eventTime;
-      mVelocityTracker=VelocityTracker.obtain();
-      mSnapScrollMode=SNAP_NONE;
-      if (mDragTracker != null) {
-        mDragTrackerHandler=new DragTrackerHandler(x,y,mDragTracker);
-      }
+      startTouch(x,y,eventTime);
       break;
     }
 case MotionEvent.ACTION_MOVE:
@@ -130,7 +156,7 @@ case MotionEvent.ACTION_MOVE:
       fDeltaY=0.0f;
       deltaX=0;
       deltaY=0;
-      WebViewCore.pauseUpdate(mWebViewCore);
+      WebViewCore.reducePriority(mWebViewCore);
       if (!mDragFromTextInput) {
         nativeHideCursor();
       }
@@ -265,7 +291,7 @@ mPrivateHandler.removeMessages(SWITCH_TO_LONGPRESS);
 if ((deltaX * deltaX + deltaY * deltaY) > mTouchSlopSquare) {
 Log.w(LOGTAG,"Miss a drag as we are waiting for" + " WebCore's response for touch down.");
 if (mFullScreenHolder == null && (computeHorizontalScrollExtent() < computeHorizontalScrollRange() || computeVerticalScrollExtent() < computeVerticalScrollRange())) {
-WebViewCore.pauseUpdate(mWebViewCore);
+WebViewCore.reducePriority(mWebViewCore);
 }
  else {
 break;
@@ -299,7 +325,7 @@ doFling();
 break;
 }
 mLastVelocity=0;
-WebViewCore.resumeUpdate(mWebViewCore);
+WebViewCore.resumePriority(mWebViewCore);
 break;
 case TOUCH_DRAG_START_MODE:
 case TOUCH_DONE_MODE:
@@ -313,24 +339,7 @@ break;
 }
 case MotionEvent.ACTION_CANCEL:
 {
-if (mDragTrackerHandler != null) {
-mDragTrackerHandler.stopDrag();
-mDragTrackerHandler=null;
-}
-if (mVelocityTracker != null) {
-mVelocityTracker.recycle();
-mVelocityTracker=null;
-}
-if (mTouchMode == TOUCH_DRAG_MODE) {
-WebViewCore.resumeUpdate(mWebViewCore);
-}
-mPrivateHandler.removeMessages(SWITCH_TO_SHORTPRESS);
-mPrivateHandler.removeMessages(SWITCH_TO_LONGPRESS);
-mPrivateHandler.removeMessages(DRAG_HELD_MOTIONLESS);
-mPrivateHandler.removeMessages(AWAKEN_SCROLL_BARS);
-mHeldMotionless=MOTIONLESS_TRUE;
-mTouchMode=TOUCH_DONE_MODE;
-nativeHideCursor();
+cancelTouch();
 break;
 }
 }
