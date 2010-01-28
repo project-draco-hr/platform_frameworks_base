@@ -1,0 +1,56 @@
+{
+  int pFlags=args.flags;
+  String installerPackageName=args.installerPackageName;
+  File tmpPackageFile=new File(args.getCodePath());
+  boolean forwardLocked=((pFlags & PackageManager.INSTALL_FORWARD_LOCK) != 0);
+  boolean onSd=((pFlags & PackageManager.INSTALL_ON_SDCARD) != 0);
+  boolean replacingExistingPackage=false;
+  int scanMode=SCAN_MONITOR | SCAN_FORCE_DEX | SCAN_UPDATE_SIGNATURE| (newInstall ? SCAN_NEW_INSTALL : 0);
+  res.returnCode=PackageManager.INSTALL_SUCCEEDED;
+  main_flow:   try {
+    int parseFlags=PackageParser.PARSE_CHATTY | (forwardLocked ? PackageParser.PARSE_FORWARD_LOCK : 0) | (onSd ? PackageParser.PARSE_ON_SDCARD : 0);
+    parseFlags|=mDefParseFlags;
+    PackageParser pp=new PackageParser(tmpPackageFile.getPath());
+    pp.setSeparateProcesses(mSeparateProcesses);
+    final PackageParser.Package pkg=pp.parsePackage(tmpPackageFile,null,mMetrics,parseFlags);
+    if (pkg == null) {
+      res.returnCode=pp.getParseError();
+      break main_flow;
+    }
+    String pkgName=res.name=pkg.packageName;
+    if ((pkg.applicationInfo.flags & ApplicationInfo.FLAG_TEST_ONLY) != 0) {
+      if ((pFlags & PackageManager.INSTALL_ALLOW_TEST) == 0) {
+        res.returnCode=PackageManager.INSTALL_FAILED_TEST_ONLY;
+        break main_flow;
+      }
+    }
+    if (GET_CERTIFICATES && !pp.collectCertificates(pkg,parseFlags)) {
+      res.returnCode=pp.getParseError();
+      break main_flow;
+    }
+    pp=null;
+    String oldCodePath=null;
+synchronized (mPackages) {
+      if ((pFlags & PackageManager.INSTALL_REPLACE_EXISTING) != 0 && mPackages.containsKey(pkgName)) {
+        replacingExistingPackage=true;
+        oldCodePath=mSettings.mPackages.get(pkgName).codePathString;
+      }
+    }
+    if (!args.doRename(res.returnCode,pkgName,oldCodePath)) {
+      res.returnCode=PackageManager.INSTALL_FAILED_INSUFFICIENT_STORAGE;
+      break main_flow;
+    }
+    pkg.applicationInfo.sourceDir=pkg.mScanPath=pkg.mPath=args.getCodePath();
+    pkg.applicationInfo.publicSourceDir=args.getResourcePath();
+    if (replacingExistingPackage) {
+      replacePackageLI(pkg,parseFlags,scanMode,installerPackageName,res);
+    }
+ else {
+      installNewPackageLI(pkg,parseFlags,scanMode,installerPackageName,res);
+    }
+  }
+  finally {
+    if (res.returnCode == PackageManager.INSTALL_SUCCEEDED) {
+    }
+  }
+}

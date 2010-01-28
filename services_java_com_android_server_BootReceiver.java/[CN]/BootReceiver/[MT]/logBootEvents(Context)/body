@@ -1,24 +1,35 @@
 {
-  DropBoxManager db=(DropBoxManager)context.getSystemService(Context.DROPBOX_SERVICE);
-  StringBuilder props=new StringBuilder();
-  props.append("Build: ").append(Build.FINGERPRINT).append("\n");
-  props.append("Hardware: ").append(Build.BOARD).append("\n");
-  props.append("Bootloader: ").append(Build.BOOTLOADER).append("\n");
-  props.append("Radio: ").append(Build.RADIO).append("\n");
-  props.append("Kernel: ");
-  props.append(FileUtils.readTextFile(new File("/proc/version"),1024,"...\n"));
+  final DropBoxManager db=(DropBoxManager)ctx.getSystemService(Context.DROPBOX_SERVICE);
+  final SharedPreferences prefs=ctx.getSharedPreferences("log_files",Context.MODE_PRIVATE);
+  final String props=new StringBuilder().append("Build: ").append(Build.FINGERPRINT).append("\n").append("Hardware: ").append(Build.BOARD).append("\n").append("Bootloader: ").append(Build.BOOTLOADER).append("\n").append("Radio: ").append(Build.RADIO).append("\n").append("Kernel: ").append(FileUtils.readTextFile(new File("/proc/version"),1024,"...\n")).toString();
+  if (db == null || prefs == null)   return;
   if (SystemProperties.getLong("ro.runtime.firstboot",0) == 0) {
     String now=Long.toString(System.currentTimeMillis());
     SystemProperties.set("ro.runtime.firstboot",now);
-    if (db != null)     db.addText("SYSTEM_BOOT",props.toString());
+    db.addText("SYSTEM_BOOT",props);
+    addFileToDropBox(db,prefs,props,"/proc/last_kmsg","SYSTEM_LAST_KMSG");
+    addFileToDropBox(db,prefs,props,"/cache/recovery/log","SYSTEM_RECOVERY_LOG");
+    addFileToDropBox(db,prefs,props,"/data/dontpanic/apanic_console","APANIC_CONSOLE");
+    addFileToDropBox(db,prefs,props,"/data/dontpanic/apanic_threads","APANIC_THREADS");
   }
  else {
-    if (db != null)     db.addText("SYSTEM_RESTART",props.toString());
-    return;
+    db.addText("SYSTEM_RESTART",props);
   }
-  ContentResolver cr=context.getContentResolver();
-  logBootFile(cr,db,props,"/cache/recovery/log","SYSTEM_RECOVERY_LOG");
-  logBootFile(cr,db,props,"/proc/last_kmsg","SYSTEM_LAST_KMSG");
-  logBootFile(cr,db,props,"/data/dontpanic/apanic_console","APANIC_CONSOLE");
-  logBootFile(cr,db,props,"/data/dontpanic/apanic_threads","APANIC_THREADS");
+  File[] tombstoneFiles=TOMBSTONE_DIR.listFiles();
+  for (int i=0; tombstoneFiles != null && i < tombstoneFiles.length; i++) {
+    addFileToDropBox(db,prefs,props,tombstoneFiles[i].getPath(),"SYSTEM_TOMBSTONE");
+  }
+  sTombstoneObserver=new FileObserver(TOMBSTONE_DIR.getPath(),FileObserver.CLOSE_WRITE){
+    @Override public void onEvent(    int event,    String path){
+      try {
+        String filename=new File(TOMBSTONE_DIR,path).getPath();
+        addFileToDropBox(db,prefs,props,filename,"SYSTEM_TOMBSTONE");
+      }
+ catch (      IOException e) {
+        Log.e(TAG,"Can't log tombstone",e);
+      }
+    }
+  }
+;
+  sTombstoneObserver.startWatching();
 }
