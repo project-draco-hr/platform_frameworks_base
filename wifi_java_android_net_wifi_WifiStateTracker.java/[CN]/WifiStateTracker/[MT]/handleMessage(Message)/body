@@ -98,6 +98,9 @@ int eventLogParam=(newState.ordinal() & 0x3f);
 EventLog.writeEvent(EVENTLOG_SUPPLICANT_STATE_CHANGED,eventLogParam);
 if (LOCAL_LOGD) Log.v(TAG,"Changing supplicant state: " + currentState + " ==> "+ newState);
 int networkId=supplicantStateResult.networkId;
+if (supplicantStateResult.state == SupplicantState.ASSOCIATING) {
+mLastBssid=supplicantStateResult.BSSID;
+}
 if (newState == SupplicantState.DISCONNECTED || newState == SupplicantState.INACTIVE) {
 sendMessageDelayed(obtainMessage(EVENT_MAYBE_START_SCAN_POST_DISCONNECT,mNumSupplicantStateChanges,0),KICKSTART_SCANNING_DELAY_MSECS);
 }
@@ -120,6 +123,7 @@ resetSupplicantLoopState();
 setSupplicantState(newState);
 if (newState == SupplicantState.DORMANT) {
 DetailedState newDetailedState;
+Message reconnectMsg=obtainMessage(EVENT_DEFERRED_RECONNECT,mLastBssid);
 if (mIsScanOnly || mRunState == RUN_STATE_STOPPING) {
 newDetailedState=DetailedState.IDLE;
 }
@@ -128,7 +132,7 @@ newDetailedState=DetailedState.FAILED;
 }
 handleDisconnectedState(newDetailedState);
 if (mRunState == RUN_STATE_RUNNING && !mIsScanOnly && networkId != -1) {
-sendEmptyMessageDelayed(EVENT_DEFERRED_RECONNECT,RECONNECT_DELAY_MSECS);
+sendMessageDelayed(reconnectMsg,RECONNECT_DELAY_MSECS);
 }
  else if (mRunState == RUN_STATE_STOPPING) {
 synchronized (this) {
@@ -230,9 +234,13 @@ handleDisconnectedState(DetailedState.DISCONNECTED);
 }
 break;
 case EVENT_DEFERRED_RECONNECT:
+String BSSID=msg.obj.toString();
 if (mWifiInfo.getSupplicantState() != SupplicantState.UNINITIALIZED) {
 if (++mReconnectCount > getMaxDhcpRetries()) {
-mWM.disableNetwork(mLastNetworkId);
+if (LOCAL_LOGD) {
+Log.d(TAG,"Failed reconnect count: " + mReconnectCount + " Blacklisting "+ BSSID);
+}
+addToBlacklist(BSSID);
 }
 synchronized (this) {
 WifiNative.reconnectCommand();
