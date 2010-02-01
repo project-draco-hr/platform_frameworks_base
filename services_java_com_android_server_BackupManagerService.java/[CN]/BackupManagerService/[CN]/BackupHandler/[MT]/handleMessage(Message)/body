@@ -19,11 +19,11 @@ synchronized (mQueueLock) {
           for (          BackupRequest b : mPendingBackups.values()) {
             queue.add(b);
           }
-          Log.v(TAG,"clearing pending backups");
+          if (DEBUG)           Log.v(TAG,"clearing pending backups");
           mPendingBackups.clear();
           File oldJournal=mJournal;
           mJournal=null;
-          (new PerformBackupThread(transport,queue,oldJournal)).start();
+          (new PerformBackupTask(transport,queue,oldJournal)).run();
         }
  else {
           Log.v(TAG,"Backup requested but nothing pending");
@@ -41,13 +41,13 @@ case MSG_RUN_RESTORE:
 {
   RestoreParams params=(RestoreParams)msg.obj;
   Log.d(TAG,"MSG_RUN_RESTORE observer=" + params.observer);
-  (new PerformRestoreThread(params.transport,params.observer,params.token)).start();
+  (new PerformRestoreTask(params.transport,params.observer,params.token)).run();
   break;
 }
 case MSG_RUN_CLEAR:
 {
 ClearParams params=(ClearParams)msg.obj;
-(new PerformClearThread(params.transport,params.packageInfo)).start();
+(new PerformClearTask(params.transport,params.packageInfo)).run();
 break;
 }
 case MSG_RUN_INITIALIZE:
@@ -57,7 +57,20 @@ synchronized (mQueueLock) {
 queue=new HashSet<String>(mPendingInits);
 mPendingInits.clear();
 }
-(new PerformInitializeThread(queue)).start();
+(new PerformInitializeTask(queue)).run();
+break;
+}
+case MSG_TIMEOUT:
+{
+synchronized (mCurrentOpLock) {
+final int token=msg.arg1;
+int state=mCurrentOperations.get(token,OP_TIMEOUT);
+if (state == OP_PENDING) {
+if (DEBUG) Log.v(TAG,"TIMEOUT: token=" + token);
+mCurrentOperations.put(token,OP_TIMEOUT);
+}
+mCurrentOpLock.notifyAll();
+}
 break;
 }
 }
