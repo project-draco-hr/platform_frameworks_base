@@ -7,21 +7,35 @@
   }
   mVelocityTracker.addMovement(ev);
   boolean handled=false;
-switch (action) {
-case MotionEvent.ACTION_DOWN:
-    if (mDoubleTapListener != null) {
-      boolean hadTapMessage=mHandler.hasMessages(TAP);
-      if (hadTapMessage)       mHandler.removeMessages(TAP);
-      if ((mCurrentDownEvent != null) && (mPreviousUpEvent != null) && hadTapMessage&& isConsideredDoubleTap(mCurrentDownEvent,mPreviousUpEvent,ev)) {
-        mIsDoubleTapping=true;
-        handled|=mDoubleTapListener.onDoubleTap(mCurrentDownEvent);
-        handled|=mDoubleTapListener.onDoubleTapEvent(ev);
-      }
- else {
-        mHandler.sendEmptyMessageDelayed(TAP,DOUBLE_TAP_TIMEOUT);
-      }
+switch (action & MotionEvent.ACTION_MASK) {
+case MotionEvent.ACTION_POINTER_DOWN:
+    if (mIgnoreMultitouch) {
+      cancel();
     }
-  mLastMotionX=x;
+  break;
+case MotionEvent.ACTION_POINTER_UP:
+if (mIgnoreMultitouch && ev.getPointerCount() == 2) {
+  int id=(((action & MotionEvent.ACTION_POINTER_ID_MASK) >> MotionEvent.ACTION_POINTER_ID_SHIFT) == 0) ? 1 : 0;
+  mLastMotionX=ev.getX(id);
+  mLastMotionY=ev.getY(id);
+  mVelocityTracker.recycle();
+  mVelocityTracker=VelocityTracker.obtain();
+}
+break;
+case MotionEvent.ACTION_DOWN:
+if (mDoubleTapListener != null) {
+boolean hadTapMessage=mHandler.hasMessages(TAP);
+if (hadTapMessage) mHandler.removeMessages(TAP);
+if ((mCurrentDownEvent != null) && (mPreviousUpEvent != null) && hadTapMessage&& isConsideredDoubleTap(mCurrentDownEvent,mPreviousUpEvent,ev)) {
+mIsDoubleTapping=true;
+handled|=mDoubleTapListener.onDoubleTap(mCurrentDownEvent);
+handled|=mDoubleTapListener.onDoubleTapEvent(ev);
+}
+ else {
+mHandler.sendEmptyMessageDelayed(TAP,DOUBLE_TAP_TIMEOUT);
+}
+}
+mLastMotionX=x;
 mLastMotionY=y;
 mCurrentDownEvent=MotionEvent.obtain(ev);
 mAlwaysInTapRegion=true;
@@ -36,7 +50,7 @@ mHandler.sendEmptyMessageAtTime(SHOW_PRESS,mCurrentDownEvent.getDownTime() + TAP
 handled|=mListener.onDown(ev);
 break;
 case MotionEvent.ACTION_MOVE:
-if (mInLongPress) {
+if (mInLongPress || (mIgnoreMultitouch && ev.getPointerCount() > 1)) {
 break;
 }
 final float scrollX=mLastMotionX - x;
@@ -97,17 +111,7 @@ mHandler.removeMessages(SHOW_PRESS);
 mHandler.removeMessages(LONG_PRESS);
 break;
 case MotionEvent.ACTION_CANCEL:
-mHandler.removeMessages(SHOW_PRESS);
-mHandler.removeMessages(LONG_PRESS);
-mHandler.removeMessages(TAP);
-mVelocityTracker.recycle();
-mVelocityTracker=null;
-mIsDoubleTapping=false;
-mStillDown=false;
-if (mInLongPress) {
-mInLongPress=false;
-break;
-}
+cancel();
 }
 return handled;
 }
