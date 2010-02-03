@@ -1,15 +1,7 @@
 {
+  Intent in=null;
   if (code == VoldResponseCode.VolumeStateChange) {
     notifyVolumeStateChange(cooked[2],cooked[3],Integer.parseInt(cooked[7]),Integer.parseInt(cooked[10]));
-  }
- else   if (code == VoldResponseCode.VolumeMountFailedBlank) {
-    notifyMediaNoFs(cooked[3]);
-  }
- else   if (code == VoldResponseCode.VolumeMountFailedNoMedia) {
-    notifyMediaRemoved(cooked[3]);
-  }
- else   if (code == VoldResponseCode.VolumeMountFailedDamaged) {
-    notifyMediaUnmountable(cooked[3]);
   }
  else   if (code == VoldResponseCode.ShareAvailabilityChange) {
     boolean avail=false;
@@ -18,17 +10,88 @@
     }
     notifyShareAvailabilityChange(cooked[3],avail);
   }
- else   if (code == VoldResponseCode.VolumeDiskInserted) {
-    notifyMediaInserted(cooked[3]);
-  }
- else   if (code == VoldResponseCode.VolumeDiskRemoved) {
-    notifyMediaRemoved(cooked[3]);
-  }
- else   if (code == VoldResponseCode.VolumeBadRemoval) {
-    notifyMediaBadRemoval(cooked[3]);
+ else   if ((code == VoldResponseCode.VolumeDiskInserted) || (code == VoldResponseCode.VolumeDiskRemoved) || (code == VoldResponseCode.VolumeBadRemoval)) {
+    final String label=cooked[2];
+    final String path=cooked[3];
+    int major=-1;
+    int minor=-1;
+    try {
+      String devComp=cooked[6].substring(1,cooked[6].length() - 1);
+      String[] devTok=devComp.split(":");
+      major=Integer.parseInt(devTok[0]);
+      minor=Integer.parseInt(devTok[1]);
+    }
+ catch (    Exception ex) {
+      Log.e(TAG,"Failed to parse major/minor",ex);
+    }
+synchronized (mListeners) {
+      for (int i=mListeners.size() - 1; i >= 0; i--) {
+        MountServiceBinderListener bl=mListeners.get(i);
+        try {
+          if (code == VoldResponseCode.VolumeDiskInserted) {
+            bl.mListener.onMediaInserted(label,path,major,minor);
+          }
+ else           if (code == VoldResponseCode.VolumeDiskRemoved) {
+            bl.mListener.onMediaRemoved(label,path,major,minor,true);
+          }
+ else           if (code == VoldResponseCode.VolumeBadRemoval) {
+            bl.mListener.onMediaRemoved(label,path,major,minor,false);
+          }
+ else {
+            Log.e(TAG,String.format("Unknown code {%d}",code));
+          }
+        }
+ catch (        RemoteException rex) {
+          Log.e(TAG,"Listener dead");
+          mListeners.remove(i);
+        }
+catch (        Exception ex) {
+          Log.e(TAG,"Listener failed",ex);
+        }
+      }
+    }
+    if (code == VoldResponseCode.VolumeDiskInserted) {
+      new Thread(){
+        public void run(){
+          try {
+            int rc;
+            if ((rc=mountVolume(path)) != MountServiceResultCode.OperationSucceeded) {
+              Log.w(TAG,String.format("Insertion mount failed (%d)",rc));
+            }
+          }
+ catch (          Exception ex) {
+            Log.w(TAG,"Failed to mount media on insertion",ex);
+          }
+        }
+      }
+.start();
+    }
+ else     if (code == VoldResponseCode.VolumeDiskRemoved) {
+      if (getVolumeState(path).equals(Environment.MEDIA_BAD_REMOVAL)) {
+        return true;
+      }
+      updatePublicVolumeState(path,Environment.MEDIA_UNMOUNTED);
+      in=new Intent(Intent.ACTION_MEDIA_UNMOUNTED,Uri.parse("file://" + path));
+      mContext.sendBroadcast(in);
+      updatePublicVolumeState(path,Environment.MEDIA_REMOVED);
+      in=new Intent(Intent.ACTION_MEDIA_REMOVED,Uri.parse("file://" + path));
+    }
+ else     if (code == VoldResponseCode.VolumeBadRemoval) {
+      updatePublicVolumeState(path,Environment.MEDIA_UNMOUNTED);
+      in=new Intent(Intent.ACTION_MEDIA_UNMOUNTED,Uri.parse("file://" + path));
+      mContext.sendBroadcast(in);
+      updatePublicVolumeState(path,Environment.MEDIA_BAD_REMOVAL);
+      in=new Intent(Intent.ACTION_MEDIA_BAD_REMOVAL,Uri.parse("file://" + path));
+    }
+ else {
+      Log.e(TAG,String.format("Unknown code {%d}",code));
+    }
   }
  else {
     return false;
+  }
+  if (in != null) {
+    mContext.sendBroadcast(in);
   }
   return true;
 }
