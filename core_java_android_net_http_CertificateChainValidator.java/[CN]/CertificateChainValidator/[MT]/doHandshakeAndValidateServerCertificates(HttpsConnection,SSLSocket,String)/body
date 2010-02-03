@@ -36,112 +36,45 @@
       return new SslError(SslError.SSL_IDMISMATCH,currCertificate);
     }
   }
+  int chainLength=serverCertificates.length;
+  if (serverCertificates.length > 1) {
+    int currIndex;
+    for (currIndex=0; currIndex < serverCertificates.length; ++currIndex) {
+      boolean foundNext=false;
+      for (int nextIndex=currIndex + 1; nextIndex < serverCertificates.length; ++nextIndex) {
+        if (serverCertificates[currIndex].getIssuerDN().equals(serverCertificates[nextIndex].getSubjectDN())) {
+          foundNext=true;
+          if (nextIndex != currIndex + 1) {
+            X509Certificate tempCertificate=serverCertificates[nextIndex];
+            serverCertificates[nextIndex]=serverCertificates[currIndex + 1];
+            serverCertificates[currIndex + 1]=tempCertificate;
+          }
+          break;
+        }
+      }
+      if (!foundNext)       break;
+    }
+    chainLength=currIndex + 1;
+    X509Certificate lastCertificate=serverCertificates[chainLength - 1];
+    Date now=new Date();
+    if (lastCertificate.getSubjectDN().equals(lastCertificate.getIssuerDN()) && now.after(lastCertificate.getNotAfter())) {
+      --chainLength;
+    }
+  }
+  X509Certificate[] newServerCertificates=null;
+  newServerCertificates=new X509Certificate[chainLength];
+  for (int i=0; i < chainLength; ++i) {
+    newServerCertificates[i]=serverCertificates[i];
+  }
   try {
-    SSLParameters.getDefaultTrustManager().checkServerTrusted(serverCertificates,"RSA");
+    SSLParameters.getDefaultTrustManager().checkServerTrusted(newServerCertificates,"RSA");
     return null;
   }
  catch (  CertificateException e) {
+    sslSocket.getSession().invalidate();
     if (HttpLog.LOGV) {
       HttpLog.v("failed to pre-validate the certificate chain, error: " + e.getMessage());
     }
-  }
-  sslSocket.getSession().invalidate();
-  SslError error=null;
-  currCertificate=serverCertificates[serverCertificates.length - 1];
-  if (currCertificate == null) {
-    closeSocketThrowException(sslSocket,"root certificate is null");
-  }
-  X509Certificate[] rootCertificateChain={currCertificate};
-  try {
-    SSLParameters.getDefaultTrustManager().checkServerTrusted(rootCertificateChain,"RSA");
-  }
- catch (  CertificateExpiredException e) {
-    String errorMessage=e.getMessage();
-    if (errorMessage == null) {
-      errorMessage="root certificate has expired";
-    }
-    if (HttpLog.LOGV) {
-      HttpLog.v(errorMessage);
-    }
-    error=new SslError(SslError.SSL_EXPIRED,currCertificate);
-  }
-catch (  CertificateNotYetValidException e) {
-    String errorMessage=e.getMessage();
-    if (errorMessage == null) {
-      errorMessage="root certificate not valid yet";
-    }
-    if (HttpLog.LOGV) {
-      HttpLog.v(errorMessage);
-    }
-    error=new SslError(SslError.SSL_NOTYETVALID,currCertificate);
-  }
-catch (  CertificateException e) {
-    String errorMessage=e.getMessage();
-    if (errorMessage == null) {
-      errorMessage="root certificate not trusted";
-    }
-    if (HttpLog.LOGV) {
-      HttpLog.v(errorMessage);
-    }
     return new SslError(SslError.SSL_UNTRUSTED,currCertificate);
   }
-  X509Certificate prevCertificate=serverCertificates[serverCertificates.length - 1];
-  for (int i=serverCertificates.length - 2; i >= 0; --i) {
-    currCertificate=serverCertificates[i];
-    if (currCertificate == null) {
-      closeSocketThrowException(sslSocket,"null certificate in the chain");
-    }
-    if (!prevCertificate.getSubjectDN().equals(currCertificate.getIssuerDN())) {
-      String errorMessage="not trusted by chain";
-      if (HttpLog.LOGV) {
-        HttpLog.v(errorMessage);
-      }
-      return new SslError(SslError.SSL_UNTRUSTED,currCertificate);
-    }
-    try {
-      currCertificate.verify(prevCertificate.getPublicKey());
-    }
- catch (    GeneralSecurityException e) {
-      String errorMessage=e.getMessage();
-      if (errorMessage == null) {
-        errorMessage="not trusted by chain";
-      }
-      if (HttpLog.LOGV) {
-        HttpLog.v(errorMessage);
-      }
-      return new SslError(SslError.SSL_UNTRUSTED,currCertificate);
-    }
-    try {
-      currCertificate.checkValidity();
-    }
- catch (    CertificateExpiredException e) {
-      String errorMessage=e.getMessage();
-      if (errorMessage == null) {
-        errorMessage="certificate expired";
-      }
-      if (HttpLog.LOGV) {
-        HttpLog.v(errorMessage);
-      }
-      if (error == null || error.getPrimaryError() < SslError.SSL_EXPIRED) {
-        error=new SslError(SslError.SSL_EXPIRED,currCertificate);
-      }
-    }
-catch (    CertificateNotYetValidException e) {
-      String errorMessage=e.getMessage();
-      if (errorMessage == null) {
-        errorMessage="certificate not valid yet";
-      }
-      if (HttpLog.LOGV) {
-        HttpLog.v(errorMessage);
-      }
-      if (error == null || error.getPrimaryError() < SslError.SSL_NOTYETVALID) {
-        error=new SslError(SslError.SSL_NOTYETVALID,currCertificate);
-      }
-    }
-    prevCertificate=currCertificate;
-  }
-  if (error == null) {
-    closeSocketThrowException(sslSocket,"failed to pre-validate the certificate chain due to a non-standard error");
-  }
-  return error;
 }
