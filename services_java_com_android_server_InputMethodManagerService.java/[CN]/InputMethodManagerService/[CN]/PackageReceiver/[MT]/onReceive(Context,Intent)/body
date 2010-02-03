@@ -1,4 +1,19 @@
 {
+  String action=intent.getAction();
+  String pkgList[]=null;
+  if (Intent.ACTION_PACKAGE_ADDED.equals(action) || Intent.ACTION_PACKAGE_REMOVED.equals(action)) {
+    Uri uri=intent.getData();
+    String pkg=uri != null ? uri.getSchemeSpecificPart() : null;
+    if (pkg != null) {
+      pkgList=new String[]{pkg};
+    }
+  }
+ else   if (Intent.ACTION_MEDIA_RESOURCES_AVAILABLE.equals(action) || Intent.ACTION_MEDIA_RESOURCES_UNAVAILABLE.equals(action)) {
+    pkgList=intent.getStringArrayExtra(Intent.EXTRA_CHANGED_PACKAGE_LIST);
+  }
+  if (pkgList == null || pkgList.length == 0) {
+    return;
+  }
 synchronized (mMethodMap) {
     buildInputMethodListLocked(mMethodList,mMethodMap);
     InputMethodInfo curIm=null;
@@ -12,31 +27,38 @@ synchronized (mMethodMap) {
       }
     }
     boolean changed=false;
-    Uri uri=intent.getData();
-    String pkg=uri != null ? uri.getSchemeSpecificPart() : null;
-    if (curIm != null && curIm.getPackageName().equals(pkg)) {
-      ServiceInfo si=null;
-      try {
-        si=mContext.getPackageManager().getServiceInfo(curIm.getComponent(),0);
-      }
- catch (      PackageManager.NameNotFoundException ex) {
-      }
-      if (si == null) {
-        Log.i(TAG,"Current input method removed: " + curInputMethodId);
-        if (!chooseNewDefaultIME()) {
-          changed=true;
-          curIm=null;
-          curInputMethodId="";
-          Log.i(TAG,"Unsetting current input method");
-          Settings.Secure.putString(mContext.getContentResolver(),Settings.Secure.DEFAULT_INPUT_METHOD,curInputMethodId);
+    if (curIm != null) {
+      boolean foundPkg=false;
+      for (      String pkg : pkgList) {
+        if (curIm.getPackageName().equals(pkg)) {
+          foundPkg=true;
+          break;
         }
       }
-    }
- else     if (curIm == null) {
-      changed=chooseNewDefaultIME();
-    }
-    if (changed) {
-      updateFromSettingsLocked();
+      if (foundPkg) {
+        ServiceInfo si=null;
+        try {
+          si=mContext.getPackageManager().getServiceInfo(curIm.getComponent(),0);
+        }
+ catch (        PackageManager.NameNotFoundException ex) {
+        }
+        if (si == null) {
+          Log.i(TAG,"Current input method removed: " + curInputMethodId);
+          if (!chooseNewDefaultIME()) {
+            changed=true;
+            curIm=null;
+            curInputMethodId="";
+            Log.i(TAG,"Unsetting current input method");
+            Settings.Secure.putString(mContext.getContentResolver(),Settings.Secure.DEFAULT_INPUT_METHOD,curInputMethodId);
+          }
+        }
+      }
+ else       if (curIm == null) {
+        changed=chooseNewDefaultIME();
+      }
+      if (changed) {
+        updateFromSettingsLocked();
+      }
     }
   }
 }
