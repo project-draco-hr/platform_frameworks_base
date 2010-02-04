@@ -111,7 +111,28 @@ synchronized (mPackages) {
         Log.d(TAG,"Shared UserID " + pkg.mSharedUserId + " (uid="+ suid.userId+ "): packages="+ suid.packages);
       }
     }
-    pkgSetting=mSettings.getPackageLP(pkg,suid,destCodeFile,destResourceFile,pkg.applicationInfo.flags,true,false);
+    PackageSetting origPackage=null;
+    if (pkg.mOriginalPackage != null) {
+      origPackage=mSettings.peekPackageLP(pkg.mOriginalPackage);
+      if (origPackage != null) {
+        if (!verifyPackageUpdate(origPackage,pkg)) {
+          origPackage=null;
+        }
+ else         if (origPackage.sharedUser != null) {
+          if (!origPackage.sharedUser.name.equals(pkg.mSharedUserId)) {
+            Log.w(TAG,"Unable to migrate data from " + origPackage.name + " to "+ pkg.packageName+ ": old uid "+ origPackage.sharedUser.name+ " differs from "+ pkg.mSharedUserId);
+            origPackage=null;
+          }
+        }
+ else {
+          if (DEBUG_UPGRADE)           Log.v(TAG,"Migrating data from " + origPackage.name + " to "+ pkg.packageName);
+        }
+      }
+    }
+    if (mTransferedPackages.contains(pkg.packageName)) {
+      Log.w(TAG,"Package " + pkg.packageName + " was transferred to another, but its .apk remains");
+    }
+    pkgSetting=mSettings.getPackageLP(pkg,origPackage,suid,destCodeFile,destResourceFile,pkg.applicationInfo.flags,true,false);
     if (pkgSetting == null) {
       Log.w(TAG,"Creating application package " + pkgName + " failed");
       mLastScanError=PackageManager.INSTALL_FAILED_INSUFFICIENT_STORAGE;
@@ -122,6 +143,18 @@ synchronized (mPackages) {
     }
     pkg.applicationInfo.uid=pkgSetting.userId;
     pkg.mExtras=pkgSetting;
+    if (pkg.mAdoptPermissions != null) {
+      for (int i=pkg.mAdoptPermissions.size() - 1; i >= 0; i--) {
+        String origName=pkg.mAdoptPermissions.get(i);
+        PackageSetting orig=mSettings.peekPackageLP(origName);
+        if (orig != null) {
+          if (verifyPackageUpdate(orig,pkg)) {
+            if (DEBUG_UPGRADE)             Log.v(TAG,"Adopting permissions from " + origName + " to "+ pkg.packageName);
+            mSettings.transferPermissions(origName,pkg.packageName);
+          }
+        }
+      }
+    }
     if (!verifySignaturesLP(pkgSetting,pkg,parseFlags,(scanMode & SCAN_UPDATE_SIGNATURE) != 0)) {
       if ((parseFlags & PackageParser.PARSE_IS_SYSTEM) == 0) {
         mLastScanError=PackageManager.INSTALL_FAILED_UPDATE_INCOMPATIBLE;
@@ -184,6 +217,7 @@ synchronized (mPackages) {
  else {
       dataPath=new File(mAppDataDir,pkgName);
     }
+    boolean uidError=false;
     if (dataPath.exists()) {
       mOutPermissions[1]=0;
       FileUtils.getPermissions(dataPath.getPath(),mOutPermissions);
@@ -216,11 +250,12 @@ synchronized (mPackages) {
           pkg.applicationInfo.dataDir="/mismatched_uid/settings_" + pkg.applicationInfo.uid + "/fs_"+ mOutPermissions[1];
           String msg="Package " + pkg.packageName + " has mismatched uid: "+ mOutPermissions[1]+ " on disk, "+ pkg.applicationInfo.uid+ " in settings";
 synchronized (mPackages) {
-            if (!mReportedUidError) {
-              mReportedUidError=true;
-              msg=msg + "; read messages:\n" + mSettings.getReadMessagesLP();
+            mSettings.mReadMessages.append(msg);
+            mSettings.mReadMessages.append('\n');
+            uidError=true;
+            if (!pkgSetting.uidError) {
+              reportSettingsProblem(Log.ERROR,msg);
             }
-            reportSettingsProblem(Log.ERROR,msg);
           }
         }
       }
@@ -228,6 +263,21 @@ synchronized (mPackages) {
     }
  else {
       if ((parseFlags & PackageParser.PARSE_CHATTY) != 0 && Config.LOGV)       Log.v(TAG,"Want this data dir: " + dataPath);
+      if (pkgSetting.origPackage != null) {
+synchronized (mPackages) {
+          String msg="Transfering data from old package " + pkgSetting.origPackage.name + " to new package "+ pkgSetting.name;
+          reportSettingsProblem(Log.WARN,msg);
+          if (mInstaller != null) {
+            int ret=mInstaller.rename(pkgSetting.origPackage.name,pkgName,useEncryptedFSDir);
+            if (ret < 0) {
+              msg="Error transfering data from old package " + pkgSetting.origPackage.name + " to new package "+ pkgSetting.name;
+              reportSettingsProblem(Log.WARN,msg);
+            }
+          }
+          mInstaller.remove(pkgSetting.origPackage.name,useEncryptedFSDir);
+          mSettings.removePackageLP(pkgSetting.origPackage.name);
+        }
+      }
       if (mInstaller != null) {
         int ret=mInstaller.install(pkgName,useEncryptedFSDir,pkg.applicationInfo.uid,pkg.applicationInfo.uid);
         if (ret < 0) {
@@ -249,6 +299,11 @@ synchronized (mPackages) {
         pkg.applicationInfo.dataDir=null;
       }
     }
+    pkgSetting.uidError=uidError;
+  }
+  if (pkgSetting.origPackage != null) {
+    mTransferedPackages.add(pkgSetting.origPackage.name);
+    pkgSetting.origPackage=null;
   }
   if (mInstaller != null) {
     String path=scanFile.getPath();
