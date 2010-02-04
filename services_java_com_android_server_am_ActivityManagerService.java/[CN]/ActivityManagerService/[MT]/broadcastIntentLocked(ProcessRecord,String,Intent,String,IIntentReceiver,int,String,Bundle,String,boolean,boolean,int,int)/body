@@ -5,7 +5,7 @@
     Log.w(TAG,"Broadcast " + intent + " not ordered but result callback requested!");
   }
   final boolean uidRemoved=intent.ACTION_UID_REMOVED.equals(intent.getAction());
-  if (intent.ACTION_PACKAGE_REMOVED.equals(intent.getAction()) || intent.ACTION_PACKAGE_CHANGED.equals(intent.getAction()) || uidRemoved) {
+  if (intent.ACTION_PACKAGE_REMOVED.equals(intent.getAction()) || intent.ACTION_PACKAGE_CHANGED.equals(intent.getAction()) || Intent.ACTION_MEDIA_RESOURCES_UNAVAILABLE.equals(intent.getAction())|| uidRemoved) {
     if (checkComponentPermission(android.Manifest.permission.BROADCAST_PACKAGE_REMOVED,callingPid,callingUid,-1) == PackageManager.PERMISSION_GRANTED) {
       if (uidRemoved) {
         final Bundle intentExtras=intent.getExtras();
@@ -18,14 +18,20 @@ synchronized (bs) {
         }
       }
  else {
-        Uri data=intent.getData();
-        String ssp;
-        if (data != null && (ssp=data.getSchemeSpecificPart()) != null) {
-          if (!intent.getBooleanExtra(Intent.EXTRA_DONT_KILL_APP,false)) {
-            forceStopPackageLocked(ssp,intent.getIntExtra(Intent.EXTRA_UID,-1),false);
-            AttributeCache ac=AttributeCache.instance();
-            if (ac != null) {
-              ac.removePackage(ssp);
+        if (Intent.ACTION_MEDIA_RESOURCES_UNAVAILABLE.equals(intent.getAction())) {
+          String list[]=intent.getStringArrayExtra(Intent.EXTRA_CHANGED_PACKAGE_LIST);
+          if (list != null && (list.length > 0)) {
+            for (            String pkg : list) {
+              forceStopPackageLocked(pkg,-1,false,true);
+            }
+          }
+        }
+ else {
+          Uri data=intent.getData();
+          String ssp;
+          if (data != null && (ssp=data.getSchemeSpecificPart()) != null) {
+            if (!intent.getBooleanExtra(Intent.EXTRA_DONT_KILL_APP,false)) {
+              forceStopPackageLocked(ssp,intent.getIntExtra(Intent.EXTRA_UID,-1),false,true);
             }
           }
         }
@@ -132,25 +138,31 @@ synchronized (bs) {
   }
   int ir=0;
   if (receivers != null) {
-    boolean skip=false;
-    if (intent.ACTION_PACKAGE_ADDED.equals(intent.getAction())) {
-      skip=true;
+    String skipPackages[]=null;
+    if (intent.ACTION_PACKAGE_ADDED.equals(intent.getAction()) || intent.ACTION_PACKAGE_RESTARTED.equals(intent.getAction()) || intent.ACTION_PACKAGE_DATA_CLEARED.equals(intent.getAction())) {
+      Uri data=intent.getData();
+      if (data != null) {
+        String pkgName=data.getSchemeSpecificPart();
+        if (pkgName != null) {
+          skipPackages=new String[]{pkgName};
+        }
+      }
     }
- else     if (intent.ACTION_PACKAGE_RESTARTED.equals(intent.getAction())) {
-      skip=true;
+ else     if (intent.ACTION_MEDIA_RESOURCES_AVAILABLE.equals(intent.getAction())) {
+      skipPackages=intent.getStringArrayExtra(Intent.EXTRA_CHANGED_PACKAGE_LIST);
     }
- else     if (intent.ACTION_PACKAGE_DATA_CLEARED.equals(intent.getAction())) {
-      skip=true;
-    }
-    String skipPackage=(skip && intent.getData() != null) ? intent.getData().getSchemeSpecificPart() : null;
-    if (skipPackage != null && receivers != null) {
-      int NT=receivers.size();
-      for (int it=0; it < NT; it++) {
-        ResolveInfo curt=(ResolveInfo)receivers.get(it);
-        if (curt.activityInfo.packageName.equals(skipPackage)) {
-          receivers.remove(it);
-          it--;
-          NT--;
+    if (skipPackages != null && (skipPackages.length > 0)) {
+      for (      String skipPackage : skipPackages) {
+        if (skipPackage != null) {
+          int NT=receivers.size();
+          for (int it=0; it < NT; it++) {
+            ResolveInfo curt=(ResolveInfo)receivers.get(it);
+            if (curt.activityInfo.packageName.equals(skipPackage)) {
+              receivers.remove(it);
+              it--;
+              NT--;
+            }
+          }
         }
       }
     }
