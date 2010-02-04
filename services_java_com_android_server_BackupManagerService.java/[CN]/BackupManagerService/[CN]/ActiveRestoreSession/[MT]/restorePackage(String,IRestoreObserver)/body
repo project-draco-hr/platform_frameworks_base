@@ -1,0 +1,32 @@
+{
+  if (DEBUG)   Log.v(TAG,"restorePackage pkg=" + packageName + " obs="+ observer);
+  PackageInfo app=null;
+  try {
+    app=mPackageManager.getPackageInfo(packageName,0);
+  }
+ catch (  NameNotFoundException nnf) {
+    Log.w(TAG,"Asked to restore nonexistent pkg " + packageName);
+    return -1;
+  }
+  int perm=mContext.checkPermission(android.Manifest.permission.BACKUP,Binder.getCallingPid(),Binder.getCallingUid());
+  if ((perm == PackageManager.PERMISSION_DENIED) && (app.applicationInfo.uid != Binder.getCallingUid())) {
+    Log.w(TAG,"restorePackage: bad packageName=" + packageName + " or calling uid="+ Binder.getCallingUid());
+    throw new SecurityException("No permission to restore other packages");
+  }
+  long token=mAncestralToken;
+synchronized (mQueueLock) {
+    if (mEverStoredApps.contains(packageName)) {
+      token=mCurrentToken;
+    }
+  }
+  if (token == 0) {
+    return -1;
+  }
+  long oldId=Binder.clearCallingIdentity();
+  mWakelock.acquire();
+  Message msg=mBackupHandler.obtainMessage(MSG_RUN_RESTORE);
+  msg.obj=new RestoreParams(mRestoreTransport,observer,token,app);
+  mBackupHandler.sendMessage(msg);
+  Binder.restoreCallingIdentity(oldId);
+  return 0;
+}
