@@ -10,11 +10,10 @@
     mLastScanError=PackageManager.INSTALL_PARSE_FAILED_BAD_PACKAGE_NAME;
     return null;
   }
-  final String pkgName=pkg.applicationInfo.packageName;
   if ((parseFlags & PackageParser.PARSE_IS_SYSTEM) != 0) {
     pkg.applicationInfo.flags|=ApplicationInfo.FLAG_SYSTEM;
   }
-  if (pkgName.equals("android")) {
+  if (pkg.packageName.equals("android")) {
 synchronized (mPackages) {
       if (mAndroidApplication != null) {
         Log.w(TAG,"*************************************************");
@@ -43,10 +42,10 @@ synchronized (mPackages) {
       mResolveComponentName=new ComponentName(mAndroidApplication.packageName,mResolveActivity.name);
     }
   }
-  if ((parseFlags & PackageParser.PARSE_CHATTY) != 0 && Config.LOGD)   Log.d(TAG,"Scanning package " + pkgName);
-  if (mPackages.containsKey(pkgName) || mSharedLibraries.containsKey(pkgName)) {
+  if ((parseFlags & PackageParser.PARSE_CHATTY) != 0 && Config.LOGD)   Log.d(TAG,"Scanning package " + pkg.packageName);
+  if (mPackages.containsKey(pkg.packageName) || mSharedLibraries.containsKey(pkg.packageName)) {
     Log.w(TAG,"*************************************************");
-    Log.w(TAG,"Application package " + pkgName + " already installed.  Skipping duplicate.");
+    Log.w(TAG,"Application package " + pkg.packageName + " already installed.  Skipping duplicate.");
     Log.w(TAG,"*************************************************");
     mLastScanError=PackageManager.INSTALL_FAILED_DUPLICATE_PACKAGE;
     return null;
@@ -56,6 +55,11 @@ synchronized (mPackages) {
   SharedUserSetting suid=null;
   PackageSetting pkgSetting=null;
   boolean removeExisting=false;
+  if ((pkg.applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) == 0) {
+    pkg.mOriginalPackage=null;
+    pkg.mRealPackage=null;
+    pkg.mAdoptPermissions=null;
+  }
 synchronized (mPackages) {
     if (pkg.usesLibraries != null || pkg.usesOptionalLibraries != null) {
       if (mTmpSharedLibraries == null || mTmpSharedLibraries.length < mSharedLibraries.size()) {
@@ -108,7 +112,7 @@ synchronized (mPackages) {
     if (pkg.mSharedUserId != null) {
       suid=mSettings.getSharedUserLP(pkg.mSharedUserId,pkg.applicationInfo.flags,true);
       if (suid == null) {
-        Log.w(TAG,"Creating application package " + pkgName + " for shared user failed");
+        Log.w(TAG,"Creating application package " + pkg.packageName + " for shared user failed");
         mLastScanError=PackageManager.INSTALL_FAILED_INSUFFICIENT_STORAGE;
         return null;
       }
@@ -116,10 +120,24 @@ synchronized (mPackages) {
         Log.d(TAG,"Shared UserID " + pkg.mSharedUserId + " (uid="+ suid.userId+ "): packages="+ suid.packages);
       }
     }
+    if (false) {
+      if (pkg.mOriginalPackage != null) {
+        Log.w(TAG,"WAITING FOR DEBUGGER");
+        Debug.waitForDebugger();
+        Log.i(TAG,"Package " + pkg.packageName + " from original package"+ pkg.mOriginalPackage);
+      }
+    }
     PackageSetting origPackage=null;
+    String realName=null;
     if (pkg.mOriginalPackage != null) {
-      origPackage=mSettings.peekPackageLP(pkg.mOriginalPackage);
-      if (origPackage != null) {
+      String renamed=mSettings.mRenamedPackages.get(pkg.mRealPackage);
+      if (pkg.mOriginalPackage.equals(renamed)) {
+        realName=pkg.mRealPackage;
+        if (!pkg.packageName.equals(renamed)) {
+          pkg.setPackageName(renamed);
+        }
+      }
+ else       if ((origPackage=mSettings.peekPackageLP(pkg.mOriginalPackage)) != null) {
         if (!verifyPackageUpdate(origPackage,pkg)) {
           origPackage=null;
         }
@@ -130,36 +148,34 @@ synchronized (mPackages) {
           }
         }
  else {
-          if (DEBUG_UPGRADE)           Log.v(TAG,"Migrating data from " + origPackage.name + " to "+ pkg.packageName);
+          if (DEBUG_UPGRADE)           Log.v(TAG,"Renaming new package " + pkg.packageName + " to old name "+ origPackage.name);
         }
       }
     }
     if (mTransferedPackages.contains(pkg.packageName)) {
       Log.w(TAG,"Package " + pkg.packageName + " was transferred to another, but its .apk remains");
     }
-    pkgSetting=mSettings.getPackageLP(pkg,origPackage,suid,destCodeFile,destResourceFile,pkg.applicationInfo.flags,true,false);
+    pkgSetting=mSettings.getPackageLP(pkg,origPackage,realName,suid,destCodeFile,destResourceFile,pkg.applicationInfo.flags,true,false);
     if (pkgSetting == null) {
-      Log.w(TAG,"Creating application package " + pkgName + " failed");
+      Log.w(TAG,"Creating application package " + pkg.packageName + " failed");
       mLastScanError=PackageManager.INSTALL_FAILED_INSUFFICIENT_STORAGE;
       return null;
+    }
+    if (pkgSetting.origPackage != null) {
+      pkg.setPackageName(origPackage.name);
+      String msg="New package " + pkgSetting.realName + " renamed to replace old package "+ pkgSetting.name;
+      reportSettingsProblem(Log.WARN,msg);
+      mTransferedPackages.add(origPackage.name);
+      pkgSetting.origPackage=null;
+    }
+    if (realName != null) {
+      mTransferedPackages.add(pkg.packageName);
     }
     if (mSettings.mDisabledSysPackages.get(pkg.packageName) != null) {
       pkg.applicationInfo.flags|=ApplicationInfo.FLAG_UPDATED_SYSTEM_APP;
     }
     pkg.applicationInfo.uid=pkgSetting.userId;
     pkg.mExtras=pkgSetting;
-    if (pkg.mAdoptPermissions != null) {
-      for (int i=pkg.mAdoptPermissions.size() - 1; i >= 0; i--) {
-        String origName=pkg.mAdoptPermissions.get(i);
-        PackageSetting orig=mSettings.peekPackageLP(origName);
-        if (orig != null) {
-          if (verifyPackageUpdate(orig,pkg)) {
-            if (DEBUG_UPGRADE)             Log.v(TAG,"Adopting permissions from " + origName + " to "+ pkg.packageName);
-            mSettings.transferPermissions(origName,pkg.packageName);
-          }
-        }
-      }
-    }
     if (!verifySignaturesLP(pkgSetting,pkg,parseFlags,(scanMode & SCAN_UPDATE_SIGNATURE) != 0)) {
       if ((parseFlags & PackageParser.PARSE_IS_SYSTEM) == 0) {
         mLastScanError=PackageManager.INSTALL_FAILED_UPDATE_INCOMPATIBLE;
@@ -183,7 +199,7 @@ synchronized (mPackages) {
         for (int j=0; j < names.length; j++) {
           if (mProviders.containsKey(names[j])) {
             PackageParser.Provider other=mProviders.get(names[j]);
-            Log.w(TAG,"Can't install because provider name " + names[j] + " (in package "+ pkg.applicationInfo.packageName+ ") is already used by "+ ((other != null && other.component != null) ? other.component.getPackageName() : "?"));
+            Log.w(TAG,"Can't install because provider name " + names[j] + " (in package "+ pkg.applicationInfo.packageName+ ") is already used by "+ ((other != null && other.getComponentName() != null) ? other.getComponentName().getPackageName() : "?"));
             mLastScanError=PackageManager.INSTALL_FAILED_CONFLICTING_PROVIDER;
             return null;
           }
@@ -191,6 +207,7 @@ synchronized (mPackages) {
       }
     }
   }
+  final String pkgName=pkg.packageName;
   if (removeExisting) {
     boolean useEncryptedFSDir=useEncryptedFilesystemForPackage(pkg);
     if (mInstaller != null) {
@@ -204,6 +221,18 @@ synchronized (mPackages) {
     }
     Log.w(TAG,"System package " + pkg.packageName + " signature changed: existing data removed.");
     mLastScanError=PackageManager.INSTALL_SUCCEEDED;
+  }
+  if (pkg.mAdoptPermissions != null) {
+    for (int i=pkg.mAdoptPermissions.size() - 1; i >= 0; i--) {
+      String origName=pkg.mAdoptPermissions.get(i);
+      PackageSetting orig=mSettings.peekPackageLP(origName);
+      if (orig != null) {
+        if (verifyPackageUpdate(orig,pkg)) {
+          Log.i(TAG,"Adopting permissions from " + origName + " to "+ pkg.packageName);
+          mSettings.transferPermissions(origName,pkg.packageName);
+        }
+      }
+    }
   }
   long scanFileTime=scanFile.lastModified();
   final boolean forceDex=(scanMode & SCAN_FORCE_DEX) != 0;
@@ -268,21 +297,6 @@ synchronized (mPackages) {
     }
  else {
       if ((parseFlags & PackageParser.PARSE_CHATTY) != 0 && Config.LOGV)       Log.v(TAG,"Want this data dir: " + dataPath);
-      if (pkgSetting.origPackage != null) {
-synchronized (mPackages) {
-          String msg="Transfering data from old package " + pkgSetting.origPackage.name + " to new package "+ pkgSetting.name;
-          reportSettingsProblem(Log.WARN,msg);
-          if (mInstaller != null) {
-            int ret=mInstaller.rename(pkgSetting.origPackage.name,pkgName,useEncryptedFSDir);
-            if (ret < 0) {
-              msg="Error transfering data from old package " + pkgSetting.origPackage.name + " to new package "+ pkgSetting.name;
-              reportSettingsProblem(Log.WARN,msg);
-            }
-            mInstaller.remove(pkgSetting.origPackage.name,useEncryptedFSDir);
-          }
-          mSettings.removePackageLP(pkgSetting.origPackage.name);
-        }
-      }
       if (mInstaller != null) {
         int ret=mInstaller.install(pkgName,useEncryptedFSDir,pkg.applicationInfo.uid,pkg.applicationInfo.uid);
         if (ret < 0) {
@@ -305,10 +319,6 @@ synchronized (mPackages) {
       }
     }
     pkgSetting.uidError=uidError;
-  }
-  if (pkgSetting.origPackage != null) {
-    mTransferedPackages.add(pkgSetting.origPackage.name);
-    pkgSetting.origPackage=null;
   }
   if (mInstaller != null) {
     String path=scanFile.getPath();
@@ -368,7 +378,7 @@ synchronized (mPackages) {
         }
  else {
           PackageParser.Provider other=mProviders.get(names[j]);
-          Log.w(TAG,"Skipping provider name " + names[j] + " (in package "+ pkg.applicationInfo.packageName+ "): name already used by "+ ((other != null && other.component != null) ? other.component.getPackageName() : "?"));
+          Log.w(TAG,"Skipping provider name " + names[j] + " (in package "+ pkg.applicationInfo.packageName+ "): name already used by "+ ((other != null && other.getComponentName() != null) ? other.getComponentName().getPackageName() : "?"));
         }
       }
       if ((parseFlags & PackageParser.PARSE_CHATTY) != 0) {
@@ -537,7 +547,7 @@ synchronized (mPackages) {
       a.info.sourceDir=pkg.applicationInfo.sourceDir;
       a.info.publicSourceDir=pkg.applicationInfo.publicSourceDir;
       a.info.dataDir=pkg.applicationInfo.dataDir;
-      mInstrumentation.put(a.component,a);
+      mInstrumentation.put(a.getComponentName(),a);
       if ((parseFlags & PackageParser.PARSE_CHATTY) != 0) {
         if (r == null) {
           r=new StringBuilder(256);
