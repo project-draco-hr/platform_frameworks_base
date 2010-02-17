@@ -1,19 +1,58 @@
 {
-  Intent broadcast=new Intent(ConnectivityManager.ACTION_TETHER_STATE_CHANGED);
-  broadcast.addFlags(Intent.FLAG_RECEIVER_REPLACE_PENDING);
-  broadcast.putExtra(ConnectivityManager.EXTRA_AVAILABLE_TETHER_COUNT,mAvailableIfaces.size());
-  broadcast.putExtra(ConnectivityManager.EXTRA_ACTIVE_TETHER_COUNT,mActiveIfaces.size());
-  mContext.sendBroadcast(broadcast);
-  if (mAvailableIfaces.size() > 0) {
-    boolean tellUser=(Settings.Secure.getInt(mContext.getContentResolver(),Settings.Secure.TETHER_NOTIFY,0) == 1);
-    if (tellUser) {
-      showTetherAvailableNotification();
+  IBinder b=ServiceManager.getService(Context.CONNECTIVITY_SERVICE);
+  IConnectivityManager service=IConnectivityManager.Stub.asInterface(b);
+  try {
+    if (!service.isTetheringSupported())     return;
+  }
+ catch (  RemoteException e) {
+    return;
+  }
+  ArrayList<String> availableList=new ArrayList<String>();
+  ArrayList<String> activeList=new ArrayList<String>();
+  ArrayList<String> erroredList=new ArrayList<String>();
+synchronized (mIfaces) {
+    Set ifaces=mIfaces.keySet();
+    for (    Object iface : ifaces) {
+      TetherInterfaceSM sm=mIfaces.get(iface);
+      if (sm != null) {
+        if (sm.isErrored()) {
+          erroredList.add((String)iface);
+        }
+ else         if (sm.isAvailable()) {
+          availableList.add((String)iface);
+        }
+ else         if (sm.isTethered()) {
+          activeList.add((String)iface);
+        }
+      }
     }
   }
- else   if (mActiveIfaces.size() > 0) {
-    showTetheredNotification();
+  Intent broadcast=new Intent(ConnectivityManager.ACTION_TETHER_STATE_CHANGED);
+  broadcast.addFlags(Intent.FLAG_RECEIVER_REPLACE_PENDING);
+  broadcast.putStringArrayListExtra(ConnectivityManager.EXTRA_AVAILABLE_TETHER,availableList);
+  broadcast.putStringArrayListExtra(ConnectivityManager.EXTRA_ACTIVE_TETHER,activeList);
+  broadcast.putStringArrayListExtra(ConnectivityManager.EXTRA_ERRORED_TETHER,erroredList);
+  mContext.sendStickyBroadcast(broadcast);
+  boolean tellUser=(Settings.Secure.getInt(mContext.getContentResolver(),Settings.Secure.TETHER_NOTIFY,0) == 1);
+  for (  Object o : activeList) {
+    String s=(String)o;
+    for (    Object regexObject : mTetherableUsbRegexs) {
+      if (s.matches((String)regexObject)) {
+        showTetheredNotification();
+        return;
+      }
+    }
   }
- else {
-    clearNotification();
+  if (tellUser) {
+    for (    Object o : availableList) {
+      String s=(String)o;
+      for (      Object matchObject : mTetherableUsbRegexs) {
+        if (s.matches((String)matchObject)) {
+          showTetherAvailableNotification();
+          return;
+        }
+      }
+    }
   }
+  clearNotification();
 }
