@@ -1,0 +1,75 @@
+{
+  mHandler.post(new Runnable(){
+    public void run(){
+      mHandler.removeCallbacks(this);
+      int returnCode=currentStatus;
+      boolean moveSucceeded=(returnCode == PackageManager.MOVE_SUCCEEDED);
+      if (moveSucceeded) {
+        int uid=-1;
+synchronized (mPackages) {
+          uid=mPackages.get(mp.packageName).applicationInfo.uid;
+        }
+        ArrayList<String> pkgList=new ArrayList<String>();
+        pkgList.add(mp.packageName);
+        int uidArr[]=new int[]{uid};
+        sendResourcesChangedBroadcast(false,pkgList,uidArr);
+synchronized (mPackages) {
+          PackageParser.Package pkg=mPackages.get(mp.packageName);
+          if (pkg != null) {
+            String oldCodePath=pkg.mPath;
+            String newCodePath=mp.targetArgs.getCodePath();
+            String newResPath=mp.targetArgs.getResourcePath();
+            pkg.mPath=newCodePath;
+            if (moveDexFiles(pkg) != PackageManager.INSTALL_SUCCEEDED) {
+              pkg.mPath=pkg.mScanPath;
+              returnCode=PackageManager.MOVE_FAILED_INSUFFICIENT_STORAGE;
+              moveSucceeded=false;
+            }
+ else {
+              pkg.mScanPath=newCodePath;
+              pkg.applicationInfo.sourceDir=newCodePath;
+              pkg.applicationInfo.publicSourceDir=newResPath;
+              PackageSetting ps=(PackageSetting)pkg.mExtras;
+              ps.codePath=new File(pkg.applicationInfo.sourceDir);
+              ps.codePathString=ps.codePath.getPath();
+              ps.resourcePath=new File(pkg.applicationInfo.publicSourceDir);
+              ps.resourcePathString=ps.resourcePath.getPath();
+              if ((mp.flags & PackageManager.INSTALL_EXTERNAL) != 0) {
+                pkg.applicationInfo.flags|=ApplicationInfo.FLAG_ON_SDCARD;
+              }
+ else {
+                pkg.applicationInfo.flags&=~ApplicationInfo.FLAG_ON_SDCARD;
+              }
+              ps.setFlags(pkg.applicationInfo.flags);
+              mAppDirs.remove(oldCodePath);
+              mAppDirs.put(newCodePath,pkg);
+              mSettings.writeLP();
+            }
+          }
+        }
+        if (moveSucceeded) {
+synchronized (mInstallLock) {
+            mp.srcArgs.cleanUpResourcesLI();
+          }
+          sendResourcesChangedBroadcast(true,pkgList,uidArr);
+          Runtime.getRuntime().gc();
+        }
+      }
+      if (!moveSucceeded) {
+        if (mp.targetArgs != null) {
+          mp.targetArgs.doPostInstall(PackageManager.INSTALL_FAILED_INTERNAL_ERROR);
+        }
+      }
+      IPackageMoveObserver observer=mp.observer;
+      if (observer != null) {
+        try {
+          observer.packageMoved(mp.packageName,returnCode);
+        }
+ catch (        RemoteException e) {
+          Log.i(TAG,"Observer no longer exists.");
+        }
+      }
+    }
+  }
+);
+}
