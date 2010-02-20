@@ -1,30 +1,61 @@
 {
   Context context=mContext;
-  BroadcastReceiver broadcastReceiver=new BroadcastReceiver(){
-    @Override public void onReceive(    Context context,    Intent intent){
+  PackageMonitor monitor=new PackageMonitor(){
+    @Override public void onSomePackagesChanged(){
 synchronized (mLock) {
         populateAccessibilityServiceListLocked();
-        if (intent.getAction() == Intent.ACTION_BOOT_COMPLETED) {
+        manageServicesLocked();
+      }
+    }
+    @Override public boolean onHandleForceStop(    Intent intent,    String[] packages,    int uid,    boolean doit){
+synchronized (mLock) {
+        boolean changed=false;
+        Iterator<ComponentName> it=mEnabledServices.iterator();
+        while (it.hasNext()) {
+          ComponentName comp=it.next();
+          String compPkg=comp.getPackageName();
+          for (          String pkg : packages) {
+            if (compPkg.equals(pkg)) {
+              if (!doit) {
+                return true;
+              }
+              it.remove();
+              changed=true;
+            }
+          }
+        }
+        if (changed) {
+          it=mEnabledServices.iterator();
+          StringBuilder str=new StringBuilder();
+          while (it.hasNext()) {
+            if (str.length() > 0) {
+              str.append(':');
+            }
+            str.append(it.next().flattenToShortString());
+          }
+          Settings.Secure.putString(mContext.getContentResolver(),Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,str.toString());
+          manageServicesLocked();
+        }
+        return false;
+      }
+    }
+    @Override public void onReceive(    Context context,    Intent intent){
+      if (intent.getAction() == Intent.ACTION_BOOT_COMPLETED) {
+synchronized (mLock) {
+          populateAccessibilityServiceListLocked();
           mIsEnabled=Settings.Secure.getInt(mContext.getContentResolver(),Settings.Secure.ACCESSIBILITY_ENABLED,0) == 1;
           if (mIsEnabled) {
             updateClientsLocked();
           }
+          manageServicesLocked();
         }
-        manageServicesLocked();
+        return;
       }
+      super.onReceive(context,intent);
     }
   }
 ;
-  IntentFilter packageFilter=new IntentFilter();
-  packageFilter.addAction(Intent.ACTION_PACKAGE_ADDED);
-  packageFilter.addAction(Intent.ACTION_PACKAGE_REMOVED);
-  packageFilter.addAction(Intent.ACTION_PACKAGE_RESTARTED);
-  packageFilter.addDataScheme("package");
-  context.registerReceiver(broadcastReceiver,packageFilter);
-  IntentFilter sdFilter=new IntentFilter();
-  sdFilter.addAction(Intent.ACTION_EXTERNAL_APPLICATIONS_AVAILABLE);
-  sdFilter.addAction(Intent.ACTION_EXTERNAL_APPLICATIONS_UNAVAILABLE);
-  mContext.registerReceiver(broadcastReceiver,sdFilter);
+  monitor.register(context,true);
   IntentFilter bootFiler=new IntentFilter(Intent.ACTION_BOOT_COMPLETED);
-  mContext.registerReceiver(broadcastReceiver,bootFiler);
+  mContext.registerReceiver(monitor,bootFiler);
 }
