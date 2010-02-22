@@ -1,0 +1,65 @@
+{
+  int i, N;
+  if (uid < 0) {
+    try {
+      uid=ActivityThread.getPackageManager().getPackageUid(name);
+    }
+ catch (    RemoteException e) {
+    }
+  }
+  if (doit) {
+    Log.i(TAG,"Force stopping package " + name + " uid="+ uid);
+    Iterator<SparseArray<Long>> badApps=mProcessCrashTimes.getMap().values().iterator();
+    while (badApps.hasNext()) {
+      SparseArray<Long> ba=badApps.next();
+      if (ba.get(uid) != null) {
+        badApps.remove();
+      }
+    }
+  }
+  boolean didSomething=killPackageProcessesLocked(name,uid,-100,callerWillRestart,doit);
+  for (i=mHistory.size() - 1; i >= 0; i--) {
+    HistoryRecord r=(HistoryRecord)mHistory.get(i);
+    if (r.packageName.equals(name)) {
+      if (!doit) {
+        return true;
+      }
+      didSomething=true;
+      Log.i(TAG,"  Force finishing activity " + r);
+      if (r.app != null) {
+        r.app.removed=true;
+      }
+      r.app=null;
+      finishActivityLocked(r,i,Activity.RESULT_CANCELED,null,"uninstall");
+    }
+  }
+  ArrayList<ServiceRecord> services=new ArrayList<ServiceRecord>();
+  for (  ServiceRecord service : mServices.values()) {
+    if (service.packageName.equals(name)) {
+      if (!doit) {
+        return true;
+      }
+      didSomething=true;
+      Log.i(TAG,"  Force stopping service " + service);
+      if (service.app != null) {
+        service.app.removed=true;
+      }
+      service.app=null;
+      services.add(service);
+    }
+  }
+  N=services.size();
+  for (i=0; i < N; i++) {
+    bringDownServiceLocked(services.get(i),true);
+  }
+  if (doit) {
+    if (purgeCache) {
+      AttributeCache ac=AttributeCache.instance();
+      if (ac != null) {
+        ac.removePackage(name);
+      }
+    }
+    resumeTopActivityLocked(null);
+  }
+  return didSomething;
+}
