@@ -14,32 +14,37 @@ synchronized (mInstallLock) {
         }
         args.doPostInstall(res.returnCode);
       }
-      if (res.returnCode == PackageManager.INSTALL_SUCCEEDED) {
-        res.removedInfo.sendBroadcast(false,true);
-        Bundle extras=new Bundle(1);
-        extras.putInt(Intent.EXTRA_UID,res.uid);
-        final boolean update=res.removedInfo.removedPackage != null;
-        if (update) {
-          extras.putBoolean(Intent.EXTRA_REPLACING,true);
-        }
-        sendPackageBroadcast(Intent.ACTION_PACKAGE_ADDED,res.pkg.applicationInfo.packageName,extras);
-        if (update) {
-          sendPackageBroadcast(Intent.ACTION_PACKAGE_REPLACED,res.pkg.applicationInfo.packageName,extras);
-        }
-        if (res.removedInfo.args != null) {
-synchronized (mInstallLock) {
-            res.removedInfo.args.doPostDeleteLI(true);
+      final boolean update=res.removedInfo.removedPackage != null;
+      boolean doRestore=(!update && res.pkg != null && res.pkg.applicationInfo.backupAgentName != null);
+      int token;
+      if (mNextInstallToken < 0)       mNextInstallToken=1;
+      token=mNextInstallToken++;
+      PostInstallData data=new PostInstallData(args,res);
+      mRunningInstalls.put(token,data);
+      if (DEBUG_INSTALL)       Log.v(TAG,"+ starting restore round-trip " + token);
+      if (res.returnCode == PackageManager.INSTALL_SUCCEEDED && doRestore) {
+        IBackupManager bm=IBackupManager.Stub.asInterface(ServiceManager.getService(Context.BACKUP_SERVICE));
+        if (bm != null) {
+          if (DEBUG_INSTALL)           Log.v(TAG,"token " + token + " to BM for possible restore");
+          try {
+            bm.restoreAtInstall(res.pkg.applicationInfo.packageName,token);
+          }
+ catch (          RemoteException e) {
+          }
+catch (          Exception e) {
+            Log.e(TAG,"Exception trying to enqueue restore",e);
+            doRestore=false;
           }
         }
+ else {
+          Log.e(TAG,"Backup Manager not found!");
+          doRestore=false;
+        }
       }
-      Runtime.getRuntime().gc();
-      if (args.observer != null) {
-        try {
-          args.observer.packageInstalled(res.name,res.returnCode);
-        }
- catch (        RemoteException e) {
-          Log.i(TAG,"Observer no longer exists.");
-        }
+      if (!doRestore) {
+        if (DEBUG_INSTALL)         Log.v(TAG,"No restore - queue post-install for " + token);
+        Message msg=mHandler.obtainMessage(POST_INSTALL,token,0);
+        mHandler.sendMessage(msg);
       }
     }
   }
