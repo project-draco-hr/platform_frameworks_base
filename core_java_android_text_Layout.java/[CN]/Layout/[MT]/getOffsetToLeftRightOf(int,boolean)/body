@@ -1,0 +1,100 @@
+{
+  int line=getLineForOffset(caret);
+  int lineStart=getLineStart(line);
+  int lineEnd=getLineEnd(line);
+  boolean paraIsRtl=getParagraphDirection(line) == -1;
+  int[] runs=getLineDirections(line).mDirections;
+  int runIndex, runLevel=0, runStart=lineStart, runLimit=lineEnd, newCaret=-1;
+  boolean trailing=false;
+  if (caret == lineStart) {
+    runIndex=-2;
+  }
+ else   if (caret == lineEnd) {
+    runIndex=runs.length;
+  }
+ else {
+    for (runIndex=0; runIndex < runs.length; runIndex+=2) {
+      runStart=lineStart + runs[runIndex];
+      if (caret >= runStart) {
+        runLimit=runStart + (runs[runIndex + 1] & RUN_LENGTH_MASK);
+        if (runLimit > lineEnd) {
+          runLimit=lineEnd;
+        }
+        if (caret < runLimit) {
+          runLevel=(runs[runIndex + 1] >>> RUN_LEVEL_SHIFT) & RUN_LEVEL_MASK;
+          if (caret == runStart) {
+            int prevRunIndex, prevRunLevel, prevRunStart, prevRunLimit;
+            int pos=caret - 1;
+            for (prevRunIndex=0; prevRunIndex < runs.length; prevRunIndex+=2) {
+              prevRunStart=lineStart + runs[prevRunIndex];
+              if (pos >= prevRunStart) {
+                prevRunLimit=prevRunStart + (runs[prevRunIndex + 1] & RUN_LENGTH_MASK);
+                if (prevRunLimit > lineEnd) {
+                  prevRunLimit=lineEnd;
+                }
+                if (pos < prevRunLimit) {
+                  prevRunLevel=(runs[prevRunIndex + 1] >>> RUN_LEVEL_SHIFT) & RUN_LEVEL_MASK;
+                  if (prevRunLevel < runLevel) {
+                    runIndex=prevRunIndex;
+                    runLevel=prevRunLevel;
+                    runStart=prevRunStart;
+                    runLimit=prevRunLimit;
+                    trailing=true;
+                    break;
+                  }
+                }
+              }
+            }
+          }
+          break;
+        }
+      }
+    }
+    if (runIndex != runs.length) {
+      boolean rtlRun=(runLevel & 0x1) != 0;
+      boolean advance=toLeft == rtlRun;
+      if (caret != (advance ? runLimit : runStart) || advance != trailing) {
+        newCaret=getOffsetBeforeAfter(caret,advance);
+        if (newCaret != (advance ? runLimit : runStart)) {
+          return newCaret;
+        }
+      }
+    }
+  }
+  while (true) {
+    boolean advance=toLeft == paraIsRtl;
+    int otherRunIndex=runIndex + (advance ? 2 : -2);
+    if (otherRunIndex >= 0 && otherRunIndex < runs.length) {
+      int otherRunStart=lineStart + runs[otherRunIndex];
+      int otherRunLimit=otherRunStart + (runs[otherRunIndex + 1] & RUN_LENGTH_MASK);
+      if (otherRunLimit > lineEnd) {
+        otherRunLimit=lineEnd;
+      }
+      int otherRunLevel=runs[otherRunIndex + 1] >>> RUN_LEVEL_SHIFT & RUN_LEVEL_MASK;
+      boolean otherRunIsRtl=(otherRunLevel & 1) != 0;
+      advance=toLeft == otherRunIsRtl;
+      if (newCaret == -1) {
+        newCaret=getOffsetBeforeAfter(advance ? otherRunStart : otherRunLimit,advance);
+        if (newCaret == (advance ? otherRunLimit : otherRunStart)) {
+          runIndex=otherRunIndex;
+          runLevel=otherRunLevel;
+          continue;
+        }
+        break;
+      }
+      if (otherRunLevel < runLevel) {
+        newCaret=advance ? otherRunStart : otherRunLimit;
+      }
+      break;
+    }
+    if (newCaret == -1) {
+      newCaret=getOffsetBeforeAfter(caret,advance);
+      break;
+    }
+    if (newCaret <= lineEnd) {
+      newCaret=advance ? lineEnd : lineStart;
+    }
+    break;
+  }
+  return newCaret;
+}
