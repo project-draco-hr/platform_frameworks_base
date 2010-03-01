@@ -9,15 +9,13 @@
     }
   }
   final int action=ev.getAction();
-  final int x=(int)ev.getX();
-  final int y=(int)ev.getY();
   View v;
   int deltaY;
   if (mVelocityTracker == null) {
     mVelocityTracker=VelocityTracker.obtain();
   }
   mVelocityTracker.addMovement(ev);
-switch (action) {
+switch (action & MotionEvent.ACTION_MASK) {
 case MotionEvent.ACTION_DOWN:
 {
 switch (mTouchMode) {
@@ -25,12 +23,16 @@ case TOUCH_MODE_OVERFLING:
 {
           mFlingRunnable.endFling();
           mTouchMode=TOUCH_MODE_OVERSCROLL;
-          mLastY=y;
+          mLastY=(int)ev.getY();
           mMotionCorrection=0;
+          mActivePointerId=ev.getPointerId(0);
           break;
         }
 default :
 {
+        mActivePointerId=ev.getPointerId(0);
+        final int x=(int)ev.getX();
+        final int y=(int)ev.getY();
         int motionPosition=pointToPosition(x,y);
         if (!mDataChanged) {
           if ((mTouchMode != TOUCH_MODE_FLING) && (motionPosition >= 0) && (getAdapter().isEnabled(motionPosition))) {
@@ -44,11 +46,13 @@ default :
             if (ev.getEdgeFlags() != 0 && motionPosition < 0) {
               return false;
             }
-            createScrollingCache();
-            mTouchMode=TOUCH_MODE_SCROLL;
-            mMotionCorrection=0;
-            motionPosition=findMotionRow(y);
-            reportScrollStateChange(OnScrollListener.SCROLL_STATE_TOUCH_SCROLL);
+            if (mTouchMode == TOUCH_MODE_FLING) {
+              createScrollingCache();
+              mTouchMode=TOUCH_MODE_SCROLL;
+              mMotionCorrection=0;
+              motionPosition=findMotionRow(y);
+              reportScrollStateChange(OnScrollListener.SCROLL_STATE_TOUCH_SCROLL);
+            }
           }
         }
         if (motionPosition >= 0) {
@@ -66,6 +70,8 @@ default :
 }
 case MotionEvent.ACTION_MOVE:
 {
+final int pointerIndex=ev.findPointerIndex(mActivePointerId);
+final int y=(int)ev.getY(pointerIndex);
 deltaY=y - mMotionY;
 switch (mTouchMode) {
 case TOUCH_MODE_DOWN:
@@ -120,7 +126,7 @@ trackMotionScroll(incrementalDeltaY,incrementalDeltaY);
 View motionView=this.getChildAt(mMotionPosition - mFirstPosition);
 if (motionView != null) {
 mTouchMode=TOUCH_MODE_SCROLL;
-final int motionPosition=findMotionRow(y);
+final int motionPosition=findClosestMotionRow(y);
 mMotionCorrection=0;
 motionView=getChildAt(motionPosition - mFirstPosition);
 mMotionViewOriginalTop=motionView.getTop();
@@ -209,7 +215,7 @@ reportScrollStateChange(OnScrollListener.SCROLL_STATE_IDLE);
  else {
 final VelocityTracker velocityTracker=mVelocityTracker;
 velocityTracker.computeCurrentVelocity(1000,mMaximumVelocity);
-final int initialVelocity=(int)velocityTracker.getYVelocity();
+final int initialVelocity=(int)velocityTracker.getYVelocity(mActivePointerId);
 if (Math.abs(initialVelocity) > mMinimumVelocity) {
 if (mFlingRunnable == null) {
 mFlingRunnable=new FlingRunnable();
@@ -234,7 +240,7 @@ mFlingRunnable=new FlingRunnable();
 }
 final VelocityTracker velocityTracker=mVelocityTracker;
 velocityTracker.computeCurrentVelocity(1000,mMaximumVelocity);
-final int initialVelocity=(int)velocityTracker.getYVelocity();
+final int initialVelocity=(int)velocityTracker.getYVelocity(mActivePointerId);
 reportScrollStateChange(OnScrollListener.SCROLL_STATE_FLING);
 if (Math.abs(initialVelocity) > mMinimumVelocity) {
 mFlingRunnable.startOverfling(-initialVelocity);
@@ -254,6 +260,7 @@ if (mVelocityTracker != null) {
 mVelocityTracker.recycle();
 mVelocityTracker=null;
 }
+mActivePointerId=INVALID_POINTER;
 if (PROFILE_SCROLLING) {
 if (mScrollProfilingStarted) {
 Debug.stopMethodTracing();
@@ -290,6 +297,22 @@ mVelocityTracker.recycle();
 mVelocityTracker=null;
 }
 }
+mActivePointerId=INVALID_POINTER;
+break;
+}
+case MotionEvent.ACTION_POINTER_UP:
+{
+onSecondaryPointerUp(ev);
+final int x=mMotionX;
+final int y=mMotionY;
+final int motionPosition=pointToPosition(x,y);
+if (motionPosition >= 0) {
+v=getChildAt(motionPosition - mFirstPosition);
+mMotionViewOriginalTop=v.getTop();
+mMotionPosition=motionPosition;
+}
+mLastY=y;
+break;
 }
 }
 return true;

@@ -1,32 +1,20 @@
 {
   String action=intent.getAction();
-  if (action.equals(Intent.ACTION_UMS_CONNECTED)) {
-    Log.w(TAG,"got UMS connected");
-synchronized (Tethering.this) {
-      if (mUsbResetExpected != 0) {
-        Log.w(TAG,"mUsbResetExpected == " + mUsbResetExpected + ", ignored");
-        mUsbResetExpected--;
-        return;
-      }
+  if (action.equals(Intent.ACTION_BATTERY_CHANGED)) {
+    boolean usbConnected=(intent.getIntExtra(BatteryManager.EXTRA_PLUGGED,-1) == BatteryManager.BATTERY_PLUGGED_USB);
+    if (mBooted) {
+      Tethering.this.enableUsbIfaces(usbConnected);
     }
-    Tethering.this.enableUsbIfaces(true);
-  }
- else   if (action.equals(Intent.ACTION_UMS_DISCONNECTED)) {
-    Log.w(TAG,"got UMS disconneded broadcast");
-synchronized (Tethering.this) {
-      if (mUsbResetExpected != 0) {
-        Log.w(TAG,"mUsbResetExpected == " + mUsbResetExpected + ", ignored");
-        mUsbResetExpected--;
-        return;
-      }
+ else {
+      mDeferedUsbConnection=usbConnected;
     }
-    Tethering.this.enableUsbIfaces(false);
   }
  else   if (action.equals(ConnectivityManager.CONNECTIVITY_ACTION)) {
     IBinder b=ServiceManager.getService(Context.CONNECTIVITY_SERVICE);
     IConnectivityManager service=IConnectivityManager.Stub.asInterface(b);
     try {
-      NetworkInfo info=service.getNetworkInfo(ConnectivityManager.TYPE_MOBILE_DUN);
+      int netType=(mUseHiPri ? ConnectivityManager.TYPE_MOBILE_HIPRI : ConnectivityManager.TYPE_MOBILE_DUN);
+      NetworkInfo info=service.getNetworkInfo(netType);
       int msg;
       if (info != null && info.isConnected() == true) {
         msg=TetherMasterSM.CMD_CELL_DUN_ENABLED;
@@ -37,6 +25,12 @@ synchronized (Tethering.this) {
       mTetherMasterSM.sendMessage(mTetherMasterSM.obtainMessage(msg));
     }
  catch (    RemoteException e) {
+    }
+  }
+ else   if (action.equals(Intent.ACTION_BOOT_COMPLETED)) {
+    mBooted=true;
+    if (mDeferedUsbConnection) {
+      Tethering.this.enableUsbIfaces(true);
     }
   }
 }
