@@ -1,60 +1,27 @@
 {
-  if (localLOGV)   Log.d(TAG,"enableSensor " + name + "(#"+ sensor+ ") "+ enable);
-  int uid=Binder.getCallingUid();
-  long identity=Binder.clearCallingIdentity();
-  if (enable == SENSOR_DISABLE) {
-    mBatteryStats.noteStopSensor(uid,sensor);
-  }
- else {
-    mBatteryStats.noteStartSensor(uid,sensor);
-  }
-  Binder.restoreCallingIdentity(identity);
+  if (localLOGV)   Slog.d(TAG,"enableSensor " + name + "(#"+ sensor+ ") "+ enable);
   if (binder == null) {
-    Log.w(TAG,"listener is null (sensor=" + name + ", id="+ sensor+ ")");
+    Slog.e(TAG,"listener is null (sensor=" + name + ", id="+ sensor+ ")");
     return false;
   }
+  if (enable < 0 && (enable != SENSOR_DISABLE)) {
+    Slog.e(TAG,"invalid enable parameter (enable=" + enable + ", sensor="+ name+ ", id="+ sensor+ ")");
+    return false;
+  }
+  boolean res;
+  int uid=Binder.getCallingUid();
 synchronized (mListeners) {
-    if (enable != SENSOR_DISABLE && !_sensors_control_activate(sensor,true)) {
-      Log.w(TAG,"could not enable sensor " + sensor);
-      return false;
-    }
-    Listener l=null;
-    int minDelay=enable;
-    for (    Listener listener : mListeners) {
-      if (binder == listener.mToken) {
-        l=listener;
+    res=enableSensorInternalLocked(binder,uid,name,sensor,enable);
+    if (res == true) {
+      long identity=Binder.clearCallingIdentity();
+      if (enable == SENSOR_DISABLE) {
+        mBatteryStats.noteStopSensor(uid,sensor);
       }
-      if (minDelay > listener.mDelay)       minDelay=listener.mDelay;
-    }
-    if (l == null && enable != SENSOR_DISABLE) {
-      l=new Listener(binder);
-      binder.linkToDeath(l,0);
-      mListeners.add(l);
-      mListeners.notify();
-    }
-    if (l == null) {
-      Log.w(TAG,"listener with binder " + binder + ", doesn't exist (sensor="+ name+ ", id="+ sensor+ ")");
-      return false;
-    }
-    if (minDelay >= 0) {
-      _sensors_control_set_delay(minDelay);
-    }
-    if (enable != SENSOR_DISABLE) {
-      l.addSensor(sensor,enable);
-    }
  else {
-      l.removeSensor(sensor);
-      deactivateIfUnusedLocked(sensor);
-      if (l.mSensors == 0) {
-        mListeners.remove(l);
-        binder.unlinkToDeath(l,0);
-        mListeners.notify();
+        mBatteryStats.noteStartSensor(uid,sensor);
       }
-    }
-    if (mListeners.size() == 0) {
-      _sensors_control_wake();
-      _sensors_control_close();
+      Binder.restoreCallingIdentity(identity);
     }
   }
-  return true;
+  return res;
 }
