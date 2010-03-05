@@ -1,6 +1,14 @@
 {
   if (DebugFlags.WEB_VIEW && msg.what != INVAL_RECT_MSG_ID) {
-    Log.v(LOGTAG,msg.what < REMEMBER_PASSWORD || msg.what > FIND_AGAIN ? Integer.toString(msg.what) : HandlerDebugString[msg.what - REMEMBER_PASSWORD]);
+    if (msg.what >= FIRST_PRIVATE_MSG_ID && msg.what <= LAST_PRIVATE_MSG_ID) {
+      Log.v(LOGTAG,HandlerPrivateDebugString[msg.what - FIRST_PRIVATE_MSG_ID]);
+    }
+ else     if (msg.what >= FIRST_PACKAGE_MSG_ID && msg.what <= LAST_PACKAGE_MSG_ID) {
+      Log.v(LOGTAG,HandlerPackageDebugString[msg.what - FIRST_PACKAGE_MSG_ID]);
+    }
+ else {
+      Log.v(LOGTAG,Integer.toString(msg.what));
+    }
   }
   if (mWebViewCore == null) {
     return;
@@ -18,62 +26,50 @@ case NEVER_REMEMBER_PASSWORD:
     ((Message)msg.obj).sendToTarget();
     break;
   }
-case SWITCH_TO_SHORTPRESS:
+case PREVENT_DEFAULT_TIMEOUT:
 {
-  if (mPreventDrag == PREVENT_DRAG_MAYBE_YES) {
-    mPreventDrag=PREVENT_DRAG_CANCEL;
-    mPreventLongPress=false;
-    mPreventDoubleTap=false;
-    mWebViewCore.removeMessages(EventHub.TOUCH_EVENT);
-    WebViewCore.TouchEventData ted=new WebViewCore.TouchEventData();
-    ted.mAction=MotionEvent.ACTION_CANCEL;
-    mWebViewCore.sendMessage(EventHub.TOUCH_EVENT,ted);
-  }
-  if (mTouchMode == TOUCH_INIT_MODE) {
-    mTouchMode=mFullScreenHolder == null ? TOUCH_SHORTPRESS_START_MODE : TOUCH_SHORTPRESS_MODE;
-    updateSelection();
-  }
- else   if (mTouchMode == TOUCH_DOUBLE_TAP_MODE) {
-    mTouchMode=TOUCH_DONE_MODE;
+  if ((msg.arg1 == MotionEvent.ACTION_DOWN && mPreventDefault == PREVENT_DEFAULT_MAYBE_YES) || (msg.arg1 == MotionEvent.ACTION_MOVE && mPreventDefault == PREVENT_DEFAULT_NO_FROM_TOUCH_DOWN)) {
+    cancelWebCoreTouchEvent(viewToContentX((int)mLastTouchX + mScrollX),viewToContentY((int)mLastTouchY + mScrollY),true);
   }
   break;
 }
+case SWITCH_TO_SHORTPRESS:
+{
+if (mTouchMode == TOUCH_INIT_MODE) {
+  if (mPreventDefault != PREVENT_DEFAULT_YES) {
+    mTouchMode=TOUCH_SHORTPRESS_START_MODE;
+    updateSelection();
+  }
+ else {
+    mTouchMode=TOUCH_SHORTPRESS_MODE;
+  }
+}
+ else if (mTouchMode == TOUCH_DOUBLE_TAP_MODE) {
+  mTouchMode=TOUCH_DONE_MODE;
+}
+break;
+}
 case SWITCH_TO_LONGPRESS:
 {
-if (mPreventLongPress) {
-  mTouchMode=TOUCH_DONE_MODE;
-  WebViewCore.TouchEventData ted=new WebViewCore.TouchEventData();
-  ted.mAction=WebViewCore.ACTION_LONGPRESS;
-  ted.mX=viewToContentX((int)mLastTouchX + mScrollX);
-  ted.mY=viewToContentY((int)mLastTouchY + mScrollY);
-  ted.mEventTime=SystemClock.uptimeMillis();
-  ted.mMetaState=0;
-  mWebViewCore.sendMessage(EventHub.TOUCH_EVENT,ted);
+if (inFullScreenMode() || mDeferTouchProcess) {
+TouchEventData ted=new TouchEventData();
+ted.mAction=WebViewCore.ACTION_LONGPRESS;
+ted.mX=viewToContentX((int)mLastTouchX + mScrollX);
+ted.mY=viewToContentY((int)mLastTouchY + mScrollY);
+ted.mMetaState=0;
+ted.mReprocess=mDeferTouchProcess;
+mWebViewCore.sendMessage(EventHub.TOUCH_EVENT,ted);
 }
- else if (mPreventDrag != PREVENT_DRAG_YES) {
-  mTouchMode=TOUCH_DONE_MODE;
-  if (mFullScreenHolder == null) {
-    performLongClick();
-    rebuildWebTextView();
-  }
+ else if (mPreventDefault != PREVENT_DEFAULT_YES) {
+mTouchMode=TOUCH_DONE_MODE;
+performLongClick();
+rebuildWebTextView();
 }
 break;
 }
 case RELEASE_SINGLE_TAP:
 {
-if (mPreventDrag == PREVENT_DRAG_MAYBE_YES) {
-mPreventDrag=PREVENT_DRAG_CANCEL;
-mPreventLongPress=false;
-mPreventDoubleTap=false;
-mWebViewCore.removeMessages(EventHub.TOUCH_EVENT);
-WebViewCore.TouchEventData ted=new WebViewCore.TouchEventData();
-ted.mAction=MotionEvent.ACTION_CANCEL;
-mWebViewCore.sendMessage(EventHub.TOUCH_EVENT,ted);
-}
-if (mPreventDrag != PREVENT_DRAG_YES) {
-mTouchMode=TOUCH_DONE_MODE;
 doShortPress();
-}
 break;
 }
 case SCROLL_BY_MSG_ID:
@@ -252,16 +248,63 @@ case WEBCORE_NEED_TOUCH_EVENTS:
 mForwardTouchEvents=(msg.arg1 != 0);
 break;
 case PREVENT_TOUCH_ID:
-if (msg.arg1 == MotionEvent.ACTION_DOWN) {
-if (mPreventDrag == PREVENT_DRAG_MAYBE_YES) {
-mPreventDrag=(msg.arg2 & TOUCH_PREVENT_DRAG) == TOUCH_PREVENT_DRAG ? PREVENT_DRAG_YES : PREVENT_DRAG_NO;
-if (mPreventDrag == PREVENT_DRAG_YES) {
-mTouchMode=TOUCH_DONE_MODE;
+if (inFullScreenMode()) {
+break;
 }
- else {
-mPreventLongPress=(msg.arg2 & TOUCH_PREVENT_LONGPRESS) == TOUCH_PREVENT_LONGPRESS;
-mPreventDoubleTap=(msg.arg2 & TOUCH_PREVENT_DOUBLETAP) == TOUCH_PREVENT_DOUBLETAP;
+if (msg.obj == null) {
+if (msg.arg1 == MotionEvent.ACTION_DOWN && mPreventDefault == PREVENT_DEFAULT_MAYBE_YES) {
+mPreventDefault=msg.arg2 == 1 ? PREVENT_DEFAULT_YES : PREVENT_DEFAULT_NO_FROM_TOUCH_DOWN;
 }
+ else if (msg.arg1 == MotionEvent.ACTION_MOVE && mPreventDefault == PREVENT_DEFAULT_NO_FROM_TOUCH_DOWN) {
+mPreventDefault=msg.arg2 == 1 ? PREVENT_DEFAULT_YES : PREVENT_DEFAULT_NO;
+}
+}
+ else if (msg.arg2 == 0) {
+TouchEventData ted=(TouchEventData)msg.obj;
+switch (ted.mAction) {
+case MotionEvent.ACTION_DOWN:
+mLastDeferTouchX=contentToViewX(ted.mX) - mScrollX;
+mLastDeferTouchY=contentToViewY(ted.mY) - mScrollY;
+mDeferTouchMode=TOUCH_INIT_MODE;
+break;
+case MotionEvent.ACTION_MOVE:
+{
+int x=contentToViewX(ted.mX) - mScrollX;
+int y=contentToViewY(ted.mY) - mScrollY;
+if (mDeferTouchMode != TOUCH_DRAG_MODE) {
+mDeferTouchMode=TOUCH_DRAG_MODE;
+mLastDeferTouchX=x;
+mLastDeferTouchY=y;
+startDrag();
+}
+doDrag((int)(mLastDeferTouchX - x),(int)(mLastDeferTouchY - y));
+mLastDeferTouchX=x;
+mLastDeferTouchY=y;
+break;
+}
+case MotionEvent.ACTION_UP:
+case MotionEvent.ACTION_CANCEL:
+if (mDeferTouchMode == TOUCH_DRAG_MODE) {
+mScroller.springback(mScrollX,mScrollY,0,computeMaxScrollX(),0,computeMaxScrollY());
+invalidate();
+WebViewCore.resumePriority();
+}
+mDeferTouchMode=TOUCH_DONE_MODE;
+break;
+case WebViewCore.ACTION_DOUBLETAP:
+mLastTouchX=contentToViewX(ted.mX) - mScrollX;
+mLastTouchY=contentToViewY(ted.mY) - mScrollY;
+doDoubleTap();
+mDeferTouchMode=TOUCH_DONE_MODE;
+break;
+case WebViewCore.ACTION_LONGPRESS:
+HitTestResult hitTest=getHitTestResult();
+if (hitTest != null && hitTest.mType != HitTestResult.UNKNOWN_TYPE) {
+performLongClick();
+rebuildWebTextView();
+}
+mDeferTouchMode=TOUCH_DONE_MODE;
+break;
 }
 }
 break;
@@ -294,7 +337,7 @@ case SHOW_FULLSCREEN:
 {
 WebViewCore.PluginFullScreenData data=(WebViewCore.PluginFullScreenData)msg.obj;
 if (data.mNpp != 0 && data.mView != null) {
-if (mFullScreenHolder != null) {
+if (inFullScreenMode()) {
 Log.w(LOGTAG,"Should not have another full screen.");
 mFullScreenHolder.dismiss();
 }
@@ -305,7 +348,7 @@ mFullScreenHolder.setCancelable(false);
 mFullScreenHolder.setCanceledOnTouchOutside(false);
 mFullScreenHolder.show();
 }
- else if (mFullScreenHolder == null) {
+ else if (!inFullScreenMode()) {
 break;
 }
 int x=contentToViewX(data.mDocX);
@@ -338,7 +381,7 @@ mFullScreenHolder.updateBound(contentToViewX(data.mDocX) - mScrollX,contentToVie
 }
 break;
 case HIDE_FULLSCREEN:
-if (mFullScreenHolder != null) {
+if (inFullScreenMode()) {
 mFullScreenHolder.dismiss();
 mFullScreenHolder=null;
 }
