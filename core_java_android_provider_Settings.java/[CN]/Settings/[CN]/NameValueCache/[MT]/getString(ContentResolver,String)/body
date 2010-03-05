@@ -1,6 +1,6 @@
 {
   long newValuesVersion=SystemProperties.getLong(mVersionSystemProperty,0);
-synchronized (mValues) {
+synchronized (this) {
     if (mValuesVersion != newValuesVersion) {
       if (LOCAL_LOGV) {
         Log.v(TAG,"invalidate [" + mUri.getLastPathSegment() + "]: current "+ newValuesVersion+ " != cached "+ mValuesVersion);
@@ -12,15 +12,36 @@ synchronized (mValues) {
       return mValues.get(name);
     }
   }
+  IContentProvider cp=null;
+synchronized (this) {
+    cp=mContentProvider;
+    if (cp == null) {
+      cp=mContentProvider=cr.acquireProvider(mUri.getAuthority());
+    }
+  }
+  if (mCallCommand != null) {
+    try {
+      Bundle b=cp.call(mCallCommand,name,null);
+      if (b != null) {
+        String value=b.getPairValue();
+synchronized (this) {
+          mValues.put(name,value);
+        }
+        return value;
+      }
+    }
+ catch (    RemoteException e) {
+    }
+  }
   Cursor c=null;
   try {
-    c=cr.query(mUri,new String[]{Settings.NameValueTable.VALUE},Settings.NameValueTable.NAME + "=?",new String[]{name},null);
+    c=cp.query(mUri,SELECT_VALUE,NAME_EQ_PLACEHOLDER,new String[]{name},null);
     if (c == null) {
       Log.w(TAG,"Can't get key " + name + " from "+ mUri);
       return null;
     }
     String value=c.moveToNext() ? c.getString(0) : null;
-synchronized (mValues) {
+synchronized (this) {
       mValues.put(name,value);
     }
     if (LOCAL_LOGV) {
@@ -28,7 +49,7 @@ synchronized (mValues) {
     }
     return value;
   }
- catch (  SQLException e) {
+ catch (  RemoteException e) {
     Log.w(TAG,"Can't get key " + name + " from "+ mUri,e);
     return null;
   }
