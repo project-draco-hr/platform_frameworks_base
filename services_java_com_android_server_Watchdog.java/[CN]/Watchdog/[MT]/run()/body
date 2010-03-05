@@ -5,36 +5,32 @@
 synchronized (this) {
       long timeout=TIME_TO_WAIT;
       long start=SystemClock.uptimeMillis();
-      do {
+      while (timeout > 0 && !mForceKillSystem) {
         try {
           wait(timeout);
         }
  catch (        InterruptedException e) {
-          if (SystemProperties.getBoolean("ro.secure",false)) {
-            Slog.e("WatchDog","Woof! Woof! Interrupter!");
-          }
- else {
-            throw new AssertionError("Someone interrupted the watchdog");
-          }
+          Log.wtf(TAG,e);
         }
         timeout=TIME_TO_WAIT - (SystemClock.uptimeMillis() - start);
       }
- while (timeout > 0 && !mForceKillSystem);
       if (mCompleted && !mForceKillSystem) {
         continue;
       }
     }
     String name=(mCurrentMonitor != null) ? mCurrentMonitor.getClass().getName() : "null";
     EventLog.writeEvent(EventLogTags.WATCHDOG,name);
-    Process.sendSignal(Process.myPid(),Process.SIGNAL_QUIT);
-    try {
-      Thread.sleep(10 * 1000);
-    }
- catch (    InterruptedException e) {
-    }
+    ArrayList pids=new ArrayList();
+    pids.add(Process.myPid());
+    File stack=ActivityManagerService.dumpStackTraces(pids);
+    mActivity.addErrorToDropBox("watchdog",null,null,null,name,null,stack,null);
     if (!Debug.isDebuggerConnected()) {
-      Slog.i(TAG,"Watchdog is killing the system process");
+      Slog.w(TAG,"*** WATCHDOG KILLING SYSTEM PROCESS: " + name);
       Process.killProcess(Process.myPid());
+      System.exit(10);
+    }
+ else {
+      Slog.w(TAG,"Debugger connected: Watchdog is *not* killing the system process");
     }
   }
 }
