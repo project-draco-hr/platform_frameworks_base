@@ -1,0 +1,84 @@
+{
+  long ident=Binder.clearCallingIdentity();
+  try {
+    int uiMode=0;
+    if (mCarModeEnabled) {
+      uiMode=Configuration.UI_MODE_TYPE_CAR;
+    }
+ else     if (mDockState == Intent.EXTRA_DOCK_STATE_DESK) {
+      uiMode=Configuration.UI_MODE_TYPE_DESK;
+    }
+    if (uiMode != 0) {
+      if (mNightMode == UiModeManager.MODE_NIGHT_AUTO) {
+        updateTwilightLocked();
+        uiMode|=mComputedNightMode ? Configuration.UI_MODE_NIGHT_YES : Configuration.UI_MODE_NIGHT_NO;
+      }
+ else {
+        uiMode|=mNightMode << 4;
+      }
+    }
+ else {
+      uiMode=Configuration.UI_MODE_TYPE_NORMAL | Configuration.UI_MODE_NIGHT_NO;
+    }
+    if (uiMode != mCurUiMode) {
+      mCurUiMode=uiMode;
+      try {
+        final IActivityManager am=ActivityManagerNative.getDefault();
+        mConfiguration.uiMode=uiMode;
+        am.updateConfiguration(mConfiguration);
+      }
+ catch (      RemoteException e) {
+        Slog.w(TAG,"Failure communicating with activity manager",e);
+      }
+    }
+    String action=null;
+    String oldAction=null;
+    if (mLastBroadcastState == Intent.EXTRA_DOCK_STATE_CAR) {
+      oldAction=UiModeManager.ACTION_EXIT_CAR_MODE;
+    }
+ else     if (mLastBroadcastState == Intent.EXTRA_DOCK_STATE_DESK) {
+      oldAction=UiModeManager.ACTION_EXIT_DESK_MODE;
+    }
+    if (mCarModeEnabled) {
+      if (mLastBroadcastState != Intent.EXTRA_DOCK_STATE_CAR) {
+        adjustStatusBarCarModeLocked();
+        if (oldAction != null) {
+          mContext.sendBroadcast(new Intent(oldAction));
+        }
+        mLastBroadcastState=Intent.EXTRA_DOCK_STATE_CAR;
+        action=UiModeManager.ACTION_ENTER_CAR_MODE;
+      }
+    }
+ else     if (mDockState == Intent.EXTRA_DOCK_STATE_DESK) {
+      if (mLastBroadcastState != Intent.EXTRA_DOCK_STATE_DESK) {
+        if (oldAction != null) {
+          mContext.sendBroadcast(new Intent(oldAction));
+        }
+        mLastBroadcastState=Intent.EXTRA_DOCK_STATE_DESK;
+        action=UiModeManager.ACTION_ENTER_DESK_MODE;
+      }
+    }
+ else {
+      if (mLastBroadcastState == Intent.EXTRA_DOCK_STATE_CAR) {
+        adjustStatusBarCarModeLocked();
+      }
+      mLastBroadcastState=Intent.EXTRA_DOCK_STATE_UNDOCKED;
+      action=oldAction;
+    }
+    if (action != null) {
+      mContext.sendOrderedBroadcast(new Intent(action),null,mResultReceiver,null,Activity.RESULT_OK,null,null);
+    }
+    boolean keepScreenOn=mCharging && ((mCarModeEnabled && mCarModeKeepsScreenOn) || (mCurUiMode == Configuration.UI_MODE_TYPE_DESK && mDeskModeKeepsScreenOn));
+    if (keepScreenOn != mWakeLock.isHeld()) {
+      if (keepScreenOn) {
+        mWakeLock.acquire();
+      }
+ else {
+        mWakeLock.release();
+      }
+    }
+  }
+  finally {
+    Binder.restoreCallingIdentity(ident);
+  }
+}
