@@ -3,23 +3,23 @@
   boolean radioOff;
   BroadcastReceiver br=new BroadcastReceiver(){
     @Override public void onReceive(    Context context,    Intent intent){
-      broadcastDone();
+      actionDone();
     }
   }
 ;
   Log.i(TAG,"Sending shutdown broadcast...");
-  mBroadcastDone=false;
+  mActionDone=false;
   mContext.sendOrderedBroadcast(new Intent(Intent.ACTION_SHUTDOWN),null,br,mHandler,0,null,null);
   final long endTime=System.currentTimeMillis() + MAX_BROADCAST_TIME;
-synchronized (mBroadcastDoneSync) {
-    while (!mBroadcastDone) {
+synchronized (mActionDoneSync) {
+    while (!mActionDone) {
       long delay=endTime - System.currentTimeMillis();
       if (delay <= 0) {
         Log.w(TAG,"Shutdown broadcast timed out");
         break;
       }
       try {
-        mBroadcastDoneSync.wait(delay);
+        mActionDoneSync.wait(delay);
       }
  catch (      InterruptedException e) {
       }
@@ -85,16 +85,49 @@ synchronized (mBroadcastDoneSync) {
     }
     SystemClock.sleep(PHONE_STATE_POLL_SLEEP_MSEC);
   }
-  try {
-    if (mount != null) {
-      mount.shutdown();
-    }
- else {
-      Log.w(TAG,"MountService unavailable for shutdown");
+  IMountShutdownObserver observer=new IMountShutdownObserver.Stub(){
+    public void onShutDownComplete(    int statusCode) throws RemoteException {
+      Log.w(TAG,"Result code " + statusCode + " from MountService.shutdown");
+      actionDone();
     }
   }
- catch (  Exception e) {
-    Log.e(TAG,"Exception during MountService shutdown",e);
+;
+  Log.i(TAG,"Shutting down MountService");
+  mActionDone=false;
+  final long endShutTime=System.currentTimeMillis() + MAX_SHUTDOWN_WAIT_TIME;
+synchronized (mActionDoneSync) {
+    try {
+      if (mount != null) {
+        mount.shutdown(observer);
+      }
+ else {
+        Log.w(TAG,"MountService unavailable for shutdown");
+      }
+    }
+ catch (    Exception e) {
+      Log.e(TAG,"Exception during MountService shutdown",e);
+    }
+    while (!mActionDone) {
+      long delay=endShutTime - System.currentTimeMillis();
+      if (delay <= 0) {
+        Log.w(TAG,"Shutdown wait timed out");
+        break;
+      }
+      try {
+        mActionDoneSync.wait(delay);
+      }
+ catch (      InterruptedException e) {
+      }
+    }
+  }
+  if (mReboot) {
+    Log.i(TAG,"Rebooting, reason: " + mRebootReason);
+    try {
+      Power.reboot(mRebootReason);
+    }
+ catch (    Exception e) {
+      Log.e(TAG,"Reboot failed, will attempt shutdown instead",e);
+    }
   }
   Log.i(TAG,"Performing low-level shutdown...");
   Power.shutdown();
