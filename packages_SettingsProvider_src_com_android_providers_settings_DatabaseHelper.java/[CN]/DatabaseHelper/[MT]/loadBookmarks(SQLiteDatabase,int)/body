@@ -1,27 +1,18 @@
 {
-  FileReader bookmarksReader;
-  final File favFile=new File(Environment.getRootDirectory(),subPath);
-  try {
-    bookmarksReader=new FileReader(favFile);
-  }
- catch (  FileNotFoundException e) {
-    if (!quiet) {
-      Log.e(TAG,"Couldn't find or open bookmarks file " + favFile);
-    }
-    return 0;
-  }
   Intent intent=new Intent(Intent.ACTION_MAIN,null);
   intent.addCategory(Intent.CATEGORY_LAUNCHER);
   ContentValues values=new ContentValues();
   PackageManager packageManager=mContext.getPackageManager();
-  ActivityInfo info;
   int i=startingIndex;
   try {
-    XmlPullParser parser=Xml.newPullParser();
-    parser.setInput(bookmarksReader);
+    XmlResourceParser parser=mContext.getResources().getXml(R.xml.bookmarks);
     XmlUtils.beginDocument(parser,"bookmarks");
-    while (true) {
-      XmlUtils.nextElement(parser);
+    final int depth=parser.getDepth();
+    int type;
+    while (((type=parser.next()) != XmlPullParser.END_TAG || parser.getDepth() > depth) && type != XmlPullParser.END_DOCUMENT) {
+      if (type != XmlPullParser.START_TAG) {
+        continue;
+      }
       String name=parser.getName();
       if (!"bookmark".equals(name)) {
         break;
@@ -33,19 +24,29 @@
       if (TextUtils.isEmpty(shortcutStr)) {
         Log.w(TAG,"Unable to get shortcut for: " + pkg + "/"+ cls);
       }
+      ActivityInfo info=null;
+      ComponentName cn=new ComponentName(pkg,cls);
       try {
-        ComponentName cn=new ComponentName(pkg,cls);
         info=packageManager.getActivityInfo(cn,0);
+      }
+ catch (      PackageManager.NameNotFoundException e) {
+        String[] packages=packageManager.canonicalToCurrentPackageNames(new String[]{pkg});
+        cn=new ComponentName(packages[0],cls);
+        try {
+          info=packageManager.getActivityInfo(cn,0);
+        }
+ catch (        PackageManager.NameNotFoundException e1) {
+          Log.w(TAG,"Unable to add bookmark: " + pkg + "/"+ cls,e);
+        }
+      }
+      if (info != null) {
         intent.setComponent(cn);
         intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        values.put(Settings.Bookmarks.INTENT,intent.toURI());
+        values.put(Settings.Bookmarks.INTENT,intent.toUri(0));
         values.put(Settings.Bookmarks.TITLE,info.loadLabel(packageManager).toString());
         values.put(Settings.Bookmarks.SHORTCUT,shortcutValue);
         db.insert("bookmarks",null,values);
         i++;
-      }
- catch (      PackageManager.NameNotFoundException e) {
-        Log.w(TAG,"Unable to add bookmark: " + pkg + "/"+ cls,e);
       }
     }
   }
