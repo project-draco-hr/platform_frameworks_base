@@ -1,12 +1,13 @@
 {
   final int eventualWifiState=enable ? WIFI_STATE_ENABLED : WIFI_STATE_DISABLED;
-  if (mWifiState == eventualWifiState) {
+  final int wifiState=mWifiStateTracker.getWifiState();
+  if (wifiState == eventualWifiState) {
     return true;
   }
   if (enable && isAirplaneModeOn() && !mAirplaneModeOverwridden) {
     return false;
   }
-  if ((mWifiState == WIFI_STATE_UNKNOWN) && !enable) {
+  if ((wifiState == WIFI_STATE_UNKNOWN) && !enable) {
     return false;
   }
   setWifiEnabledState(enable ? WIFI_STATE_ENABLING : WIFI_STATE_DISABLING,uid);
@@ -14,18 +15,16 @@
     setWifiApEnabledBlocking(false,true,Process.myUid(),null);
   }
   if (enable) {
-synchronized (mWifiStateTracker) {
-      if (!WifiNative.loadDriver()) {
-        Slog.e(TAG,"Failed to load Wi-Fi driver.");
-        setWifiEnabledState(WIFI_STATE_UNKNOWN,uid);
-        return false;
-      }
-      if (!WifiNative.startSupplicant()) {
-        WifiNative.unloadDriver();
-        Slog.e(TAG,"Failed to start supplicant daemon.");
-        setWifiEnabledState(WIFI_STATE_UNKNOWN,uid);
-        return false;
-      }
+    if (!mWifiStateTracker.loadDriver()) {
+      Slog.e(TAG,"Failed to load Wi-Fi driver.");
+      setWifiEnabledState(WIFI_STATE_UNKNOWN,uid);
+      return false;
+    }
+    if (!mWifiStateTracker.startSupplicant()) {
+      mWifiStateTracker.unloadDriver();
+      Slog.e(TAG,"Failed to start supplicant daemon.");
+      setWifiEnabledState(WIFI_STATE_UNKNOWN,uid);
+      return false;
     }
     registerForBroadcasts();
     mWifiStateTracker.startEventLoop();
@@ -34,19 +33,17 @@ synchronized (mWifiStateTracker) {
     mContext.unregisterReceiver(mReceiver);
     mWifiStateTracker.setNotificationVisible(false,0,false,0);
     boolean failedToStopSupplicantOrUnloadDriver=false;
-synchronized (mWifiStateTracker) {
-      if (!WifiNative.stopSupplicant()) {
-        Slog.e(TAG,"Failed to stop supplicant daemon.");
+    if (!mWifiStateTracker.stopSupplicant()) {
+      Slog.e(TAG,"Failed to stop supplicant daemon.");
+      setWifiEnabledState(WIFI_STATE_UNKNOWN,uid);
+      failedToStopSupplicantOrUnloadDriver=true;
+    }
+    mWifiStateTracker.resetConnections(true);
+    if (!mWifiStateTracker.unloadDriver()) {
+      Slog.e(TAG,"Failed to unload Wi-Fi driver.");
+      if (!failedToStopSupplicantOrUnloadDriver) {
         setWifiEnabledState(WIFI_STATE_UNKNOWN,uid);
         failedToStopSupplicantOrUnloadDriver=true;
-      }
-      mWifiStateTracker.resetConnections(true);
-      if (!WifiNative.unloadDriver()) {
-        Slog.e(TAG,"Failed to unload Wi-Fi driver.");
-        if (!failedToStopSupplicantOrUnloadDriver) {
-          setWifiEnabledState(WIFI_STATE_UNKNOWN,uid);
-          failedToStopSupplicantOrUnloadDriver=true;
-        }
       }
     }
     if (failedToStopSupplicantOrUnloadDriver) {
