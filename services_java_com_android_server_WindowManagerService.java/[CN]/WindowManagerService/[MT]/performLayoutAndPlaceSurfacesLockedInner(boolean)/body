@@ -7,7 +7,6 @@
     mFocusMayChange=false;
     updateFocusedWindowLocked(UPDATE_FOCUS_WILL_PLACE_SURFACES);
   }
-  performLayoutLockedInner();
   if (mFxSession == null) {
     mFxSession=new SurfaceSession();
   }
@@ -26,10 +25,44 @@
   boolean animating=false;
   Surface.openTransaction();
   try {
-    boolean restart;
-    boolean forceHiding=false;
     boolean wallpaperForceHidingChanged=false;
+    int repeats=0;
+    int changes=0;
     do {
+      repeats++;
+      if (repeats > 6) {
+        Slog.w(TAG,"Animation repeat aborted after too many iterations");
+        mLayoutNeeded=false;
+        break;
+      }
+      if ((changes & (WindowManagerPolicy.FINISH_LAYOUT_REDO_WALLPAPER | WindowManagerPolicy.FINISH_LAYOUT_REDO_CONFIG | WindowManagerPolicy.FINISH_LAYOUT_REDO_LAYOUT)) != 0) {
+        if ((changes & WindowManagerPolicy.FINISH_LAYOUT_REDO_WALLPAPER) != 0) {
+          if ((adjustWallpaperWindowsLocked() & ADJUST_WALLPAPER_LAYERS_CHANGED) != 0) {
+            assignLayersLocked();
+            mLayoutNeeded=true;
+          }
+        }
+        if ((changes & WindowManagerPolicy.FINISH_LAYOUT_REDO_CONFIG) != 0) {
+          if (DEBUG_LAYOUT)           Slog.v(TAG,"Computing new config from layout");
+          if (updateOrientationFromAppTokensLocked()) {
+            mLayoutNeeded=true;
+            mH.sendEmptyMessage(H.SEND_NEW_CONFIGURATION);
+          }
+        }
+        if ((changes & WindowManagerPolicy.FINISH_LAYOUT_REDO_LAYOUT) != 0) {
+          mLayoutNeeded=true;
+        }
+      }
+      if (repeats < 4) {
+        changes=performLayoutLockedInner();
+        if (changes != 0) {
+          continue;
+        }
+      }
+ else {
+        Slog.w(TAG,"Layout repeat skipped after too many iterations");
+        changes=0;
+      }
       final int transactionSequence=++mTransactionSequence;
       boolean tokensAnimating=false;
       final int NAT=mAppTokens.size();
@@ -46,9 +79,9 @@
       }
       if (DEBUG_APP_TRANSITIONS)       Slog.v(TAG,"*** ANIM STEP: seq=" + transactionSequence + " tokensAnimating="+ tokensAnimating);
       animating=tokensAnimating;
-      restart=false;
       boolean tokenMayBeDrawn=false;
       boolean wallpaperMayChange=false;
+      boolean forceHiding=false;
       mPolicy.beginAnimationLw(dw,dh);
       final int N=mWindows.size();
       for (i=N - 1; i >= 0; i--) {
@@ -88,7 +121,7 @@
               changed=w.showLw(false,false);
               if (DEBUG_VISIBILITY && changed)               Slog.v(TAG,"Now policy shown: " + w);
               if (changed) {
-                if (wallpaperForceHidingChanged && w.isReadyForDisplay()) {
+                if (wallpaperForceHidingChanged && w.isVisibleNow()) {
                   Animation a=mPolicy.createForceHideEnterAnimation();
                   if (a != null) {
                     w.setAnimation(a);
@@ -138,9 +171,7 @@
           w.performShowLocked();
         }
       }
-      if (mPolicy.finishAnimationLw()) {
-        restart=true;
-      }
+      changes|=mPolicy.finishAnimationLw();
       if (tokenMayBeDrawn) {
         final int NT=mTokenList.size();
         for (i=0; i < NT; i++) {
@@ -162,7 +193,7 @@
             if (numInteresting > 0 && wtoken.numDrawnWindows >= numInteresting) {
               if (DEBUG_VISIBILITY)               Slog.v(TAG,"allDrawn: " + wtoken + " interesting="+ numInteresting+ " drawn="+ wtoken.numDrawnWindows);
               wtoken.allDrawn=true;
-              restart=true;
+              changes|=PhoneWindowManager.FINISH_LAYOUT_REDO_ANIM;
               if (!mOpeningApps.contains(wtoken)) {
                 wtoken.showAllWindowsLocked();
               }
@@ -311,35 +342,33 @@ case WindowManagerPolicy.TRANSIT_TASK_TO_BACK:
   mNextAppTransitionPackage=null;
   mOpeningApps.clear();
   mClosingApps.clear();
+  changes|=PhoneWindowManager.FINISH_LAYOUT_REDO_LAYOUT;
   mLayoutNeeded=true;
   if (!moveInputMethodWindowsIfNeededLocked(true)) {
     assignLayersLocked();
   }
-  performLayoutLockedInner();
   updateFocusedWindowLocked(UPDATE_FOCUS_PLACING_SURFACES);
   mFocusMayChange=false;
-  restart=true;
 }
 }
 if (!animating && mAppTransitionRunning) {
 mAppTransitionRunning=false;
 mToBottomApps.clear();
 rebuildAppWindowListLocked();
-restart=true;
+changes|=PhoneWindowManager.FINISH_LAYOUT_REDO_LAYOUT;
 moveInputMethodWindowsIfNeededLocked(false);
 wallpaperMayChange=true;
-mLayoutNeeded=true;
 mFocusMayChange=true;
 }
 int adjResult=0;
-if (wallpaperForceHidingChanged && !restart && !mAppTransitionReady) {
+if (wallpaperForceHidingChanged && changes == 0 && !mAppTransitionReady) {
 WindowState oldWallpaper=mWallpaperTarget;
 if (mLowerWallpaperTarget != null && mLowerWallpaperTarget.mAppToken != null) {
   if (DEBUG_WALLPAPER)   Slog.v(TAG,"wallpaperForceHiding changed with lower=" + mLowerWallpaperTarget);
   if (DEBUG_WALLPAPER)   Slog.v(TAG,"hidden=" + mLowerWallpaperTarget.mAppToken.hidden + " hiddenRequested="+ mLowerWallpaperTarget.mAppToken.hiddenRequested);
   if (mLowerWallpaperTarget.mAppToken.hidden) {
     mLowerWallpaperTarget=mUpperWallpaperTarget=null;
-    restart=true;
+    changes|=PhoneWindowManager.FINISH_LAYOUT_REDO_ANIM;
   }
 }
 adjResult=adjustWallpaperWindowsLocked();
@@ -371,29 +400,26 @@ adjResult=adjustWallpaperWindowsLocked();
 }
 if ((adjResult & ADJUST_WALLPAPER_LAYERS_CHANGED) != 0) {
 if (DEBUG_WALLPAPER) Slog.v(TAG,"Wallpaper layer changed: assigning layers + relayout");
-restart=true;
-mLayoutNeeded=true;
+changes|=PhoneWindowManager.FINISH_LAYOUT_REDO_LAYOUT;
 assignLayersLocked();
 }
  else if ((adjResult & ADJUST_WALLPAPER_VISIBILITY_CHANGED) != 0) {
 if (DEBUG_WALLPAPER) Slog.v(TAG,"Wallpaper visibility changed: relayout");
-restart=true;
-mLayoutNeeded=true;
+changes|=PhoneWindowManager.FINISH_LAYOUT_REDO_LAYOUT;
 }
 if (mFocusMayChange) {
 mFocusMayChange=false;
 if (updateFocusedWindowLocked(UPDATE_FOCUS_PLACING_SURFACES)) {
-  restart=true;
+  changes|=PhoneWindowManager.FINISH_LAYOUT_REDO_ANIM;
   adjResult=0;
 }
 }
 if (mLayoutNeeded) {
-restart=true;
-performLayoutLockedInner();
+changes|=PhoneWindowManager.FINISH_LAYOUT_REDO_LAYOUT;
 }
-if (DEBUG_APP_TRANSITIONS) Slog.v(TAG,"*** ANIM STEP: restart=" + restart);
+if (DEBUG_APP_TRANSITIONS) Slog.v(TAG,"*** ANIM STEP: changes=0x" + Integer.toHexString(changes));
 }
- while (restart);
+ while (changes != 0);
 final boolean someoneLosingFocus=mLosingFocus.size() != 0;
 boolean obscured=false;
 boolean blurring=false;
@@ -420,7 +446,7 @@ if ((w.mAttrs.flags & w.mAttrs.FLAG_SCALED) != 0) {
   w.mLastRequestedHeight=height;
   w.mLastShownFrame.set(w.mShownFrame);
   try {
-    if (SHOW_TRANSACTIONS)     Slog.i(TAG,"  SURFACE " + w.mSurface + ": POS "+ w.mShownFrame.left+ ", "+ w.mShownFrame.top);
+    if (SHOW_TRANSACTIONS)     logSurface(w,"POS " + w.mShownFrame.left + ", "+ w.mShownFrame.top,null);
     w.mSurface.setPosition(w.mShownFrame.left,w.mShownFrame.top);
   }
  catch (  RuntimeException e) {
@@ -441,7 +467,7 @@ if (resize) {
   if (height < 1)   height=1;
   if (w.mSurface != null) {
     try {
-      if (SHOW_TRANSACTIONS)       Slog.i(TAG,"  SURFACE " + w.mSurface + ": POS "+ w.mShownFrame.left+ ","+ w.mShownFrame.top+ " SIZE "+ w.mShownFrame.width()+ "x"+ w.mShownFrame.height());
+      if (SHOW_TRANSACTIONS)       logSurface(w,"POS " + w.mShownFrame.left + ","+ w.mShownFrame.top+ " SIZE "+ w.mShownFrame.width()+ "x"+ w.mShownFrame.height(),null);
       w.mSurface.setSize(width,height);
       w.mSurface.setPosition(w.mShownFrame.left,w.mShownFrame.top);
     }
@@ -493,7 +519,7 @@ if (!w.mAppFreezing && w.mLayoutSeq == mLayoutSeq) {
 if (w.mAttachedHidden || !w.isReadyForDisplay()) {
   if (!w.mLastHidden) {
     w.mLastHidden=true;
-    if (SHOW_TRANSACTIONS)     Slog.i(TAG,"  SURFACE " + w.mSurface + ": HIDE (performLayout)");
+    if (SHOW_TRANSACTIONS)     logSurface(w,"HIDE (performLayout)",null);
     if (w.mSurface != null) {
       try {
         w.mSurface.hide();
@@ -519,7 +545,7 @@ if (w.mAttachedHidden || !w.isReadyForDisplay()) {
   w.mLastDtDy=w.mDtDy;
   w.mLastHScale=w.mHScale;
   w.mLastVScale=w.mVScale;
-  if (SHOW_TRANSACTIONS)   Slog.i(TAG,"  SURFACE " + w.mSurface + ": alpha="+ w.mShownAlpha+ " layer="+ w.mAnimLayer+ " matrix=["+ (w.mDsDx * w.mHScale)+ ","+ (w.mDtDx * w.mVScale)+ "]["+ (w.mDsDy * w.mHScale)+ ","+ (w.mDtDy * w.mVScale)+ "]");
+  if (SHOW_TRANSACTIONS)   logSurface(w,"alpha=" + w.mShownAlpha + " layer="+ w.mAnimLayer+ " matrix=["+ (w.mDsDx * w.mHScale)+ ","+ (w.mDtDx * w.mVScale)+ "]["+ (w.mDsDy * w.mHScale)+ ","+ (w.mDtDy * w.mVScale)+ "]",null);
   if (w.mSurface != null) {
     try {
       w.mSurface.setAlpha(w.mShownAlpha);
@@ -534,7 +560,7 @@ if (w.mAttachedHidden || !w.isReadyForDisplay()) {
     }
   }
   if (w.mLastHidden && !w.mDrawPending && !w.mCommitDrawPending&& !w.mReadyToShow) {
-    if (SHOW_TRANSACTIONS)     Slog.i(TAG,"  SURFACE " + w.mSurface + ": SHOW (performLayout)");
+    if (SHOW_TRANSACTIONS)     logSurface(w,"SHOW (performLayout)",null);
     if (DEBUG_VISIBILITY)     Slog.v(TAG,"Showing " + w + " during relayout");
     if (showSurfaceRobustlyLocked(w)) {
       w.mHasDrawn=true;
