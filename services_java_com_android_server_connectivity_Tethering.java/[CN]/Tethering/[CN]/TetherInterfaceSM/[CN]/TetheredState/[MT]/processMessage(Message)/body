@@ -7,17 +7,19 @@ case CMD_TETHER_UNREQUESTED:
 case CMD_INTERFACE_DOWN:
     IBinder b=ServiceManager.getService(Context.NETWORKMANAGEMENT_SERVICE);
   INetworkManagementService service=INetworkManagementService.Stub.asInterface(b);
-try {
-  service.disableNat(mIfaceName,mUpstreamIfaceName);
-}
- catch (Exception e) {
+if (mMyUpstreamIfaceName != null) {
   try {
-    service.untetherInterface(mIfaceName);
+    service.disableNat(mIfaceName,mMyUpstreamIfaceName);
   }
- catch (  Exception ee) {
+ catch (  Exception e) {
+    try {
+      service.untetherInterface(mIfaceName);
+    }
+ catch (    Exception ee) {
+    }
+    setLastErrorAndTransitionToInitialState(ConnectivityManager.TETHER_ERROR_DISABLE_NAT_ERROR);
+    break;
   }
-  setLastErrorAndTransitionToInitialState(ConnectivityManager.TETHER_ERROR_DISABLE_NAT_ERROR);
-  break;
 }
 try {
 service.untetherInterface(mIfaceName);
@@ -26,9 +28,7 @@ service.untetherInterface(mIfaceName);
 setLastErrorAndTransitionToInitialState(ConnectivityManager.TETHER_ERROR_UNTETHER_IFACE_ERROR);
 break;
 }
-Message m=mTetherMasterSM.obtainMessage(TetherMasterSM.CMD_TETHER_MODE_UNREQUESTED);
-m.obj=TetherInterfaceSM.this;
-mTetherMasterSM.sendMessage(m);
+mTetherMasterSM.sendMessage(TetherMasterSM.CMD_TETHER_MODE_UNREQUESTED,TetherInterfaceSM.this);
 if (message.what == CMD_TETHER_UNREQUESTED) {
 if (mUsb) {
 if (!Tethering.this.configureUsbIface(false)) {
@@ -42,6 +42,41 @@ transitionTo(mUnavailableState);
 }
 Log.d(TAG,"Untethered " + mIfaceName);
 break;
+case CMD_TETHER_CONNECTION_CHANGED:
+String newUpstreamIfaceName=(String)(message.obj);
+b=ServiceManager.getService(Context.NETWORKMANAGEMENT_SERVICE);
+service=INetworkManagementService.Stub.asInterface(b);
+if (mMyUpstreamIfaceName != null) {
+try {
+service.disableNat(mIfaceName,mMyUpstreamIfaceName);
+}
+ catch (Exception e) {
+try {
+service.untetherInterface(mIfaceName);
+}
+ catch (Exception ee) {
+}
+setLastErrorAndTransitionToInitialState(ConnectivityManager.TETHER_ERROR_DISABLE_NAT_ERROR);
+break;
+}
+}
+if (newUpstreamIfaceName != null) {
+try {
+service.enableNat(mIfaceName,newUpstreamIfaceName);
+}
+ catch (Exception e) {
+try {
+service.untetherInterface(mIfaceName);
+}
+ catch (Exception ee) {
+}
+setLastError(ConnectivityManager.TETHER_ERROR_ENABLE_NAT_ERROR);
+transitionTo(mInitialState);
+return true;
+}
+}
+mMyUpstreamIfaceName=newUpstreamIfaceName;
+break;
 case CMD_CELL_DUN_ERROR:
 case CMD_IP_FORWARDING_ENABLE_ERROR:
 case CMD_IP_FORWARDING_DISABLE_ERROR:
@@ -52,8 +87,9 @@ error=true;
 case CMD_TETHER_MODE_DEAD:
 b=ServiceManager.getService(Context.NETWORKMANAGEMENT_SERVICE);
 service=INetworkManagementService.Stub.asInterface(b);
+if (mMyUpstreamIfaceName != null) {
 try {
-service.disableNat(mIfaceName,mUpstreamIfaceName);
+service.disableNat(mIfaceName,mMyUpstreamIfaceName);
 }
  catch (Exception e) {
 try {
@@ -63,6 +99,7 @@ service.untetherInterface(mIfaceName);
 }
 setLastErrorAndTransitionToInitialState(ConnectivityManager.TETHER_ERROR_DISABLE_NAT_ERROR);
 break;
+}
 }
 try {
 service.untetherInterface(mIfaceName);
