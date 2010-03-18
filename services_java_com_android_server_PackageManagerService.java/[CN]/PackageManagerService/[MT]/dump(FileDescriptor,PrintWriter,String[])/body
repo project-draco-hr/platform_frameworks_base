@@ -3,22 +3,60 @@
     pw.println("Permission Denial: can't dump ActivityManager from from pid=" + Binder.getCallingPid() + ", uid="+ Binder.getCallingUid()+ " without permission "+ android.Manifest.permission.DUMP);
     return;
   }
+  String packageName=null;
+  int opti=0;
+  while (opti < args.length) {
+    String opt=args[opti];
+    if (opt == null || opt.length() <= 0 || opt.charAt(0) != '-') {
+      break;
+    }
+    opti++;
+    if ("-a".equals(opt)) {
+    }
+ else     if ("-h".equals(opt)) {
+      pw.println("Package manager dump options:");
+      pw.println("  [-h] [cmd] ...");
+      pw.println("  cmd may be one of:");
+      pw.println("    [package.name]: info about given package");
+      return;
+    }
+ else {
+      pw.println("Unknown argument: " + opt + "; use -h for help");
+    }
+  }
+  if (opti < args.length) {
+    String cmd=args[opti];
+    opti++;
+    if ("android".equals(cmd) || cmd.contains(".")) {
+      packageName=cmd;
+    }
+  }
+  boolean printedTitle=false;
 synchronized (mPackages) {
-    pw.println("Activity Resolver Table:");
-    mActivities.dump(pw,"  ");
-    pw.println(" ");
-    pw.println("Receiver Resolver Table:");
-    mReceivers.dump(pw,"  ");
-    pw.println(" ");
-    pw.println("Service Resolver Table:");
-    mServices.dump(pw,"  ");
-    pw.println(" ");
-    pw.println("Preferred Activities:");
-    mSettings.mPreferredActivities.dump(pw,"  ");
-    pw.println(" ");
-    pw.println("Permissions:");
+    if (mActivities.dump(pw,"Activity Resolver Table:","  ",packageName)) {
+      printedTitle=true;
+    }
+    if (mReceivers.dump(pw,printedTitle ? "\nReceiver Resolver Table:" : "Receiver Resolver Table:","  ",packageName)) {
+      printedTitle=true;
+    }
+    if (mServices.dump(pw,printedTitle ? "\nService Resolver Table:" : "Service Resolver Table:","  ",packageName)) {
+      printedTitle=true;
+    }
+    if (mSettings.mPreferredActivities.dump(pw,printedTitle ? "\nPreferred Activities:" : "Preferred Activities:","  ",packageName)) {
+      printedTitle=true;
+    }
+    boolean printedSomething=false;
 {
       for (      BasePermission p : mSettings.mPermissions.values()) {
+        if (packageName != null && !packageName.equals(p.sourcePackage)) {
+          continue;
+        }
+        if (!printedSomething) {
+          if (printedTitle)           pw.println(" ");
+          pw.println("Permissions:");
+          printedSomething=true;
+          printedTitle=true;
+        }
         pw.print("  Permission [");
         pw.print(p.name);
         pw.print("] (");
@@ -31,13 +69,33 @@ synchronized (mPackages) {
         pw.print(" gids=");
         pw.print(arrayToString(p.gids));
         pw.print(" type=");
-        pw.println(p.type);
+        pw.print(p.type);
+        pw.print(" prot=");
+        pw.println(p.protectionLevel);
+        if (p.packageSetting != null) {
+          pw.print("    packageSetting=");
+          pw.println(p.packageSetting);
+        }
+        if (p.perm != null) {
+          pw.print("    perm=");
+          pw.println(p.perm);
+        }
       }
     }
-    pw.println(" ");
-    pw.println("Packages:");
+    printedSomething=false;
+    SharedUserSetting packageSharedUser=null;
 {
       for (      PackageSetting ps : mSettings.mPackages.values()) {
+        if (packageName != null && !packageName.equals(ps.realName) && !packageName.equals(ps.name)) {
+          continue;
+        }
+        if (!printedSomething) {
+          if (printedTitle)           pw.println(" ");
+          pw.println("Packages:");
+          printedSomething=true;
+          printedTitle=true;
+        }
+        packageSharedUser=ps.sharedUser;
         pw.print("  Package [");
         pw.print(ps.realName != null ? ps.realName : ps.name);
         pw.print("] (");
@@ -135,20 +193,36 @@ synchronized (mPackages) {
         }
       }
     }
+    printedSomething=false;
     if (mSettings.mRenamedPackages.size() > 0) {
-      pw.println(" ");
-      pw.println("Renamed packages:");
       for (      HashMap.Entry<String,String> e : mSettings.mRenamedPackages.entrySet()) {
+        if (packageName != null && !packageName.equals(e.getKey()) && !packageName.equals(e.getValue())) {
+          continue;
+        }
+        if (!printedSomething) {
+          if (printedTitle)           pw.println(" ");
+          pw.println("Renamed packages:");
+          printedSomething=true;
+          printedTitle=true;
+        }
         pw.print("  ");
         pw.print(e.getKey());
         pw.print(" -> ");
         pw.println(e.getValue());
       }
     }
+    printedSomething=false;
     if (mSettings.mDisabledSysPackages.size() > 0) {
-      pw.println(" ");
-      pw.println("Hidden system packages:");
       for (      PackageSetting ps : mSettings.mDisabledSysPackages.values()) {
+        if (packageName != null && !packageName.equals(ps.realName) && !packageName.equals(ps.name)) {
+          continue;
+        }
+        if (!printedSomething) {
+          if (printedTitle)           pw.println(" ");
+          pw.println("Hidden system packages:");
+          printedSomething=true;
+          printedTitle=true;
+        }
         pw.print("  Package [");
         pw.print(ps.realName != null ? ps.realName : ps.name);
         pw.print("] (");
@@ -168,10 +242,18 @@ synchronized (mPackages) {
         pw.println(ps.resourcePathString);
       }
     }
-    pw.println(" ");
-    pw.println("Shared Users:");
+    printedSomething=false;
 {
       for (      SharedUserSetting su : mSettings.mSharedUsers.values()) {
+        if (packageName != null && su != packageSharedUser) {
+          continue;
+        }
+        if (!printedSomething) {
+          if (printedTitle)           pw.println(" ");
+          pw.println("Shared users:");
+          printedSomething=true;
+          printedTitle=true;
+        }
         pw.print("  SharedUser [");
         pw.print(su.name);
         pw.print("] (");
@@ -193,29 +275,40 @@ synchronized (mPackages) {
         }
       }
     }
-    pw.println(" ");
-    pw.println("Settings parse messages:");
-    pw.println(mSettings.mReadMessages.toString());
-    pw.println(" ");
-    pw.println("Package warning messages:");
-    File fname=getSettingsProblemFile();
-    FileInputStream in;
-    try {
-      in=new FileInputStream(fname);
-      int avail=in.available();
-      byte[] data=new byte[avail];
-      in.read(data);
-      pw.println(new String(data));
-    }
- catch (    FileNotFoundException e) {
-    }
-catch (    IOException e) {
+    if (packageName == null) {
+      if (printedTitle)       pw.println(" ");
+      printedTitle=true;
+      pw.println("Settings parse messages:");
+      pw.println(mSettings.mReadMessages.toString());
+      pw.println(" ");
+      pw.println("Package warning messages:");
+      File fname=getSettingsProblemFile();
+      FileInputStream in;
+      try {
+        in=new FileInputStream(fname);
+        int avail=in.available();
+        byte[] data=new byte[avail];
+        in.read(data);
+        pw.println(new String(data));
+      }
+ catch (      FileNotFoundException e) {
+      }
+catch (      IOException e) {
+      }
     }
   }
 synchronized (mProviders) {
-    pw.println(" ");
-    pw.println("Registered ContentProviders:");
+    boolean printedSomething=false;
     for (    PackageParser.Provider p : mProviders.values()) {
+      if (packageName != null && !packageName.equals(p.info.packageName)) {
+        continue;
+      }
+      if (!printedSomething) {
+        if (printedTitle)         pw.println(" ");
+        pw.println("Registered ContentProviders:");
+        printedSomething=true;
+        printedTitle=true;
+      }
       pw.print("  [");
       pw.print(p.info.authority);
       pw.print("]: ");
