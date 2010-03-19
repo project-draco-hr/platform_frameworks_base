@@ -5,23 +5,22 @@ case H_UNMOUNT_PM_UPDATE:
       if (DEBUG_UNMOUNT)       Log.i(TAG,"H_UNMOUNT_PM_UPDATE");
       UnmountCallBack ucb=(UnmountCallBack)msg.obj;
       mForceUnmounts.add(ucb);
-      if (DEBUG_UNMOUNT)       Log.i(TAG," registered = " + mRegistered);
-      if (!mRegistered) {
-        registerReceiver();
-        if (DEBUG_UNMOUNT)         Log.i(TAG,"Updating external media status");
-        boolean hasExtPkgs=mPms.updateExternalMediaStatus(false);
-        if (!hasExtPkgs) {
-          mHandler.sendEmptyMessage(H_UNMOUNT_PM_DONE);
-        }
+      if (DEBUG_UNMOUNT)       Log.i(TAG," registered = " + mUpdatingStatus);
+      if (!mUpdatingStatus) {
+        if (DEBUG_UNMOUNT)         Log.i(TAG,"Updating external media status on PackageManager");
+        mUpdatingStatus=true;
+        mPms.updateExternalMediaStatus(false,true);
       }
       break;
     }
 case H_UNMOUNT_PM_DONE:
 {
     if (DEBUG_UNMOUNT)     Log.i(TAG,"H_UNMOUNT_PM_DONE");
-    if (mRegistered) {
-      unregisterReceiver();
+    if (!mUpdatingStatus) {
+      return;
     }
+    if (DEBUG_UNMOUNT)     Log.i(TAG,"Updated status. Processing requests");
+    mUpdatingStatus=false;
     int size=mForceUnmounts.size();
     int sizeArr[]=new int[size];
     int sizeArrN=0;
@@ -39,7 +38,7 @@ case H_UNMOUNT_PM_DONE:
         }
  else {
           ActivityManagerService ams=(ActivityManagerService)ServiceManager.getService("activity");
-          boolean ret=ams.killPidsForMemory(pids);
+          boolean ret=ams.killPids(pids,"Unmount media");
           if (ret) {
             pids=getStorageUsers(path);
             if (pids == null || pids.length == 0) {
@@ -54,7 +53,7 @@ case H_UNMOUNT_PM_DONE:
       }
  else {
         if (ucb.retries >= MAX_UNMOUNT_RETRIES) {
-          Log.i(TAG,"Cannot unmount inspite of " + MAX_UNMOUNT_RETRIES + " to unmount media");
+          Log.i(TAG,"Cannot unmount media inspite of " + MAX_UNMOUNT_RETRIES + " retries");
         }
  else {
           mHandler.sendMessageDelayed(mHandler.obtainMessage(H_UNMOUNT_PM_DONE,ucb.retries++),RETRY_UNMOUNT_DELAY);
