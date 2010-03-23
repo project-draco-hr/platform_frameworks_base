@@ -1,0 +1,63 @@
+{
+  ArrayList<String> pkgList=new ArrayList<String>();
+  Set<SdInstallArgs> keys=processCids.keySet();
+  boolean doGc=false;
+  for (  SdInstallArgs args : keys) {
+    String codePath=processCids.get(args);
+    if (DEBUG_SD_INSTALL)     Log.i(TAG,"Loading container : " + args.cid);
+    int retCode=PackageManager.INSTALL_FAILED_CONTAINER_ERROR;
+    try {
+      if (args.doPreInstall(PackageManager.INSTALL_SUCCEEDED) != PackageManager.INSTALL_SUCCEEDED) {
+        Slog.e(TAG,"Failed to mount cid : " + args.cid + " when installing from sdcard");
+        continue;
+      }
+      if (codePath == null || !codePath.equals(args.getCodePath())) {
+        Slog.e(TAG,"Container " + args.cid + " cachepath "+ args.getCodePath()+ " does not match one in settings "+ codePath);
+        continue;
+      }
+      int parseFlags=PackageParser.PARSE_CHATTY | PackageParser.PARSE_ON_SDCARD | mDefParseFlags;
+      PackageParser pp=new PackageParser(codePath);
+      pp.setSeparateProcesses(mSeparateProcesses);
+      final PackageParser.Package pkg=pp.parsePackage(new File(codePath),codePath,mMetrics,parseFlags);
+      pp=null;
+      doGc=true;
+      if (pkg == null) {
+        Slog.e(TAG,"Parse error when installing install pkg : " + args.cid + " from "+ args.cachePath);
+        continue;
+      }
+      setApplicationInfoPaths(pkg,codePath,codePath);
+synchronized (mInstallLock) {
+        if (scanPackageLI(pkg,parseFlags,SCAN_MONITOR) != null) {
+synchronized (mPackages) {
+            retCode=PackageManager.INSTALL_SUCCEEDED;
+            pkgList.add(pkg.packageName);
+            args.doPostInstall(PackageManager.INSTALL_SUCCEEDED);
+          }
+        }
+ else {
+          Slog.i(TAG,"Failed to install pkg: " + pkg.packageName + " from sdcard");
+        }
+      }
+    }
+  finally {
+      if (retCode != PackageManager.INSTALL_SUCCEEDED) {
+        removeCids.add(args.cid);
+      }
+    }
+  }
+synchronized (mPackages) {
+    mSettings.writeLP();
+  }
+  if (pkgList.size() > 0) {
+    sendResourcesChangedBroadcast(true,pkgList,uidArr);
+  }
+  if (doGc) {
+    Runtime.getRuntime().gc();
+  }
+  if (removeCids != null) {
+    for (    String cid : removeCids) {
+      Log.i(TAG,"Destroying stale container : " + cid);
+      PackageHelper.destroySdDir(cid);
+    }
+  }
+}

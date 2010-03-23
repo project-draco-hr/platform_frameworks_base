@@ -1,0 +1,39 @@
+{
+  if (Binder.getCallingUid() != Process.SYSTEM_UID) {
+    throw new SecurityException("killPids only available to the system");
+  }
+  String reason=(pReason == null) ? "Unknown" : pReason;
+  boolean killed=false;
+synchronized (mPidsSelfLocked) {
+    int[] types=new int[pids.length];
+    int worstType=0;
+    for (int i=0; i < pids.length; i++) {
+      ProcessRecord proc=mPidsSelfLocked.get(pids[i]);
+      if (proc != null) {
+        int type=proc.setAdj;
+        types[i]=type;
+        if (type > worstType) {
+          worstType=type;
+        }
+      }
+    }
+    if (worstType < EMPTY_APP_ADJ && worstType > HIDDEN_APP_MIN_ADJ) {
+      worstType=HIDDEN_APP_MIN_ADJ;
+    }
+    Slog.w(TAG,"Killing processes " + reason + " at adjustment "+ worstType);
+    for (int i=0; i < pids.length; i++) {
+      ProcessRecord proc=mPidsSelfLocked.get(pids[i]);
+      if (proc == null) {
+        continue;
+      }
+      int adj=proc.setAdj;
+      if (adj >= worstType) {
+        Slog.w(TAG,"Killing " + reason + " : "+ proc+ " (adj "+ adj+ ")");
+        EventLog.writeEvent(EventLogTags.AM_KILL,proc.pid,proc.processName,adj,reason);
+        killed=true;
+        Process.killProcess(pids[i]);
+      }
+    }
+  }
+  return killed;
+}

@@ -1,0 +1,62 @@
+{
+  final String list[]=PackageHelper.getSecureContainerList();
+  if (list == null || list.length == 0) {
+    Log.i(TAG,"No secure containers on sdcard");
+    return;
+  }
+  int uidList[]=new int[list.length];
+  int num=0;
+  HashSet<String> removeCids=new HashSet<String>();
+  HashMap<SdInstallArgs,String> processCids=new HashMap<SdInstallArgs,String>();
+synchronized (mPackages) {
+    for (    String cid : list) {
+      SdInstallArgs args=new SdInstallArgs(cid);
+      if (DEBUG_SD_INSTALL)       Log.i(TAG,"Processing container " + cid);
+      boolean failed=true;
+      try {
+        String pkgName=args.getPackageName();
+        if (pkgName == null) {
+          continue;
+        }
+        if (DEBUG_SD_INSTALL)         Log.i(TAG,"Looking for pkg : " + pkgName);
+        PackageSetting ps=mSettings.mPackages.get(pkgName);
+        if (ps != null && ps.codePathString != null && (ps.pkgFlags & ApplicationInfo.FLAG_EXTERNAL_STORAGE) != 0) {
+          if (DEBUG_SD_INSTALL)           Log.i(TAG,"Container : " + cid + " corresponds to pkg : "+ pkgName+ " at code path: "+ ps.codePathString);
+          processCids.put(args,ps.codePathString);
+          failed=false;
+          int uid=ps.userId;
+          if (uid != -1) {
+            uidList[num++]=uid;
+          }
+        }
+      }
+  finally {
+        if (failed) {
+          if (DEBUG_SD_INSTALL)           Log.i(TAG,"Container : " + cid + " stale");
+          removeCids.add(cid);
+        }
+      }
+    }
+  }
+  int uidArr[]=null;
+  if (num > 0) {
+    Arrays.sort(uidList,0,num);
+    uidArr=new int[num];
+    uidArr[0]=uidList[0];
+    int di=0;
+    for (int i=1; i < num; i++) {
+      if (uidList[i - 1] != uidList[i]) {
+        uidArr[di++]=uidList[i];
+      }
+    }
+  }
+  if (mediaStatus) {
+    if (DEBUG_SD_INSTALL)     Log.i(TAG,"Loading packages");
+    loadMediaPackages(processCids,uidArr,removeCids);
+    startCleaningPackages();
+  }
+ else {
+    if (DEBUG_SD_INSTALL)     Log.i(TAG,"Unloading packages");
+    unloadMediaPackages(processCids,uidArr);
+  }
+}
