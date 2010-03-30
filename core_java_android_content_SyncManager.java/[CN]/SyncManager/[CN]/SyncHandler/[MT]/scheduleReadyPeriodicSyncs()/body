@@ -1,0 +1,40 @@
+{
+  final boolean backgroundDataUsageAllowed=getConnectivityManager().getBackgroundDataSetting();
+  Long earliestFuturePollTime=null;
+  if (!backgroundDataUsageAllowed || !mSyncStorageEngine.getMasterSyncAutomatically()) {
+    return earliestFuturePollTime;
+  }
+  final long nowAbsolute=System.currentTimeMillis();
+  ArrayList<SyncStorageEngine.AuthorityInfo> infos=mSyncStorageEngine.getAuthorities();
+  for (  SyncStorageEngine.AuthorityInfo info : infos) {
+    if (!ArrayUtils.contains(mAccounts,info.account)) {
+      continue;
+    }
+    if (!mSyncStorageEngine.getSyncAutomatically(info.account,info.authority)) {
+      continue;
+    }
+    if (mSyncStorageEngine.getIsSyncable(info.account,info.authority) == 0) {
+      continue;
+    }
+    SyncStatusInfo status=mSyncStorageEngine.getOrCreateSyncStatus(info);
+    for (int i=0, N=info.periodicSyncs.size(); i < N; i++) {
+      final Bundle extras=info.periodicSyncs.get(i).first;
+      final Long periodInSeconds=info.periodicSyncs.get(i).second;
+      final long lastPollTimeAbsolute=status.getPeriodicSyncTime(i);
+      long nextPollTimeAbsolute=lastPollTimeAbsolute + periodInSeconds * 1000;
+      if (nextPollTimeAbsolute <= nowAbsolute) {
+        scheduleSyncOperation(new SyncOperation(info.account,SyncStorageEngine.SOURCE_PERIODIC,info.authority,extras,0));
+        status.setPeriodicSyncTime(i,nowAbsolute);
+      }
+ else {
+        if (earliestFuturePollTime == null || nextPollTimeAbsolute < earliestFuturePollTime) {
+          earliestFuturePollTime=nextPollTimeAbsolute;
+        }
+      }
+    }
+  }
+  if (earliestFuturePollTime == null) {
+    return null;
+  }
+  return SystemClock.elapsedRealtime() + ((earliestFuturePollTime < nowAbsolute) ? 0 : (earliestFuturePollTime - nowAbsolute));
+}
