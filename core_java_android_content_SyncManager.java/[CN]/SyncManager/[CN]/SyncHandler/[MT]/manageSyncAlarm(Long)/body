@@ -1,0 +1,64 @@
+{
+  if (!mDataConnectionIsConnected)   return;
+  if (mStorageIsLow)   return;
+  final long now=SystemClock.elapsedRealtime();
+  Long alarmTime;
+  ActiveSyncContext activeSyncContext=mActiveSyncContext;
+  if (activeSyncContext == null) {
+synchronized (mSyncQueue) {
+      final Pair<SyncOperation,Long> candidate=mSyncQueue.nextOperation();
+      if (earliestFuturePollElapsedTime == null && candidate == null) {
+        alarmTime=null;
+      }
+ else       if (earliestFuturePollElapsedTime == null) {
+        alarmTime=candidate.second;
+      }
+ else       if (candidate == null) {
+        alarmTime=earliestFuturePollElapsedTime;
+      }
+ else {
+        alarmTime=Math.min(earliestFuturePollElapsedTime,candidate.second);
+      }
+    }
+  }
+ else {
+    final long notificationTime=mSyncHandler.mSyncNotificationInfo.startTime + SYNC_NOTIFICATION_DELAY;
+    final long timeoutTime=mActiveSyncContext.mTimeoutStartTime + MAX_TIME_PER_SYNC;
+    if (mSyncHandler.mSyncNotificationInfo.isActive) {
+      alarmTime=timeoutTime;
+    }
+ else {
+      alarmTime=Math.min(notificationTime,timeoutTime);
+    }
+  }
+  if (!mErrorNotificationInstalled) {
+    long when=mSyncStorageEngine.getInitialSyncFailureTime();
+    if (when > 0) {
+      when+=ERROR_NOTIFICATION_DELAY_MS;
+      long delay=when - System.currentTimeMillis();
+      when=now + delay;
+      alarmTime=alarmTime != null ? Math.min(alarmTime,when) : when;
+    }
+  }
+  boolean shouldSet=false;
+  boolean shouldCancel=false;
+  final boolean alarmIsActive=mAlarmScheduleTime != null;
+  final boolean needAlarm=alarmTime != null;
+  if (needAlarm) {
+    if (!alarmIsActive || alarmTime < mAlarmScheduleTime) {
+      shouldSet=true;
+    }
+  }
+ else {
+    shouldCancel=alarmIsActive;
+  }
+  ensureAlarmService();
+  if (shouldSet) {
+    mAlarmScheduleTime=alarmTime;
+    mAlarmService.set(AlarmManager.ELAPSED_REALTIME_WAKEUP,alarmTime,mSyncAlarmIntent);
+  }
+ else   if (shouldCancel) {
+    mAlarmScheduleTime=null;
+    mAlarmService.cancel(mSyncAlarmIntent);
+  }
+}

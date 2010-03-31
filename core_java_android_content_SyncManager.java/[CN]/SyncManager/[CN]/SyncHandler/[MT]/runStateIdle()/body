@@ -21,20 +21,29 @@
     return;
   }
   SyncOperation op;
+  int syncableState;
   final boolean backgroundDataUsageAllowed=getConnectivityManager().getBackgroundDataSetting();
+  final boolean masterSyncAutomatically=mSyncStorageEngine.getMasterSyncAutomatically();
 synchronized (mSyncQueue) {
     final long now=SystemClock.elapsedRealtime();
     while (true) {
-      op=getNextReadyToRunSyncOperation(now);
-      if (op == null) {
+      Pair<SyncOperation,Long> nextOpAndRunTime=mSyncQueue.nextOperation();
+      if (nextOpAndRunTime == null || nextOpAndRunTime.second > now) {
         if (isLoggable) {
-          Log.v(TAG,"runStateIdle: no more sync operations, returning");
+          Log.v(TAG,"runStateIdle: no more ready sync operations, returning");
         }
         return;
       }
+      op=nextOpAndRunTime.first;
       mSyncQueue.remove(op);
-      final boolean ignoreSettings=op.extras.getBoolean(ContentResolver.SYNC_EXTRAS_IGNORE_SETTINGS,false);
-      if (!isSyncAllowed(op.account,op.authority,ignoreSettings,backgroundDataUsageAllowed)) {
+      if (!ArrayUtils.contains(mAccounts,op.account)) {
+        continue;
+      }
+      syncableState=mSyncStorageEngine.getIsSyncable(op.account,op.authority);
+      if (syncableState == 0) {
+        continue;
+      }
+      if (!op.extras.getBoolean(ContentResolver.SYNC_EXTRAS_IGNORE_SETTINGS,false) && (syncableState > 0) && (!masterSyncAutomatically || !backgroundDataUsageAllowed || !mSyncStorageEngine.getSyncAutomatically(op.account,op.authority))) {
         continue;
       }
       break;
@@ -42,6 +51,15 @@ synchronized (mSyncQueue) {
     if (isLoggable) {
       Log.v(TAG,"runStateIdle: we are going to sync " + op);
     }
+  }
+  final boolean initializeIsSet=op.extras.getBoolean(ContentResolver.SYNC_EXTRAS_INITIALIZE,false);
+  if (syncableState < 0 && !initializeIsSet) {
+    op.extras.putBoolean(ContentResolver.SYNC_EXTRAS_INITIALIZE,true);
+    op=new SyncOperation(op);
+  }
+ else   if (syncableState > 0 && initializeIsSet) {
+    op.extras.putBoolean(ContentResolver.SYNC_EXTRAS_INITIALIZE,false);
+    op=new SyncOperation(op);
   }
   SyncAdapterType syncAdapterType=SyncAdapterType.newKey(op.authority,op.account.type);
   RegisteredServicesCache.ServiceInfo<SyncAdapterType> syncAdapterInfo=mSyncAdapters.getServiceInfo(syncAdapterType);
