@@ -20,7 +20,7 @@
   final boolean sizeChanged=mWidth != myWidth || mHeight != myHeight;
   final boolean visibleChanged=mVisible != mRequestedVisible || mNewSurfaceNeeded;
   final boolean typeChanged=mType != mRequestedType;
-  if (force || creating || formatChanged|| sizeChanged|| visibleChanged|| typeChanged|| mLeft != mLocation[0] || mTop != mLocation[1]) {
+  if (force || creating || formatChanged|| sizeChanged|| visibleChanged|| typeChanged|| mLeft != mLocation[0] || mTop != mLocation[1] || mUpdateWindowNeeded || mReportDrawNeeded) {
     if (localLOGV)     Log.i(TAG,"Changes: creating=" + creating + " format="+ formatChanged+ " size="+ sizeChanged+ " visible="+ visibleChanged+ " left="+ (mLeft != mLocation[0])+ " top="+ (mTop != mLocation[1]));
     try {
       final boolean visible=mVisible=mRequestedVisible;
@@ -53,22 +53,39 @@
         reportSurfaceDestroyed();
       }
       mNewSurfaceNeeded=false;
+      boolean realSizeChanged;
+      boolean reportDrawNeeded;
       mSurfaceLock.lock();
-      mDrawingStopped=!visible;
-      final int relayoutResult=mSession.relayout(mWindow,mLayout,mWidth,mHeight,visible ? VISIBLE : GONE,false,mWinFrame,mContentInsets,mVisibleInsets,mConfiguration,mSurface);
-      if (localLOGV)       Log.i(TAG,"New surface: " + mSurface + ", vis="+ visible+ ", frame="+ mWinFrame);
-      mSurfaceFrame.left=0;
-      mSurfaceFrame.top=0;
-      if (mTranslator == null) {
-        mSurfaceFrame.right=mWinFrame.width();
-        mSurfaceFrame.bottom=mWinFrame.height();
-      }
+      try {
+        mUpdateWindowNeeded=false;
+        reportDrawNeeded=mReportDrawNeeded;
+        mReportDrawNeeded=false;
+        mDrawingStopped=!visible;
+        final int relayoutResult=mSession.relayout(mWindow,mLayout,mWidth,mHeight,visible ? VISIBLE : GONE,false,mWinFrame,mContentInsets,mVisibleInsets,mConfiguration,mSurface);
+        if ((relayoutResult & WindowManagerImpl.RELAYOUT_FIRST_TIME) != 0) {
+          mReportDrawNeeded=true;
+        }
+        if (localLOGV)         Log.i(TAG,"New surface: " + mSurface + ", vis="+ visible+ ", frame="+ mWinFrame);
+        mSurfaceFrame.left=0;
+        mSurfaceFrame.top=0;
+        if (mTranslator == null) {
+          mSurfaceFrame.right=mWinFrame.width();
+          mSurfaceFrame.bottom=mWinFrame.height();
+        }
  else {
-        float appInvertedScale=mTranslator.applicationInvertedScale;
-        mSurfaceFrame.right=(int)(mWinFrame.width() * appInvertedScale + 0.5f);
-        mSurfaceFrame.bottom=(int)(mWinFrame.height() * appInvertedScale + 0.5f);
+          float appInvertedScale=mTranslator.applicationInvertedScale;
+          mSurfaceFrame.right=(int)(mWinFrame.width() * appInvertedScale + 0.5f);
+          mSurfaceFrame.bottom=(int)(mWinFrame.height() * appInvertedScale + 0.5f);
+        }
+        final int surfaceWidth=mSurfaceFrame.right;
+        final int surfaceHeight=mSurfaceFrame.bottom;
+        realSizeChanged=mLastSurfaceWidth != surfaceWidth || mLastSurfaceHeight != surfaceHeight;
+        mLastSurfaceWidth=surfaceWidth;
+        mLastSurfaceHeight=surfaceHeight;
       }
-      mSurfaceLock.unlock();
+  finally {
+        mSurfaceLock.unlock();
+      }
       try {
         if (visible) {
           mDestroyReportNeeded=true;
@@ -83,9 +100,9 @@ synchronized (mCallbacks) {
               c.surfaceCreated(mSurfaceHolder);
             }
           }
-          if (creating || formatChanged || sizeChanged|| visibleChanged) {
+          if (creating || formatChanged || sizeChanged|| visibleChanged|| realSizeChanged) {
             for (            SurfaceHolder.Callback c : callbacks) {
-              c.surfaceChanged(mSurfaceHolder,mFormat,mWidth,mHeight);
+              c.surfaceChanged(mSurfaceHolder,mFormat,myWidth,myHeight);
             }
           }
         }
@@ -95,7 +112,7 @@ synchronized (mCallbacks) {
       }
   finally {
         mIsCreating=false;
-        if (creating || (relayoutResult & WindowManagerImpl.RELAYOUT_FIRST_TIME) != 0) {
+        if (creating || reportDrawNeeded) {
           mSession.finishDrawing(mWindow);
         }
       }
