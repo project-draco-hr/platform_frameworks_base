@@ -1,0 +1,107 @@
+{
+  super(context);
+  mConfiguration=context.getResources().getConfiguration();
+  mEnableFallback=false;
+  mRequiresSim=TextUtils.isEmpty(SystemProperties.get("keyguard.no_require_sim"));
+  mUpdateMonitor=updateMonitor;
+  mLockPatternUtils=lockPatternUtils;
+  mWindowController=controller;
+  mMode=getInitialMode();
+  mKeyguardScreenCallback=new KeyguardScreenCallback(){
+    public void goToLockScreen(){
+      mForgotPattern=false;
+      if (mIsVerifyUnlockOnly) {
+        mIsVerifyUnlockOnly=false;
+        getCallback().keyguardDone(false);
+      }
+ else {
+        updateScreen(Mode.LockScreen);
+      }
+    }
+    public void goToUnlockScreen(){
+      final IccCard.State simState=mUpdateMonitor.getSimState();
+      if (stuckOnLockScreenBecauseSimMissing() || (simState == IccCard.State.PUK_REQUIRED)) {
+        return;
+      }
+      if (!isSecure()) {
+        getCallback().keyguardDone(true);
+      }
+ else {
+        updateScreen(Mode.UnlockScreen);
+      }
+    }
+    public void forgotPattern(    boolean isForgotten){
+      if (mEnableFallback) {
+        mForgotPattern=isForgotten;
+        updateScreen(Mode.UnlockScreen);
+      }
+    }
+    public boolean isSecure(){
+      return LockPatternKeyguardView.this.isSecure();
+    }
+    public boolean isVerifyUnlockOnly(){
+      return mIsVerifyUnlockOnly;
+    }
+    public void recreateMe(    Configuration config){
+      mConfiguration=config;
+      recreateScreens();
+    }
+    public void takeEmergencyCallAction(){
+      pokeWakelock(EMERGENCY_CALL_TIMEOUT);
+      if (TelephonyManager.getDefault().getCallState() == TelephonyManager.CALL_STATE_OFFHOOK) {
+        mLockPatternUtils.resumeCall();
+      }
+ else {
+        Intent intent=new Intent(ACTION_EMERGENCY_DIAL);
+        intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS);
+        getContext().startActivity(intent);
+      }
+    }
+    public void pokeWakelock(){
+      getCallback().pokeWakelock();
+    }
+    public void pokeWakelock(    int millis){
+      getCallback().pokeWakelock(millis);
+    }
+    public void keyguardDone(    boolean authenticated){
+      getCallback().keyguardDone(authenticated);
+    }
+    public void keyguardDoneDrawing(){
+    }
+    public void reportFailedUnlockAttempt(){
+      mUpdateMonitor.reportFailedAttempt();
+      final int failedAttempts=mUpdateMonitor.getFailedAttempts();
+      if (DEBUG)       Log.d(TAG,"reportFailedPatternAttempt: #" + failedAttempts + " (enableFallback="+ mEnableFallback+ ")");
+      final boolean usingLockPattern=mLockPatternUtils.getKeyguardStoredPasswordQuality() == DevicePolicyManager.PASSWORD_QUALITY_SOMETHING;
+      if (usingLockPattern && mEnableFallback && failedAttempts == (LockPatternUtils.FAILED_ATTEMPTS_BEFORE_RESET - LockPatternUtils.FAILED_ATTEMPTS_BEFORE_TIMEOUT)) {
+        showAlmostAtAccountLoginDialog();
+      }
+ else       if (usingLockPattern && mEnableFallback && failedAttempts >= LockPatternUtils.FAILED_ATTEMPTS_BEFORE_RESET) {
+        mLockPatternUtils.setPermanentlyLocked(true);
+        updateScreen(mMode);
+      }
+ else       if ((failedAttempts % LockPatternUtils.FAILED_ATTEMPTS_BEFORE_TIMEOUT) == 0) {
+        showTimeoutDialog();
+      }
+      mLockPatternUtils.reportFailedPasswordAttempt();
+    }
+    public boolean doesFallbackUnlockScreenExist(){
+      return mEnableFallback;
+    }
+    public void reportSuccessfulUnlockAttempt(){
+      mLockPatternUtils.reportSuccessfulPasswordAttempt();
+    }
+  }
+;
+  setFocusableInTouchMode(true);
+  setDescendantFocusability(FOCUS_AFTER_DESCENDANTS);
+  mLockScreen=createLockScreen();
+  addView(mLockScreen);
+  final UnlockMode unlockMode=getUnlockMode();
+  if (DEBUG)   Log.d(TAG,"LockPatternKeyguardView ctor: about to createUnlockScreenFor; mEnableFallback=" + mEnableFallback);
+  mUnlockScreen=createUnlockScreenFor(unlockMode);
+  mUnlockScreenMode=unlockMode;
+  maybeEnableFallback(context);
+  addView(mUnlockScreen);
+  updateScreen(mMode);
+}
