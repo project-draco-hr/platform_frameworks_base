@@ -16,14 +16,12 @@ case H_UNMOUNT_PM_UPDATE:
 case H_UNMOUNT_PM_DONE:
 {
     if (DEBUG_UNMOUNT)     Slog.i(TAG,"H_UNMOUNT_PM_DONE");
-    if (!mUpdatingStatus) {
-      return;
-    }
     if (DEBUG_UNMOUNT)     Slog.i(TAG,"Updated status. Processing requests");
     mUpdatingStatus=false;
     int size=mForceUnmounts.size();
     int sizeArr[]=new int[size];
     int sizeArrN=0;
+    ActivityManagerService ams=(ActivityManagerService)ServiceManager.getService("activity");
     for (int i=0; i < size; i++) {
       UnmountCallBack ucb=mForceUnmounts.get(i);
       String path=ucb.path;
@@ -37,27 +35,23 @@ case H_UNMOUNT_PM_DONE:
           done=true;
         }
  else {
-          ActivityManagerService ams=(ActivityManagerService)ServiceManager.getService("activity");
-          boolean ret=ams.killPids(pids,"Unmount media");
-          if (ret) {
-            pids=getStorageUsers(path);
-            if (pids == null || pids.length == 0) {
-              done=true;
-            }
+          ams.killPids(pids,"unmount media");
+          pids=getStorageUsers(path);
+          if (pids == null || pids.length == 0) {
+            done=true;
           }
         }
       }
-      if (done) {
-        sizeArr[sizeArrN++]=i;
-        mHandler.sendMessage(mHandler.obtainMessage(H_UNMOUNT_MS,ucb));
+      if (!done && (ucb.retries < MAX_UNMOUNT_RETRIES)) {
+        Slog.i(TAG,"Retrying to kill storage users again");
+        mHandler.sendMessageDelayed(mHandler.obtainMessage(H_UNMOUNT_PM_DONE,ucb.retries++),RETRY_UNMOUNT_DELAY);
       }
  else {
         if (ucb.retries >= MAX_UNMOUNT_RETRIES) {
-          Slog.i(TAG,"Cannot unmount media inspite of " + MAX_UNMOUNT_RETRIES + " retries");
+          Slog.i(TAG,"Failed to unmount media inspite of " + MAX_UNMOUNT_RETRIES + " retries. Forcibly killing processes now");
         }
- else {
-          mHandler.sendMessageDelayed(mHandler.obtainMessage(H_UNMOUNT_PM_DONE,ucb.retries++),RETRY_UNMOUNT_DELAY);
-        }
+        sizeArr[sizeArrN++]=i;
+        mHandler.sendMessage(mHandler.obtainMessage(H_UNMOUNT_MS,ucb));
       }
     }
     for (int i=(sizeArrN - 1); i >= 0; i--) {
