@@ -3,57 +3,76 @@
     public void run(){
       mHandler.removeCallbacks(this);
       int returnCode=currentStatus;
-      boolean moveSucceeded=(returnCode == PackageManager.MOVE_SUCCEEDED);
-      if (moveSucceeded) {
-        int uid=-1;
+      if (currentStatus == PackageManager.MOVE_SUCCEEDED) {
+        int uidArr[]=null;
+        ArrayList<String> pkgList=null;
 synchronized (mPackages) {
-          uid=mPackages.get(mp.packageName).applicationInfo.uid;
-        }
-        ArrayList<String> pkgList=new ArrayList<String>();
-        pkgList.add(mp.packageName);
-        int uidArr[]=new int[]{uid};
-        sendResourcesChangedBroadcast(false,pkgList,uidArr);
-synchronized (mInstallLock) {
-synchronized (mPackages) {
-            PackageParser.Package pkg=mPackages.get(mp.packageName);
-            if (pkg != null) {
-              String oldCodePath=pkg.mPath;
-              String newCodePath=mp.targetArgs.getCodePath();
-              String newResPath=mp.targetArgs.getResourcePath();
-              pkg.mPath=newCodePath;
-              if (moveDexFilesLI(pkg) != PackageManager.INSTALL_SUCCEEDED) {
-                pkg.mPath=pkg.mScanPath;
-                returnCode=PackageManager.MOVE_FAILED_INSUFFICIENT_STORAGE;
-                moveSucceeded=false;
-              }
+          PackageParser.Package pkg=mPackages.get(mp.packageName);
+          if (pkg == null) {
+            Slog.w(TAG," Package " + mp.packageName + " doesn't exist. Aborting move");
+            returnCode=PackageManager.MOVE_FAILED_DOESNT_EXIST;
+          }
+ else           if (!mp.srcArgs.getCodePath().equals(pkg.applicationInfo.sourceDir)) {
+            Slog.w(TAG,"Package " + mp.packageName + " code path changed from "+ mp.srcArgs.getCodePath()+ " to "+ pkg.applicationInfo.sourceDir+ " Aborting move and returning error");
+            returnCode=PackageManager.MOVE_FAILED_INTERNAL_ERROR;
+          }
  else {
-                pkg.mScanPath=newCodePath;
-                pkg.applicationInfo.sourceDir=newCodePath;
-                pkg.applicationInfo.publicSourceDir=newResPath;
-                PackageSetting ps=(PackageSetting)pkg.mExtras;
-                ps.codePath=new File(pkg.applicationInfo.sourceDir);
-                ps.codePathString=ps.codePath.getPath();
-                ps.resourcePath=new File(pkg.applicationInfo.publicSourceDir);
-                ps.resourcePathString=ps.resourcePath.getPath();
-                if ((mp.flags & PackageManager.INSTALL_EXTERNAL) != 0) {
-                  pkg.applicationInfo.flags|=ApplicationInfo.FLAG_EXTERNAL_STORAGE;
-                }
- else {
-                  pkg.applicationInfo.flags&=~ApplicationInfo.FLAG_EXTERNAL_STORAGE;
-                }
-                ps.setFlags(pkg.applicationInfo.flags);
-                mAppDirs.remove(oldCodePath);
-                mAppDirs.put(newCodePath,pkg);
-                mSettings.writeLP();
-              }
-            }
+            uidArr=new int[]{pkg.applicationInfo.uid};
+            pkgList=new ArrayList<String>();
+            pkgList.add(mp.packageName);
           }
         }
-        sendResourcesChangedBroadcast(true,pkgList,uidArr);
+        if (returnCode == PackageManager.MOVE_SUCCEEDED) {
+          sendResourcesChangedBroadcast(false,pkgList,uidArr,null);
+synchronized (mInstallLock) {
+synchronized (mPackages) {
+              PackageParser.Package pkg=mPackages.get(mp.packageName);
+              if (pkg == null) {
+                Slog.w(TAG," Package " + mp.packageName + " doesn't exist. Aborting move");
+                returnCode=PackageManager.MOVE_FAILED_DOESNT_EXIST;
+              }
+ else               if (!mp.srcArgs.getCodePath().equals(pkg.applicationInfo.sourceDir)) {
+                Slog.w(TAG,"Package " + mp.packageName + " code path changed from "+ mp.srcArgs.getCodePath()+ " to "+ pkg.applicationInfo.sourceDir+ " Aborting move and returning error");
+                returnCode=PackageManager.MOVE_FAILED_INTERNAL_ERROR;
+              }
+ else {
+                String oldCodePath=pkg.mPath;
+                String newCodePath=mp.targetArgs.getCodePath();
+                String newResPath=mp.targetArgs.getResourcePath();
+                pkg.mPath=newCodePath;
+                if (moveDexFilesLI(pkg) != PackageManager.INSTALL_SUCCEEDED) {
+                  pkg.mPath=pkg.mScanPath;
+                  returnCode=PackageManager.MOVE_FAILED_INSUFFICIENT_STORAGE;
+                }
+ else {
+                  pkg.mScanPath=newCodePath;
+                  pkg.applicationInfo.sourceDir=newCodePath;
+                  pkg.applicationInfo.publicSourceDir=newResPath;
+                  PackageSetting ps=(PackageSetting)pkg.mExtras;
+                  ps.codePath=new File(pkg.applicationInfo.sourceDir);
+                  ps.codePathString=ps.codePath.getPath();
+                  ps.resourcePath=new File(pkg.applicationInfo.publicSourceDir);
+                  ps.resourcePathString=ps.resourcePath.getPath();
+                  if ((mp.flags & PackageManager.INSTALL_EXTERNAL) != 0) {
+                    pkg.applicationInfo.flags|=ApplicationInfo.FLAG_EXTERNAL_STORAGE;
+                  }
+ else {
+                    pkg.applicationInfo.flags&=~ApplicationInfo.FLAG_EXTERNAL_STORAGE;
+                  }
+                  ps.setFlags(pkg.applicationInfo.flags);
+                  mAppDirs.remove(oldCodePath);
+                  mAppDirs.put(newCodePath,pkg);
+                  mSettings.writeLP();
+                }
+              }
+            }
+            sendResourcesChangedBroadcast(true,pkgList,uidArr,null);
+          }
+        }
       }
-      if (!moveSucceeded) {
+      if (returnCode != PackageManager.MOVE_SUCCEEDED) {
         if (mp.targetArgs != null) {
-          mp.targetArgs.doPostInstall(returnCode);
+          mp.targetArgs.doPostInstall(PackageManager.INSTALL_FAILED_INTERNAL_ERROR);
         }
       }
  else {
