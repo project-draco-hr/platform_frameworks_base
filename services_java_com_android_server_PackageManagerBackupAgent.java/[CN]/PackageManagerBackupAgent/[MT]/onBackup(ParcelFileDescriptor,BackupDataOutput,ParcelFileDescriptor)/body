@@ -1,7 +1,7 @@
 {
   if (DEBUG)   Slog.v(TAG,"onBackup()");
-  ByteArrayOutputStream bufStream=new ByteArrayOutputStream();
-  DataOutputStream outWriter=new DataOutputStream(bufStream);
+  ByteArrayOutputStream outputBuffer=new ByteArrayOutputStream();
+  DataOutputStream outputBufferStream=new DataOutputStream(outputBuffer);
   parseStateFile(oldState);
   if (mStoredIncrementalVersion == null || !mStoredIncrementalVersion.equals(Build.VERSION.INCREMENTAL)) {
     Slog.i(TAG,"Previous metadata " + mStoredIncrementalVersion + " mismatch vs "+ Build.VERSION.INCREMENTAL+ " - rewriting");
@@ -10,11 +10,9 @@
   try {
     if (!mExisting.contains(GLOBAL_METADATA_KEY)) {
       if (DEBUG)       Slog.v(TAG,"Storing global metadata key");
-      outWriter.writeInt(Build.VERSION.SDK_INT);
-      outWriter.writeUTF(Build.VERSION.INCREMENTAL);
-      byte[] metadata=bufStream.toByteArray();
-      data.writeEntityHeader(GLOBAL_METADATA_KEY,metadata.length);
-      data.writeEntityData(metadata,metadata.length);
+      outputBufferStream.writeInt(Build.VERSION.SDK_INT);
+      outputBufferStream.writeUTF(Build.VERSION.INCREMENTAL);
+      writeEntity(data,GLOBAL_METADATA_KEY,outputBuffer.toByteArray());
     }
  else {
       if (DEBUG)       Slog.v(TAG,"Global metadata key already stored");
@@ -34,28 +32,23 @@
           mExisting.add(packName);
           continue;
         }
-        boolean doBackup=false;
-        if (!mExisting.contains(packName)) {
-          doBackup=true;
-        }
- else {
-          if (info.versionCode != mStateVersions.get(packName).versionCode) {
-            doBackup=true;
-          }
+        if (mExisting.contains(packName)) {
           mExisting.remove(packName);
-        }
-        if (doBackup) {
-          bufStream.reset();
-          outWriter.writeInt(info.versionCode);
-          byte[] versionBuf=bufStream.toByteArray();
-          byte[] sigs=flattenSignatureArray(info.signatures);
-          if (DEBUG) {
-            Slog.v(TAG,"+ metadata for " + packName + " version="+ info.versionCode+ " versionLen="+ versionBuf.length+ " sigsLen="+ sigs.length);
+          if (info.versionCode == mStateVersions.get(packName).versionCode) {
+            continue;
           }
-          data.writeEntityHeader(packName,versionBuf.length + sigs.length);
-          data.writeEntityData(versionBuf,versionBuf.length);
-          data.writeEntityData(sigs,sigs.length);
         }
+        if (info.signatures == null || info.signatures.length == 0) {
+          Slog.w(TAG,"Not backing up package " + packName + " since it appears to have no signatures.");
+          continue;
+        }
+        outputBuffer.reset();
+        outputBufferStream.writeInt(info.versionCode);
+        writeSignatureArray(outputBufferStream,info.signatures);
+        if (DEBUG) {
+          Slog.v(TAG,"+ writing metadata for " + packName + " version="+ info.versionCode+ " entityLen="+ outputBuffer.size());
+        }
+        writeEntity(data,packName,outputBuffer.toByteArray());
       }
     }
     for (    String app : mExisting) {
