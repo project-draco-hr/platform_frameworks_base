@@ -1,19 +1,26 @@
 {
-  SntpClient client=new SntpClient();
-  long time;
-  if ((mNtpServer != null) && client.requestTime(mNtpServer,10000)) {
-    time=client.getNtpTime();
-    if (!mNtpActive) {
-      mNtpActive=true;
-      if (DBG)       Slog.d(TAG,"found Authoritative time - reseting alarm");
-      mHandler.obtainMessage(EVENT_RESET_ALARM).sendToTarget();
+  if (mNtpServer != null) {
+    if (mNtpActive) {
+      long ntpAge=SystemClock.elapsedRealtime() - cachedNtpTimestamp;
+      if (ntpAge < MAX_NTP_CACHE_AGE) {
+        return cachedNtp + ntpAge;
+      }
     }
-    if (DBG)     Slog.d(TAG,"using Authoritative time: " + time);
+    SntpClient client=new SntpClient();
+    if (client.requestTime(mNtpServer,MAX_NTP_FETCH_WAIT)) {
+      cachedNtp=client.getNtpTime();
+      cachedNtpTimestamp=SystemClock.elapsedRealtime();
+      if (!mNtpActive) {
+        mNtpActive=true;
+        if (DBG)         Slog.d(TAG,"found Authoritative time - reseting alarm");
+        mHandler.obtainMessage(EVENT_RESET_ALARM).sendToTarget();
+      }
+      if (DBG)       Slog.d(TAG,"using Authoritative time: " + cachedNtp);
+      return cachedNtp;
+    }
   }
- else {
-    time=System.currentTimeMillis();
-    if (DBG)     Slog.d(TAG,"using User time: " + time);
-    mNtpActive=false;
-  }
+  long time=System.currentTimeMillis();
+  if (DBG)   Slog.d(TAG,"using User time: " + time);
+  mNtpActive=false;
   return time;
 }
