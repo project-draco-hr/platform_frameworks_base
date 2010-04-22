@@ -2,7 +2,6 @@
   if (mCancelled)   return;
   StatusLine statusLine=null;
   boolean hasBody=false;
-  boolean reuse=false;
   httpClientConnection.flush();
   int statusCode=0;
   Headers header=new Headers();
@@ -18,6 +17,7 @@
   HttpEntity entity=null;
   hasBody=canResponseHaveBody(mHttpRequest,statusCode);
   if (hasBody)   entity=httpClientConnection.receiveResponseEntity(header);
+  boolean supportPartialContent=v.greaterEquals(HttpVersion.HTTP_1_1);
   if (entity != null) {
     InputStream is=entity.getContent();
     Header contentEncoding=entity.getContentEncoding();
@@ -48,6 +48,7 @@ synchronized (this) {
         len=nis.read(buf,count,buf.length - count);
         if (len != -1) {
           count+=len;
+          if (supportPartialContent)           mReceivedBytes+=len;
         }
         if (len == -1 || count >= lowWater) {
           if (HttpLog.LOGV)           HttpLog.v("Request.readResponse() " + count);
@@ -63,7 +64,10 @@ synchronized (this) {
       if (HttpLog.LOGV)       HttpLog.v("readResponse() handling " + e);
     }
 catch (    IOException e) {
-      if (statusCode == HttpStatus.SC_OK) {
+      if (statusCode == HttpStatus.SC_OK || statusCode == HttpStatus.SC_PARTIAL_CONTENT) {
+        if (supportPartialContent && count > 0) {
+          mEventHandler.data(buf,count);
+        }
         throw e;
       }
     }
