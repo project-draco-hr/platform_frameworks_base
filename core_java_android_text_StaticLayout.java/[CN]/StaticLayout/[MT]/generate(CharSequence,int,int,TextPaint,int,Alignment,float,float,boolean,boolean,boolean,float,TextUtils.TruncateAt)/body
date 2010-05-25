@@ -14,7 +14,7 @@
     if (paraEnd < 0)     paraEnd=bufend;
  else     paraEnd++;
     int paraLen=paraEnd - paraStart;
-    int firstWidthLineCount=1;
+    int firstWidthLineLimit=mLineCount + 1;
     int firstwidth=outerwidth;
     int restwidth=outerwidth;
     LineHeightSpan[] chooseht=null;
@@ -24,8 +24,10 @@
         LeadingMarginSpan lms=sp[i];
         firstwidth-=sp[i].getLeadingMargin(true);
         restwidth-=sp[i].getLeadingMargin(false);
-        if (lms instanceof LeadingMarginSpan.LeadingMarginSpan2) {
-          firstWidthLineCount=((LeadingMarginSpan.LeadingMarginSpan2)lms).getLeadingMarginLineCount();
+        if (lms instanceof LeadingMarginSpan2) {
+          LeadingMarginSpan2 lms2=(LeadingMarginSpan2)lms;
+          int lmsFirstLine=getLineForOffset(spanned.getSpanStart(lms2));
+          firstWidthLineLimit=lmsFirstLine + lms2.getLeadingMarginLineCount();
         }
       }
       chooseht=spanned.getSpans(paraStart,paraEnd,LineHeightSpan.class);
@@ -60,7 +62,9 @@
     int fit=paraStart;
     float fitwidth=w;
     int fitascent=0, fitdescent=0, fittop=0, fitbottom=0;
-    boolean tab=false;
+    boolean hasTabOrEmoji=false;
+    boolean hasTab=false;
+    TabStops tabStops=null;
     for (int spanStart=paraStart, spanEnd=spanStart, nextSpanStart; spanStart < paraEnd; spanStart=nextSpanStart) {
       if (spanStart == spanEnd) {
         if (spanned == null)         spanEnd=paraEnd;
@@ -88,8 +92,20 @@
           ;
         }
  else         if (c == '\t') {
-          w=Layout.nextTab(sub,paraStart,paraEnd,w,null);
-          tab=true;
+          if (hasTab == false) {
+            hasTab=true;
+            hasTabOrEmoji=true;
+            TabStopSpan[] spans=spanned.getSpans(paraStart,paraEnd,TabStopSpan.class);
+            if (spans.length > 0) {
+              tabStops=new TabStops(TAB_INCREMENT,spans);
+            }
+          }
+          if (tabStops != null) {
+            w=tabStops.nextTab(w);
+          }
+ else {
+            w=TabStops.nextDefaultStop(w,TAB_INCREMENT);
+          }
         }
  else         if (c >= 0xD800 && c <= 0xDFFF && j + 1 < spanEnd) {
           int emoji=Character.codePointAt(chs,j - paraStart);
@@ -105,7 +121,7 @@
               }
               float wid=bm.getWidth() * -whichPaint.ascent() / bm.getHeight();
               w+=wid;
-              tab=true;
+              hasTabOrEmoji=true;
               j++;
             }
  else {
@@ -140,7 +156,7 @@
             while (ok < spanEnd && chs[ok - paraStart] == ' ') {
               ok++;
             }
-            v=out(source,here,ok,okascent,okdescent,oktop,okbottom,v,spacingmult,spacingadd,chooseht,choosehtv,fm,tab,needMultiply,paraStart,chdirs,dir,easy,ok == bufend,includepad,trackpad,chs,widths,here - paraStart,where,ellipsizedWidth,okwidth,paint);
+            v=out(source,here,ok,okascent,okdescent,oktop,okbottom,v,spacingmult,spacingadd,chooseht,choosehtv,fm,hasTabOrEmoji,needMultiply,paraStart,chdirs,dir,easy,ok == bufend,includepad,trackpad,chs,widths,here - paraStart,where,ellipsizedWidth,okwidth,paint);
             here=ok;
           }
  else {
@@ -157,15 +173,15 @@
             while (ok < spanEnd && chs[ok - paraStart] == ' ') {
               ok++;
             }
-            v=out(source,here,ok,okascent,okdescent,oktop,okbottom,v,spacingmult,spacingadd,chooseht,choosehtv,fm,tab,needMultiply,paraStart,chdirs,dir,easy,ok == bufend,includepad,trackpad,chs,widths,here - paraStart,where,ellipsizedWidth,okwidth,paint);
+            v=out(source,here,ok,okascent,okdescent,oktop,okbottom,v,spacingmult,spacingadd,chooseht,choosehtv,fm,hasTabOrEmoji,needMultiply,paraStart,chdirs,dir,easy,ok == bufend,includepad,trackpad,chs,widths,here - paraStart,where,ellipsizedWidth,okwidth,paint);
             here=ok;
           }
  else           if (fit != here) {
-            v=out(source,here,fit,fitascent,fitdescent,fittop,fitbottom,v,spacingmult,spacingadd,chooseht,choosehtv,fm,tab,needMultiply,paraStart,chdirs,dir,easy,fit == bufend,includepad,trackpad,chs,widths,here - paraStart,where,ellipsizedWidth,fitwidth,paint);
+            v=out(source,here,fit,fitascent,fitdescent,fittop,fitbottom,v,spacingmult,spacingadd,chooseht,choosehtv,fm,hasTabOrEmoji,needMultiply,paraStart,chdirs,dir,easy,fit == bufend,includepad,trackpad,chs,widths,here - paraStart,where,ellipsizedWidth,fitwidth,paint);
             here=fit;
           }
  else {
-            v=out(source,here,here + 1,fm.ascent,fm.descent,fm.top,fm.bottom,v,spacingmult,spacingadd,chooseht,choosehtv,fm,tab,needMultiply,paraStart,chdirs,dir,easy,here + 1 == bufend,includepad,trackpad,chs,widths,here - paraStart,where,ellipsizedWidth,widths[here - paraStart],paint);
+            v=out(source,here,here + 1,fm.ascent,fm.descent,fm.top,fm.bottom,v,spacingmult,spacingadd,chooseht,choosehtv,fm,hasTabOrEmoji,needMultiply,paraStart,chdirs,dir,easy,here + 1 == bufend,includepad,trackpad,chs,widths,here - paraStart,where,ellipsizedWidth,widths[here - paraStart],paint);
             here=here + 1;
           }
           if (here < spanStart) {
@@ -178,7 +194,7 @@
           w=0;
           fitascent=fitdescent=fittop=fitbottom=0;
           okascent=okdescent=oktop=okbottom=0;
-          if (--firstWidthLineCount <= 0) {
+          if (--firstWidthLineLimit <= 0) {
             width=restwidth;
           }
         }
@@ -192,7 +208,7 @@
         fitascent=fm.ascent;
         fitdescent=fm.descent;
       }
-      v=out(source,here,paraEnd,fitascent,fitdescent,fittop,fitbottom,v,spacingmult,spacingadd,chooseht,choosehtv,fm,tab,needMultiply,paraStart,chdirs,dir,easy,paraEnd == bufend,includepad,trackpad,chs,widths,here - paraStart,where,ellipsizedWidth,w,paint);
+      v=out(source,here,paraEnd,fitascent,fitdescent,fittop,fitbottom,v,spacingmult,spacingadd,chooseht,choosehtv,fm,hasTabOrEmoji,needMultiply,paraStart,chdirs,dir,easy,paraEnd == bufend,includepad,trackpad,chs,widths,here - paraStart,where,ellipsizedWidth,w,paint);
     }
     paraStart=paraEnd;
     if (paraEnd == bufend)     break;
