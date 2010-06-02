@@ -1,33 +1,45 @@
 {
-  String rsp=mConnector.doCommand("interface getcfg " + iface).get(0);
+  String rsp;
+  try {
+    rsp=mConnector.doCommand("interface getcfg " + iface).get(0);
+  }
+ catch (  NativeDaemonConnectorException e) {
+    throw new IllegalStateException("Cannot communicate with native daemon to get interface config");
+  }
   Slog.d(TAG,String.format("rsp <%s>",rsp));
   StringTokenizer st=new StringTokenizer(rsp);
+  InterfaceConfiguration cfg;
   try {
-    int code=Integer.parseInt(st.nextToken(" "));
-    if (code != NetdResponseCode.InterfaceGetCfgResult) {
-      throw new IllegalStateException(String.format("Expected code %d, but got %d",NetdResponseCode.InterfaceGetCfgResult,code));
+    try {
+      int code=Integer.parseInt(st.nextToken(" "));
+      if (code != NetdResponseCode.InterfaceGetCfgResult) {
+        throw new IllegalStateException(String.format("Expected code %d, but got %d",NetdResponseCode.InterfaceGetCfgResult,code));
+      }
     }
+ catch (    NumberFormatException nfe) {
+      throw new IllegalStateException(String.format("Invalid response from daemon (%s)",rsp));
+    }
+    cfg=new InterfaceConfiguration();
+    cfg.hwAddr=st.nextToken(" ");
+    try {
+      cfg.ipAddr=stringToIpAddr(st.nextToken(" "));
+    }
+ catch (    UnknownHostException uhe) {
+      Slog.e(TAG,"Failed to parse ipaddr",uhe);
+      cfg.ipAddr=0;
+    }
+    try {
+      cfg.netmask=stringToIpAddr(st.nextToken(" "));
+    }
+ catch (    UnknownHostException uhe) {
+      Slog.e(TAG,"Failed to parse netmask",uhe);
+      cfg.netmask=0;
+    }
+    cfg.interfaceFlags=st.nextToken("]").trim() + "]";
   }
- catch (  NumberFormatException nfe) {
+ catch (  NoSuchElementException nsee) {
     throw new IllegalStateException(String.format("Invalid response from daemon (%s)",rsp));
   }
-  InterfaceConfiguration cfg=new InterfaceConfiguration();
-  cfg.hwAddr=st.nextToken(" ");
-  try {
-    cfg.ipAddr=stringToIpAddr(st.nextToken(" "));
-  }
- catch (  UnknownHostException uhe) {
-    Slog.e(TAG,"Failed to parse ipaddr",uhe);
-    cfg.ipAddr=0;
-  }
-  try {
-    cfg.netmask=stringToIpAddr(st.nextToken(" "));
-  }
- catch (  UnknownHostException uhe) {
-    Slog.e(TAG,"Failed to parse netmask",uhe);
-    cfg.netmask=0;
-  }
-  cfg.interfaceFlags=st.nextToken("]").trim() + "]";
   Slog.d(TAG,String.format("flags <%s>",cfg.interfaceFlags));
   return cfg;
 }
