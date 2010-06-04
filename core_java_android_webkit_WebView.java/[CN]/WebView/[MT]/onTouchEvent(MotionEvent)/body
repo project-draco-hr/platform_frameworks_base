@@ -63,17 +63,6 @@ case MotionEvent.ACTION_DOWN:
         mConfirmMove=true;
         mPrivateHandler.removeMessages(RESUME_WEBCORE_PRIORITY);
       }
- else       if (!inFullScreenMode() && mShiftIsPressed) {
-        mSelectX=mScrollX + (int)x;
-        mSelectY=mScrollY + (int)y;
-        mTouchMode=TOUCH_SELECT_MODE;
-        if (DebugFlags.WEB_VIEW) {
-          Log.v(LOGTAG,"select=" + mSelectX + ","+ mSelectY);
-        }
-        nativeMoveSelection(contentX,contentY,false);
-        mTouchSelection=mExtendSelection=true;
-        invalidate();
-      }
  else       if (mPrivateHandler.hasMessages(RELEASE_SINGLE_TAP)) {
         mPrivateHandler.removeMessages(RELEASE_SINGLE_TAP);
         if (getSettings().supportTouchOnly()) {
@@ -114,6 +103,14 @@ case MotionEvent.ACTION_DOWN:
         }
         if (mLogEvent && eventTime - mLastTouchUpTime < 1000) {
           EventLog.writeEvent(EventLogTags.BROWSER_DOUBLE_TAP_DURATION,(eventTime - mLastTouchUpTime),eventTime);
+        }
+        if (mSelectingText) {
+          mDrawSelectionPointer=false;
+          mSelectionStarted=nativeStartSelection(contentX,contentY);
+          if (DebugFlags.WEB_VIEW) {
+            Log.v(LOGTAG,"select=" + contentX + ","+ contentY);
+          }
+          invalidate();
         }
       }
       if (mTouchMode == TOUCH_INIT_MODE || mTouchMode == TOUCH_DOUBLE_TAP_MODE) {
@@ -188,17 +185,15 @@ case MotionEvent.ACTION_MOVE:
       Log.e(LOGTAG,"Got null mVelocityTracker when " + "mPreventDefault = " + mPreventDefault + " mDeferTouchProcess = "+ mDeferTouchProcess+ " mTouchMode = "+ mTouchMode);
     }
     mVelocityTracker.addMovement(ev);
-    if (mTouchMode != TOUCH_DRAG_MODE) {
-      if (mTouchMode == TOUCH_SELECT_MODE) {
-        mSelectX=mScrollX + (int)x;
-        mSelectY=mScrollY + (int)y;
-        if (DebugFlags.WEB_VIEW) {
-          Log.v(LOGTAG,"xtend=" + mSelectX + ","+ mSelectY);
-        }
-        nativeMoveSelection(contentX,contentY,true);
-        invalidate();
-        break;
+    if (mSelectingText && mSelectionStarted) {
+      if (DebugFlags.WEB_VIEW) {
+        Log.v(LOGTAG,"extend=" + contentX + ","+ contentY);
       }
+      nativeExtendSelection(contentX,contentY);
+      invalidate();
+      break;
+    }
+    if (mTouchMode != TOUCH_DRAG_MODE) {
       if (!mConfirmMove) {
         break;
       }
@@ -335,10 +330,6 @@ if (inFullScreenMode() || mDeferTouchProcess) {
   mTouchMode=TOUCH_DONE_MODE;
 }
 break;
-case TOUCH_SELECT_MODE:
-commitCopy();
-mTouchSelection=false;
-break;
 case TOUCH_INIT_MODE:
 case TOUCH_SHORTPRESS_START_MODE:
 case TOUCH_SHORTPRESS_MODE:
@@ -356,6 +347,12 @@ break;
 }
 }
  else {
+if (mSelectingText) {
+if (!nativeHitSelection(contentX,contentY)) {
+selectionDone();
+}
+break;
+}
 if (mTouchMode == TOUCH_INIT_MODE && (canZoomIn() || canZoomOut())) {
 mPrivateHandler.sendEmptyMessageDelayed(RELEASE_SINGLE_TAP,ViewConfiguration.getDoubleTapTimeout());
 }
