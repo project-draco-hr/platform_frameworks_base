@@ -2,7 +2,7 @@
   if (intent != null && intent.hasFileDescriptors()) {
     throw new IllegalArgumentException("File descriptors passed in Intent");
   }
-  final boolean componentSpecified=intent.getComponent() != null;
+  boolean componentSpecified=intent.getComponent() != null;
   intent=new Intent(intent);
   ActivityInfo aInfo;
   try {
@@ -33,6 +33,52 @@ synchronized (this) {
     mConfigWillChange=config != null && mConfiguration.diff(config) != 0;
     if (DEBUG_CONFIGURATION)     Slog.v(TAG,"Starting activity when config will change = " + mConfigWillChange);
     final long origId=Binder.clearCallingIdentity();
+    if (aInfo != null && (aInfo.applicationInfo.flags & ApplicationInfo.FLAG_HEAVY_WEIGHT) != 0) {
+      if (aInfo.processName.equals(aInfo.applicationInfo.packageName)) {
+        if (mHeavyWeightProcess != null && (mHeavyWeightProcess.info.uid != aInfo.applicationInfo.uid || !mHeavyWeightProcess.processName.equals(aInfo.processName))) {
+          int realCallingPid=callingPid;
+          int realCallingUid=callingUid;
+          if (caller != null) {
+            ProcessRecord callerApp=getRecordForAppLocked(caller);
+            if (callerApp != null) {
+              realCallingPid=callerApp.pid;
+              realCallingUid=callerApp.info.uid;
+            }
+ else {
+              Slog.w(TAG,"Unable to find app for caller " + caller + " (pid="+ realCallingPid+ ") when starting: "+ intent.toString());
+              return START_PERMISSION_DENIED;
+            }
+          }
+          IIntentSender target=getIntentSenderLocked(IActivityManager.INTENT_SENDER_ACTIVITY,"android",realCallingUid,null,null,0,intent,resolvedType,PendingIntent.FLAG_CANCEL_CURRENT | PendingIntent.FLAG_ONE_SHOT);
+          Intent newIntent=new Intent();
+          if (requestCode >= 0) {
+            newIntent.putExtra(HeavyWeightSwitcherActivity.KEY_HAS_RESULT,true);
+          }
+          newIntent.putExtra(HeavyWeightSwitcherActivity.KEY_INTENT,new IntentSender(target));
+          if (mHeavyWeightProcess.activities.size() > 0) {
+            HistoryRecord hist=mHeavyWeightProcess.activities.get(0);
+            newIntent.putExtra(HeavyWeightSwitcherActivity.KEY_CUR_APP,hist.packageName);
+            newIntent.putExtra(HeavyWeightSwitcherActivity.KEY_CUR_TASK,hist.task.taskId);
+          }
+          newIntent.putExtra(HeavyWeightSwitcherActivity.KEY_NEW_APP,aInfo.packageName);
+          newIntent.setFlags(intent.getFlags());
+          newIntent.setClassName("android",HeavyWeightSwitcherActivity.class.getName());
+          intent=newIntent;
+          resolvedType=null;
+          caller=null;
+          callingUid=Binder.getCallingUid();
+          callingPid=Binder.getCallingPid();
+          componentSpecified=true;
+          try {
+            ResolveInfo rInfo=ActivityThread.getPackageManager().resolveIntent(intent,null,PackageManager.MATCH_DEFAULT_ONLY | STOCK_PM_FLAGS);
+            aInfo=rInfo != null ? rInfo.activityInfo : null;
+          }
+ catch (          RemoteException e) {
+            aInfo=null;
+          }
+        }
+      }
+    }
     int res=startActivityLocked(caller,intent,resolvedType,grantedUriPermissions,grantedMode,aInfo,resultTo,resultWho,requestCode,callingPid,callingUid,onlyIfNeeded,componentSpecified);
     if (mConfigWillChange) {
       enforceCallingPermission(android.Manifest.permission.CHANGE_CONFIGURATION,"updateConfiguration()");
