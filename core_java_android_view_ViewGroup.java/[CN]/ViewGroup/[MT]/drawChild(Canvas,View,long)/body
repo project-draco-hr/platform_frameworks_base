@@ -6,29 +6,37 @@
   final int cb=child.mBottom;
   final int flags=mGroupFlags;
   if ((flags & FLAG_CLEAR_TRANSFORMATION) == FLAG_CLEAR_TRANSFORMATION) {
-    if (mChildTransformation != null) {
-      mChildTransformation.clear();
-    }
+    mChildTransformation.clear();
     mGroupFlags&=~FLAG_CLEAR_TRANSFORMATION;
   }
   Transformation transformToApply=null;
+  Transformation invalidationTransform;
   final Animation a=child.getAnimation();
   boolean concatMatrix=false;
+  boolean scalingRequired=false;
+  boolean caching=false;
+  if (!canvas.isHardwareAccelerated() && (flags & FLAG_CHILDREN_DRAWN_WITH_CACHE) == FLAG_CHILDREN_DRAWN_WITH_CACHE || (flags & FLAG_ALWAYS_DRAWN_WITH_CACHE) == FLAG_ALWAYS_DRAWN_WITH_CACHE) {
+    caching=true;
+    if (mAttachInfo != null)     scalingRequired=mAttachInfo.mScalingRequired;
+  }
   if (a != null) {
-    if (mInvalidateRegion == null) {
-      mInvalidateRegion=new RectF();
-    }
-    final RectF region=mInvalidateRegion;
     final boolean initialized=a.isInitialized();
     if (!initialized) {
       a.initialize(cr - cl,cb - ct,getWidth(),getHeight());
       a.initializeInvalidateRegion(0,0,cr - cl,cb - ct);
       child.onAnimationStart();
     }
-    if (mChildTransformation == null) {
-      mChildTransformation=new Transformation();
+    more=a.getTransformation(drawingTime,mChildTransformation,scalingRequired ? mAttachInfo.mApplicationScale : 1f);
+    if (scalingRequired && mAttachInfo.mApplicationScale != 1f) {
+      if (mInvalidationTransformation == null) {
+        mInvalidationTransformation=new Transformation();
+      }
+      invalidationTransform=mInvalidationTransformation;
+      a.getTransformation(drawingTime,invalidationTransform,1f);
     }
-    more=a.getTransformation(drawingTime,mChildTransformation);
+ else {
+      invalidationTransform=mChildTransformation;
+    }
     transformToApply=mChildTransformation;
     concatMatrix=a.willChangeTransformationMatrix();
     if (more) {
@@ -42,7 +50,11 @@
         }
       }
  else {
-        a.getInvalidateRegion(0,0,cr - cl,cb - ct,region,transformToApply);
+        if (mInvalidateRegion == null) {
+          mInvalidateRegion=new RectF();
+        }
+        final RectF region=mInvalidateRegion;
+        a.getInvalidateRegion(0,0,cr - cl,cb - ct,region,invalidationTransform);
         mPrivateFlags|=DRAW_ANIMATION;
         final int left=cl + (int)region.left;
         final int top=ct + (int)region.top;
@@ -51,9 +63,6 @@
     }
   }
  else   if ((flags & FLAG_SUPPORT_STATIC_TRANSFORMATIONS) == FLAG_SUPPORT_STATIC_TRANSFORMATIONS) {
-    if (mChildTransformation == null) {
-      mChildTransformation=new Transformation();
-    }
     final boolean hasTransform=getChildStaticTransformation(child,mChildTransformation);
     if (hasTransform) {
       final int transformType=mChildTransformation.getTransformationType();
@@ -68,11 +77,9 @@
   child.computeScroll();
   final int sx=child.mScrollX;
   final int sy=child.mScrollY;
-  boolean scalingRequired=false;
   Bitmap cache=null;
-  if (!canvas.isHardwareAccelerated() && (flags & FLAG_CHILDREN_DRAWN_WITH_CACHE) == FLAG_CHILDREN_DRAWN_WITH_CACHE || (flags & FLAG_ALWAYS_DRAWN_WITH_CACHE) == FLAG_ALWAYS_DRAWN_WITH_CACHE) {
+  if (caching) {
     cache=child.getDrawingCache(true);
-    if (mAttachInfo != null)     scalingRequired=mAttachInfo.mScalingRequired;
   }
   final boolean hasNoCache=cache == null;
   final int restoreTo=canvas.save();
