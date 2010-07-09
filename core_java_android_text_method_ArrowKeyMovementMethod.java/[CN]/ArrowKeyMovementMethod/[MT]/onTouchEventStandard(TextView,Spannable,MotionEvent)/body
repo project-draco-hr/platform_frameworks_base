@@ -1,0 +1,116 @@
+{
+  int initialScrollX=-1, initialScrollY=-1;
+  if (event.getAction() == MotionEvent.ACTION_UP) {
+    initialScrollX=Touch.getInitialScrollX(widget,buffer);
+    initialScrollY=Touch.getInitialScrollY(widget,buffer);
+  }
+  boolean handled=Touch.onTouchEvent(widget,buffer,event);
+  if (widget.isFocused() && !widget.didTouchFocusSelect()) {
+    if (event.getAction() == MotionEvent.ACTION_DOWN) {
+      boolean cap=(MetaKeyKeyListener.getMetaState(buffer,KeyEvent.META_SHIFT_ON) == 1) || (MetaKeyKeyListener.getMetaState(buffer,MetaKeyKeyListener.META_SELECTING) != 0);
+      int x=(int)event.getX();
+      int y=(int)event.getY();
+      int offset=getOffset(x,y,widget);
+      if (cap) {
+        buffer.setSpan(LAST_TAP_DOWN,offset,offset,Spannable.SPAN_POINT_POINT);
+        widget.getParent().requestDisallowInterceptTouchEvent(true);
+      }
+ else {
+        OnePointFiveTapState[] tap=buffer.getSpans(0,buffer.length(),OnePointFiveTapState.class);
+        if (tap.length > 0) {
+          if (event.getEventTime() - tap[0].mWhen <= ViewConfiguration.getDoubleTapTimeout() && sameWord(buffer,offset,Selection.getSelectionEnd(buffer))) {
+            tap[0].active=true;
+            MetaKeyKeyListener.startSelecting(widget,buffer);
+            widget.getParent().requestDisallowInterceptTouchEvent(true);
+            buffer.setSpan(LAST_TAP_DOWN,offset,offset,Spannable.SPAN_POINT_POINT);
+          }
+          tap[0].mWhen=event.getEventTime();
+        }
+ else {
+          OnePointFiveTapState newtap=new OnePointFiveTapState();
+          newtap.mWhen=event.getEventTime();
+          newtap.active=false;
+          buffer.setSpan(newtap,0,buffer.length(),Spannable.SPAN_INCLUSIVE_INCLUSIVE);
+        }
+      }
+    }
+ else     if (event.getAction() == MotionEvent.ACTION_MOVE) {
+      boolean cap=(MetaKeyKeyListener.getMetaState(buffer,KeyEvent.META_SHIFT_ON) == 1) || (MetaKeyKeyListener.getMetaState(buffer,MetaKeyKeyListener.META_SELECTING) != 0);
+      if (cap && handled) {
+        widget.cancelLongPress();
+        int x=(int)event.getX();
+        int y=(int)event.getY();
+        int offset=getOffset(x,y,widget);
+        final OnePointFiveTapState[] tap=buffer.getSpans(0,buffer.length(),OnePointFiveTapState.class);
+        if (tap.length > 0 && tap[0].active) {
+          int lastDownOffset=buffer.getSpanStart(LAST_TAP_DOWN);
+          int spanstart;
+          int spanend;
+          if (offset >= lastDownOffset) {
+            spanstart=findWordStart(buffer,lastDownOffset);
+            spanend=findWordEnd(buffer,offset);
+          }
+ else {
+            spanstart=findWordEnd(buffer,lastDownOffset);
+            spanend=findWordStart(buffer,offset);
+          }
+          Selection.setSelection(buffer,spanstart,spanend);
+        }
+ else {
+          Selection.extendSelection(buffer,offset);
+        }
+        return true;
+      }
+    }
+ else     if (event.getAction() == MotionEvent.ACTION_UP) {
+      if ((initialScrollY >= 0 && initialScrollY != widget.getScrollY()) || (initialScrollX >= 0 && initialScrollX != widget.getScrollX())) {
+        widget.moveCursorToVisibleOffset();
+        return true;
+      }
+      int x=(int)event.getX();
+      int y=(int)event.getY();
+      int off=getOffset(x,y,widget);
+      OnePointFiveTapState[] onepointfivetap=buffer.getSpans(0,buffer.length(),OnePointFiveTapState.class);
+      if (onepointfivetap.length > 0 && onepointfivetap[0].active && Selection.getSelectionStart(buffer) == Selection.getSelectionEnd(buffer)) {
+        MetaKeyKeyListener.stopSelecting(widget,buffer);
+        for (int i=0; i < onepointfivetap.length; i++) {
+          buffer.removeSpan(onepointfivetap[i]);
+        }
+        buffer.removeSpan(LAST_TAP_DOWN);
+      }
+      boolean cap=(MetaKeyKeyListener.getMetaState(buffer,KeyEvent.META_SHIFT_ON) == 1) || (MetaKeyKeyListener.getMetaState(buffer,MetaKeyKeyListener.META_SELECTING) != 0);
+      DoubleTapState[] tap=buffer.getSpans(0,buffer.length(),DoubleTapState.class);
+      boolean doubletap=false;
+      if (tap.length > 0) {
+        if (event.getEventTime() - tap[0].mWhen <= ViewConfiguration.getDoubleTapTimeout() && sameWord(buffer,off,Selection.getSelectionEnd(buffer))) {
+          doubletap=true;
+        }
+        tap[0].mWhen=event.getEventTime();
+      }
+ else {
+        DoubleTapState newtap=new DoubleTapState();
+        newtap.mWhen=event.getEventTime();
+        buffer.setSpan(newtap,0,buffer.length(),Spannable.SPAN_INCLUSIVE_INCLUSIVE);
+      }
+      if (cap) {
+        buffer.removeSpan(LAST_TAP_DOWN);
+        if (onepointfivetap.length > 0 && onepointfivetap[0].active) {
+          MetaKeyKeyListener.stopSelecting(widget,buffer);
+        }
+ else {
+          Selection.extendSelection(buffer,off);
+        }
+      }
+ else       if (doubletap) {
+        Selection.setSelection(buffer,findWordStart(buffer,off),findWordEnd(buffer,off));
+      }
+ else {
+        Selection.setSelection(buffer,off);
+      }
+      MetaKeyKeyListener.adjustMetaAfterKeypress(buffer);
+      MetaKeyKeyListener.resetLockedMeta(buffer);
+      return true;
+    }
+  }
+  return handled;
+}
