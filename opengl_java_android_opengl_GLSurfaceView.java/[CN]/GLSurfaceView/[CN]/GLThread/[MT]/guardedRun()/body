@@ -10,6 +10,7 @@
     boolean sizeChanged=false;
     boolean wantRenderNotification=false;
     boolean doRenderNotification=false;
+    boolean askedToReleaseEglContext=false;
     int w=0;
     int h=0;
     Runnable event=null;
@@ -29,6 +30,15 @@ synchronized (sGLThreadManager) {
             if (LOG_PAUSE_RESUME) {
               Log.i("GLThread","mPaused is now " + mPaused + " tid="+ getId());
             }
+          }
+          if (mShouldReleaseEglContext) {
+            if (LOG_SURFACE) {
+              Log.i("GLThread","releasing EGL context because asked to tid=" + getId());
+            }
+            stopEglSurfaceLocked();
+            stopEglContextLocked();
+            mShouldReleaseEglContext=false;
+            askedToReleaseEglContext=true;
           }
           if (lostEglContext) {
             stopEglSurfaceLocked();
@@ -71,23 +81,31 @@ synchronized (sGLThreadManager) {
             sGLThreadManager.notifyAll();
           }
           if (doRenderNotification) {
+            if (LOG_SURFACE) {
+              Log.i("GLThread","sending render notification tid=" + getId());
+            }
             wantRenderNotification=false;
             doRenderNotification=false;
             mRenderComplete=true;
             sGLThreadManager.notifyAll();
           }
-          if ((!mPaused) && mHasSurface && (mWidth > 0)&& (mHeight > 0)&& (mRequestRender || (mRenderMode == RENDERMODE_CONTINUOUSLY))) {
-            if ((!mHaveEglContext) && sGLThreadManager.tryAcquireEglContextLocked(this)) {
-              try {
-                mEglHelper.start();
+          if (readyToDraw()) {
+            if (!mHaveEglContext) {
+              if (askedToReleaseEglContext) {
+                askedToReleaseEglContext=false;
               }
- catch (              RuntimeException t) {
-                sGLThreadManager.releaseEglContextLocked(this);
-                throw t;
+ else               if (sGLThreadManager.tryAcquireEglContextLocked(this)) {
+                try {
+                  mEglHelper.start();
+                }
+ catch (                RuntimeException t) {
+                  sGLThreadManager.releaseEglContextLocked(this);
+                  throw t;
+                }
+                mHaveEglContext=true;
+                createEglContext=true;
+                sGLThreadManager.notifyAll();
               }
-              mHaveEglContext=true;
-              createEglContext=true;
-              sGLThreadManager.notifyAll();
             }
             if (mHaveEglContext && !mHaveEglSurface) {
               mHaveEglSurface=true;
@@ -100,6 +118,9 @@ synchronized (sGLThreadManager) {
                 w=mWidth;
                 h=mHeight;
                 wantRenderNotification=true;
+                if (LOG_SURFACE) {
+                  Log.i("GLThread","noticing that we want render notification tid=" + getId());
+                }
                 if (DRAW_TWICE_AFTER_SIZE_CHANGED) {
                 }
  else {
@@ -115,7 +136,7 @@ synchronized (sGLThreadManager) {
             }
           }
           if (LOG_THREADS) {
-            Log.i("GLThread","waiting tid=" + getId());
+            Log.i("GLThread","waiting tid=" + getId() + " mHaveEglContext: "+ mHaveEglContext+ " mHaveEglSurface: "+ mHaveEglSurface+ " mPaused: "+ mPaused+ " mHasSurface: "+ mHasSurface+ " mWaitingForSurface: "+ mWaitingForSurface+ " mWidth: "+ mWidth+ " mHeight: "+ mHeight+ " mRequestRender: "+ mRequestRender+ " mRenderMode: "+ mRenderMode);
           }
           sGLThreadManager.wait();
         }
@@ -151,7 +172,7 @@ synchronized (sGLThreadManager) {
         sizeChanged=false;
       }
       if (LOG_RENDERER_DRAW_FRAME) {
-        Log.w("GLThread","onDrawFrame");
+        Log.w("GLThread","onDrawFrame tid=" + getId());
       }
       mRenderer.onDrawFrame(gl);
       if (!mEglHelper.swap()) {
