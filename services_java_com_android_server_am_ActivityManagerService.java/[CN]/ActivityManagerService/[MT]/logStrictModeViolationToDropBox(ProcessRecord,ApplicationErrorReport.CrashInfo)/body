@@ -1,0 +1,57 @@
+{
+  if (crashInfo == null) {
+    return;
+  }
+  final boolean isSystemApp=process == null || (process.info.flags & (ApplicationInfo.FLAG_SYSTEM | ApplicationInfo.FLAG_UPDATED_SYSTEM_APP)) != 0;
+  final String dropboxTag=isSystemApp ? "system_app_strictmode" : "data_app_strictmode";
+  final DropBoxManager dbox=(DropBoxManager)mContext.getSystemService(Context.DROPBOX_SERVICE);
+  if (dbox == null || !dbox.isTagEnabled(dropboxTag))   return;
+  boolean bufferWasEmpty;
+  final StringBuilder sb=isSystemApp ? mStrictModeBuffer : new StringBuilder(1024);
+synchronized (sb) {
+    bufferWasEmpty=sb.length() == 0;
+    appendDropBoxProcessHeaders(process,sb);
+    sb.append("Build: ").append(Build.FINGERPRINT).append("\n");
+    sb.append("System-App: ").append(isSystemApp).append("\n");
+    if (crashInfo != null && crashInfo.durationMillis != -1) {
+      sb.append("Duration-Millis: ").append(crashInfo.durationMillis).append("\n");
+    }
+    sb.append("\n");
+    if (crashInfo != null && crashInfo.stackTrace != null) {
+      sb.append(crashInfo.stackTrace);
+    }
+    sb.append("\n");
+  }
+  if (!isSystemApp) {
+    new Thread("Error dump: " + dropboxTag){
+      @Override public void run(){
+        dbox.addText(dropboxTag,sb.toString());
+      }
+    }
+.start();
+    return;
+  }
+  if (!bufferWasEmpty) {
+    return;
+  }
+  new Thread("Error dump: " + dropboxTag){
+    @Override public void run(){
+      try {
+        Thread.sleep(5000);
+      }
+ catch (      InterruptedException e) {
+      }
+      String errorReport;
+synchronized (mStrictModeBuffer) {
+        errorReport=mStrictModeBuffer.toString();
+        if (errorReport.length() == 0) {
+          return;
+        }
+        mStrictModeBuffer.delete(0,mStrictModeBuffer.length());
+        mStrictModeBuffer.trimToSize();
+      }
+      dbox.addText(dropboxTag,errorReport);
+    }
+  }
+.start();
+}
