@@ -1,0 +1,87 @@
+{
+  int indicesToLoadCount=0;
+  int[] indicesToLoad=null;
+synchronized (mViewCache) {
+    indicesToLoad=new int[mViewCache.length];
+    Arrays.fill(indicesToLoad,0);
+    if (containsAndIsValid(position)) {
+      return mViewCache[getCacheIndex(position)];
+    }
+    int centerPosition=(mViewCacheEndPosition + mViewCacheStartPosition) / 2;
+    if ((mViewCacheEndPosition <= mViewCacheStartPosition) || (Math.abs(position - centerPosition) > mCacheSlack)) {
+      int newStartPosition=position - mHalfCacheSize;
+      int newEndPosition=position + mHalfCacheSize;
+      int effectiveStart=Math.max(newStartPosition,0);
+      int effectiveEnd=Math.min(newEndPosition,getCount());
+      mWorkerQueue.removeMessages(0);
+      boolean loadFromBeginning=effectiveStart < mViewCacheStartPosition;
+      int numLoadFromBeginning=mViewCacheStartPosition - effectiveStart;
+      boolean loadFromEnd=effectiveEnd > mViewCacheEndPosition;
+      int overlapStart=Math.max(mViewCacheStartPosition,effectiveStart);
+      int overlapEnd=Math.min(Math.max(mViewCacheStartPosition,mViewCacheEndPosition),effectiveEnd);
+      for (int i=newStartPosition; i < newEndPosition; ++i) {
+        if (loadFromBeginning && (effectiveStart <= i) && (i < overlapStart)) {
+          mViewCache[getCacheIndex(i)].invalidate();
+          indicesToLoad[indicesToLoadCount++]=effectiveStart + (numLoadFromBeginning - (i - effectiveStart) - 1);
+        }
+ else         if (loadFromEnd && (overlapEnd <= i) && (i < effectiveEnd)) {
+          mViewCache[getCacheIndex(i)].invalidate();
+          indicesToLoad[indicesToLoadCount++]=i;
+        }
+ else         if ((overlapStart <= i) && (i < overlapEnd)) {
+          if (!mViewCache[getCacheIndex(i)].isValid()) {
+            indicesToLoad[indicesToLoadCount++]=i;
+          }
+        }
+ else {
+          mViewCache[getCacheIndex(i)].invalidate();
+        }
+      }
+      mViewCacheStartPosition=newStartPosition;
+      mViewCacheEndPosition=newEndPosition;
+      mPriorityLoadingWindowStart=position;
+      mPriorityLoadingWindowEnd=position + mPriorityLoadingWindowSize;
+      mLoadUpwards=loadFromBeginning && !loadFromEnd;
+    }
+ else     if (contains(position)) {
+      if (position < mPriorityLoadingWindowStart || position > mPriorityLoadingWindowEnd) {
+        mWorkerQueue.removeMessages(0);
+        int index;
+        int effectiveStart=Math.max(position - mPriorityLoadingWindowSize,0);
+        int effectiveEnd=0;
+synchronized (mViewCacheInfo) {
+          effectiveEnd=Math.min(position + mPriorityLoadingWindowSize - 1,mViewCacheInfo.count - 1);
+        }
+        for (int i=0; i < mViewCache.length; ++i) {
+          if (mLoadUpwards) {
+            index=effectiveEnd - i;
+          }
+ else {
+            index=effectiveStart + i;
+          }
+          if (!mViewCache[getCacheIndex(index)].isValid()) {
+            indicesToLoad[indicesToLoadCount++]=index;
+          }
+        }
+        mPriorityLoadingWindowStart=effectiveStart;
+        mPriorityLoadingWindowEnd=position + mPriorityLoadingWindowSize;
+      }
+    }
+  }
+  int length=0;
+synchronized (mViewCacheInfo) {
+    length=mViewCacheInfo.count;
+  }
+  for (int i=0; i < indicesToLoadCount; ++i) {
+    final int index=indicesToLoad[i];
+    if (0 <= index && index < length) {
+      mWorkerQueue.post(new Runnable(){
+        @Override public void run(){
+          updateRemoteViewsInfo(index);
+        }
+      }
+);
+    }
+  }
+  return null;
+}
