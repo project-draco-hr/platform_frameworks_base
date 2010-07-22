@@ -1,9 +1,6 @@
 {
   int indicesToLoadCount=0;
-  int[] indicesToLoad=null;
 synchronized (mViewCache) {
-    indicesToLoad=new int[mViewCache.length];
-    Arrays.fill(indicesToLoad,0);
     if (containsAndIsValid(position)) {
       return mViewCache[getCacheIndex(position)];
     }
@@ -11,76 +8,46 @@ synchronized (mViewCache) {
     if ((mViewCacheEndPosition <= mViewCacheStartPosition) || (Math.abs(position - centerPosition) > mCacheSlack)) {
       int newStartPosition=position - mHalfCacheSize;
       int newEndPosition=position + mHalfCacheSize;
+      int frameSize=mHalfCacheSize / 4;
+      int frameCount=(int)Math.ceil(mViewCache.length / (float)frameSize);
       int effectiveStart=Math.max(newStartPosition,0);
-      int effectiveEnd=Math.min(newEndPosition,getCount());
-      mWorkerQueue.removeMessages(0);
-      boolean loadFromBeginning=effectiveStart < mViewCacheStartPosition;
-      int numLoadFromBeginning=mViewCacheStartPosition - effectiveStart;
-      boolean loadFromEnd=effectiveEnd > mViewCacheEndPosition;
+      int effectiveEnd=Math.min(newEndPosition,getCount() - 1);
       int overlapStart=Math.max(mViewCacheStartPosition,effectiveStart);
       int overlapEnd=Math.min(Math.max(mViewCacheStartPosition,mViewCacheEndPosition),effectiveEnd);
-      for (int i=newStartPosition; i < newEndPosition; ++i) {
-        if (loadFromBeginning && (effectiveStart <= i) && (i < overlapStart)) {
-          mViewCache[getCacheIndex(i)].invalidate();
-          indicesToLoad[indicesToLoadCount++]=effectiveStart + (numLoadFromBeginning - (i - effectiveStart) - 1);
-        }
- else         if (loadFromEnd && (overlapEnd <= i) && (i < effectiveEnd)) {
-          mViewCache[getCacheIndex(i)].invalidate();
-          indicesToLoad[indicesToLoadCount++]=i;
-        }
- else         if ((overlapStart <= i) && (i < overlapEnd)) {
-          if (!mViewCache[getCacheIndex(i)].isValid()) {
-            indicesToLoad[indicesToLoadCount++]=i;
+      for (int i=0; i < (frameSize * frameCount); ++i) {
+        int index=newStartPosition + ((i % frameSize) * frameCount + (i / frameSize));
+        if (index <= newEndPosition) {
+          if ((overlapStart <= index) && (index <= overlapEnd)) {
+            if (!mViewCache[getCacheIndex(index)].isValid()) {
+              mTmpViewCacheLoadIndices[indicesToLoadCount++]=index;
+            }
           }
-        }
+ else           if ((effectiveStart <= index) && (index <= effectiveEnd)) {
+            mViewCache[getCacheIndex(index)].invalidate();
+            mTmpViewCacheLoadIndices[indicesToLoadCount++]=index;
+          }
  else {
-          mViewCache[getCacheIndex(i)].invalidate();
+            mViewCache[getCacheIndex(index)].invalidate();
+          }
         }
       }
       mViewCacheStartPosition=newStartPosition;
       mViewCacheEndPosition=newEndPosition;
-      mPriorityLoadingWindowStart=position;
-      mPriorityLoadingWindowEnd=position + mPriorityLoadingWindowSize;
-      mLoadUpwards=loadFromBeginning && !loadFromEnd;
-    }
- else     if (contains(position)) {
-      if (position < mPriorityLoadingWindowStart || position > mPriorityLoadingWindowEnd) {
-        mWorkerQueue.removeMessages(0);
-        int index;
-        int effectiveStart=Math.max(position - mPriorityLoadingWindowSize,0);
-        int effectiveEnd=0;
-synchronized (mViewCacheInfo) {
-          effectiveEnd=Math.min(position + mPriorityLoadingWindowSize - 1,mViewCacheInfo.count - 1);
-        }
-        for (int i=0; i < mViewCache.length; ++i) {
-          if (mLoadUpwards) {
-            index=effectiveEnd - i;
-          }
- else {
-            index=effectiveStart + i;
-          }
-          if (!mViewCache[getCacheIndex(index)].isValid()) {
-            indicesToLoad[indicesToLoadCount++]=index;
-          }
-        }
-        mPriorityLoadingWindowStart=effectiveStart;
-        mPriorityLoadingWindowEnd=position + mPriorityLoadingWindowSize;
-      }
     }
   }
   int length=0;
 synchronized (mViewCacheInfo) {
     length=mViewCacheInfo.count;
   }
-  for (int i=0; i < indicesToLoadCount; ++i) {
-    final int index=indicesToLoad[i];
-    if (0 <= index && index < length) {
-      mWorkerQueue.post(new Runnable(){
-        @Override public void run(){
-          updateRemoteViewsInfo(index);
+  if (indicesToLoadCount > 0) {
+synchronized (mViewCacheLoadIndices) {
+      mViewCacheLoadIndices.clear();
+      for (int i=0; i < indicesToLoadCount; ++i) {
+        final int index=mTmpViewCacheLoadIndices[i];
+        if (0 <= index && index < length) {
+          mViewCacheLoadIndices.addLast(index);
         }
       }
-);
     }
   }
   return null;
