@@ -1,0 +1,127 @@
+{
+  if (DBG)   Log.d(TAG,getName() + message.toString() + "\n");
+  SyncParams syncParams;
+switch (message.what) {
+case CMD_STOP_SUPPLICANT:
+    Log.d(TAG,"Stop supplicant received");
+  WifiNative.stopSupplicant();
+case SUP_DISCONNECTION_EVENT:
+EventLog.writeEvent(EVENTLOG_WIFI_EVENT_HANDLED,message.what);
+WifiNative.closeSupplicantConnection();
+handleNetworkDisconnect();
+sendSupplicantConnectionChangedBroadcast(false);
+mSupplicantStateTracker.resetSupplicantState();
+transitionTo(mDriverLoadedState);
+if (message.what == SUP_DISCONNECTION_EVENT) {
+Log.d(TAG,"Supplicant died, unloading driver");
+sendMessage(obtainMessage(CMD_UNLOAD_DRIVER,WIFI_STATE_UNKNOWN,0));
+}
+break;
+case CMD_START_DRIVER:
+EventLog.writeEvent(EVENTLOG_WIFI_EVENT_HANDLED,message.what);
+WifiNative.startDriverCommand();
+transitionTo(mDriverStartingState);
+break;
+case SCAN_RESULTS_EVENT:
+setScanResults(WifiNative.scanResultsCommand());
+sendScanResultsAvailableBroadcast();
+break;
+case CMD_PING_SUPPLICANT:
+syncParams=(SyncParams)message.obj;
+syncParams.mSyncReturn.boolValue=WifiNative.pingCommand();
+notifyOnMsgObject(message);
+break;
+case CMD_ADD_OR_UPDATE_NETWORK:
+EventLog.writeEvent(EVENTLOG_WIFI_EVENT_HANDLED,message.what);
+syncParams=(SyncParams)message.obj;
+WifiConfiguration config=(WifiConfiguration)syncParams.mParameter;
+syncParams.mSyncReturn.intValue=addOrUpdateNetworkNative(config);
+notifyOnMsgObject(message);
+break;
+case CMD_REMOVE_NETWORK:
+EventLog.writeEvent(EVENTLOG_WIFI_EVENT_HANDLED,message.what);
+if (message.arg2 == SYNCHRONOUS_CALL) {
+syncParams=(SyncParams)message.obj;
+syncParams.mSyncReturn.boolValue=WifiNative.removeNetworkCommand(message.arg1);
+notifyOnMsgObject(message);
+}
+ else {
+WifiNative.removeNetworkCommand(message.arg1);
+}
+break;
+case CMD_ENABLE_NETWORK:
+EventLog.writeEvent(EVENTLOG_WIFI_EVENT_HANDLED,message.what);
+if (message.arg2 == SYNCHRONOUS_CALL) {
+syncParams=(SyncParams)message.obj;
+EnableNetParams enableNetParams=(EnableNetParams)syncParams.mParameter;
+syncParams.mSyncReturn.boolValue=WifiNative.enableNetworkCommand(enableNetParams.netId,enableNetParams.disableOthers);
+notifyOnMsgObject(message);
+}
+ else {
+WifiNative.enableNetworkCommand(message.arg1,message.arg2 == 1);
+}
+break;
+case CMD_DISABLE_NETWORK:
+EventLog.writeEvent(EVENTLOG_WIFI_EVENT_HANDLED,message.what);
+if (message.arg2 == SYNCHRONOUS_CALL) {
+syncParams=(SyncParams)message.obj;
+syncParams.mSyncReturn.boolValue=WifiNative.disableNetworkCommand(message.arg1);
+notifyOnMsgObject(message);
+}
+ else {
+WifiNative.disableNetworkCommand(message.arg1);
+}
+break;
+case CMD_BLACKLIST_NETWORK:
+EventLog.writeEvent(EVENTLOG_WIFI_EVENT_HANDLED,message.what);
+WifiNative.addToBlacklistCommand((String)message.obj);
+break;
+case CMD_CLEAR_BLACKLIST:
+WifiNative.clearBlacklistCommand();
+break;
+case CMD_GET_NETWORK_CONFIG:
+syncParams=(SyncParams)message.obj;
+syncParams.mSyncReturn.configList=getConfiguredNetworksNative();
+notifyOnMsgObject(message);
+break;
+case CMD_SAVE_CONFIG:
+if (message.arg2 == SYNCHRONOUS_CALL) {
+syncParams=(SyncParams)message.obj;
+syncParams.mSyncReturn.boolValue=WifiNative.saveConfigCommand();
+notifyOnMsgObject(message);
+}
+ else {
+WifiNative.saveConfigCommand();
+}
+IBackupManager ibm=IBackupManager.Stub.asInterface(ServiceManager.getService(Context.BACKUP_SERVICE));
+if (ibm != null) {
+try {
+ibm.dataChanged("com.android.providers.settings");
+}
+ catch (Exception e) {
+}
+}
+break;
+case CMD_CONNECTION_STATUS:
+syncParams=(SyncParams)message.obj;
+syncParams.mSyncReturn.stringValue=WifiNative.statusCommand();
+notifyOnMsgObject(message);
+break;
+case CMD_GET_MAC_ADDR:
+syncParams=(SyncParams)message.obj;
+syncParams.mSyncReturn.stringValue=WifiNative.getMacAddressCommand();
+notifyOnMsgObject(message);
+break;
+case CMD_START_AP:
+Log.d(TAG,"Failed to start soft AP with a running supplicant");
+EventLog.writeEvent(EVENTLOG_WIFI_EVENT_HANDLED,message.what);
+setWifiApState(WIFI_AP_STATE_FAILED);
+break;
+case CMD_SET_SCAN_MODE:
+mIsScanMode=(message.arg1 == SCAN_ONLY_MODE);
+break;
+default :
+return NOT_HANDLED;
+}
+return HANDLED;
+}
