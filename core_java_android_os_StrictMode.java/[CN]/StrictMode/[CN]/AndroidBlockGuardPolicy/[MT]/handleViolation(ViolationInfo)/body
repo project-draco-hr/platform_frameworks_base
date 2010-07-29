@@ -1,0 +1,67 @@
+{
+  if (info == null || info.crashInfo == null || info.crashInfo.stackTrace == null) {
+    Log.wtf(TAG,"unexpected null stacktrace");
+    return;
+  }
+  if (LOG_V)   Log.d(TAG,"handleViolation; policy=" + info.policy);
+  if ((info.policy & PENALTY_GATHER) != 0) {
+    ArrayList<ViolationInfo> violations=gatheredViolations.get();
+    if (violations == null) {
+      violations=new ArrayList<ViolationInfo>(1);
+      gatheredViolations.set(violations);
+    }
+ else     if (violations.size() >= 5) {
+      return;
+    }
+    for (    ViolationInfo previous : violations) {
+      if (info.crashInfo.stackTrace.equals(previous.crashInfo.stackTrace)) {
+        return;
+      }
+    }
+    violations.add(info);
+    return;
+  }
+  Integer crashFingerprint=info.crashInfo.stackTrace.hashCode();
+  long lastViolationTime=0;
+  if (mLastViolationTime.containsKey(crashFingerprint)) {
+    lastViolationTime=mLastViolationTime.get(crashFingerprint);
+  }
+  long now=SystemClock.uptimeMillis();
+  mLastViolationTime.put(crashFingerprint,now);
+  long timeSinceLastViolationMillis=lastViolationTime == 0 ? Long.MAX_VALUE : (now - lastViolationTime);
+  if ((info.policy & PENALTY_LOG) != 0 && timeSinceLastViolationMillis > MIN_LOG_INTERVAL_MS) {
+    if (info.durationMillis != -1) {
+      Log.d(TAG,"StrictMode policy violation; ~duration=" + info.durationMillis + " ms: "+ info.crashInfo.stackTrace);
+    }
+ else {
+      Log.d(TAG,"StrictMode policy violation: " + info.crashInfo.stackTrace);
+    }
+  }
+  int violationMaskSubset=0;
+  if ((info.policy & PENALTY_DIALOG) != 0 && timeSinceLastViolationMillis > MIN_DIALOG_INTERVAL_MS) {
+    violationMaskSubset|=PENALTY_DIALOG;
+  }
+  if ((info.policy & PENALTY_DROPBOX) != 0 && lastViolationTime == 0) {
+    violationMaskSubset|=PENALTY_DROPBOX;
+  }
+  if (violationMaskSubset != 0) {
+    int violationBit=parseViolationFromMessage(info.crashInfo.exceptionMessage);
+    violationMaskSubset|=violationBit;
+    final int savedPolicy=getThreadBlockingPolicy();
+    try {
+      setThreadBlockingPolicy(0);
+      ActivityManagerNative.getDefault().handleApplicationStrictModeViolation(RuntimeInit.getApplicationObject(),violationMaskSubset,info);
+    }
+ catch (    RemoteException e) {
+      Log.e(TAG,"RemoteException trying to handle StrictMode violation",e);
+    }
+ finally {
+      setThreadBlockingPolicy(savedPolicy);
+    }
+  }
+  if ((info.policy & PENALTY_DEATH) != 0) {
+    System.err.println("StrictMode policy violation with POLICY_DEATH; shutting down.");
+    Process.killProcess(Process.myPid());
+    System.exit(10);
+  }
+}
