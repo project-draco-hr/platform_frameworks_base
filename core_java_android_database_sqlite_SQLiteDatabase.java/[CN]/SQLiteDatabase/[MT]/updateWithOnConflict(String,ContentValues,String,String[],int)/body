@@ -1,5 +1,6 @@
 {
-  if (values == null || values.size() == 0) {
+  int setValuesSize=values.size();
+  if (values == null || setValuesSize == 0) {
     throw new IllegalArgumentException("Empty values");
   }
   StringBuilder sql=new StringBuilder(120);
@@ -7,52 +8,33 @@
   sql.append(CONFLICT_VALUES[conflictAlgorithm]);
   sql.append(table);
   sql.append(" SET ");
-  Set<Map.Entry<String,Object>> entrySet=values.valueSet();
-  Iterator<Map.Entry<String,Object>> entriesIter=entrySet.iterator();
-  while (entriesIter.hasNext()) {
-    Map.Entry<String,Object> entry=entriesIter.next();
-    sql.append(entry.getKey());
+  int bindArgsSize=(whereArgs == null) ? setValuesSize : (setValuesSize + whereArgs.length);
+  Object[] bindArgs=new Object[bindArgsSize];
+  int i=0;
+  for (  String colName : values.keySet()) {
+    sql.append((i > 0) ? "," : "");
+    sql.append(colName);
+    bindArgs[i++]=values.get(colName);
     sql.append("=?");
-    if (entriesIter.hasNext()) {
-      sql.append(", ");
+  }
+  if (whereArgs != null) {
+    for (i=setValuesSize; i < bindArgsSize; i++) {
+      bindArgs[i]=whereArgs[i - setValuesSize];
     }
   }
   if (!TextUtils.isEmpty(whereClause)) {
     sql.append(" WHERE ");
     sql.append(whereClause);
   }
-  verifyDbIsOpen();
-  SQLiteStatement statement=null;
+  SQLiteStatement statement=new SQLiteStatement(this,sql.toString(),bindArgs);
   try {
-    statement=compileStatement(sql.toString());
-    int size=entrySet.size();
-    entriesIter=entrySet.iterator();
-    int bindArg=1;
-    for (int i=0; i < size; i++) {
-      Map.Entry<String,Object> entry=entriesIter.next();
-      DatabaseUtils.bindObjectToProgram(statement,bindArg,entry.getValue());
-      bindArg++;
-    }
-    if (whereArgs != null) {
-      size=whereArgs.length;
-      for (int i=0; i < size; i++) {
-        statement.bindString(bindArg,whereArgs[i]);
-        bindArg++;
-      }
-    }
     return statement.executeUpdateDelete();
   }
  catch (  SQLiteDatabaseCorruptException e) {
     onCorruption();
     throw e;
   }
-catch (  SQLException e) {
-    Log.e(TAG,"Error updating " + values + " using "+ sql);
-    throw e;
-  }
  finally {
-    if (statement != null) {
-      statement.close();
-    }
+    statement.close();
   }
 }
