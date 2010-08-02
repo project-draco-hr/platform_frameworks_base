@@ -1,6 +1,7 @@
 {
+  state=0;
   mDatabase.verifyDbIsOpen();
-  SQLiteDatabase db=(getSqlStatementType(mSql) != SELECT_STMT) ? mDatabase : mDatabase.getDbConnection(mSql);
+  SQLiteDatabase db=(mStatementType != DatabaseUtils.STATEMENT_SELECT) ? mDatabase : mDatabase.getDbConnection(mSql);
   mOrigDb=mDatabase;
   mDatabase=db;
   nHandle=mDatabase.mNativeHandle;
@@ -10,9 +11,23 @@
  else {
     BlockGuard.getThreadPolicy().onReadFromDisk();
   }
-  long startTime=SystemClock.uptimeMillis();
-  mDatabase.lock();
+  if (mStatementType == DatabaseUtils.STATEMENT_BEGIN) {
+    if (!mDatabase.isDbLockedByCurrentThread()) {
+      mDatabase.setTransactionUsingExecSqlFlag();
+    }
+  }
+ else   if (mStatementType == DatabaseUtils.STATEMENT_UPDATE) {
+    if (!mDatabase.inTransaction()) {
+      mDatabase.beginTransactionNonExclusive();
+      state=TRANS_STARTED;
+    }
+  }
+  if (!mDatabase.isDbLockedByCurrentThread()) {
+    mDatabase.lock();
+    state=LOCK_ACQUIRED;
+  }
   acquireReference();
+  long startTime=SystemClock.uptimeMillis();
   mDatabase.closePendingStatements();
   compileAndbindAllArgs();
   return startTime;
