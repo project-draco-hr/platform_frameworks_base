@@ -1,38 +1,59 @@
 {
-  for (int pos=0; pos < MotionEvent.BASE_AVAIL_POINTERS; pos++) {
-    final float[] pastX=mPastX[pos];
-    final float[] pastY=mPastY[pos];
-    final long[] pastTime=mPastTime[pos];
-    final int lastTouch=mLastTouch;
-    int oldestTouch=lastTouch;
-    if (pastTime[lastTouch] != Long.MIN_VALUE) {
-      final float acceptableTime=pastTime[lastTouch] - LONGEST_PAST_TIME;
-      int nextOldestTouch=(NUM_PAST + oldestTouch - 1) % NUM_PAST;
-      while (pastTime[nextOldestTouch] >= acceptableTime && nextOldestTouch != lastTouch) {
-        oldestTouch=nextOldestTouch;
-        nextOldestTouch=(NUM_PAST + oldestTouch - 1) % NUM_PAST;
+  final int numPointers=mNumPointers;
+  final PointerData[] pointers=mPointers;
+  final int lastTouchIndex=mLastTouchIndex;
+  for (int p=0; p < numPointers; p++) {
+    final PointerData pointerData=pointers[p];
+    final long[] pastTime=pointerData.pastTime;
+    int oldestTouchIndex=lastTouchIndex;
+    int numTouches=1;
+    final long minTime=pastTime[lastTouchIndex] - MAX_AGE_MILLISECONDS;
+    while (numTouches < NUM_PAST) {
+      final int nextOldestTouchIndex=(oldestTouchIndex + NUM_PAST - 1) % NUM_PAST;
+      final long nextOldestTime=pastTime[nextOldestTouchIndex];
+      if (nextOldestTime < minTime) {
+        break;
       }
+      oldestTouchIndex=nextOldestTouchIndex;
+      numTouches+=1;
     }
-    final float oldestX=pastX[oldestTouch];
-    final float oldestY=pastY[oldestTouch];
-    final long oldestTime=pastTime[oldestTouch];
+    if (numTouches > 3) {
+      numTouches-=1;
+    }
+    final float[] pastX=pointerData.pastX;
+    final float[] pastY=pointerData.pastY;
+    final float oldestX=pastX[oldestTouchIndex];
+    final float oldestY=pastY[oldestTouchIndex];
+    final long oldestTime=pastTime[oldestTouchIndex];
     float accumX=0;
     float accumY=0;
-    int N=(lastTouch - oldestTouch + NUM_PAST) % NUM_PAST + 1;
-    if (N > 3)     N--;
-    for (int i=1; i < N; i++) {
-      final int j=(oldestTouch + i) % NUM_PAST;
-      final int dur=(int)(pastTime[j] - oldestTime);
-      if (dur == 0)       continue;
-      float dist=pastX[j] - oldestX;
-      float vel=(dist / dur) * units;
-      accumX=(accumX == 0) ? vel : (accumX + vel) * .5f;
-      dist=pastY[j] - oldestY;
-      vel=(dist / dur) * units;
-      accumY=(accumY == 0) ? vel : (accumY + vel) * .5f;
+    for (int i=1; i < numTouches; i++) {
+      final int touchIndex=(oldestTouchIndex + i) % NUM_PAST;
+      final int duration=(int)(pastTime[touchIndex] - oldestTime);
+      if (duration == 0)       continue;
+      float delta=pastX[touchIndex] - oldestX;
+      float velocity=(delta / duration) * units;
+      accumX=(accumX == 0) ? velocity : (accumX + velocity) * .5f;
+      delta=pastY[touchIndex] - oldestY;
+      velocity=(delta / duration) * units;
+      accumY=(accumY == 0) ? velocity : (accumY + velocity) * .5f;
     }
-    mXVelocity[pos]=accumX < 0.0f ? Math.max(accumX,-maxVelocity) : Math.min(accumX,maxVelocity);
-    mYVelocity[pos]=accumY < 0.0f ? Math.max(accumY,-maxVelocity) : Math.min(accumY,maxVelocity);
-    if (localLOGV)     Log.v(TAG,"Y velocity=" + mYVelocity + " X velocity="+ mXVelocity+ " N="+ N);
+    if (accumX < -maxVelocity) {
+      accumX=-maxVelocity;
+    }
+ else     if (accumX > maxVelocity) {
+      accumX=maxVelocity;
+    }
+    if (accumY < -maxVelocity) {
+      accumY=-maxVelocity;
+    }
+ else     if (accumY > maxVelocity) {
+      accumY=maxVelocity;
+    }
+    pointerData.xVelocity=accumX;
+    pointerData.yVelocity=accumY;
+    if (localLOGV) {
+      Log.v(TAG,"[" + p + "] Pointer "+ pointerData.id+ ": Y velocity="+ accumX+ " X velocity="+ accumY+ " N="+ numTouches);
+    }
   }
 }
