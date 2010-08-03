@@ -1,31 +1,49 @@
 {
-synchronized (this) {
-    if (intent.getAction().equals(TelephonyIntents.ACTION_ANY_DATA_CONNECTION_STATE_CHANGED)) {
-      String apnType=intent.getStringExtra(Phone.DATA_APN_TYPE_KEY);
-      if (!TextUtils.equals(apnType,mApnType)) {
-        return;
-      }
-      Phone.DataState state=Enum.valueOf(Phone.DataState.class,intent.getStringExtra(Phone.STATE_KEY));
-      String reason=intent.getStringExtra(Phone.STATE_CHANGE_REASON_KEY);
-      String apnName=intent.getStringExtra(Phone.DATA_APN_KEY);
-      boolean unavailable=intent.getBooleanExtra(Phone.NETWORK_UNAVAILABLE_KEY,false);
-      mNetworkInfo.setIsAvailable(!unavailable);
-      if (DBG)       Log.d(TAG,mApnType + " Received state= " + state+ ", old= "+ mMobileDataState+ ", reason= "+ (reason == null ? "(unspecified)" : reason));
-      if (mMobileDataState != state) {
-        mMobileDataState=state;
+  if (intent.getAction().equals(TelephonyIntents.ACTION_ANY_DATA_CONNECTION_STATE_CHANGED)) {
+    String apnType=intent.getStringExtra(Phone.DATA_APN_TYPE_KEY);
+    if (!TextUtils.equals(apnType,mApnType)) {
+      return;
+    }
+    Phone.DataState state=Enum.valueOf(Phone.DataState.class,intent.getStringExtra(Phone.STATE_KEY));
+    String reason=intent.getStringExtra(Phone.STATE_CHANGE_REASON_KEY);
+    String apnName=intent.getStringExtra(Phone.DATA_APN_KEY);
+    boolean unavailable=intent.getBooleanExtra(Phone.NETWORK_UNAVAILABLE_KEY,false);
+    mNetworkInfo.setIsAvailable(!unavailable);
+    if (DBG)     Log.d(TAG,mApnType + " Received state= " + state+ ", old= "+ mMobileDataState+ ", reason= "+ (reason == null ? "(unspecified)" : reason));
+    if (mMobileDataState != state) {
+      mMobileDataState=state;
 switch (state) {
 case DISCONNECTED:
-          if (isTeardownRequested()) {
-            setTeardownRequested(false);
-          }
-        setDetailedState(DetailedState.DISCONNECTED,reason,apnName);
-      if (mNetworkProperties != null) {
-        String iface=mNetworkProperties.getInterfaceName();
-        if (iface != null)         NetworkUtils.resetConnections(iface);
+        if (isTeardownRequested()) {
+          setTeardownRequested(false);
+        }
+      setDetailedState(DetailedState.DISCONNECTED,reason,apnName);
+    boolean doReset=true;
+  if (mIsDefaultOrHipri == true) {
+    int typeToCheck=(Phone.APN_TYPE_DEFAULT.equals(mApnType) ? ConnectivityManager.TYPE_MOBILE_HIPRI : ConnectivityManager.TYPE_MOBILE);
+    if (mConnectivityManager == null) {
+      IBinder b=ServiceManager.getService(mContext.CONNECTIVITY_SERVICE);
+      mConnectivityManager=IConnectivityManager.Stub.asInterface(b);
+    }
+    try {
+      if (mConnectivityManager != null) {
+        NetworkInfo info=mConnectivityManager.getNetworkInfo(typeToCheck);
+        if (info.isConnected() == true) {
+          doReset=false;
+        }
       }
-    break;
+    }
+ catch (    RemoteException e) {
+      Log.e(TAG,"Exception trying to contact ConnService: " + e);
+    }
+  }
+if (doReset && mNetworkProperties != null) {
+  String iface=mNetworkProperties.getInterfaceName();
+  if (iface != null)   NetworkUtils.resetConnections(iface);
+}
+break;
 case CONNECTING:
-  setDetailedState(DetailedState.CONNECTING,reason,apnName);
+setDetailedState(DetailedState.CONNECTING,reason,apnName);
 break;
 case SUSPENDED:
 setDetailedState(DetailedState.SUSPENDED,reason,apnName);
@@ -53,5 +71,4 @@ setDetailedState(DetailedState.FAILED,reason,apnName);
 TelephonyManager tm=TelephonyManager.getDefault();
 setRoamingStatus(tm.isNetworkRoaming());
 setSubtype(tm.getNetworkType(),tm.getNetworkTypeName());
-}
 }
