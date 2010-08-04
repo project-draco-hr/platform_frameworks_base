@@ -1,28 +1,60 @@
 {
-  final int N=ev.getHistorySize();
+  final int historySize=ev.getHistorySize();
   final int pointerCount=ev.getPointerCount();
-  int touchIndex=(mLastTouch + 1) % NUM_PAST;
-  for (int i=0; i < N; i++) {
-    for (int id=0; id < MotionEvent.BASE_AVAIL_POINTERS; id++) {
-      mPastTime[id][touchIndex]=Long.MIN_VALUE;
+  final int lastTouchIndex=mLastTouchIndex;
+  final int nextTouchIndex=(lastTouchIndex + 1) % NUM_PAST;
+  final int finalTouchIndex=(nextTouchIndex + historySize) % NUM_PAST;
+  if (pointerCount < mNumPointers) {
+    final PointerData[] pointers=mPointers;
+    int i=mNumPointers;
+    while (--i >= 0) {
+      final PointerData pointerData=pointers[i];
+      if (ev.findPointerIndex(pointerData.id) == -1) {
+        mNumPointers-=1;
+        final int remaining=mNumPointers - i;
+        if (remaining != 0) {
+          System.arraycopy(pointers,i + 1,pointers,i,remaining);
+          pointers[mNumPointers]=pointerData;
+        }
+      }
     }
-    for (int p=0; p < pointerCount; p++) {
-      int id=ev.getPointerId(p);
-      mPastX[id][touchIndex]=ev.getHistoricalX(p,i);
-      mPastY[id][touchIndex]=ev.getHistoricalY(p,i);
-      mPastTime[id][touchIndex]=ev.getHistoricalEventTime(i);
+  }
+  for (int i=0; i < pointerCount; i++) {
+    final int pointerId=ev.getPointerId(i);
+    PointerData pointerData=getPointerData(pointerId);
+    if (pointerData == null) {
+      final PointerData[] oldPointers=mPointers;
+      final int newPointerIndex=mNumPointers;
+      if (newPointerIndex < oldPointers.length) {
+        pointerData=oldPointers[newPointerIndex];
+        if (pointerData == null) {
+          pointerData=new PointerData();
+          oldPointers[newPointerIndex]=pointerData;
+        }
+      }
+ else {
+        final PointerData[] newPointers=new PointerData[newPointerIndex * 2];
+        System.arraycopy(oldPointers,0,newPointers,0,newPointerIndex);
+        mPointers=newPointers;
+        pointerData=new PointerData();
+        newPointers[newPointerIndex]=pointerData;
+      }
+      pointerData.id=pointerId;
+      pointerData.pastTime[lastTouchIndex]=Long.MIN_VALUE;
+      mNumPointers+=1;
     }
-    touchIndex=(touchIndex + 1) % NUM_PAST;
+    final float[] pastX=pointerData.pastX;
+    final float[] pastY=pointerData.pastY;
+    final long[] pastTime=pointerData.pastTime;
+    for (int j=0; j < historySize; j++) {
+      final int touchIndex=(nextTouchIndex + j) % NUM_PAST;
+      pastX[touchIndex]=ev.getHistoricalX(i,j);
+      pastY[touchIndex]=ev.getHistoricalY(i,j);
+      pastTime[touchIndex]=ev.getHistoricalEventTime(j);
+    }
+    pastX[finalTouchIndex]=ev.getX(i);
+    pastY[finalTouchIndex]=ev.getY(i);
+    pastTime[finalTouchIndex]=ev.getEventTime();
   }
-  for (int id=0; id < MotionEvent.BASE_AVAIL_POINTERS; id++) {
-    mPastTime[id][touchIndex]=Long.MIN_VALUE;
-  }
-  final long time=ev.getEventTime();
-  for (int p=0; p < pointerCount; p++) {
-    int id=ev.getPointerId(p);
-    mPastX[id][touchIndex]=ev.getX(p);
-    mPastY[id][touchIndex]=ev.getY(p);
-    mPastTime[id][touchIndex]=time;
-  }
-  mLastTouch=touchIndex;
+  mLastTouchIndex=finalTouchIndex;
 }
