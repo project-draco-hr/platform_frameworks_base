@@ -1,13 +1,33 @@
 {
-  if (getMediaState()) {
+  if (checkMediaState(Environment.MEDIA_MOUNTED)) {
     return true;
   }
+  final String path=Environment.getExternalStorageDirectory().toString();
+  StorageListener observer=new StorageListener(Environment.MEDIA_MOUNTED);
+  StorageManager sm=(StorageManager)mContext.getSystemService(Context.STORAGE_SERVICE);
+  sm.registerListener(observer);
   try {
-    String mPath=Environment.getExternalStorageDirectory().toString();
-    int ret=getMs().mountVolume(mPath);
-    return ret == StorageResultCode.OperationSucceeded;
+synchronized (observer) {
+      int ret=getMs().mountVolume(path);
+      if (ret != StorageResultCode.OperationSucceeded) {
+        throw new Exception("Could not mount the media");
+      }
+      long waitTime=0;
+      while ((!observer.isDone()) && (waitTime < MAX_WAIT_TIME)) {
+        observer.wait(WAIT_TIME_INCR);
+        waitTime+=WAIT_TIME_INCR;
+      }
+      if (!observer.isDone()) {
+        throw new Exception("Timed out waiting for unmount media notification");
+      }
+      return true;
+    }
   }
- catch (  RemoteException e) {
+ catch (  Exception e) {
+    Log.e(TAG,"Exception : " + e);
     return false;
+  }
+ finally {
+    sm.unregisterListener(observer);
   }
 }
