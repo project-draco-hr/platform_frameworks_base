@@ -4,48 +4,49 @@
   final int lastTouchIndex=mLastTouchIndex;
   final int nextTouchIndex=(lastTouchIndex + 1) % NUM_PAST;
   final int finalTouchIndex=(nextTouchIndex + historySize) % NUM_PAST;
-  if (pointerCount < mNumPointers) {
-    final PointerData[] pointers=mPointers;
-    int i=mNumPointers;
-    while (--i >= 0) {
-      final PointerData pointerData=pointers[i];
-      if (ev.findPointerIndex(pointerData.id) == -1) {
-        mNumPointers-=1;
-        final int remaining=mNumPointers - i;
-        if (remaining != 0) {
-          System.arraycopy(pointers,i + 1,pointers,i,remaining);
-          pointers[mNumPointers]=pointerData;
-        }
-      }
-    }
-  }
+  final int generation=mGeneration++;
+  mLastTouchIndex=finalTouchIndex;
+  Pointer previousPointer=null;
   for (int i=0; i < pointerCount; i++) {
     final int pointerId=ev.getPointerId(i);
-    PointerData pointerData=getPointerData(pointerId);
-    if (pointerData == null) {
-      final PointerData[] oldPointers=mPointers;
-      final int newPointerIndex=mNumPointers;
-      if (newPointerIndex < oldPointers.length) {
-        pointerData=oldPointers[newPointerIndex];
-        if (pointerData == null) {
-          pointerData=new PointerData();
-          oldPointers[newPointerIndex]=pointerData;
+    Pointer nextPointer;
+    if (previousPointer == null || pointerId < previousPointer.id) {
+      previousPointer=null;
+      nextPointer=mPointerListHead;
+    }
+ else {
+      nextPointer=previousPointer.next;
+    }
+    final Pointer pointer;
+    for (; ; ) {
+      if (nextPointer != null) {
+        final int nextPointerId=nextPointer.id;
+        if (nextPointerId == pointerId) {
+          pointer=nextPointer;
+          break;
+        }
+        if (nextPointerId < pointerId) {
+          nextPointer=nextPointer.next;
+          continue;
         }
       }
- else {
-        final PointerData[] newPointers=new PointerData[newPointerIndex * 2];
-        System.arraycopy(oldPointers,0,newPointers,0,newPointerIndex);
-        mPointers=newPointers;
-        pointerData=new PointerData();
-        newPointers[newPointerIndex]=pointerData;
+      pointer=obtainPointer();
+      pointer.id=pointerId;
+      pointer.pastTime[lastTouchIndex]=Long.MIN_VALUE;
+      pointer.next=nextPointer;
+      if (previousPointer == null) {
+        mPointerListHead=pointer;
       }
-      pointerData.id=pointerId;
-      pointerData.pastTime[lastTouchIndex]=Long.MIN_VALUE;
-      mNumPointers+=1;
+ else {
+        previousPointer.next=pointer;
+      }
+      break;
     }
-    final float[] pastX=pointerData.pastX;
-    final float[] pastY=pointerData.pastY;
-    final long[] pastTime=pointerData.pastTime;
+    pointer.generation=generation;
+    previousPointer=pointer;
+    final float[] pastX=pointer.pastX;
+    final float[] pastY=pointer.pastY;
+    final long[] pastTime=pointer.pastTime;
     for (int j=0; j < historySize; j++) {
       final int touchIndex=(nextTouchIndex + j) % NUM_PAST;
       pastX[touchIndex]=ev.getHistoricalX(i,j);
@@ -56,5 +57,21 @@
     pastY[finalTouchIndex]=ev.getY(i);
     pastTime[finalTouchIndex]=ev.getEventTime();
   }
-  mLastTouchIndex=finalTouchIndex;
+  previousPointer=null;
+  for (Pointer pointer=mPointerListHead; pointer != null; ) {
+    final Pointer nextPointer=pointer.next;
+    if (pointer.generation != generation) {
+      if (previousPointer == null) {
+        mPointerListHead=nextPointer;
+      }
+ else {
+        previousPointer.next=nextPointer;
+      }
+      releasePointer(pointer);
+    }
+ else {
+      previousPointer=pointer;
+    }
+    pointer=nextPointer;
+  }
 }
