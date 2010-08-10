@@ -1,40 +1,78 @@
 {
-  if (mAdapter != null) {
-    if (mPreviousView != null) {
-      mPreviousView.clearAnimation();
-      removeViewInLayout(mPreviousView);
-    }
-    if (mCurrentView != null) {
-      mCurrentView.clearAnimation();
-    }
-    mPreviousView=mCurrentView;
-    mCurrentView=mAdapter.getView(childIndex,null,this);
-    if (mPreviousView != mCurrentView) {
-      addViewInLayout(mCurrentView,0,makeLayoutParams(),true);
-      mCurrentView.bringToFront();
-    }
-    if (mPreviousView != null && mPreviousView != mCurrentView) {
-      if (animate && mOutAnimation != null) {
-        mPreviousView.startAnimation(mOutAnimation);
+  if (mAdapter == null)   return;
+  for (int i=0; i < mPreviousViews.size(); i++) {
+    View viewToRemove=mPreviousViews.get(i);
+    viewToRemove.clearAnimation();
+    applyTransformForChildAtIndex(viewToRemove,-1);
+    removeViewInLayout(viewToRemove);
+  }
+  mPreviousViews.clear();
+  int newWindowStartUnbounded=childIndex - mActiveOffset;
+  int newWindowEndUnbounded=newWindowStartUnbounded + mNumActiveViews - 1;
+  int newWindowStart=Math.max(0,newWindowStartUnbounded);
+  int newWindowEnd=Math.min(mAdapter.getCount(),newWindowEndUnbounded);
+  for (int i=newWindowStartUnbounded; i < newWindowEndUnbounded; i++) {
+    if (i < newWindowStart || i > newWindowEnd) {
+      int index=modulo(i,mNumActiveViews);
+      if (mActiveViews[index] != null) {
+        View previousView=mActiveViews[index];
+        mPreviousViews.add(previousView);
+        int previousViewRelativeIndex=modulo(index - mCurrentWindowStart,mNumActiveViews);
+        animateViewForTransition(previousViewRelativeIndex,-1,previousView);
       }
-      mPreviousView.setVisibility(View.GONE);
     }
-    if (mCurrentView != null && animate && mInAnimation != null) {
-      mCurrentView.startAnimation(mInAnimation);
-    }
-    mFirstTime=false;
-    if (!onLayout) {
-      requestLayout();
-      invalidate();
-    }
+  }
+  if (!(newWindowStart == mCurrentWindowStart && newWindowEnd == mCurrentWindowEnd)) {
+    for (int i=newWindowStart; i <= newWindowEnd; i++) {
+      int oldRelativeIndex=i - mCurrentWindowStartUnbounded;
+      int newRelativeIndex=i - newWindowStartUnbounded;
+      int index=modulo(i,mNumActiveViews);
+      if (i >= mCurrentWindowStart && i <= mCurrentWindowEnd) {
+        View view=mActiveViews[index];
+        applyTransformForChildAtIndex(view,newRelativeIndex);
+        animateViewForTransition(oldRelativeIndex,newRelativeIndex,view);
+      }
  else {
-      mMainQueue.post(new Runnable(){
-        @Override public void run(){
-          mCurrentView.requestLayout();
-          mCurrentView.invalidate();
+        if (mActiveViews[index] != null) {
+          View previousView=mActiveViews[index];
+          mPreviousViews.add(previousView);
+          int previousViewRelativeIndex=modulo(index - mCurrentWindowStart,mNumActiveViews);
+          animateViewForTransition(previousViewRelativeIndex,-1,previousView);
+          if (mCurrentWindowStart > newWindowStart) {
+            mViewsToBringToFront.add(previousView);
+          }
+        }
+        View newView=mAdapter.getView(i,null,this);
+        if (newView != null) {
+          mActiveViews[index]=newView;
+          addViewInLayout(newView,-1,createOrReuseLayoutParams(newView));
+          applyTransformForChildAtIndex(newView,newRelativeIndex);
+          animateViewForTransition(-1,newRelativeIndex,newView);
         }
       }
-);
+      mActiveViews[index].bringToFront();
     }
+    for (int i=0; i < mViewsToBringToFront.size(); i++) {
+      View v=mViewsToBringToFront.get(i);
+      v.bringToFront();
+    }
+    mViewsToBringToFront.clear();
+    mCurrentWindowStart=newWindowStart;
+    mCurrentWindowEnd=newWindowEnd;
+    mCurrentWindowStartUnbounded=newWindowStartUnbounded;
+  }
+  mFirstTime=false;
+  if (!onLayout) {
+    requestLayout();
+    invalidate();
+  }
+ else {
+    mMainQueue.post(new Runnable(){
+      @Override public void run(){
+        requestLayout();
+        invalidate();
+      }
+    }
+);
   }
 }
