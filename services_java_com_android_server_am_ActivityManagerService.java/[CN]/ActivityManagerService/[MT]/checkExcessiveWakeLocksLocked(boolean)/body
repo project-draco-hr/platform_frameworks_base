@@ -1,0 +1,36 @@
+{
+  BatteryStatsImpl stats=mBatteryStatsService.getActiveStatistics();
+  if (mLastWakeLockCheckTime == 0) {
+    doKills=false;
+  }
+  if (stats.isScreenOn()) {
+    doKills=false;
+  }
+  final long curRealtime=SystemClock.elapsedRealtime();
+  final long timeSince=curRealtime - mLastWakeLockCheckTime;
+  mLastWakeLockCheckTime=curRealtime;
+  if (timeSince < 5 * 60 * 1000) {
+    doKills=false;
+  }
+  int i=mLruProcesses.size();
+  while (i > 0) {
+    i--;
+    ProcessRecord app=mLruProcesses.get(i);
+    if (app.curAdj >= HIDDEN_APP_MIN_ADJ) {
+      long wtime;
+synchronized (stats) {
+        wtime=stats.getProcessWakeTime(app.info.uid,app.pid,curRealtime);
+      }
+      long timeUsed=wtime - app.lastWakeTime;
+      Slog.i(TAG,"Wake for " + app + ": over "+ timeSince+ " used "+ timeUsed+ " ("+ ((timeUsed * 100) / timeSince)+ "%)");
+      if (doKills && timeSince > 0 && ((timeUsed * 100) / timeSince) >= 50) {
+        Slog.i(TAG,"Excessive wake lock in " + app.processName + " (pid "+ app.pid+ "): held "+ timeUsed+ " during "+ timeSince);
+        EventLog.writeEvent(EventLogTags.AM_KILL,app.pid,app.processName,app.setAdj,"excessive wake lock");
+        Process.killProcessQuiet(app.pid);
+      }
+ else {
+        app.lastWakeTime=wtime;
+      }
+    }
+  }
+}
