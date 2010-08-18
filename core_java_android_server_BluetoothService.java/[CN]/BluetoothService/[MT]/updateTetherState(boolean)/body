@@ -1,0 +1,57 @@
+{
+  Log.d(TAG,"configureBluetoothIface(" + enabled + ")");
+  IBinder b=ServiceManager.getService(Context.NETWORKMANAGEMENT_SERVICE);
+  INetworkManagementService service=INetworkManagementService.Stub.asInterface(b);
+  ConnectivityManager cm=(ConnectivityManager)mContext.getSystemService(Context.CONNECTIVITY_SERVICE);
+  String[] bluetoothRegexs=cm.getTetherableBluetoothRegexs();
+  String[] ifaces=new String[0];
+  try {
+    ifaces=service.listInterfaces();
+  }
+ catch (  Exception e) {
+    Log.e(TAG,"Error listing Interfaces :" + e);
+    return false;
+  }
+  ArrayList<String> ifaceAddresses=(ArrayList<String>)mBluetoothIfaceAddresses.clone();
+  for (  String iface : ifaces) {
+    for (    String regex : bluetoothRegexs) {
+      if (iface.matches(regex)) {
+        InterfaceConfiguration ifcg=null;
+        try {
+          ifcg=service.getInterfaceConfig(iface);
+          if (ifcg != null) {
+            if (enabled) {
+              String[] addr=BLUETOOTH_NETMASK.split("\\.");
+              ifcg.netmask=(Integer.parseInt(addr[0]) << 24) + (Integer.parseInt(addr[1]) << 16) + (Integer.parseInt(addr[2]) << 8)+ (Integer.parseInt(addr[3]));
+              if (ifcg.ipAddr == 0 && !ifaceAddresses.isEmpty()) {
+                addr=ifaceAddresses.remove(0).split("\\.");
+                ifcg.ipAddr=(Integer.parseInt(addr[0]) << 24) + (Integer.parseInt(addr[1]) << 16) + (Integer.parseInt(addr[2]) << 8)+ (Integer.parseInt(addr[3]));
+              }
+ else {
+                String IfaceAddress=String.valueOf(ifcg.ipAddr >>> 24) + "." + String.valueOf((ifcg.ipAddr & 0x00FF0000) >>> 16)+ "."+ String.valueOf((ifcg.ipAddr & 0x0000FF00) >>> 8)+ "."+ String.valueOf(ifcg.ipAddr & 0x000000FF);
+                ifaceAddresses.remove(IfaceAddress);
+              }
+              ifcg.interfaceFlags=ifcg.interfaceFlags.replace("down","up");
+            }
+ else {
+              ifcg.interfaceFlags=ifcg.interfaceFlags.replace("up","down");
+            }
+            ifcg.interfaceFlags=ifcg.interfaceFlags.replace("running","");
+            ifcg.interfaceFlags=ifcg.interfaceFlags.replace("  "," ");
+            service.setInterfaceConfig(iface,ifcg);
+            if (enabled) {
+              if (cm.tether(iface) != ConnectivityManager.TETHER_ERROR_NO_ERROR) {
+                Log.e(TAG,"Error tethering " + ifaces);
+              }
+            }
+          }
+        }
+ catch (        Exception e) {
+          Log.e(TAG,"Error configuring interface " + iface + ", :"+ e);
+          return false;
+        }
+      }
+    }
+  }
+  return true;
+}
