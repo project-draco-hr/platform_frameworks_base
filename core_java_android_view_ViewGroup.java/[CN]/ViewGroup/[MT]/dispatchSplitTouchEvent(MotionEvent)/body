@@ -1,0 +1,143 @@
+{
+  final SplitMotionTargets targets=mSplitMotionTargets;
+  final int action=ev.getAction();
+  final int maskedAction=ev.getActionMasked();
+  float xf=ev.getX();
+  float yf=ev.getY();
+  float scrolledXFloat=xf + mScrollX;
+  float scrolledYFloat=yf + mScrollY;
+  boolean disallowIntercept=(mGroupFlags & FLAG_DISALLOW_INTERCEPT) != 0;
+  if (maskedAction == MotionEvent.ACTION_DOWN || maskedAction == MotionEvent.ACTION_POINTER_DOWN) {
+    final int actionIndex=ev.getActionIndex();
+    final int actionId=ev.getPointerId(actionIndex);
+    targets.removeById(actionId);
+    if (disallowIntercept || !onInterceptTouchEvent(ev)) {
+      ev.setAction(action);
+      final View[] children=mChildren;
+      final int count=mChildrenCount;
+      for (int i=count - 1; i >= 0; i--) {
+        final View child=children[i];
+        if ((child.mViewFlags & VISIBILITY_MASK) == VISIBLE || child.getAnimation() != null) {
+          final MotionEvent childEvent=targets.filterMotionEventForChild(ev,child);
+          if (childEvent != null) {
+            try {
+              final int childActionIndex=childEvent.findPointerIndex(actionId);
+              if (dispatchTouchEventIfInView(child,childEvent,childActionIndex)) {
+                targets.add(actionId,child);
+                return true;
+              }
+            }
+  finally {
+              childEvent.recycle();
+            }
+          }
+        }
+      }
+      final View primaryTarget=targets.getPrimaryTarget();
+      if (primaryTarget != null) {
+        final MotionEvent childEvent=targets.filterMotionEventForChild(ev,primaryTarget);
+        if (childEvent != null) {
+          try {
+            float xc=scrolledXFloat - (float)primaryTarget.mLeft;
+            float yc=scrolledYFloat - (float)primaryTarget.mTop;
+            if (!primaryTarget.hasIdentityMatrix() && mAttachInfo != null) {
+              final float[] localXY=mAttachInfo.mTmpTransformLocation;
+              localXY[0]=xc;
+              localXY[1]=yc;
+              primaryTarget.getInverseMatrix().mapPoints(localXY);
+              xc=localXY[0];
+              yc=localXY[1];
+            }
+            childEvent.setLocation(xc,yc);
+            if (primaryTarget.dispatchTouchEvent(childEvent)) {
+              targets.add(actionId,primaryTarget);
+              return true;
+            }
+          }
+  finally {
+            childEvent.recycle();
+          }
+        }
+      }
+    }
+  }
+  boolean isUpOrCancel=(action == MotionEvent.ACTION_UP) || (action == MotionEvent.ACTION_CANCEL);
+  if (isUpOrCancel) {
+    mGroupFlags&=~FLAG_DISALLOW_INTERCEPT;
+  }
+  if (targets.isEmpty()) {
+    ev.setLocation(xf,yf);
+    if ((mPrivateFlags & CANCEL_NEXT_UP_EVENT) != 0) {
+      ev.setAction(MotionEvent.ACTION_CANCEL);
+      mPrivateFlags&=~CANCEL_NEXT_UP_EVENT;
+    }
+    return super.dispatchTouchEvent(ev);
+  }
+  int uniqueTargetCount=targets.getUniqueTargetCount();
+  if (!disallowIntercept && onInterceptTouchEvent(ev)) {
+    mPrivateFlags&=~CANCEL_NEXT_UP_EVENT;
+    for (int uniqueIndex=0; uniqueIndex < uniqueTargetCount; uniqueIndex++) {
+      final View target=targets.getUniqueTargetAt(uniqueIndex);
+      float xc=scrolledXFloat - (float)target.mLeft;
+      float yc=scrolledYFloat - (float)target.mTop;
+      if (!target.hasIdentityMatrix() && mAttachInfo != null) {
+        final float[] localXY=mAttachInfo.mTmpTransformLocation;
+        localXY[0]=xc;
+        localXY[1]=yc;
+        target.getInverseMatrix().mapPoints(localXY);
+        xc=localXY[0];
+        yc=localXY[1];
+      }
+      ev.setAction(MotionEvent.ACTION_CANCEL);
+      ev.setLocation(xc,yc);
+      if (!target.dispatchTouchEvent(ev)) {
+      }
+    }
+    targets.clear();
+    return true;
+  }
+  boolean handled=false;
+  for (int uniqueIndex=0; uniqueIndex < uniqueTargetCount; uniqueIndex++) {
+    final View target=targets.getUniqueTargetAt(uniqueIndex);
+    final MotionEvent targetEvent=targets.filterMotionEventForChild(ev,target);
+    if (targetEvent == null) {
+      continue;
+    }
+    try {
+      xf=targetEvent.getX();
+      yf=targetEvent.getY();
+      scrolledXFloat=xf + mScrollX;
+      scrolledYFloat=yf + mScrollY;
+      float xc=scrolledXFloat - (float)target.mLeft;
+      float yc=scrolledYFloat - (float)target.mTop;
+      if (!target.hasIdentityMatrix() && mAttachInfo != null) {
+        final float[] localXY=mAttachInfo.mTmpTransformLocation;
+        localXY[0]=xc;
+        localXY[1]=yc;
+        target.getInverseMatrix().mapPoints(localXY);
+        xc=localXY[0];
+        yc=localXY[1];
+      }
+      targetEvent.setLocation(xc,yc);
+      if ((target.mPrivateFlags & CANCEL_NEXT_UP_EVENT) != 0) {
+        targetEvent.setAction(MotionEvent.ACTION_CANCEL);
+        target.mPrivateFlags&=~CANCEL_NEXT_UP_EVENT;
+        targets.removeView(target);
+        uniqueIndex--;
+        uniqueTargetCount--;
+      }
+      handled|=target.dispatchTouchEvent(targetEvent);
+    }
+  finally {
+      targetEvent.recycle();
+    }
+  }
+  if (maskedAction == MotionEvent.ACTION_POINTER_UP) {
+    final int removeId=ev.getPointerId(ev.getActionIndex());
+    targets.removeById(removeId);
+  }
+  if (isUpOrCancel) {
+    targets.clear();
+  }
+  return handled;
+}
