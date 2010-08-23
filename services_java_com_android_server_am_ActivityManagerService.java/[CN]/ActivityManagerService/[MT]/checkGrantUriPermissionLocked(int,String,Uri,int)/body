@@ -1,0 +1,66 @@
+{
+  modeFlags&=(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+  if (modeFlags == 0) {
+    return -1;
+  }
+  if (DEBUG_URI_PERMISSION)   Slog.v(TAG,"Checking grant " + targetPkg + " permission to "+ uri);
+  final IPackageManager pm=AppGlobals.getPackageManager();
+  if (!ContentResolver.SCHEME_CONTENT.equals(uri.getScheme())) {
+    if (DEBUG_URI_PERMISSION)     Slog.v(TAG,"Can't grant URI permission for non-content URI: " + uri);
+    return -1;
+  }
+  String name=uri.getAuthority();
+  ProviderInfo pi=null;
+  ContentProviderRecord cpr=mProvidersByName.get(name);
+  if (cpr != null) {
+    pi=cpr.info;
+  }
+ else {
+    try {
+      pi=pm.resolveContentProvider(name,PackageManager.GET_URI_PERMISSION_PATTERNS);
+    }
+ catch (    RemoteException ex) {
+    }
+  }
+  if (pi == null) {
+    Slog.w(TAG,"No content provider found for: " + name);
+    return -1;
+  }
+  int targetUid;
+  try {
+    targetUid=pm.getPackageUid(targetPkg);
+    if (targetUid < 0) {
+      if (DEBUG_URI_PERMISSION)       Slog.v(TAG,"Can't grant URI permission no uid for: " + targetPkg);
+      return -1;
+    }
+  }
+ catch (  RemoteException ex) {
+    return -1;
+  }
+  if (checkHoldingPermissionsLocked(pm,pi,targetUid,modeFlags)) {
+    if (DEBUG_URI_PERMISSION)     Slog.v(TAG,"Target " + targetPkg + " already has full permission to "+ uri);
+    return -1;
+  }
+  if (!pi.grantUriPermissions) {
+    throw new SecurityException("Provider " + pi.packageName + "/"+ pi.name+ " does not allow granting of Uri permissions (uri "+ uri+ ")");
+  }
+  if (pi.uriPermissionPatterns != null) {
+    final int N=pi.uriPermissionPatterns.length;
+    boolean allowed=false;
+    for (int i=0; i < N; i++) {
+      if (pi.uriPermissionPatterns[i] != null && pi.uriPermissionPatterns[i].match(uri.getPath())) {
+        allowed=true;
+        break;
+      }
+    }
+    if (!allowed) {
+      throw new SecurityException("Provider " + pi.packageName + "/"+ pi.name+ " does not allow granting of permission to path of Uri "+ uri);
+    }
+  }
+  if (!checkHoldingPermissionsLocked(pm,pi,callingUid,modeFlags)) {
+    if (!checkUriPermissionLocked(uri,callingUid,modeFlags)) {
+      throw new SecurityException("Uid " + callingUid + " does not have permission to uri "+ uri);
+    }
+  }
+  return targetUid;
+}
