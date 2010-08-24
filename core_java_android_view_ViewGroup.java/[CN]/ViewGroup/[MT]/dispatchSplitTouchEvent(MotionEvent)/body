@@ -13,17 +13,18 @@
     targets.removeById(actionId);
     if (disallowIntercept || !onInterceptTouchEvent(ev)) {
       ev.setAction(action);
+      final long downTime=ev.getEventTime();
       final View[] children=mChildren;
       final int count=mChildrenCount;
       for (int i=count - 1; i >= 0; i--) {
         final View child=children[i];
         if ((child.mViewFlags & VISIBILITY_MASK) == VISIBLE || child.getAnimation() != null) {
-          final MotionEvent childEvent=targets.filterMotionEventForChild(ev,child);
+          final MotionEvent childEvent=targets.filterMotionEventForChild(ev,child,downTime);
           if (childEvent != null) {
             try {
               final int childActionIndex=childEvent.findPointerIndex(actionId);
               if (dispatchTouchEventIfInView(child,childEvent,childActionIndex)) {
-                targets.add(actionId,child);
+                targets.add(actionId,child,downTime);
                 return true;
               }
             }
@@ -33,9 +34,10 @@
           }
         }
       }
-      final View primaryTarget=targets.getPrimaryTarget();
-      if (primaryTarget != null) {
-        final MotionEvent childEvent=targets.filterMotionEventForChild(ev,primaryTarget);
+      final SplitMotionTargets.TargetInfo primaryTargetInfo=targets.getPrimaryTarget();
+      if (primaryTargetInfo != null) {
+        final View primaryTarget=primaryTargetInfo.view;
+        final MotionEvent childEvent=targets.filterMotionEventForChild(ev,primaryTarget,primaryTargetInfo.downTime);
         if (childEvent != null) {
           try {
             float xc=scrolledXFloat - (float)primaryTarget.mLeft;
@@ -50,7 +52,7 @@
             }
             childEvent.setLocation(xc,yc);
             if (primaryTarget.dispatchTouchEvent(childEvent)) {
-              targets.add(actionId,primaryTarget);
+              targets.add(actionId,primaryTarget,primaryTargetInfo.downTime);
               return true;
             }
           }
@@ -77,7 +79,7 @@
   if (!disallowIntercept && onInterceptTouchEvent(ev)) {
     mPrivateFlags&=~CANCEL_NEXT_UP_EVENT;
     for (int uniqueIndex=0; uniqueIndex < uniqueTargetCount; uniqueIndex++) {
-      final View target=targets.getUniqueTargetAt(uniqueIndex);
+      final View target=targets.getUniqueTargetAt(uniqueIndex).view;
       float xc=scrolledXFloat - (float)target.mLeft;
       float yc=scrolledYFloat - (float)target.mTop;
       if (!target.hasIdentityMatrix() && mAttachInfo != null) {
@@ -98,8 +100,9 @@
   }
   boolean handled=false;
   for (int uniqueIndex=0; uniqueIndex < uniqueTargetCount; uniqueIndex++) {
-    final View target=targets.getUniqueTargetAt(uniqueIndex);
-    final MotionEvent targetEvent=targets.filterMotionEventForChild(ev,target);
+    final SplitMotionTargets.TargetInfo targetInfo=targets.getUniqueTargetAt(uniqueIndex);
+    final View target=targetInfo.view;
+    final MotionEvent targetEvent=targets.filterMotionEventForChild(ev,target,targetInfo.downTime);
     if (targetEvent == null) {
       continue;
     }
@@ -126,7 +129,11 @@
         uniqueIndex--;
         uniqueTargetCount--;
       }
-      handled|=target.dispatchTouchEvent(targetEvent);
+      final boolean childHandled=target.dispatchTouchEvent(targetEvent);
+      handled|=childHandled;
+      if (!childHandled) {
+        targets.removeView(target);
+      }
     }
   finally {
       targetEvent.recycle();
