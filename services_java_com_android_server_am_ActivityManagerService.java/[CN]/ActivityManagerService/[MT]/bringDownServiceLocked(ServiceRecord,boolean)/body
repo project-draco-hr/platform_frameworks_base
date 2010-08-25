@@ -4,22 +4,26 @@
   }
   if (r.connections.size() > 0) {
     if (!force) {
-      Iterator<ConnectionRecord> it=r.connections.values().iterator();
+      Iterator<ArrayList<ConnectionRecord>> it=r.connections.values().iterator();
       while (it.hasNext()) {
-        ConnectionRecord cr=it.next();
-        if ((cr.flags & Context.BIND_AUTO_CREATE) != 0) {
-          return;
+        ArrayList<ConnectionRecord> cr=it.next();
+        for (int i=0; i < cr.size(); i++) {
+          if ((cr.get(i).flags & Context.BIND_AUTO_CREATE) != 0) {
+            return;
+          }
         }
       }
     }
-    Iterator<ConnectionRecord> it=r.connections.values().iterator();
+    Iterator<ArrayList<ConnectionRecord>> it=r.connections.values().iterator();
     while (it.hasNext()) {
-      ConnectionRecord c=it.next();
-      try {
-        c.conn.connected(r.name,null);
-      }
- catch (      Exception e) {
-        Slog.w(TAG,"Failure disconnecting service " + r.name + " to connection "+ c.conn.asBinder()+ " (in "+ c.binding.client.processName+ ")",e);
+      ArrayList<ConnectionRecord> c=it.next();
+      for (int i=0; i < c.size(); i++) {
+        try {
+          c.get(i).conn.connected(r.name,null);
+        }
+ catch (        Exception e) {
+          Slog.w(TAG,"Failure disconnecting service " + r.name + " to connection "+ c.get(i).conn.asBinder()+ " (in "+ c.get(i).binding.client.processName+ ")",e);
+        }
       }
     }
   }
@@ -30,6 +34,7 @@
       if (DEBUG_SERVICE)       Slog.v(TAG,"Bringing down binding " + ibr + ": hasBound="+ ibr.hasBound);
       if (r.app != null && r.app.thread != null && ibr.hasBound) {
         try {
+          if (DEBUG_SERVICE)           Slog.v(TAG,">>> EXECUTING bring down unbind of " + r + " for "+ ibr);
           bumpServiceExecutingLocked(r);
           updateOomAdjLocked(r.app);
           ibr.hasBound=false;
@@ -42,18 +47,17 @@
       }
     }
   }
-  if (DEBUG_SERVICE)   Slog.v(TAG,"Bringing down service " + r.name + " "+ r.intent);
+  if (DEBUG_SERVICE)   Slog.v(TAG,"Bringing down " + r + " "+ r.intent);
   EventLog.writeEvent(EventLogTags.AM_DESTROY_SERVICE,System.identityHashCode(r),r.shortName,(r.app != null) ? r.app.pid : -1);
   mServices.remove(r.name);
   mServicesByIntent.remove(r.intent);
-  if (localLOGV)   Slog.v(TAG,"BRING DOWN SERVICE: " + r.shortName);
   r.totalRestartCount=0;
   unscheduleServiceRestartLocked(r);
   int N=mPendingServices.size();
   for (int i=0; i < N; i++) {
     if (mPendingServices.get(i) == r) {
       mPendingServices.remove(i);
-      if (DEBUG_SERVICE)       Slog.v(TAG,"Removed pending service: " + r.shortName);
+      if (DEBUG_SERVICE)       Slog.v(TAG,"Removed pending: " + r);
       i--;
       N--;
     }
@@ -71,7 +75,11 @@ synchronized (r.stats.getBatteryStats()) {
     r.app.services.remove(r);
     if (r.app.thread != null) {
       try {
-        if (DEBUG_SERVICE)         Slog.v(TAG,"Stopping service: " + r.shortName);
+        if (DEBUG_SERVICE) {
+          RuntimeException here=new RuntimeException();
+          here.fillInStackTrace();
+          Slog.v(TAG,">>> EXECUTING stop of " + r,here);
+        }
         bumpServiceExecutingLocked(r);
         mStoppingServices.add(r);
         updateOomAdjLocked(r.app);
@@ -84,10 +92,10 @@ synchronized (r.stats.getBatteryStats()) {
       updateServiceForegroundLocked(r.app,false);
     }
  else {
-      if (DEBUG_SERVICE)       Slog.v(TAG,"Removed service that has no process: " + r.shortName);
+      if (DEBUG_SERVICE)       Slog.v(TAG,"Removed service that has no process: " + r);
     }
   }
  else {
-    if (DEBUG_SERVICE)     Slog.v(TAG,"Removed service that is not running: " + r.shortName);
+    if (DEBUG_SERVICE)     Slog.v(TAG,"Removed service that is not running: " + r);
   }
 }
