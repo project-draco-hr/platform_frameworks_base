@@ -245,10 +245,7 @@ synchronized (mPackages) {
     if (dataPath.exists()) {
       mOutPermissions[1]=0;
       FileUtils.getPermissions(dataPath.getPath(),mOutPermissions);
-      if (mOutPermissions[1] == pkg.applicationInfo.uid || !Process.supportsProcesses()) {
-        pkg.applicationInfo.dataDir=dataPath.getPath();
-      }
- else {
+      if (mOutPermissions[1] != pkg.applicationInfo.uid && Process.supportsProcesses()) {
         boolean recovered=false;
         if ((parseFlags & PackageParser.PARSE_IS_SYSTEM) != 0) {
           if (mInstaller != null) {
@@ -272,6 +269,7 @@ synchronized (mPackages) {
         }
         if (!recovered) {
           pkg.applicationInfo.dataDir="/mismatched_uid/settings_" + pkg.applicationInfo.uid + "/fs_"+ mOutPermissions[1];
+          pkg.applicationInfo.nativeLibraryDir=pkg.applicationInfo.dataDir;
           String msg="Package " + pkg.packageName + " has mismatched uid: "+ mOutPermissions[1]+ " on disk, "+ pkg.applicationInfo.uid+ " in settings";
 synchronized (mPackages) {
             mSettings.mReadMessages.append(msg);
@@ -308,20 +306,18 @@ synchronized (mPackages) {
         pkg.applicationInfo.dataDir=null;
       }
     }
+    if (pkg.applicationInfo.nativeLibraryDir == null && pkg.applicationInfo.dataDir != null) {
+      pkg.applicationInfo.nativeLibraryDir=new File(dataPath,LIB_DIR_NAME).getPath();
+    }
     pkgSetting.uidError=uidError;
   }
   if (mInstaller != null) {
     String path=scanFile.getPath();
-    if (scanFileNewer) {
-      int flags=pkg.applicationInfo.flags;
-      if ((flags & ApplicationInfo.FLAG_SYSTEM) == 0 || (flags & ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0) {
-        Log.i(TAG,path + " changed; unpacking");
-        int err=cachePackageSharedLibsLI(pkg,scanFile);
-        if (err != PackageManager.INSTALL_SUCCEEDED) {
-          mLastScanError=err;
-          return null;
-        }
-      }
+    if ((!isSystemApp(pkg) || isUpdatedSystemApp(pkg)) && !isExternal(pkg)) {
+      Log.i(TAG,path + " changed; unpacking");
+      File sharedLibraryDir=new File(pkg.applicationInfo.nativeLibraryDir);
+      sharedLibraryDir.mkdir();
+      NativeLibraryHelper.copyNativeBinariesLI(scanFile,sharedLibraryDir);
     }
     pkg.mScanPath=path;
     if ((scanMode & SCAN_NO_DEX) == 0) {
@@ -546,6 +542,7 @@ synchronized (mPackages) {
       a.info.sourceDir=pkg.applicationInfo.sourceDir;
       a.info.publicSourceDir=pkg.applicationInfo.publicSourceDir;
       a.info.dataDir=pkg.applicationInfo.dataDir;
+      a.info.nativeLibraryDir=pkg.applicationInfo.nativeLibraryDir;
       mInstrumentation.put(a.getComponentName(),a);
       if ((parseFlags & PackageParser.PARSE_CHATTY) != 0) {
         if (r == null) {
