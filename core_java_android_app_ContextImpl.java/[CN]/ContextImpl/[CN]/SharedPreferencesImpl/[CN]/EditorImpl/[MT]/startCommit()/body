@@ -1,3 +1,27 @@
 {
-  commit();
+  if (!mCommitInFlight.compareAndSet(false,true)) {
+    throw new IllegalStateException("can't call startCommit() twice");
+  }
+  final MemoryCommitResult mcr=commitToMemory();
+  final Runnable awaitCommit=new Runnable(){
+    public void run(){
+      try {
+        mcr.writtenToDiskLatch.await();
+      }
+ catch (      InterruptedException ignored) {
+      }
+    }
+  }
+;
+  QueuedWork.add(awaitCommit);
+  Runnable postWriteRunnable=new Runnable(){
+    public void run(){
+      awaitCommit.run();
+      mCommitInFlight.set(false);
+      QueuedWork.remove(awaitCommit);
+    }
+  }
+;
+  SharedPreferencesImpl.this.enqueueDiskWrite(mcr,postWriteRunnable);
+  notifyListeners(mcr);
 }
