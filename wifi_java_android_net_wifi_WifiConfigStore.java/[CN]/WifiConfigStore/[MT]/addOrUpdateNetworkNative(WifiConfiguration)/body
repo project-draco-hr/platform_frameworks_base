@@ -1,5 +1,6 @@
 {
   int netId=config.networkId;
+  boolean updateFailed=true;
   boolean newNetwork=netId == -1;
   if (newNetwork) {
     netId=WifiNative.addNetworkCommand();
@@ -85,11 +86,33 @@
         }
       }
     }
-    return netId;
+    updateFailed=false;
   }
-  if (newNetwork) {
-    WifiNative.removeNetworkCommand(netId);
-    Log.d(TAG,"Failed to set a network variable, removed network: " + netId);
+  if (updateFailed) {
+    if (newNetwork) {
+      WifiNative.removeNetworkCommand(netId);
+      Log.d(TAG,"Failed to set a network variable, removed network: " + netId);
+    }
+    return -1;
   }
-  return -1;
+  WifiConfiguration sConfig;
+synchronized (sConfiguredNetworks) {
+    sConfig=sConfiguredNetworks.get(netId);
+  }
+  if (sConfig == null) {
+    sConfig=new WifiConfiguration();
+    sConfig.networkId=netId;
+synchronized (sConfiguredNetworks) {
+      sConfiguredNetworks.put(netId,sConfig);
+    }
+  }
+  readNetworkVariables(sConfig);
+  if (config.ipAssignment != IpAssignment.UNASSIGNED) {
+    if (newNetwork || (sConfig.ipAssignment != config.ipAssignment) || (sConfig.ipConfig.ipAddress != config.ipConfig.ipAddress)|| (sConfig.ipConfig.gateway != config.ipConfig.gateway)|| (sConfig.ipConfig.netmask != config.ipConfig.netmask)|| (sConfig.ipConfig.dns1 != config.ipConfig.dns1)|| (sConfig.ipConfig.dns2 != config.ipConfig.dns2)) {
+      sConfig.ipAssignment=config.ipAssignment;
+      sConfig.ipConfig=config.ipConfig;
+      writeIpConfigurations();
+    }
+  }
+  return netId;
 }
