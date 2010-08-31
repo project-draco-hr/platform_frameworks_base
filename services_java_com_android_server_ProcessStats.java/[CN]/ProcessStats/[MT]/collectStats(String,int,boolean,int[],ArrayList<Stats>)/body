@@ -1,5 +1,4 @@
 {
-  workingProcs.clear();
   int[] pids=Process.getPids(statsFile,curPids);
   int NP=(pids == null) ? 0 : pids.length;
   int NS=allProcs.size();
@@ -13,8 +12,10 @@
     Stats st=curStatsIndex < NS ? allProcs.get(curStatsIndex) : null;
     if (st != null && st.pid == pid) {
       st.added=false;
+      st.working=false;
       curStatsIndex++;
-      if (localLOGV)       Slog.v(TAG,"Existing pid " + pid + ": "+ st);
+      if (DEBUG)       Slog.v(TAG,"Existing " + (parentPid < 0 ? "process" : "thread") + " pid "+ pid+ ": "+ st);
+      final long uptime=SystemClock.uptimeMillis();
       final long[] procStats=mProcessStatsData;
       if (!Process.readProcFile(st.statFile.toString(),PROCESS_STATS_FORMAT,null,procStats,null)) {
         continue;
@@ -39,9 +40,12 @@
       if (parentPid < 0) {
         getName(st,st.cmdlineFile);
         if (st.threadStats != null) {
-          mCurThreadPids=collectStats(st.threadsDir,pid,false,mCurThreadPids,st.threadStats,st.workingThreads);
+          mCurThreadPids=collectStats(st.threadsDir,pid,false,mCurThreadPids,st.threadStats);
         }
       }
+      if (DEBUG)       Slog.v("Load","Stats changed " + st.name + " pid="+ st.pid+ " utime="+ utime+ "-"+ st.base_utime+ " stime="+ stime+ "-"+ st.base_stime+ " minfaults="+ minfaults+ "-"+ st.base_minfaults+ " majfaults="+ majfaults+ "-"+ st.base_majfaults);
+      st.rel_uptime=uptime - st.base_uptime;
+      st.base_uptime=uptime;
       st.rel_utime=(int)(utime - st.base_utime);
       st.rel_stime=(int)(stime - st.base_stime);
       st.base_utime=utime;
@@ -50,7 +54,7 @@
       st.rel_majfaults=(int)(majfaults - st.base_majfaults);
       st.base_minfaults=minfaults;
       st.base_majfaults=majfaults;
-      workingProcs.add(st);
+      st.working=true;
       continue;
     }
     if (st == null || st.pid > pid) {
@@ -58,14 +62,16 @@
       allProcs.add(curStatsIndex,st);
       curStatsIndex++;
       NS++;
-      if (localLOGV)       Slog.v(TAG,"New pid " + pid + ": "+ st);
+      if (DEBUG)       Slog.v(TAG,"New " + (parentPid < 0 ? "process" : "thread") + " pid "+ pid+ ": "+ st);
       final String[] procStatsString=mProcessFullStatsStringData;
       final long[] procStats=mProcessFullStatsData;
+      st.base_uptime=SystemClock.uptimeMillis();
       if (Process.readProcFile(st.statFile.toString(),PROCESS_FULL_STATS_FORMAT,procStatsString,procStats,null)) {
-        st.baseName=parentPid < 0 ? procStatsString[0] : Integer.toString(pid);
-        st.base_utime=0;
-        st.base_stime=0;
-        st.base_minfaults=st.base_majfaults=0;
+        st.baseName=procStatsString[0];
+        st.base_minfaults=procStats[PROCESS_FULL_STAT_MINOR_FAULTS];
+        st.base_majfaults=procStats[PROCESS_FULL_STAT_MAJOR_FAULTS];
+        st.base_utime=procStats[PROCESS_FULL_STAT_UTIME];
+        st.base_stime=procStats[PROCESS_FULL_STAT_STIME];
       }
  else {
         st.baseName="<unknown>";
@@ -74,21 +80,22 @@
       }
       if (parentPid < 0) {
         getName(st,st.cmdlineFile);
+        if (st.threadStats != null) {
+          mCurThreadPids=collectStats(st.threadsDir,pid,true,mCurThreadPids,st.threadStats);
+        }
       }
  else {
         st.name=st.baseName;
         st.nameWidth=onMeasureProcessName(st.name);
-        if (st.threadStats != null) {
-          mCurThreadPids=collectStats(st.threadsDir,pid,true,mCurThreadPids,st.threadStats,st.workingThreads);
-        }
       }
+      if (DEBUG)       Slog.v("Load","Stats added " + st.name + " pid="+ st.pid+ " utime="+ st.base_utime+ " stime="+ st.base_stime+ " minfaults="+ st.base_minfaults+ " majfaults="+ st.base_majfaults);
       st.rel_utime=0;
       st.rel_stime=0;
       st.rel_minfaults=0;
       st.rel_majfaults=0;
       st.added=true;
       if (!first) {
-        workingProcs.add(st);
+        st.working=true;
       }
       continue;
     }
@@ -97,10 +104,10 @@
     st.rel_minfaults=0;
     st.rel_majfaults=0;
     st.removed=true;
-    workingProcs.add(st);
+    st.working=true;
     allProcs.remove(curStatsIndex);
     NS--;
-    if (localLOGV)     Slog.v(TAG,"Removed pid " + st.pid + ": "+ st);
+    if (DEBUG)     Slog.v(TAG,"Removed " + (parentPid < 0 ? "process" : "thread") + " pid "+ pid+ ": "+ st);
     i--;
     continue;
   }
@@ -111,7 +118,7 @@
     st.rel_minfaults=0;
     st.rel_majfaults=0;
     st.removed=true;
-    workingProcs.add(st);
+    st.working=true;
     allProcs.remove(curStatsIndex);
     NS--;
     if (localLOGV)     Slog.v(TAG,"Removed pid " + st.pid + ": "+ st);
