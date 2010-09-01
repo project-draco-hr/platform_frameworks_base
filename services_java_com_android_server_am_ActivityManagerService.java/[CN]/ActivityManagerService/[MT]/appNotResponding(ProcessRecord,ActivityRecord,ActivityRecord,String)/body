@@ -1,5 +1,10 @@
 {
-  ArrayList<Integer> pids=new ArrayList<Integer>(20);
+  ArrayList<Integer> firstPids=new ArrayList<Integer>(5);
+  SparseArray<Boolean> lastPids=new SparseArray<Boolean>(20);
+  long anrTime=SystemClock.uptimeMillis();
+  if (MONITOR_CPU_USAGE) {
+    updateCpuStatsNow();
+  }
 synchronized (this) {
     if (mShuttingDown) {
       Slog.i(TAG,"During shutdown skipping ANR: " + app + " "+ annotation);
@@ -15,20 +20,28 @@ synchronized (this) {
     }
     app.notResponding=true;
     EventLog.writeEvent(EventLogTags.AM_ANR,app.pid,app.processName,app.info.flags,annotation);
-    pids.add(app.pid);
+    firstPids.add(app.pid);
     int parentPid=app.pid;
     if (parent != null && parent.app != null && parent.app.pid > 0)     parentPid=parent.app.pid;
-    if (parentPid != app.pid)     pids.add(parentPid);
-    if (MY_PID != app.pid && MY_PID != parentPid)     pids.add(MY_PID);
+    if (parentPid != app.pid)     firstPids.add(parentPid);
+    if (MY_PID != app.pid && MY_PID != parentPid)     firstPids.add(MY_PID);
     for (int i=mLruProcesses.size() - 1; i >= 0; i--) {
       ProcessRecord r=mLruProcesses.get(i);
       if (r != null && r.thread != null) {
         int pid=r.pid;
-        if (pid > 0 && pid != app.pid && pid != parentPid && pid != MY_PID)         pids.add(pid);
+        if (pid > 0 && pid != app.pid && pid != parentPid && pid != MY_PID) {
+          if (r.persistent) {
+            firstPids.add(pid);
+          }
+ else {
+            lastPids.put(pid,Boolean.TRUE);
+          }
+        }
       }
     }
   }
-  File tracesFile=dumpStackTraces(true,pids);
+  final ProcessStats processStats=new ProcessStats(true);
+  File tracesFile=dumpStackTraces(true,firstPids,processStats,lastPids);
   StringBuilder info=mStringBuilder;
   info.setLength(0);
   info.append("ANR in ").append(app.processName);
@@ -46,10 +59,12 @@ synchronized (this) {
   if (MONITOR_CPU_USAGE) {
     updateCpuStatsNow();
 synchronized (mProcessStatsThread) {
-      cpuInfo=mProcessStats.printCurrentState();
+      cpuInfo=mProcessStats.printCurrentState(anrTime);
     }
+    info.append(processStats.printCurrentLoad());
     info.append(cpuInfo);
   }
+  info.append(processStats.printCurrentState(anrTime));
   Slog.e(TAG,info.toString());
   if (tracesFile == null) {
     Process.sendSignal(app.pid,Process.SIGNAL_QUIT);
