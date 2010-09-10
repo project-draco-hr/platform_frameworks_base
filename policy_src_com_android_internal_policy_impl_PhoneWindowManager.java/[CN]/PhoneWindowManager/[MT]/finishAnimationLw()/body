@@ -1,6 +1,6 @@
 {
   int changes=0;
-  boolean hiding=false;
+  boolean topIsFullscreen=false;
   if (mStatusBar != null) {
     if (localLOGV)     Log.i(TAG,"force=" + mForceStatusBar + " top="+ mTopFullscreenOpaqueWindowState);
     if (mForceStatusBar) {
@@ -8,13 +8,16 @@
       if (mStatusBar.showLw(true))       changes|=FINISH_LAYOUT_REDO_LAYOUT;
     }
  else     if (mTopFullscreenOpaqueWindowState != null) {
-      WindowManager.LayoutParams lp=mTopFullscreenOpaqueWindowState.getAttrs();
-      boolean hideStatusBar=(lp.flags & WindowManager.LayoutParams.FLAG_FULLSCREEN) != 0;
-      if (hideStatusBar) {
+      final WindowManager.LayoutParams lp=mTopFullscreenOpaqueWindowState.getAttrs();
+      if (localLOGV) {
+        Log.d(TAG,"frame: " + mTopFullscreenOpaqueWindowState.getFrameLw() + " shown frame: "+ mTopFullscreenOpaqueWindowState.getShownFrameLw());
+        Log.d(TAG,"attr: " + mTopFullscreenOpaqueWindowState.getAttrs() + " lp.flags=0x"+ Integer.toHexString(lp.flags));
+      }
+      topIsFullscreen=(lp.flags & WindowManager.LayoutParams.FLAG_FULLSCREEN) != 0;
+      if (topIsFullscreen) {
         if (mStatusBarCanHide) {
           if (DEBUG_LAYOUT)           Log.v(TAG,"Hiding status bar");
           if (mStatusBar.hideLw(true))           changes|=FINISH_LAYOUT_REDO_LAYOUT;
-          hiding=true;
         }
  else         if (localLOGV) {
           Log.v(TAG,"Preventing status bar from hiding by policy");
@@ -26,18 +29,29 @@
       }
     }
   }
-  if (changes != 0 && hiding) {
-    IStatusBarService sbs=IStatusBarService.Stub.asInterface(ServiceManager.getService("statusbar"));
-    if (sbs != null) {
-      try {
-        sbs.collapse();
-      }
- catch (      RemoteException e) {
+  if (topIsFullscreen != mTopIsFullscreen) {
+    final boolean topIsFullscreenF=topIsFullscreen;
+    mTopIsFullscreen=topIsFullscreen;
+    mHandler.post(new Runnable(){
+      public void run(){
+        if (mStatusBarService == null) {
+          mStatusBarService=IStatusBarService.Stub.asInterface(ServiceManager.getService("statusbar"));
+        }
+        final IStatusBarService sbs=mStatusBarService;
+        if (mStatusBarService != null) {
+          try {
+            sbs.setActiveWindowIsFullscreen(topIsFullscreenF);
+          }
+ catch (          RemoteException e) {
+            mStatusBarService=null;
+          }
+        }
       }
     }
+);
   }
   if (mKeyguard != null) {
-    if (localLOGV)     Log.v(TAG,"finishLayoutLw::mHideKeyguard=" + mHideLockScreen);
+    if (localLOGV)     Log.v(TAG,"finishAnimationLw::mHideKeyguard=" + mHideLockScreen);
     if (mDismissKeyguard && !mKeyguardMediator.isSecure()) {
       if (mKeyguard.hideLw(true)) {
         changes|=FINISH_LAYOUT_REDO_LAYOUT | FINISH_LAYOUT_REDO_CONFIG | FINISH_LAYOUT_REDO_WALLPAPER;
