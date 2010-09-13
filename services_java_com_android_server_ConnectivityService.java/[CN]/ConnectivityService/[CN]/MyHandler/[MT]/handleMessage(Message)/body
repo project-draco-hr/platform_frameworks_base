@@ -49,5 +49,59 @@ if (causedBy != null) {
 Slog.d(TAG,"NetTransition Wakelock for " + causedBy + " released by timeout");
 }
 break;
+case NetworkStateTracker.EVENT_INET_CONDITION_CHANGE:
+if (DBG) {
+Slog.d(TAG,"Inet connectivity change, net=" + msg.arg1 + ", condition="+ msg.arg2+ ",mActiveDefaultNetwork="+ mActiveDefaultNetwork);
+}
+if (mActiveDefaultNetwork == -1) {
+if (DBG) Slog.d(TAG,"no active default network - aborting");
+break;
+}
+if (mActiveDefaultNetwork != msg.arg1) {
+if (DBG) Slog.d(TAG,"given net not default - aborting");
+break;
+}
+mDefaultInetCondition=msg.arg2;
+int delay;
+if (mInetConditionChangeInFlight == false) {
+if (DBG) Slog.d(TAG,"starting a change hold");
+if (mDefaultInetCondition > 50) {
+delay=Settings.Secure.getInt(mContext.getContentResolver(),Settings.Secure.INET_CONDITION_DEBOUNCE_UP_DELAY,500);
+}
+ else {
+delay=Settings.Secure.getInt(mContext.getContentResolver(),Settings.Secure.INET_CONDITION_DEBOUNCE_DOWN_DELAY,3000);
+}
+mInetConditionChangeInFlight=true;
+sendMessageDelayed(obtainMessage(NetworkStateTracker.EVENT_INET_CONDITION_HOLD_END,mActiveDefaultNetwork,mDefaultConnectionSequence),delay);
+}
+ else {
+if (DBG) Slog.d(TAG,"currently in hold - not setting new end evt");
+}
+break;
+case NetworkStateTracker.EVENT_INET_CONDITION_HOLD_END:
+if (DBG) {
+Slog.d(TAG,"Inet hold end, net=" + msg.arg1 + ", condition ="+ mDefaultInetCondition+ ", published condition ="+ mDefaultInetConditionPublished);
+}
+mInetConditionChangeInFlight=false;
+if (mActiveDefaultNetwork == -1) {
+if (DBG) Slog.d(TAG,"no active default network - aborting");
+break;
+}
+if (mDefaultConnectionSequence != msg.arg2) {
+if (DBG) Slog.d(TAG,"event hold for obsolete network - aborting");
+break;
+}
+if (mDefaultInetConditionPublished == mDefaultInetCondition) {
+if (DBG) Slog.d(TAG,"no change in condition - aborting");
+break;
+}
+NetworkInfo networkInfo=mNetTrackers[mActiveDefaultNetwork].getNetworkInfo();
+if (networkInfo.isConnected() == false) {
+if (DBG) Slog.d(TAG,"default network not connected - aborting");
+break;
+}
+mDefaultInetConditionPublished=mDefaultInetCondition;
+sendConnectedBroadcast(networkInfo);
+break;
 }
 }

@@ -38,18 +38,31 @@
     }
   }
   if (mZoomManager.supportsMultiTouchZoom() && ev.getPointerCount() > 1 && mTouchMode != TOUCH_DRAG_LAYER_MODE && !skipScaleGesture) {
-    if (mZoomManager.isZoomScaleFixed()) {
+    if (!mZoomManager.supportsPanDuringZoom() && mZoomManager.isZoomScaleFixed()) {
       return true;
     }
     if (!detector.isInProgress() && ev.getActionMasked() != MotionEvent.ACTION_POINTER_DOWN) {
       MotionEvent temp=MotionEvent.obtain(ev);
-      temp.setAction(temp.getAction() & ~MotionEvent.ACTION_MASK | MotionEvent.ACTION_POINTER_DOWN);
-      detector.onTouchEvent(temp);
+      try {
+        temp.setAction(temp.getAction() & ~MotionEvent.ACTION_MASK | MotionEvent.ACTION_POINTER_DOWN);
+        detector.onTouchEvent(temp);
+      }
+  finally {
+        temp.recycle();
+      }
     }
     detector.onTouchEvent(ev);
     if (detector.isInProgress()) {
       mLastTouchTime=eventTime;
-      return true;
+      cancelLongPress();
+      mPrivateHandler.removeMessages(SWITCH_TO_LONGPRESS);
+      if (!mZoomManager.supportsPanDuringZoom()) {
+        return true;
+      }
+      mTouchMode=TOUCH_DRAG_MODE;
+      if (mVelocityTracker == null) {
+        mVelocityTracker=VelocityTracker.obtain();
+      }
     }
     x=detector.getFocusX();
     y=detector.getFocusY();
@@ -225,15 +238,17 @@ case MotionEvent.ACTION_MOVE:
         mLastTouchTime=eventTime;
         break;
       }
-      int ax=Math.abs(deltaX);
-      int ay=Math.abs(deltaY);
-      if (ax > MAX_SLOPE_FOR_DIAG * ay) {
-        mSnapScrollMode=SNAP_X;
-        mSnapPositive=deltaX > 0;
-      }
- else       if (ay > MAX_SLOPE_FOR_DIAG * ax) {
-        mSnapScrollMode=SNAP_Y;
-        mSnapPositive=deltaY > 0;
+      if (detector != null && !detector.isInProgress()) {
+        int ax=Math.abs(deltaX);
+        int ay=Math.abs(deltaY);
+        if (ax > MAX_SLOPE_FOR_DIAG * ay) {
+          mSnapScrollMode=SNAP_X;
+          mSnapPositive=deltaX > 0;
+        }
+ else         if (ay > MAX_SLOPE_FOR_DIAG * ax) {
+          mSnapScrollMode=SNAP_Y;
+          mSnapPositive=deltaY > 0;
+        }
       }
       mTouchMode=TOUCH_DRAG_MODE;
       mLastTouchX=x;
