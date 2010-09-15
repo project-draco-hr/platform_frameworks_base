@@ -1,26 +1,31 @@
 {
   if (DBG)   Log.d(TAG,getName() + "\n");
   EventLog.writeEvent(EVENTLOG_WIFI_STATE_CHANGED,getName());
+  mUseStaticIp=WifiConfigStore.isUsingStaticIp(mLastNetworkId);
   if (!mUseStaticIp) {
     mDhcpThread=null;
-    modifiedBluetoothCoexistenceMode=false;
-    powerMode=DRIVER_POWER_MODE_AUTO;
+    mModifiedBluetoothCoexistenceMode=false;
+    mPowerMode=DRIVER_POWER_MODE_AUTO;
     if (shouldDisableCoexistenceMode()) {
-      modifiedBluetoothCoexistenceMode=true;
+      mModifiedBluetoothCoexistenceMode=true;
       WifiNative.setBluetoothCoexistenceModeCommand(WifiNative.BLUETOOTH_COEXISTENCE_MODE_DISABLED);
     }
-    powerMode=WifiNative.getPowerModeCommand();
-    if (powerMode < 0) {
-      powerMode=DRIVER_POWER_MODE_AUTO;
+    mPowerMode=WifiNative.getPowerModeCommand();
+    if (mPowerMode < 0) {
+      mPowerMode=DRIVER_POWER_MODE_AUTO;
     }
-    if (powerMode != DRIVER_POWER_MODE_ACTIVE) {
+    if (mPowerMode != DRIVER_POWER_MODE_ACTIVE) {
       WifiNative.setPowerModeCommand(DRIVER_POWER_MODE_ACTIVE);
     }
     Log.d(TAG,"DHCP request started");
     mDhcpThread=new Thread(new Runnable(){
       public void run(){
-        if (NetworkUtils.runDhcp(mInterfaceName,mDhcpInfo)) {
+        DhcpInfo dhcpInfo=new DhcpInfo();
+        if (NetworkUtils.runDhcp(mInterfaceName,dhcpInfo)) {
           Log.d(TAG,"DHCP request succeeded");
+synchronized (mDhcpInfo) {
+            mDhcpInfo=dhcpInfo;
+          }
           sendMessage(CMD_IP_CONFIG_SUCCESS);
         }
  else {
@@ -33,8 +38,12 @@
     mDhcpThread.start();
   }
  else {
-    if (NetworkUtils.configureInterface(mInterfaceName,mDhcpInfo)) {
+    DhcpInfo dhcpInfo=WifiConfigStore.getIpConfiguration(mLastNetworkId);
+    if (NetworkUtils.configureInterface(mInterfaceName,dhcpInfo)) {
       Log.v(TAG,"Static IP configuration succeeded");
+synchronized (mDhcpInfo) {
+        mDhcpInfo=dhcpInfo;
+      }
       sendMessage(CMD_IP_CONFIG_SUCCESS);
     }
  else {
