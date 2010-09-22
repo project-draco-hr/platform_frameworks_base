@@ -6,7 +6,8 @@
   if (!sFirstDrawComplete) {
 synchronized (sFirstDrawHandlers) {
       sFirstDrawComplete=true;
-      for (int i=0; i < sFirstDrawHandlers.size(); i++) {
+      final int count=sFirstDrawHandlers.size();
+      for (int i=0; i < count; i++) {
         post(sFirstDrawHandlers.get(i));
       }
     }
@@ -35,53 +36,19 @@ synchronized (sFirstDrawHandlers) {
     dirty.setEmpty();
     return;
   }
-  if (mUseGL) {
+  if (fullRedrawNeeded) {
+    mAttachInfo.mIgnoreDirtyState=true;
+    dirty.union(0,0,(int)(mWidth * appScale + 0.5f),(int)(mHeight * appScale + 0.5f));
+  }
+  if (mHwRenderer != null && mHwRenderer.isEnabled()) {
     if (!dirty.isEmpty()) {
-      Canvas canvas=mGlCanvas;
-      if (mGL != null && canvas != null) {
-        mGL.glDisable(GL_SCISSOR_TEST);
-        mGL.glClearColor(0,0,0,0);
-        mGL.glClear(GL_COLOR_BUFFER_BIT);
-        mGL.glEnable(GL_SCISSOR_TEST);
-        mAttachInfo.mDrawingTime=SystemClock.uptimeMillis();
-        mAttachInfo.mIgnoreDirtyState=true;
-        mView.mPrivateFlags|=View.DRAWN;
-        int saveCount=canvas.save(Canvas.MATRIX_SAVE_FLAG);
-        try {
-          canvas.translate(0,-yoff);
-          if (mTranslator != null) {
-            mTranslator.translateCanvas(canvas);
-          }
-          canvas.setScreenDensity(scalingRequired ? DisplayMetrics.DENSITY_DEVICE : 0);
-          mView.draw(canvas);
-          if (Config.DEBUG && ViewDebug.consistencyCheckEnabled) {
-            mView.dispatchConsistencyCheck(ViewDebug.CONSISTENCY_DRAWING);
-          }
-        }
-  finally {
-          canvas.restoreToCount(saveCount);
-        }
-        mAttachInfo.mIgnoreDirtyState=false;
-        mEgl.eglSwapBuffers(mEglDisplay,mEglSurface);
-        checkEglErrors();
-        if (SHOW_FPS || Config.DEBUG && ViewDebug.showFps) {
-          int now=(int)SystemClock.elapsedRealtime();
-          if (sDrawTime != 0) {
-            nativeShowFPS(canvas,now - sDrawTime);
-          }
-          sDrawTime=now;
-        }
-      }
+      mHwRenderer.draw(mView,mAttachInfo,yoff);
     }
     if (scrolling) {
       mFullRedrawNeeded=true;
       scheduleTraversals();
     }
     return;
-  }
-  if (fullRedrawNeeded) {
-    mAttachInfo.mIgnoreDirtyState=true;
-    dirty.union(0,0,(int)(mWidth * appScale + 0.5f),(int)(mHeight * appScale + 0.5f));
   }
   if (DEBUG_ORIENTATION || DEBUG_DRAW) {
     Log.v(TAG,"Draw " + mView + "/"+ mWindowAttributes.getTitle()+ ": dirty={"+ dirty.left+ ","+ dirty.top+ ","+ dirty.right+ ","+ dirty.bottom+ "} surface="+ surface+ " surface.isValid()="+ surface.isValid()+ ", appScale:"+ appScale+ ", width="+ mWidth+ ", height="+ mHeight);
@@ -113,7 +80,7 @@ catch (    IllegalArgumentException e) {
         if (DEBUG_ORIENTATION || DEBUG_DRAW) {
           Log.v(TAG,"Surface " + surface + " drawing to bitmap w="+ canvas.getWidth()+ ", h="+ canvas.getHeight());
         }
-        if (Config.DEBUG && ViewDebug.profileDrawing) {
+        if (ViewDebug.DEBUG_PROFILE_DRAWING) {
           startTime=SystemClock.elapsedRealtime();
         }
         if (!canvas.isOpaque() || yoff != 0) {
@@ -127,7 +94,6 @@ catch (    IllegalArgumentException e) {
           Context cxt=mView.getContext();
           Log.i(TAG,"Drawing: package:" + cxt.getPackageName() + ", metrics="+ cxt.getResources().getDisplayMetrics()+ ", compatibilityInfo="+ cxt.getResources().getCompatibilityInfo());
         }
-        int saveCount=canvas.save(Canvas.MATRIX_SAVE_FLAG);
         try {
           canvas.translate(0,-yoff);
           if (mTranslator != null) {
@@ -138,19 +104,18 @@ catch (    IllegalArgumentException e) {
         }
   finally {
           mAttachInfo.mIgnoreDirtyState=false;
-          canvas.restoreToCount(saveCount);
         }
         if (Config.DEBUG && ViewDebug.consistencyCheckEnabled) {
           mView.dispatchConsistencyCheck(ViewDebug.CONSISTENCY_DRAWING);
         }
-        if (SHOW_FPS || Config.DEBUG && ViewDebug.showFps) {
+        if (SHOW_FPS || ViewDebug.DEBUG_SHOW_FPS) {
           int now=(int)SystemClock.elapsedRealtime();
           if (sDrawTime != 0) {
             nativeShowFPS(canvas,now - sDrawTime);
           }
           sDrawTime=now;
         }
-        if (Config.DEBUG && ViewDebug.profileDrawing) {
+        if (ViewDebug.DEBUG_PROFILE_DRAWING) {
           EventLog.writeEvent(60000,SystemClock.elapsedRealtime() - startTime);
         }
       }

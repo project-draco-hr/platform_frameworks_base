@@ -1,71 +1,39 @@
 {
-  BlockGuard.getThreadPolicy().onWriteToDisk();
-  if (!isOpen()) {
-    throw new IllegalStateException("database not open");
-  }
-  StringBuilder sql=new StringBuilder(152);
+  StringBuilder sql=new StringBuilder();
   sql.append("INSERT");
   sql.append(CONFLICT_VALUES[conflictAlgorithm]);
   sql.append(" INTO ");
   sql.append(table);
-  StringBuilder values=new StringBuilder(40);
-  Set<Map.Entry<String,Object>> entrySet=null;
-  if (initialValues != null && initialValues.size() > 0) {
-    entrySet=initialValues.valueSet();
-    Iterator<Map.Entry<String,Object>> entriesIter=entrySet.iterator();
-    sql.append('(');
-    boolean needSeparator=false;
-    while (entriesIter.hasNext()) {
-      if (needSeparator) {
-        sql.append(", ");
-        values.append(", ");
-      }
-      needSeparator=true;
-      Map.Entry<String,Object> entry=entriesIter.next();
-      sql.append(entry.getKey());
-      values.append('?');
+  sql.append('(');
+  Object[] bindArgs=null;
+  int size=(initialValues != null && initialValues.size() > 0) ? initialValues.size() : 0;
+  if (size > 0) {
+    bindArgs=new Object[size];
+    int i=0;
+    for (    String colName : initialValues.keySet()) {
+      sql.append((i > 0) ? "," : "");
+      sql.append(colName);
+      bindArgs[i++]=initialValues.get(colName);
     }
     sql.append(')');
+    sql.append(" VALUES (");
+    for (i=0; i < size; i++) {
+      sql.append((i > 0) ? ",?" : "?");
+    }
   }
  else {
-    sql.append("(" + nullColumnHack + ") ");
-    values.append("NULL");
+    sql.append(nullColumnHack + ") VALUES (NULL");
   }
-  sql.append(" VALUES(");
-  sql.append(values);
-  sql.append(");");
-  lock();
-  SQLiteStatement statement=null;
+  sql.append(')');
+  SQLiteStatement statement=new SQLiteStatement(this,sql.toString(),bindArgs);
   try {
-    statement=compileStatement(sql.toString());
-    if (entrySet != null) {
-      int size=entrySet.size();
-      Iterator<Map.Entry<String,Object>> entriesIter=entrySet.iterator();
-      for (int i=0; i < size; i++) {
-        Map.Entry<String,Object> entry=entriesIter.next();
-        DatabaseUtils.bindObjectToProgram(statement,i + 1,entry.getValue());
-      }
-    }
-    statement.execute();
-    long insertedRowId=lastInsertRow();
-    if (insertedRowId == -1) {
-      Log.e(TAG,"Error inserting " + initialValues + " using "+ sql);
-    }
- else {
-      if (Config.LOGD && Log.isLoggable(TAG,Log.VERBOSE)) {
-        Log.v(TAG,"Inserting row " + insertedRowId + " from "+ initialValues+ " using "+ sql);
-      }
-    }
-    return insertedRowId;
+    return statement.executeInsert();
   }
  catch (  SQLiteDatabaseCorruptException e) {
     onCorruption();
     throw e;
   }
  finally {
-    if (statement != null) {
-      statement.close();
-    }
-    unlock();
+    statement.close();
   }
 }

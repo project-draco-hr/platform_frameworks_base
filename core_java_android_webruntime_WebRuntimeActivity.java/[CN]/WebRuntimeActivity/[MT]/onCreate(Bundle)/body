@@ -1,0 +1,84 @@
+{
+  super.onCreate(savedInstanceState);
+  PackageManager packageManager=getPackageManager();
+  ComponentName componentName=new ComponentName(this,getClass());
+  ActivityInfo activityInfo=null;
+  try {
+    activityInfo=packageManager.getActivityInfo(componentName,PackageManager.GET_META_DATA);
+  }
+ catch (  PackageManager.NameNotFoundException e) {
+    Log.d(LOGTAG,"Failed to find component");
+    return;
+  }
+  if (activityInfo == null) {
+    Log.d(LOGTAG,"Failed to get activity info");
+    return;
+  }
+  Bundle metaData=activityInfo.metaData;
+  if (metaData == null) {
+    Log.d(LOGTAG,"No meta data");
+    return;
+  }
+  String url=metaData.getString("android.webruntime.url");
+  if (url == null) {
+    Log.d(LOGTAG,"No URL");
+    return;
+  }
+  try {
+    mBaseUrl=new URL(url);
+  }
+ catch (  MalformedURLException e) {
+    Log.d(LOGTAG,"Invalid URL");
+  }
+  final SensitiveFeatures sensitiveFeatures=new SensitiveFeatures();
+  sensitiveFeatures.setGeolocation(metaData.getBoolean("android.webruntime.SensitiveFeaturesGeolocation"));
+  getWindow().requestFeature(Window.FEATURE_NO_TITLE);
+  setContentView(R.layout.web_runtime);
+  mWebView=(WebView)findViewById(R.id.webview);
+  mSplashScreen=(ImageView)findViewById(R.id.splashscreen);
+  mSplashScreen.setImageResource(getResources().getIdentifier("splash_screen","drawable",getPackageName()));
+  mWebView.getSettings().setJavaScriptEnabled(true);
+  mWebView.setWebViewClient(new WebViewClient(){
+    @Override public boolean shouldOverrideUrlLoading(    WebView view,    String url){
+      try {
+        URL newOrigin=new URL(url);
+        if (areSameOrigin(mBaseUrl,newOrigin)) {
+          return false;
+        }
+      }
+ catch (      MalformedURLException e) {
+        return true;
+      }
+      startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(url)));
+      return true;
+    }
+    @Override public void onPageFinished(    WebView view,    String url){
+      if (mSplashScreen != null && mSplashScreen.getVisibility() == View.VISIBLE) {
+        mSplashScreen.setVisibility(View.GONE);
+        mSplashScreen=null;
+      }
+    }
+  }
+);
+  mWebView.setWebChromeClient(new WebChromeClient(){
+    public void onGeolocationPermissionsShowPrompt(    String origin,    GeolocationPermissions.Callback callback){
+      boolean allowed=false;
+      if (sensitiveFeatures.getGeolocation()) {
+        try {
+          URL originUrl=new URL(origin);
+          allowed=areSameOrigin(mBaseUrl,originUrl);
+        }
+ catch (        MalformedURLException e) {
+        }
+      }
+      callback.invoke(origin,allowed,false);
+    }
+  }
+);
+  mWebView.getSettings().setGeolocationDatabasePath(getDir("geolocation",MODE_PRIVATE).getPath());
+  String title=metaData.getString("android.webruntime.title");
+  if (title != null) {
+    Toast.makeText(this,title,Toast.LENGTH_SHORT).show();
+  }
+  mWebView.loadUrl(url);
+}

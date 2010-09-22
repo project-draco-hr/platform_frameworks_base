@@ -4,7 +4,7 @@
   mHandler=new Handler(){
     @Override public void handleMessage(    Message msg){
       if (DebugFlags.WEB_VIEW_CORE) {
-        Log.v(LOGTAG,(msg.what < REQUEST_LABEL || msg.what > VALID_NODE_BOUNDS ? Integer.toString(msg.what) : HandlerDebugString[msg.what - REQUEST_LABEL]) + " arg1=" + msg.arg1+ " arg2="+ msg.arg2+ " obj="+ msg.obj);
+        Log.v(LOGTAG,(msg.what < FIRST_PACKAGE_MSG_ID || msg.what > LAST_PACKAGE_MSG_ID ? Integer.toString(msg.what) : HandlerDebugString[msg.what - FIRST_PACKAGE_MSG_ID]) + " arg1=" + msg.arg1+ " arg2="+ msg.arg2+ " obj="+ msg.obj);
       }
 switch (msg.what) {
 case WEBKIT_DRAW:
@@ -19,13 +19,16 @@ synchronized (WebViewCore.this) {
       mWebView=null;
     }
   break;
+case REVEAL_SELECTION:
+nativeRevealSelection();
+break;
 case REQUEST_LABEL:
 if (mWebView != null) {
-  int nodePointer=msg.arg2;
-  String label=nativeRequestLabel(msg.arg1,nodePointer);
-  if (label != null && label.length() > 0) {
-    Message.obtain(mWebView.mPrivateHandler,WebView.RETURN_LABEL,nodePointer,0,label).sendToTarget();
-  }
+int nodePointer=msg.arg2;
+String label=nativeRequestLabel(msg.arg1,nodePointer);
+if (label != null && label.length() > 0) {
+Message.obtain(mWebView.mPrivateHandler,WebView.RETURN_LABEL,nodePointer,0,label).sendToTarget();
+}
 }
 break;
 case UPDATE_FRAME_CACHE_IF_LOADING:
@@ -229,6 +232,10 @@ break;
 case SET_SELECTION:
 nativeSetSelection(msg.arg1,msg.arg2);
 break;
+case MODIFY_SELECTION:
+String selectionString=nativeModifySelection(msg.arg1,msg.arg2);
+mWebView.mPrivateHandler.obtainMessage(WebView.SELECTION_STRING_CHANGED,selectionString).sendToTarget();
+break;
 case LISTBOX_CHOICES:
 SparseBooleanArray choices=(SparseBooleanArray)msg.obj;
 int choicesSize=msg.arg1;
@@ -259,6 +266,11 @@ break;
 case SET_JS_FLAGS:
 nativeSetJsFlags((String)msg.obj);
 break;
+case SAVE_WEBARCHIVE:
+WebView.SaveWebArchiveMessage saveMessage=(WebView.SaveWebArchiveMessage)msg.obj;
+saveMessage.mResultFile=saveWebArchive(saveMessage.mBasename,saveMessage.mAutoname);
+mWebView.mPrivateHandler.obtainMessage(WebView.SAVE_WEBARCHIVE_FINISHED,saveMessage).sendToTarget();
+break;
 case GEOLOCATION_PERMISSIONS_PROVIDE:
 GeolocationPermissionsData data=(GeolocationPermissionsData)msg.obj;
 nativeGeolocationPermissionsProvide(data.mOrigin,data.mAllow,data.mRemember);
@@ -268,7 +280,8 @@ mWebkitScrollX=msg.arg1;
 mWebkitScrollY=msg.arg2;
 break;
 case SPLIT_PICTURE_SET:
-nativeSplitContent();
+nativeSplitContent(msg.arg1);
+mWebView.mPrivateHandler.obtainMessage(WebView.REPLACE_BASE_CONTENT,msg.arg1,0);
 mSplitPictureIsScheduled=false;
 break;
 case CLEAR_CONTENT:
@@ -312,6 +325,17 @@ if (BrowserFrame.sJavaBridge == null) {
 throw new IllegalStateException("No WebView " + "has been created in this process!");
 }
 BrowserFrame.sJavaBridge.removePackageName((String)msg.obj);
+break;
+case GET_TOUCH_HIGHLIGHT_RECTS:
+TouchHighlightData d=(TouchHighlightData)msg.obj;
+ArrayList<Rect> rects=nativeGetTouchHighlightRects(d.mX,d.mY,d.mSlop);
+mWebView.mPrivateHandler.obtainMessage(WebView.SET_TOUCH_HIGHLIGHT_RECTS,rects).sendToTarget();
+break;
+case REMOVE_TOUCH_HIGHLIGHT_RECTS:
+mWebView.mPrivateHandler.obtainMessage(WebView.SET_TOUCH_HIGHLIGHT_RECTS,null).sendToTarget();
+break;
+case USE_MOCK_DEVICE_ORIENTATION:
+useMockDeviceOrientation();
 break;
 }
 }

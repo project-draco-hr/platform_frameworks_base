@@ -1,0 +1,99 @@
+{
+  int lineStart=0;
+  int lineEnd=mLen;
+  boolean paraIsRtl=mDir == -1;
+  int[] runs=mDirections.mDirections;
+  int runIndex, runLevel=0, runStart=lineStart, runLimit=lineEnd, newCaret=-1;
+  boolean trailing=false;
+  if (cursor == lineStart) {
+    runIndex=-2;
+  }
+ else   if (cursor == lineEnd) {
+    runIndex=runs.length;
+  }
+ else {
+    for (runIndex=0; runIndex < runs.length; runIndex+=2) {
+      runStart=lineStart + runs[runIndex];
+      if (cursor >= runStart) {
+        runLimit=runStart + (runs[runIndex + 1] & Layout.RUN_LENGTH_MASK);
+        if (runLimit > lineEnd) {
+          runLimit=lineEnd;
+        }
+        if (cursor < runLimit) {
+          runLevel=(runs[runIndex + 1] >>> Layout.RUN_LEVEL_SHIFT) & Layout.RUN_LEVEL_MASK;
+          if (cursor == runStart) {
+            int prevRunIndex, prevRunLevel, prevRunStart, prevRunLimit;
+            int pos=cursor - 1;
+            for (prevRunIndex=0; prevRunIndex < runs.length; prevRunIndex+=2) {
+              prevRunStart=lineStart + runs[prevRunIndex];
+              if (pos >= prevRunStart) {
+                prevRunLimit=prevRunStart + (runs[prevRunIndex + 1] & Layout.RUN_LENGTH_MASK);
+                if (prevRunLimit > lineEnd) {
+                  prevRunLimit=lineEnd;
+                }
+                if (pos < prevRunLimit) {
+                  prevRunLevel=(runs[prevRunIndex + 1] >>> Layout.RUN_LEVEL_SHIFT) & Layout.RUN_LEVEL_MASK;
+                  if (prevRunLevel < runLevel) {
+                    runIndex=prevRunIndex;
+                    runLevel=prevRunLevel;
+                    runStart=prevRunStart;
+                    runLimit=prevRunLimit;
+                    trailing=true;
+                    break;
+                  }
+                }
+              }
+            }
+          }
+          break;
+        }
+      }
+    }
+    if (runIndex != runs.length) {
+      boolean runIsRtl=(runLevel & 0x1) != 0;
+      boolean advance=toLeft == runIsRtl;
+      if (cursor != (advance ? runLimit : runStart) || advance != trailing) {
+        newCaret=getOffsetBeforeAfter(runIndex,runStart,runLimit,runIsRtl,cursor,advance);
+        if (newCaret != (advance ? runLimit : runStart)) {
+          return newCaret;
+        }
+      }
+    }
+  }
+  while (true) {
+    boolean advance=toLeft == paraIsRtl;
+    int otherRunIndex=runIndex + (advance ? 2 : -2);
+    if (otherRunIndex >= 0 && otherRunIndex < runs.length) {
+      int otherRunStart=lineStart + runs[otherRunIndex];
+      int otherRunLimit=otherRunStart + (runs[otherRunIndex + 1] & Layout.RUN_LENGTH_MASK);
+      if (otherRunLimit > lineEnd) {
+        otherRunLimit=lineEnd;
+      }
+      int otherRunLevel=(runs[otherRunIndex + 1] >>> Layout.RUN_LEVEL_SHIFT) & Layout.RUN_LEVEL_MASK;
+      boolean otherRunIsRtl=(otherRunLevel & 1) != 0;
+      advance=toLeft == otherRunIsRtl;
+      if (newCaret == -1) {
+        newCaret=getOffsetBeforeAfter(otherRunIndex,otherRunStart,otherRunLimit,otherRunIsRtl,advance ? otherRunStart : otherRunLimit,advance);
+        if (newCaret == (advance ? otherRunLimit : otherRunStart)) {
+          runIndex=otherRunIndex;
+          runLevel=otherRunLevel;
+          continue;
+        }
+        break;
+      }
+      if (otherRunLevel < runLevel) {
+        newCaret=advance ? otherRunStart : otherRunLimit;
+      }
+      break;
+    }
+    if (newCaret == -1) {
+      newCaret=advance ? mLen + 1 : -1;
+      break;
+    }
+    if (newCaret <= lineEnd) {
+      newCaret=advance ? lineEnd : lineStart;
+    }
+    break;
+  }
+  return newCaret;
+}
