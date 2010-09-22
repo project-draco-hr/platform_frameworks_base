@@ -1,51 +1,45 @@
 {
-synchronized (this) {
-    if (intent.getAction().equals(TelephonyIntents.ACTION_ANY_DATA_CONNECTION_STATE_CHANGED)) {
-      Phone.DataState state=getMobileDataState(intent);
-      String reason=intent.getStringExtra(Phone.STATE_CHANGE_REASON_KEY);
-      String apnName=intent.getStringExtra(Phone.DATA_APN_KEY);
-      String apnTypeList=intent.getStringExtra(Phone.DATA_APN_TYPES_KEY);
-      mApnName=apnName;
-      boolean unavailable=intent.getBooleanExtra(Phone.NETWORK_UNAVAILABLE_KEY,false);
-      mNetworkInfo.setIsAvailable(!unavailable);
-      if (isApnTypeIncluded(apnTypeList)) {
-        if (mEnabled == false) {
-          if (state == Phone.DataState.CONNECTED) {
-            if (DBG)             Log.d(TAG,"replacing old mInterfaceName (" + mInterfaceName + ") with "+ intent.getStringExtra(Phone.DATA_IFACE_NAME_KEY)+ " for "+ mApnType);
-            mInterfaceName=intent.getStringExtra(Phone.DATA_IFACE_NAME_KEY);
-          }
-          return;
-        }
-      }
- else {
-        return;
-      }
-      if (DBG)       Log.d(TAG,mApnType + " Received state= " + state+ ", old= "+ mMobileDataState+ ", reason= "+ (reason == null ? "(unspecified)" : reason)+ ", apnTypeList= "+ apnTypeList);
-      if (mMobileDataState != state) {
-        mMobileDataState=state;
+  if (intent.getAction().equals(TelephonyIntents.ACTION_ANY_DATA_CONNECTION_STATE_CHANGED)) {
+    String apnType=intent.getStringExtra(Phone.DATA_APN_TYPE_KEY);
+    if (!TextUtils.equals(apnType,mApnType)) {
+      return;
+    }
+    Phone.DataState state=Enum.valueOf(Phone.DataState.class,intent.getStringExtra(Phone.STATE_KEY));
+    String reason=intent.getStringExtra(Phone.STATE_CHANGE_REASON_KEY);
+    String apnName=intent.getStringExtra(Phone.DATA_APN_KEY);
+    mNetworkInfo.setIsAvailable(!intent.getBooleanExtra(Phone.NETWORK_UNAVAILABLE_KEY,false));
+    if (DBG)     Log.d(TAG,mApnType + " Received state= " + state+ ", old= "+ mMobileDataState+ ", reason= "+ (reason == null ? "(unspecified)" : reason));
+    if (mMobileDataState != state) {
+      mMobileDataState=state;
 switch (state) {
 case DISCONNECTED:
-          if (isTeardownRequested()) {
-            mEnabled=false;
-            setTeardownRequested(false);
-          }
-        setDetailedState(DetailedState.DISCONNECTED,reason,apnName);
-      boolean doReset=true;
-    if (mIsDefaultOrHipri == true) {
-      int typeToCheck=(Phone.APN_TYPE_DEFAULT.equals(mApnType) ? ConnectivityManager.TYPE_MOBILE_HIPRI : ConnectivityManager.TYPE_MOBILE);
-      if (mConnectivityManager == null) {
-        mConnectivityManager=(ConnectivityManager)context.getSystemService(Context.CONNECTIVITY_SERVICE);
-      }
+        if (isTeardownRequested()) {
+          setTeardownRequested(false);
+        }
+      setDetailedState(DetailedState.DISCONNECTED,reason,apnName);
+    boolean doReset=true;
+  if (mIsDefaultOrHipri == true) {
+    int typeToCheck=(Phone.APN_TYPE_DEFAULT.equals(mApnType) ? ConnectivityManager.TYPE_MOBILE_HIPRI : ConnectivityManager.TYPE_MOBILE);
+    if (mConnectivityManager == null) {
+      IBinder b=ServiceManager.getService(Context.CONNECTIVITY_SERVICE);
+      mConnectivityManager=IConnectivityManager.Stub.asInterface(b);
+    }
+    try {
       if (mConnectivityManager != null) {
         NetworkInfo info=mConnectivityManager.getNetworkInfo(typeToCheck);
-        if (info != null && info.isConnected() == true) {
+        if (info.isConnected() == true) {
           doReset=false;
         }
       }
     }
-  if (doReset && mInterfaceName != null) {
-    NetworkUtils.resetConnections(mInterfaceName);
+ catch (    RemoteException e) {
+      Log.e(TAG,"Exception trying to contact ConnService: " + e);
+    }
   }
+if (doReset && mLinkProperties != null) {
+  String iface=mLinkProperties.getInterfaceName();
+  if (iface != null)   NetworkUtils.resetConnections(iface);
+}
 break;
 case CONNECTING:
 setDetailedState(DetailedState.CONNECTING,reason,apnName);
@@ -54,25 +48,29 @@ case SUSPENDED:
 setDetailedState(DetailedState.SUSPENDED,reason,apnName);
 break;
 case CONNECTED:
-mInterfaceName=intent.getStringExtra(Phone.DATA_IFACE_NAME_KEY);
-if (mInterfaceName == null) {
-Log.d(TAG,"CONNECTED event did not supply interface name.");
+mLinkProperties=intent.getParcelableExtra(Phone.DATA_LINK_PROPERTIES_KEY);
+if (mLinkProperties == null) {
+Log.d(TAG,"CONNECTED event did not supply link properties.");
+mLinkProperties=new LinkProperties();
 }
-mDefaultGatewayAddr=intent.getIntExtra(Phone.DATA_GATEWAY_KEY,0);
+mLinkCapabilities=intent.getParcelableExtra(Phone.DATA_LINK_CAPABILITIES_KEY);
+if (mLinkCapabilities == null) {
+Log.d(TAG,"CONNECTED event did not supply link capabilities.");
+mLinkCapabilities=new LinkCapabilities();
+}
 setDetailedState(DetailedState.CONNECTED,reason,apnName);
 break;
 }
 }
 }
  else if (intent.getAction().equals(TelephonyIntents.ACTION_DATA_CONNECTION_FAILED)) {
-mEnabled=false;
+String apnType=intent.getStringExtra(Phone.DATA_APN_TYPE_KEY);
+if (!TextUtils.equals(apnType,mApnType)) {
+return;
+}
 String reason=intent.getStringExtra(Phone.FAILURE_REASON_KEY);
 String apnName=intent.getStringExtra(Phone.DATA_APN_KEY);
-if (DBG) Log.d(TAG,"Received " + intent.getAction() + " broadcast"+ reason == null ? "" : "(" + reason + ")");
+if (DBG) Log.d(TAG,mApnType + "Received " + intent.getAction()+ " broadcast"+ reason == null ? "" : "(" + reason + ")");
 setDetailedState(DetailedState.FAILED,reason,apnName);
-}
-TelephonyManager tm=TelephonyManager.getDefault();
-setRoamingStatus(tm.isNetworkRoaming());
-setSubtype(tm.getNetworkType(),tm.getNetworkTypeName());
 }
 }

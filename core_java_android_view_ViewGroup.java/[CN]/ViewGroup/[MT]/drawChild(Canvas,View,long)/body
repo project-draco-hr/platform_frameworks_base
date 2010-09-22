@@ -6,29 +6,37 @@
   final int cb=child.mBottom;
   final int flags=mGroupFlags;
   if ((flags & FLAG_CLEAR_TRANSFORMATION) == FLAG_CLEAR_TRANSFORMATION) {
-    if (mChildTransformation != null) {
-      mChildTransformation.clear();
-    }
+    mChildTransformation.clear();
     mGroupFlags&=~FLAG_CLEAR_TRANSFORMATION;
   }
   Transformation transformToApply=null;
+  Transformation invalidationTransform;
   final Animation a=child.getAnimation();
   boolean concatMatrix=false;
+  boolean scalingRequired=false;
+  boolean caching=false;
+  if (!canvas.isHardwareAccelerated() && (flags & FLAG_CHILDREN_DRAWN_WITH_CACHE) == FLAG_CHILDREN_DRAWN_WITH_CACHE || (flags & FLAG_ALWAYS_DRAWN_WITH_CACHE) == FLAG_ALWAYS_DRAWN_WITH_CACHE) {
+    caching=true;
+    if (mAttachInfo != null)     scalingRequired=mAttachInfo.mScalingRequired;
+  }
   if (a != null) {
-    if (mInvalidateRegion == null) {
-      mInvalidateRegion=new RectF();
-    }
-    final RectF region=mInvalidateRegion;
     final boolean initialized=a.isInitialized();
     if (!initialized) {
       a.initialize(cr - cl,cb - ct,getWidth(),getHeight());
       a.initializeInvalidateRegion(0,0,cr - cl,cb - ct);
       child.onAnimationStart();
     }
-    if (mChildTransformation == null) {
-      mChildTransformation=new Transformation();
+    more=a.getTransformation(drawingTime,mChildTransformation,scalingRequired ? mAttachInfo.mApplicationScale : 1f);
+    if (scalingRequired && mAttachInfo.mApplicationScale != 1f) {
+      if (mInvalidationTransformation == null) {
+        mInvalidationTransformation=new Transformation();
+      }
+      invalidationTransform=mInvalidationTransformation;
+      a.getTransformation(drawingTime,invalidationTransform,1f);
     }
-    more=a.getTransformation(drawingTime,mChildTransformation);
+ else {
+      invalidationTransform=mChildTransformation;
+    }
     transformToApply=mChildTransformation;
     concatMatrix=a.willChangeTransformationMatrix();
     if (more) {
@@ -42,7 +50,11 @@
         }
       }
  else {
-        a.getInvalidateRegion(0,0,cr - cl,cb - ct,region,transformToApply);
+        if (mInvalidateRegion == null) {
+          mInvalidateRegion=new RectF();
+        }
+        final RectF region=mInvalidateRegion;
+        a.getInvalidateRegion(0,0,cr - cl,cb - ct,region,invalidationTransform);
         mPrivateFlags|=DRAW_ANIMATION;
         final int left=cl + (int)region.left;
         final int top=ct + (int)region.top;
@@ -51,9 +63,6 @@
     }
   }
  else   if ((flags & FLAG_SUPPORT_STATIC_TRANSFORMATIONS) == FLAG_SUPPORT_STATIC_TRANSFORMATIONS) {
-    if (mChildTransformation == null) {
-      mChildTransformation=new Transformation();
-    }
     final boolean hasTransform=getChildStaticTransformation(child,mChildTransformation);
     if (hasTransform) {
       final int transformType=mChildTransformation.getTransformationType();
@@ -61,6 +70,7 @@
       concatMatrix=(transformType & Transformation.TYPE_MATRIX) != 0;
     }
   }
+  concatMatrix|=!child.hasIdentityMatrix();
   child.mPrivateFlags|=DRAWN;
   if (!concatMatrix && canvas.quickReject(cl,ct,cr,cb,Canvas.EdgeType.BW) && (child.mPrivateFlags & DRAW_ANIMATION) == 0) {
     return more;
@@ -68,11 +78,9 @@
   child.computeScroll();
   final int sx=child.mScrollX;
   final int sy=child.mScrollY;
-  boolean scalingRequired=false;
   Bitmap cache=null;
-  if ((flags & FLAG_CHILDREN_DRAWN_WITH_CACHE) == FLAG_CHILDREN_DRAWN_WITH_CACHE || (flags & FLAG_ALWAYS_DRAWN_WITH_CACHE) == FLAG_ALWAYS_DRAWN_WITH_CACHE) {
+  if (caching) {
     cache=child.getDrawingCache(true);
-    if (mAttachInfo != null)     scalingRequired=mAttachInfo.mScalingRequired;
   }
   final boolean hasNoCache=cache == null;
   final int restoreTo=canvas.save();
@@ -86,36 +94,48 @@
       canvas.scale(scale,scale);
     }
   }
-  float alpha=1.0f;
-  if (transformToApply != null) {
-    if (concatMatrix) {
-      int transX=0;
-      int transY=0;
-      if (hasNoCache) {
-        transX=-sx;
-        transY=-sy;
-      }
-      canvas.translate(-transX,-transY);
-      canvas.concat(transformToApply.getMatrix());
-      canvas.translate(transX,transY);
-      mGroupFlags|=FLAG_CLEAR_TRANSFORMATION;
+  float alpha=child.getAlpha();
+  if (transformToApply != null || alpha < 1.0f || !child.hasIdentityMatrix()) {
+    int transX=0;
+    int transY=0;
+    if (hasNoCache) {
+      transX=-sx;
+      transY=-sy;
     }
-    alpha=transformToApply.getAlpha();
+    if (transformToApply != null) {
+      if (concatMatrix) {
+        canvas.translate(-transX,-transY);
+        canvas.concat(transformToApply.getMatrix());
+        canvas.translate(transX,transY);
+        mGroupFlags|=FLAG_CLEAR_TRANSFORMATION;
+      }
+      float transformAlpha=transformToApply.getAlpha();
+      if (transformAlpha < 1.0f) {
+        alpha*=transformToApply.getAlpha();
+        mGroupFlags|=FLAG_CLEAR_TRANSFORMATION;
+      }
+    }
+    if (!child.hasIdentityMatrix()) {
+      canvas.translate(-transX,-transY);
+      canvas.concat(child.getMatrix());
+      canvas.translate(transX,transY);
+    }
     if (alpha < 1.0f) {
       mGroupFlags|=FLAG_CLEAR_TRANSFORMATION;
-    }
-    if (alpha < 1.0f && hasNoCache) {
-      final int multipliedAlpha=(int)(255 * alpha);
-      if (!child.onSetAlpha(multipliedAlpha)) {
-        canvas.saveLayerAlpha(sx,sy,sx + cr - cl,sy + cb - ct,multipliedAlpha,Canvas.HAS_ALPHA_LAYER_SAVE_FLAG | Canvas.CLIP_TO_LAYER_SAVE_FLAG);
-      }
+      if (hasNoCache) {
+        final int multipliedAlpha=(int)(255 * alpha);
+        if (!child.onSetAlpha(multipliedAlpha)) {
+          canvas.saveLayerAlpha(sx,sy,sx + cr - cl,sy + cb - ct,multipliedAlpha,Canvas.HAS_ALPHA_LAYER_SAVE_FLAG | Canvas.CLIP_TO_LAYER_SAVE_FLAG);
+        }
  else {
-        child.mPrivateFlags|=ALPHA_SET;
+          child.mPrivateFlags|=ALPHA_SET;
+        }
       }
     }
   }
  else   if ((child.mPrivateFlags & ALPHA_SET) == ALPHA_SET) {
     child.onSetAlpha(255);
+    child.mPrivateFlags&=~ALPHA_SET;
   }
   if ((flags & FLAG_CLIP_CHILDREN) == FLAG_CLIP_CHILDREN) {
     if (hasNoCache) {
@@ -151,9 +171,6 @@
  else     if ((flags & FLAG_ALPHA_LOWER_THAN_ONE) == FLAG_ALPHA_LOWER_THAN_ONE) {
       cachePaint.setAlpha(255);
       mGroupFlags&=~FLAG_ALPHA_LOWER_THAN_ONE;
-    }
-    if (Config.DEBUG && ViewDebug.profileDrawing) {
-      EventLog.writeEvent(60003,hashCode());
     }
     canvas.drawBitmap(cache,0.0f,0.0f,cachePaint);
   }

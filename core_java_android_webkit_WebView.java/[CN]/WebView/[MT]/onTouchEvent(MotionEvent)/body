@@ -5,50 +5,84 @@
   if (DebugFlags.WEB_VIEW) {
     Log.v(LOGTAG,ev + " at " + ev.getEventTime()+ " mTouchMode="+ mTouchMode);
   }
-  int action;
-  float x, y;
+  int action=ev.getAction();
+  float x=ev.getX();
+  float y=ev.getY();
   long eventTime=ev.getEventTime();
-  if (mSupportMultiTouch && ev.getPointerCount() > 1) {
-    if (mAllowPanAndScale || mMinZoomScale < mMaxZoomScale) {
-      mScaleDetector.onTouchEvent(ev);
-      if (mScaleDetector.isInProgress()) {
-        mLastTouchTime=eventTime;
-        if (!mAllowPanAndScale) {
-          return true;
-        }
+  final ScaleGestureDetector detector=mZoomManager.getMultiTouchGestureDetector();
+  boolean skipScaleGesture=false;
+  float gestureX=x;
+  float gestureY=y;
+  if (detector == null || !detector.isInProgress()) {
+    if (ev.getPointerCount() > 1) {
+      float dx=ev.getX(1) - ev.getX(0);
+      float dy=ev.getY(1) - ev.getY(0);
+      float dist=(dx * dx + dy * dy) * DRAG_LAYER_INVERSE_DENSITY_SQUARED;
+      gestureX=ev.getX(0) + (dx * .5f);
+      gestureY=ev.getY(0) + (dy * .5f);
+      if (ev.getX(0) < ev.getX(1)) {
+        x=ev.getX(0);
+        y=ev.getY(0);
       }
-      x=mScaleDetector.getFocusX();
-      y=mScaleDetector.getFocusY();
-      action=ev.getAction() & MotionEvent.ACTION_MASK;
-      if (action == MotionEvent.ACTION_POINTER_DOWN) {
-        cancelTouch();
-        action=MotionEvent.ACTION_DOWN;
+ else {
+        x=ev.getX(1);
+        y=ev.getY(1);
       }
- else       if (action == MotionEvent.ACTION_POINTER_UP) {
-        mLastTouchX=x;
-        mLastTouchY=y;
+      action=ev.getActionMasked();
+      if (dist < DRAG_LAYER_FINGER_DISTANCE) {
+        skipScaleGesture=true;
       }
- else       if (action == MotionEvent.ACTION_MOVE) {
-        if (x < 0 || y < 0) {
-          return true;
-        }
+ else       if (mTouchMode == TOUCH_DRAG_LAYER_MODE) {
+        mTouchMode=TOUCH_INIT_MODE;
       }
     }
- else {
+  }
+  if (mZoomManager.supportsMultiTouchZoom() && ev.getPointerCount() > 1 && mTouchMode != TOUCH_DRAG_LAYER_MODE && !skipScaleGesture) {
+    if (!mZoomManager.supportsPanDuringZoom() && mZoomManager.isZoomScaleFixed()) {
       return true;
     }
+    if (!detector.isInProgress() && ev.getActionMasked() != MotionEvent.ACTION_POINTER_DOWN) {
+      MotionEvent temp=MotionEvent.obtain(ev);
+      try {
+        temp.setAction(temp.getAction() & ~MotionEvent.ACTION_MASK | MotionEvent.ACTION_POINTER_DOWN);
+        detector.onTouchEvent(temp);
+      }
+  finally {
+        temp.recycle();
+      }
+    }
+    detector.onTouchEvent(ev);
+    if (detector.isInProgress()) {
+      mLastTouchTime=eventTime;
+      cancelLongPress();
+      mPrivateHandler.removeMessages(SWITCH_TO_LONGPRESS);
+      if (!mZoomManager.supportsPanDuringZoom()) {
+        return true;
+      }
+      mTouchMode=TOUCH_DRAG_MODE;
+      if (mVelocityTracker == null) {
+        mVelocityTracker=VelocityTracker.obtain();
+      }
+    }
+    x=detector.getFocusX();
+    y=detector.getFocusY();
+    action=ev.getAction() & MotionEvent.ACTION_MASK;
+    if (action == MotionEvent.ACTION_POINTER_DOWN) {
+      cancelTouch();
+      action=MotionEvent.ACTION_DOWN;
+    }
+ else     if (action == MotionEvent.ACTION_POINTER_UP) {
+      mLastTouchX=x;
+      mLastTouchY=y;
+    }
+ else     if (action == MotionEvent.ACTION_MOVE) {
+      if (x < 0 || y < 0) {
+        return true;
+      }
+    }
   }
- else {
-    action=ev.getAction();
-    x=ev.getX();
-    y=ev.getY();
-  }
-  if (x > getViewWidth() - 1) {
-    x=getViewWidth() - 1;
-  }
-  if (y > getViewHeightWithTitle() - 1) {
-    y=getViewHeightWithTitle() - 1;
-  }
+  x=Math.min(x,getViewWidth() - 1);
+  y=Math.min(y,getViewHeightWithTitle() - 1);
   float fDeltaX=mLastTouchX - x;
   float fDeltaY=mLastTouchY - y;
   int deltaX=(int)fDeltaX;
@@ -68,6 +102,9 @@ case MotionEvent.ACTION_DOWN:
       }
  else       if (mPrivateHandler.hasMessages(RELEASE_SINGLE_TAP)) {
         mPrivateHandler.removeMessages(RELEASE_SINGLE_TAP);
+        if (getSettings().supportTouchOnly()) {
+          removeTouchHighlight(true);
+        }
         if (deltaX * deltaX + deltaY * deltaY < mDoubleTapSlopSquare) {
           mTouchMode=TOUCH_DOUBLE_TAP_MODE;
         }
@@ -78,10 +115,29 @@ case MotionEvent.ACTION_DOWN:
         }
       }
  else {
-        mPreviewZoomOnly=false;
         mTouchMode=TOUCH_INIT_MODE;
         mDeferTouchProcess=(!inFullScreenMode() && mForwardTouchEvents) ? hitFocusedPlugin(contentX,contentY) : false;
         mWebViewCore.sendMessage(EventHub.UPDATE_FRAME_CACHE_IF_LOADING);
+        if (getSettings().supportTouchOnly()) {
+          TouchHighlightData data=new TouchHighlightData();
+          data.mX=contentX;
+          data.mY=contentY;
+          data.mSlop=viewToContentDimension(mNavSlop);
+          mWebViewCore.sendMessageDelayed(EventHub.GET_TOUCH_HIGHLIGHT_RECTS,data,ViewConfiguration.getTapTimeout());
+          if (DEBUG_TOUCH_HIGHLIGHT) {
+            if (getSettings().getNavDump()) {
+              mTouchHighlightX=(int)x + mScrollX;
+              mTouchHighlightY=(int)y + mScrollY;
+              mPrivateHandler.postDelayed(new Runnable(){
+                public void run(){
+                  mTouchHighlightX=mTouchHighlightY=0;
+                  invalidate();
+                }
+              }
+,TOUCH_HIGHLIGHT_ELAPSE_TIME);
+            }
+          }
+        }
         if (mLogEvent && eventTime - mLastTouchUpTime < 1000) {
           EventLog.writeEvent(EventLogTags.BROWSER_DOUBLE_TAP_DURATION,(eventTime - mLastTouchUpTime),eventTime);
         }
@@ -113,16 +169,14 @@ case MotionEvent.ACTION_DOWN:
           ted.mY=contentY;
           ted.mMetaState=ev.getMetaState();
           ted.mReprocess=mDeferTouchProcess;
+          mWebViewCore.sendMessage(EventHub.TOUCH_EVENT,ted);
           if (mDeferTouchProcess) {
             mLastTouchX=x;
             mLastTouchY=y;
-            ted.mViewX=x;
-            ted.mViewY=y;
-            mWebViewCore.sendMessage(EventHub.TOUCH_EVENT,ted);
             break;
           }
-          mWebViewCore.sendMessage(EventHub.TOUCH_EVENT,ted);
           if (!inFullScreenMode()) {
+            mPrivateHandler.removeMessages(PREVENT_DEFAULT_TIMEOUT);
             mPrivateHandler.sendMessageDelayed(mPrivateHandler.obtainMessage(PREVENT_DEFAULT_TIMEOUT,action,0),TAP_TIMEOUT);
           }
         }
@@ -141,22 +195,22 @@ case MotionEvent.ACTION_MOVE:
       if (mTouchMode == TOUCH_DOUBLE_TAP_MODE) {
         mTouchMode=TOUCH_INIT_MODE;
       }
+      if (getSettings().supportTouchOnly()) {
+        removeTouchHighlight(true);
+      }
     }
     if (shouldForwardTouchEvent() && mConfirmMove && (firstMove || eventTime - mLastSentTouchTime > mCurrentTouchInterval)) {
-      mLastSentTouchTime=eventTime;
       TouchEventData ted=new TouchEventData();
       ted.mAction=action;
       ted.mX=contentX;
       ted.mY=contentY;
       ted.mMetaState=ev.getMetaState();
       ted.mReprocess=mDeferTouchProcess;
+      mWebViewCore.sendMessage(EventHub.TOUCH_EVENT,ted);
+      mLastSentTouchTime=eventTime;
       if (mDeferTouchProcess) {
-        ted.mViewX=x;
-        ted.mViewY=y;
-        mWebViewCore.sendMessage(EventHub.TOUCH_EVENT,ted);
         break;
       }
-      mWebViewCore.sendMessage(EventHub.TOUCH_EVENT,ted);
       if (firstMove && !inFullScreenMode()) {
         mPrivateHandler.sendMessageDelayed(mPrivateHandler.obtainMessage(PREVENT_DEFAULT_TIMEOUT,action,0),TAP_TIMEOUT);
       }
@@ -176,7 +230,7 @@ case MotionEvent.ACTION_MOVE:
       invalidate();
       break;
     }
-    if (mTouchMode != TOUCH_DRAG_MODE) {
+    if (mTouchMode != TOUCH_DRAG_MODE && mTouchMode != TOUCH_DRAG_LAYER_MODE) {
       if (!mConfirmMove) {
         break;
       }
@@ -184,7 +238,7 @@ case MotionEvent.ACTION_MOVE:
         mLastTouchTime=eventTime;
         break;
       }
-      if (mScaleDetector != null && !mScaleDetector.isInProgress()) {
+      if (detector != null && !detector.isInProgress()) {
         int ax=Math.abs(deltaX);
         int ay=Math.abs(deltaY);
         if (ax > MAX_SLOPE_FOR_DIAG * ay) {
@@ -203,10 +257,27 @@ case MotionEvent.ACTION_MOVE:
       fDeltaY=0.0f;
       deltaX=0;
       deltaY=0;
+      if (skipScaleGesture) {
+        startScrollingLayer(gestureX,gestureY);
+      }
       startDrag();
     }
     if (mDragTrackerHandler != null) {
       mDragTrackerHandler.dragTo(x,y);
+    }
+    if (mTouchMode != TOUCH_DRAG_LAYER_MODE) {
+      int newScrollX=pinLocX(mScrollX + deltaX);
+      int newDeltaX=newScrollX - mScrollX;
+      if (deltaX != newDeltaX) {
+        deltaX=newDeltaX;
+        fDeltaX=(float)newDeltaX;
+      }
+      int newScrollY=pinLocY(mScrollY + deltaY);
+      int newDeltaY=newScrollY - mScrollY;
+      if (deltaY != newDeltaY) {
+        deltaY=newDeltaY;
+        fDeltaY=(float)newDeltaY;
+      }
     }
     boolean done=false;
     boolean keepScrollBarsVisible=false;
@@ -262,7 +333,7 @@ case MotionEvent.ACTION_MOVE:
       mUserScroll=true;
     }
     doDrag(deltaX,deltaY);
-    if (keepScrollBarsVisible) {
+    if (keepScrollBarsVisible && mTouchMode != TOUCH_DRAG_LAYER_MODE) {
       if (mHeldMotionless != MOTIONLESS_TRUE) {
         mHeldMotionless=MOTIONLESS_TRUE;
         invalidate();
@@ -274,6 +345,7 @@ case MotionEvent.ACTION_MOVE:
   }
 case MotionEvent.ACTION_UP:
 {
+  if (!isFocused())   requestFocus();
   if (shouldForwardTouchEvent()) {
     TouchEventData ted=new TouchEventData();
     ted.mAction=action;
@@ -281,10 +353,6 @@ case MotionEvent.ACTION_UP:
     ted.mY=contentY;
     ted.mMetaState=ev.getMetaState();
     ted.mReprocess=mDeferTouchProcess;
-    if (mDeferTouchProcess) {
-      ted.mViewX=x;
-      ted.mViewY=y;
-    }
     mWebViewCore.sendMessage(EventHub.TOUCH_EVENT,ted);
   }
   mLastTouchUpTime=eventTime;
@@ -299,14 +367,10 @@ if (inFullScreenMode() || mDeferTouchProcess) {
   ted.mY=contentY;
   ted.mMetaState=ev.getMetaState();
   ted.mReprocess=mDeferTouchProcess;
-  if (mDeferTouchProcess) {
-    ted.mViewX=x;
-    ted.mViewY=y;
-  }
   mWebViewCore.sendMessage(EventHub.TOUCH_EVENT,ted);
 }
  else if (mPreventDefault != PREVENT_DEFAULT_YES) {
-  doDoubleTap();
+  mZoomManager.handleDoubleTap(mLastTouchX,mLastTouchY);
   mTouchMode=TOUCH_DONE_MODE;
 }
 break;
@@ -318,7 +382,6 @@ mPrivateHandler.removeMessages(SWITCH_TO_LONGPRESS);
 if (mConfirmMove) {
 Log.w(LOGTAG,"Miss a drag as we are waiting for" + " WebCore's response for touch down.");
 if (mPreventDefault != PREVENT_DEFAULT_YES && (computeMaxScrollX() > 0 || computeMaxScrollY() > 0)) {
-cancelWebCoreTouchEvent(contentX,contentY,true);
 WebViewCore.reducePriority();
 WebViewCore.pauseUpdatePicture(mWebViewCore);
 }
@@ -329,13 +392,12 @@ break;
 }
  else {
 if (mSelectingText) {
-if (nativeHitSelection(contentX,contentY)) {
-copySelection();
-}
+if (!nativeHitSelection(contentX,contentY)) {
 selectionDone();
+}
 break;
 }
-if (mTouchMode == TOUCH_INIT_MODE) {
+if (mTouchMode == TOUCH_INIT_MODE && (canZoomIn() || canZoomOut())) {
 mPrivateHandler.sendEmptyMessageDelayed(RELEASE_SINGLE_TAP,ViewConfiguration.getDoubleTapTimeout());
 }
  else {
@@ -355,14 +417,10 @@ mHeldMotionless=MOTIONLESS_IGNORE;
 doFling();
 break;
 }
- else {
-if (mScroller.springback(mScrollX,mScrollY,0,computeMaxScrollX(),0,computeMaxScrollY())) {
-invalidate();
-}
-}
 mHeldMotionless=MOTIONLESS_TRUE;
 invalidate();
 case TOUCH_DRAG_START_MODE:
+case TOUCH_DRAG_LAYER_MODE:
 mLastVelocity=0;
 WebViewCore.resumePriority();
 WebViewCore.resumeUpdatePicture(mWebViewCore);
@@ -374,7 +432,6 @@ break;
 case MotionEvent.ACTION_CANCEL:
 {
 if (mTouchMode == TOUCH_DRAG_MODE) {
-mScroller.springback(mScrollX,mScrollY,0,computeMaxScrollX(),0,computeMaxScrollY());
 invalidate();
 }
 cancelWebCoreTouchEvent(contentX,contentY,false);

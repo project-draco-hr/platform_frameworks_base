@@ -36,7 +36,7 @@ case PREVENT_DEFAULT_TIMEOUT:
 case SWITCH_TO_SHORTPRESS:
 {
 if (mTouchMode == TOUCH_INIT_MODE) {
-  if (mPreventDefault != PREVENT_DEFAULT_YES) {
+  if (!getSettings().supportTouchOnly() && mPreventDefault != PREVENT_DEFAULT_YES) {
     mTouchMode=TOUCH_SHORTPRESS_START_MODE;
     updateSelection();
   }
@@ -51,6 +51,9 @@ break;
 }
 case SWITCH_TO_LONGPRESS:
 {
+if (getSettings().supportTouchOnly()) {
+removeTouchHighlight(false);
+}
 if (inFullScreenMode() || mDeferTouchProcess) {
 TouchEventData ted=new TouchEventData();
 ted.mAction=WebViewCore.ACTION_LONGPRESS;
@@ -58,16 +61,11 @@ ted.mX=viewToContentX((int)mLastTouchX + mScrollX);
 ted.mY=viewToContentY((int)mLastTouchY + mScrollY);
 ted.mMetaState=0;
 ted.mReprocess=mDeferTouchProcess;
-if (mDeferTouchProcess) {
-  ted.mViewX=mLastTouchX;
-  ted.mViewY=mLastTouchY;
-}
 mWebViewCore.sendMessage(EventHub.TOUCH_EVENT,ted);
 }
  else if (mPreventDefault != PREVENT_DEFAULT_YES) {
 mTouchMode=TOUCH_DONE_MODE;
 performLongClick();
-rebuildWebTextView();
 }
 break;
 }
@@ -95,54 +93,32 @@ spawnContentScrollTo(msg.arg1,msg.arg2);
 break;
 case UPDATE_ZOOM_RANGE:
 {
-WebViewCore.RestoreState restoreState=(WebViewCore.RestoreState)msg.obj;
-updateZoomRange(restoreState,getViewWidth(),restoreState.mScrollX,false);
+WebViewCore.ViewState viewState=(WebViewCore.ViewState)msg.obj;
+mZoomManager.updateZoomRange(viewState,getViewWidth(),viewState.mScrollX);
+break;
+}
+case REPLACE_BASE_CONTENT:
+{
+nativeReplaceBaseContent(msg.arg1);
 break;
 }
 case NEW_PICTURE_MSG_ID:
 {
-if (mDelayedDeleteRootLayer) {
-mDelayedDeleteRootLayer=false;
-nativeSetRootLayer(0);
-}
-WebSettings settings=mWebViewCore.getSettings();
-final int viewWidth=getViewWidth();
 final WebViewCore.DrawData draw=(WebViewCore.DrawData)msg.obj;
+nativeSetBaseLayer(draw.mBaseLayer);
 final Point viewSize=draw.mViewPoint;
-boolean useWideViewport=settings.getUseWideViewPort();
-WebViewCore.RestoreState restoreState=draw.mRestoreState;
-boolean hasRestoreState=restoreState != null;
-if (hasRestoreState) {
-updateZoomRange(restoreState,viewSize.x,draw.mMinPrefWidth,true);
+WebViewCore.ViewState viewState=draw.mViewState;
+boolean isPictureAfterFirstLayout=viewState != null;
+if (isPictureAfterFirstLayout) {
+mLastWidthSent=0;
+mZoomManager.onFirstLayout(draw);
 if (!mDrawHistory) {
-mInZoomOverview=false;
-if (mInitialScaleInPercent > 0) {
-setNewZoomScale(mInitialScaleInPercent / 100.0f,mInitialScaleInPercent != mTextWrapScale * 100,false);
-}
- else if (restoreState.mViewScale > 0) {
-mTextWrapScale=restoreState.mTextWrapScale;
-setNewZoomScale(restoreState.mViewScale,false,false);
-}
- else {
-mInZoomOverview=useWideViewport && settings.getLoadWithOverviewMode();
-float scale;
-if (mInZoomOverview) {
-scale=(float)viewWidth / DEFAULT_VIEWPORT_WIDTH;
-}
- else {
-scale=restoreState.mTextWrapScale;
-}
-setNewZoomScale(scale,Math.abs(scale - mTextWrapScale) >= MINIMUM_SCALE_INCREMENT,false);
-}
-setContentScrollTo(restoreState.mScrollX,restoreState.mScrollY);
-clearTextEntry(false);
-if (getSettings().getBuiltInZoomControls()) {
-updateZoomButtonsEnabled();
-}
+setContentScrollTo(viewState.mScrollX,viewState.mScrollY);
+clearTextEntry();
 }
 }
 final boolean updateLayout=viewSize.x == mLastWidthSent && viewSize.y == mLastHeightSent;
-recordNewContentSize(draw.mWidthHeight.x,draw.mWidthHeight.y + (mFindIsUp ? mFindHeight : 0),updateLayout);
+recordNewContentSize(draw.mWidthHeight.x,draw.mWidthHeight.y,updateLayout);
 if (DebugFlags.WEB_VIEW) {
 Rect b=draw.mInvalRegion.getBounds();
 Log.v(LOGTAG,"NEW_PICTURE_MSG_ID {" + b.left + ","+ b.top+ ","+ b.right+ ","+ b.bottom+ "}");
@@ -151,21 +127,11 @@ invalidateContentRect(draw.mInvalRegion.getBounds());
 if (mPictureListener != null) {
 mPictureListener.onNewPicture(WebView.this,capturePicture());
 }
-if (useWideViewport) {
-mZoomOverviewWidth=Math.min(sMaxViewportWidth,Math.max((int)(viewWidth / mDefaultScale),Math.max(draw.mMinPrefWidth,draw.mViewPoint.x)));
-}
-if (!mMinZoomScaleFixed) {
-mMinZoomScale=(float)viewWidth / mZoomOverviewWidth;
-}
-if (!mDrawHistory && mInZoomOverview) {
-if (Math.abs((viewWidth * mInvActualScale) - mZoomOverviewWidth) > 1) {
-setNewZoomScale((float)viewWidth / mZoomOverviewWidth,Math.abs(mActualScale - mTextWrapScale) < MINIMUM_SCALE_INCREMENT,false);
-}
-}
+mZoomManager.onNewPicture(draw);
 if (draw.mFocusSizeChanged && inEditingMode()) {
 mFocusSizeChanged=true;
 }
-if (hasRestoreState) {
+if (isPictureAfterFirstLayout) {
 mViewManager.postReadyToDrawAll();
 }
 break;
@@ -190,10 +156,7 @@ mWebTextView.setTextAndKeepSelection((String)msg.obj);
 break;
 case REQUEST_KEYBOARD_WITH_SELECTION_MSG_ID:
 displaySoftKeyboard(true);
-updateTextSelectionFromMessage(msg.arg1,msg.arg2,(WebViewCore.TextSelectionData)msg.obj);
-break;
 case UPDATE_TEXT_SELECTION_MSG_ID:
-rebuildWebTextView();
 updateTextSelectionFromMessage(msg.arg1,msg.arg2,(WebViewCore.TextSelectionData)msg.obj);
 break;
 case RETURN_LABEL:
@@ -205,18 +168,17 @@ imm.restartInput(mWebTextView);
 }
 }
 break;
-case MOVE_OUT_OF_PLUGIN:
+case UNHANDLED_NAV_KEY:
 navHandledKey(msg.arg1,1,false,0);
 break;
 case UPDATE_TEXT_ENTRY_MSG_ID:
-selectionDone();
 if (inEditingMode() && nativeCursorIsTextInput()) {
 mWebTextView.bringIntoView();
 rebuildWebTextView();
 }
 break;
 case CLEAR_TEXT_ENTRY:
-clearTextEntry(false);
+clearTextEntry();
 break;
 case INVAL_RECT_MSG_ID:
 {
@@ -226,23 +188,6 @@ invalidate();
 }
  else {
 viewInvalidate(r.left,r.top,r.right,r.bottom);
-}
-break;
-}
-case IMMEDIATE_REPAINT_MSG_ID:
-{
-invalidate();
-break;
-}
-case SET_ROOT_LAYER_MSG_ID:
-{
-if (0 == msg.arg1) {
-mDelayedDeleteRootLayer=true;
-}
- else {
-mDelayedDeleteRootLayer=false;
-nativeSetRootLayer(msg.arg1);
-invalidate();
 }
 break;
 }
@@ -275,51 +220,53 @@ mPreventDefault=msg.arg2 == 1 ? PREVENT_DEFAULT_YES : PREVENT_DEFAULT_NO_FROM_TO
  else if (msg.arg1 == MotionEvent.ACTION_MOVE && mPreventDefault == PREVENT_DEFAULT_NO_FROM_TOUCH_DOWN) {
 mPreventDefault=msg.arg2 == 1 ? PREVENT_DEFAULT_YES : PREVENT_DEFAULT_NO;
 }
+if (mPreventDefault == PREVENT_DEFAULT_YES) {
+mTouchHighlightRegion.setEmpty();
+}
 }
  else if (msg.arg2 == 0) {
 TouchEventData ted=(TouchEventData)msg.obj;
 switch (ted.mAction) {
 case MotionEvent.ACTION_DOWN:
-mLastDeferTouchX=ted.mViewX;
-mLastDeferTouchY=ted.mViewY;
+mLastDeferTouchX=contentToViewX(ted.mX) - mScrollX;
+mLastDeferTouchY=contentToViewY(ted.mY) - mScrollY;
 mDeferTouchMode=TOUCH_INIT_MODE;
 break;
 case MotionEvent.ACTION_MOVE:
 {
+int x=contentToViewX(ted.mX) - mScrollX;
+int y=contentToViewY(ted.mY) - mScrollY;
 if (mDeferTouchMode != TOUCH_DRAG_MODE) {
 mDeferTouchMode=TOUCH_DRAG_MODE;
-mLastDeferTouchX=ted.mViewX;
-mLastDeferTouchY=ted.mViewY;
+mLastDeferTouchX=x;
+mLastDeferTouchY=y;
 startDrag();
 }
-int deltaX=pinLocX((int)(mScrollX + mLastDeferTouchX - ted.mViewX)) - mScrollX;
-int deltaY=pinLocY((int)(mScrollY + mLastDeferTouchY - ted.mViewY)) - mScrollY;
+int deltaX=pinLocX((int)(mScrollX + mLastDeferTouchX - x)) - mScrollX;
+int deltaY=pinLocY((int)(mScrollY + mLastDeferTouchY - y)) - mScrollY;
 doDrag(deltaX,deltaY);
-if (deltaX != 0) mLastDeferTouchX=ted.mViewX;
-if (deltaY != 0) mLastDeferTouchY=ted.mViewY;
+if (deltaX != 0) mLastDeferTouchX=x;
+if (deltaY != 0) mLastDeferTouchY=y;
 break;
 }
 case MotionEvent.ACTION_UP:
 case MotionEvent.ACTION_CANCEL:
 if (mDeferTouchMode == TOUCH_DRAG_MODE) {
-mScroller.springback(mScrollX,mScrollY,0,computeMaxScrollX(),0,computeMaxScrollY());
-invalidate();
 WebViewCore.resumePriority();
 WebViewCore.resumeUpdatePicture(mWebViewCore);
 }
 mDeferTouchMode=TOUCH_DONE_MODE;
 break;
 case WebViewCore.ACTION_DOUBLETAP:
-mLastTouchX=ted.mViewX;
-mLastTouchY=ted.mViewY;
-doDoubleTap();
+mLastTouchX=contentToViewX(ted.mX) - mScrollX;
+mLastTouchY=contentToViewY(ted.mY) - mScrollY;
+mZoomManager.handleDoubleTap(mLastTouchX,mLastTouchY);
 mDeferTouchMode=TOUCH_DONE_MODE;
 break;
 case WebViewCore.ACTION_LONGPRESS:
 HitTestResult hitTest=getHitTestResult();
 if (hitTest != null && hitTest.mType != HitTestResult.UNKNOWN_TYPE) {
 performLongClick();
-rebuildWebTextView();
 }
 mDeferTouchMode=TOUCH_DONE_MODE;
 break;
@@ -335,8 +282,8 @@ displaySoftKeyboard(false);
 }
 break;
 case FIND_AGAIN:
-if (mFindIsUp) {
-findAll(mLastFind);
+if (mFindIsUp && mFindCallback != null) {
+mFindCallback.findAll();
 }
 break;
 case DRAG_HELD_MOTIONLESS:
@@ -411,12 +358,40 @@ scrollTo(x,y);
 break;
 case CENTER_FIT_RECT:
 Rect r=(Rect)msg.obj;
-mInZoomOverview=false;
 centerFitRect(r.left,r.top,r.width(),r.height());
 break;
 case SET_SCROLLBAR_MODES:
 mHorizontalScrollBarMode=msg.arg1;
 mVerticalScrollBarMode=msg.arg2;
+break;
+case SELECTION_STRING_CHANGED:
+if (mAccessibilityInjector != null) {
+String selectionString=(String)msg.obj;
+mAccessibilityInjector.onSelectionStringChange(selectionString);
+}
+break;
+case SET_TOUCH_HIGHLIGHT_RECTS:
+invalidate(mTouchHighlightRegion.getBounds());
+mTouchHighlightRegion.setEmpty();
+if (msg.obj != null) {
+ArrayList<Rect> rects=(ArrayList<Rect>)msg.obj;
+for (Rect rect : rects) {
+Rect viewRect=contentToViewRect(rect);
+if (viewRect.width() < getWidth() >> 1 || viewRect.height() < getHeight() >> 1) {
+mTouchHighlightRegion.union(viewRect);
+invalidate(viewRect);
+}
+ else {
+Log.w(LOGTAG,"Skip the huge selection rect:" + viewRect);
+}
+}
+}
+break;
+case SAVE_WEBARCHIVE_FINISHED:
+SaveWebArchiveMessage saveMessage=(SaveWebArchiveMessage)msg.obj;
+if (saveMessage.mCallback != null) {
+saveMessage.mCallback.onReceiveValue(saveMessage.mResultFile);
+}
 break;
 default :
 super.handleMessage(msg);
