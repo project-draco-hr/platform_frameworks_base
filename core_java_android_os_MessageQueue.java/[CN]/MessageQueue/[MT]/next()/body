@@ -1,57 +1,56 @@
 {
-  boolean tryIdle=true;
-  int timeToNextEventMillis=0;
-  while (true) {
-    long now;
-    Object[] idlers=null;
-    boolean dispatched=nativePollOnce(timeToNextEventMillis);
+  int pendingIdleHandlerCount=-1;
+  int nextPollTimeoutMillis=0;
+  for (; ; ) {
+    if (nextPollTimeoutMillis != 0) {
+      Binder.flushPendingCommands();
+    }
+    nativePollOnce(nextPollTimeoutMillis);
 synchronized (this) {
-      now=SystemClock.uptimeMillis();
-      Message msg=pullNextLocked(now);
+      final long now=SystemClock.uptimeMillis();
+      final Message msg=mMessages;
       if (msg != null) {
-        return msg;
-      }
-      if (tryIdle && mIdleHandlers.size() > 0) {
-        idlers=mIdleHandlers.toArray();
-      }
-    }
-    boolean didIdle=false;
-    if (idlers != null) {
-      for (      Object idler : idlers) {
-        boolean keep=false;
-        try {
-          didIdle=true;
-          keep=((IdleHandler)idler).queueIdle();
-        }
- catch (        Throwable t) {
-          Log.wtf("MessageQueue","IdleHandler threw exception",t);
-        }
-        if (!keep) {
-synchronized (this) {
-            mIdleHandlers.remove(idler);
-          }
-        }
-      }
-    }
-    if (didIdle) {
-      tryIdle=false;
-      continue;
-    }
-synchronized (this) {
-      if (mMessages != null) {
-        long longTimeToNextEventMillis=mMessages.when - now;
-        if (longTimeToNextEventMillis > 0) {
-          Binder.flushPendingCommands();
-          timeToNextEventMillis=(int)Math.min(longTimeToNextEventMillis,Integer.MAX_VALUE);
+        final long when=msg.when;
+        if (now >= when) {
+          mMessages=msg.next;
+          if (Config.LOGV)           Log.v("MessageQueue","Returning message: " + msg);
+          return msg;
         }
  else {
-          timeToNextEventMillis=0;
+          nextPollTimeoutMillis=(int)Math.min(when - now,Integer.MAX_VALUE);
         }
       }
  else {
-        Binder.flushPendingCommands();
-        timeToNextEventMillis=-1;
+        nextPollTimeoutMillis=-1;
+      }
+      if (pendingIdleHandlerCount < 0) {
+        pendingIdleHandlerCount=mIdleHandlers.size();
+      }
+      if (pendingIdleHandlerCount == 0) {
+        continue;
+      }
+      if (mPendingIdleHandlers == null) {
+        mPendingIdleHandlers=new IdleHandler[Math.max(pendingIdleHandlerCount,4)];
+      }
+      mPendingIdleHandlers=mIdleHandlers.toArray(mPendingIdleHandlers);
+    }
+    for (int i=0; i < pendingIdleHandlerCount; i++) {
+      final IdleHandler idler=mPendingIdleHandlers[i];
+      mPendingIdleHandlers[i]=null;
+      boolean keep=false;
+      try {
+        keep=idler.queueIdle();
+      }
+ catch (      Throwable t) {
+        Log.wtf("MessageQueue","IdleHandler threw exception",t);
+      }
+      if (!keep) {
+synchronized (this) {
+          mIdleHandlers.remove(idler);
+        }
       }
     }
+    pendingIdleHandlerCount=0;
+    nextPollTimeoutMillis=0;
   }
 }
