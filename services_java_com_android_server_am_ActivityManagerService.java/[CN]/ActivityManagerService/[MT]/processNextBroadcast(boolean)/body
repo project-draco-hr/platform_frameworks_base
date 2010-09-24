@@ -14,7 +14,7 @@ synchronized (this) {
       for (int i=0; i < N; i++) {
         Object target=r.receivers.get(i);
         if (DEBUG_BROADCAST)         Slog.v(TAG,"Delivering non-ordered to registered " + target + ": "+ r);
-        deliverToRegisteredReceiver(r,(BroadcastFilter)target,false);
+        deliverToRegisteredReceiverLocked(r,(BroadcastFilter)target,false);
       }
       addBroadcastToHistoryLocked(r);
       if (DEBUG_BROADCAST_LIGHT)       Slog.v(TAG,"Done with parallel broadcast " + r);
@@ -53,7 +53,7 @@ synchronized (mPidsSelfLocked) {
         long now=SystemClock.uptimeMillis();
         if ((numReceivers > 0) && (now > r.dispatchTime + (2 * BROADCAST_TIMEOUT * numReceivers))) {
           Slog.w(TAG,"Hung broadcast discarded after timeout failure:" + " now=" + now + " dispatchTime="+ r.dispatchTime+ " startTime="+ r.receiverTime+ " intent="+ r.intent+ " numReceivers="+ numReceivers+ " nextReceiver="+ r.nextReceiver+ " state="+ r.state);
-          broadcastTimeout();
+          broadcastTimeoutLocked(false);
           forceReceive=true;
           r.state=BroadcastRecord.IDLE;
         }
@@ -69,14 +69,14 @@ synchronized (mPidsSelfLocked) {
               int seq=r.intent.getIntExtra("seq",-1);
               Slog.i(TAG,"Finishing broadcast " + r.intent.getAction() + " seq="+ seq+ " app="+ r.callerApp);
             }
-            performReceive(r.callerApp,r.resultTo,new Intent(r.intent),r.resultCode,r.resultData,r.resultExtras,false,false);
+            performReceiveLocked(r.callerApp,r.resultTo,new Intent(r.intent),r.resultCode,r.resultData,r.resultExtras,false,false);
           }
  catch (          RemoteException e) {
             Slog.w(TAG,"Failure sending broadcast result of " + r.intent,e);
           }
         }
         if (DEBUG_BROADCAST)         Slog.v(TAG,"Cancelling BROADCAST_TIMEOUT_MSG");
-        mHandler.removeMessages(BROADCAST_TIMEOUT_MSG);
+        cancelBroadcastTimeoutLocked();
         if (DEBUG_BROADCAST_LIGHT)         Slog.v(TAG,"Finished with ordered broadcast " + r);
         addBroadcastToHistoryLocked(r);
         mOrderedBroadcasts.remove(0);
@@ -91,15 +91,17 @@ synchronized (mPidsSelfLocked) {
     if (recIdx == 0) {
       r.dispatchTime=r.receiverTime;
       if (DEBUG_BROADCAST_LIGHT)       Slog.v(TAG,"Processing ordered broadcast " + r);
-      if (DEBUG_BROADCAST)       Slog.v(TAG,"Submitting BROADCAST_TIMEOUT_MSG for " + r + " at "+ (r.receiverTime + BROADCAST_TIMEOUT));
-      Message msg=mHandler.obtainMessage(BROADCAST_TIMEOUT_MSG);
-      mHandler.sendMessageAtTime(msg,r.receiverTime + BROADCAST_TIMEOUT);
+    }
+    if (!mPendingBroadcastTimeoutMessage) {
+      long timeoutTime=r.receiverTime + BROADCAST_TIMEOUT;
+      if (DEBUG_BROADCAST)       Slog.v(TAG,"Submitting BROADCAST_TIMEOUT_MSG for " + r + " at "+ timeoutTime);
+      setBroadcastTimeoutLocked(timeoutTime);
     }
     Object nextReceiver=r.receivers.get(recIdx);
     if (nextReceiver instanceof BroadcastFilter) {
       BroadcastFilter filter=(BroadcastFilter)nextReceiver;
       if (DEBUG_BROADCAST)       Slog.v(TAG,"Delivering ordered to registered " + filter + ": "+ r);
-      deliverToRegisteredReceiver(r,filter,r.ordered);
+      deliverToRegisteredReceiverLocked(r,filter,r.ordered);
       if (r.receiver == null || !r.ordered) {
         if (DEBUG_BROADCAST)         Slog.v(TAG,"Quick finishing: ordered=" + r.ordered + " receiver="+ r.receiver);
         r.state=BroadcastRecord.IDLE;
@@ -155,7 +157,7 @@ synchronized (mPidsSelfLocked) {
     if (DEBUG_BROADCAST)     Slog.v(TAG,"Need to start app " + targetProcess + " for broadcast "+ r);
     if ((r.curApp=startProcessLocked(targetProcess,info.activityInfo.applicationInfo,true,r.intent.getFlags() | Intent.FLAG_FROM_BACKGROUND,"broadcast",r.curComponent,(r.intent.getFlags() & Intent.FLAG_RECEIVER_BOOT_UPGRADE) != 0)) == null) {
       Slog.w(TAG,"Unable to launch app " + info.activityInfo.applicationInfo.packageName + "/"+ info.activityInfo.applicationInfo.uid+ " for broadcast "+ r.intent+ ": process is bad");
-      logBroadcastReceiverDiscard(r);
+      logBroadcastReceiverDiscardLocked(r);
       finishReceiverLocked(r.receiver,r.resultCode,r.resultData,r.resultExtras,r.resultAbort,true);
       scheduleBroadcastsLocked();
       r.state=BroadcastRecord.IDLE;
