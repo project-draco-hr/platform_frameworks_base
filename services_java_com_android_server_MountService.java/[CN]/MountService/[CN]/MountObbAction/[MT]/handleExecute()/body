@@ -1,7 +1,18 @@
 {
-  final ObbInfo obbInfo=mContainerService.getObbInfo(mObbState.filename);
-  if (obbInfo == null) {
-    throw new IOException("Couldn't read OBB file: " + mObbState.filename);
+  final ObbInfo obbInfo=getObbInfo();
+  if (!mObbState.filename.equals(obbInfo.filename)) {
+    if (DEBUG_OBB)     Slog.i(TAG,"OBB filename " + mObbState.filename + " is actually "+ obbInfo.filename);
+synchronized (mObbMounts) {
+      if (isObbMounted(obbInfo.filename)) {
+        if (DEBUG_OBB)         Slog.i(TAG,"OBB already mounted as " + obbInfo.filename);
+        removeObbState(mObbState);
+        sendNewStatusOrIgnore(obbInfo.filename,Environment.MEDIA_MOUNTED);
+        return;
+      }
+      ObbState newObbState=new ObbState(obbInfo.filename,mObbState.token,mObbState.callerUid);
+      replaceObbState(mObbState,newObbState);
+      mObbState=newObbState;
+    }
   }
   if (!isUidOwnerOfPackageOrSystem(obbInfo.packageName,mObbState.callerUid)) {
     throw new IllegalArgumentException("Caller package does not match OBB file");
@@ -9,28 +20,34 @@
   if (mKey == null) {
     mKey="none";
   }
-  int rc=StorageResultCode.OperationSucceeded;
-  String cmd=String.format("obb mount %s %s %d",mObbState.filename,mKey,mObbState.callerUid);
-  try {
-    mConnector.doCommand(cmd);
-  }
- catch (  NativeDaemonConnectorException e) {
-    int code=e.getCode();
-    if (code != VoldResponseCode.OpFailedStorageBusy) {
-      rc=StorageResultCode.OperationFailedInternalError;
+  boolean mounted=false;
+  int rc;
+synchronized (mObbState) {
+    if (mObbState.mounted) {
+      sendNewStatusOrIgnore(mObbState.filename,Environment.MEDIA_MOUNTED);
+      return;
     }
-  }
-  if (rc == StorageResultCode.OperationSucceeded) {
+    rc=StorageResultCode.OperationSucceeded;
+    String cmd=String.format("obb mount %s %s %d",mObbState.filename,mKey,mObbState.callerUid);
     try {
-      mObbState.token.onObbResult(mObbState.filename,Environment.MEDIA_MOUNTED);
+      mConnector.doCommand(cmd);
     }
- catch (    RemoteException e) {
-      Slog.w(TAG,"MountServiceListener went away while calling onObbStateChanged");
+ catch (    NativeDaemonConnectorException e) {
+      int code=e.getCode();
+      if (code != VoldResponseCode.OpFailedStorageBusy) {
+        rc=StorageResultCode.OperationFailedInternalError;
+      }
     }
+    if (rc == StorageResultCode.OperationSucceeded) {
+      mObbState.mounted=mounted=true;
+    }
+  }
+  if (mounted) {
+    sendNewStatusOrIgnore(mObbState.filename,Environment.MEDIA_MOUNTED);
   }
  else {
     Slog.e(TAG,"Couldn't mount OBB file: " + rc);
     removeObbState(mObbState);
-    mObbState.token.onObbResult(mObbState.filename,Environment.MEDIA_BAD_REMOVAL);
+    sendNewStatusOrIgnore(mObbState.filename,Environment.MEDIA_UNMOUNTED);
   }
 }
