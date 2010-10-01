@@ -10,19 +10,38 @@
   final ObbState obbState;
 synchronized (mObbMounts) {
     if (isObbMounted(filename)) {
-      throw new IllegalArgumentException("OBB file is already mounted");
+      try {
+        token.onObbResult(filename,Environment.MEDIA_MOUNTED);
+      }
+ catch (      RemoteException e) {
+        Slog.d(TAG,"Could not send unmount notification for: " + filename);
+      }
+      return;
     }
     final int callerUid=Binder.getCallingUid();
+    final Integer uidUsage=mObbUidUsage.get(callerUid);
+    if (uidUsage != null && uidUsage > MAX_OBBS) {
+      throw new IllegalStateException("Maximum number of OBBs mounted!");
+    }
     obbState=new ObbState(filename,token,callerUid);
     addObbState(obbState);
   }
+  final MessageDigest md;
   try {
-    token.asBinder().linkToDeath(obbState,0);
+    md=MessageDigest.getInstance("MD5");
   }
- catch (  RemoteException rex) {
-    Slog.e(TAG,"Failed to link to listener death");
+ catch (  NoSuchAlgorithmException e) {
+    Slog.e(TAG,"Could not load MD5 algorithm",e);
+    try {
+      token.onObbResult(filename,Environment.MEDIA_UNMOUNTED);
+    }
+ catch (    RemoteException e1) {
+      Slog.d(TAG,"Could not send unmount notification for: " + filename);
+    }
+    return;
   }
-  MountObbAction action=new MountObbAction(obbState,key);
+  String hashedKey=HexDump.toHexString(md.digest(key.getBytes()));
+  ObbAction action=new MountObbAction(obbState,hashedKey);
   mObbActionHandler.sendMessage(mObbActionHandler.obtainMessage(OBB_RUN_ACTION,action));
   if (DEBUG_OBB)   Slog.i(TAG,"Send to OBB handler: " + action.toString());
 }
