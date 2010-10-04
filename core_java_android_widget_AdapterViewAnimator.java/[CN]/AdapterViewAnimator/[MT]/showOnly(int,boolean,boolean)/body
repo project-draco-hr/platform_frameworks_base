@@ -1,7 +1,8 @@
 {
   if (mAdapter == null)   return;
   for (int i=0; i < mPreviousViews.size(); i++) {
-    View viewToRemove=mPreviousViews.get(i);
+    View viewToRemove=mViewsMap.get(mPreviousViews.get(i)).view;
+    mViewsMap.remove(mPreviousViews.get(i));
     viewToRemove.clearAnimation();
     if (viewToRemove instanceof ViewGroup) {
       ViewGroup vg=(ViewGroup)viewToRemove;
@@ -11,53 +12,66 @@
     removeViewInLayout(viewToRemove);
   }
   mPreviousViews.clear();
+  int adapterCount=mAdapter.getCount();
   int newWindowStartUnbounded=childIndex - mActiveOffset;
   int newWindowEndUnbounded=newWindowStartUnbounded + mNumActiveViews - 1;
   int newWindowStart=Math.max(0,newWindowStartUnbounded);
-  int newWindowEnd=Math.min(mAdapter.getCount() - 1,newWindowEndUnbounded);
-  for (int i=newWindowStartUnbounded; i < newWindowEndUnbounded; i++) {
-    if (i < newWindowStart || i > newWindowEnd) {
-      int index=modulo(i,mNumActiveViews);
-      if (mActiveViews[index] != null) {
-        View previousView=mActiveViews[index];
-        mPreviousViews.add(previousView);
-        int previousViewRelativeIndex=modulo(index - mCurrentWindowStart,mNumActiveViews);
-        animateViewForTransition(previousViewRelativeIndex,-1,previousView);
-        mActiveViews[index]=null;
-      }
+  int newWindowEnd=Math.min(adapterCount - 1,newWindowEndUnbounded);
+  if (mLoopViews) {
+    newWindowStart=newWindowStartUnbounded;
+    newWindowEnd=newWindowEndUnbounded;
+  }
+  int rangeStart=modulo(newWindowStart,adapterCount);
+  int rangeEnd=modulo(newWindowEnd,adapterCount);
+  boolean wrap=false;
+  if (rangeStart > rangeEnd) {
+    wrap=true;
+  }
+  for (  Integer index : mViewsMap.keySet()) {
+    boolean remove=false;
+    if (!wrap && (index < rangeStart || index > rangeEnd)) {
+      remove=true;
+    }
+ else     if (wrap && (index > rangeEnd && index < rangeStart)) {
+      remove=true;
+    }
+    if (remove) {
+      View previousView=mViewsMap.get(index).view;
+      int oldRelativeIndex=mViewsMap.get(index).index;
+      mPreviousViews.add(index);
+      animateViewForTransition(oldRelativeIndex,-1,previousView);
     }
   }
   if (!(newWindowStart == mCurrentWindowStart && newWindowEnd == mCurrentWindowEnd)) {
     for (int i=newWindowStart; i <= newWindowEnd; i++) {
-      int oldRelativeIndex=i - mCurrentWindowStartUnbounded;
+      int index=modulo(i,adapterCount);
+      int oldRelativeIndex;
+      if (mViewsMap.containsKey(index)) {
+        oldRelativeIndex=mViewsMap.get(index).index;
+      }
+ else {
+        oldRelativeIndex=-1;
+      }
       int newRelativeIndex=i - newWindowStartUnbounded;
-      int index=modulo(i,mNumActiveViews);
-      if (i >= mCurrentWindowStart && i <= mCurrentWindowEnd) {
-        View view=mActiveViews[index];
+      boolean inOldRange=mViewsMap.containsKey(index) && !mPreviousViews.contains(index);
+      if (inOldRange) {
+        View view=mViewsMap.get(index).view;
+        mViewsMap.get(index).index=newRelativeIndex;
         applyTransformForChildAtIndex(view,newRelativeIndex);
         animateViewForTransition(oldRelativeIndex,newRelativeIndex,view);
       }
  else {
-        if (mActiveViews[index] != null) {
-          View previousView=mActiveViews[index];
-          mPreviousViews.add(previousView);
-          int previousViewRelativeIndex=modulo(index - mCurrentWindowStart,mNumActiveViews);
-          animateViewForTransition(previousViewRelativeIndex,-1,previousView);
-          if (mCurrentWindowStart > newWindowStart) {
-            mViewsToBringToFront.add(previousView);
-          }
-        }
-        View newView=mAdapter.getView(i,null,this);
+        View newView=mAdapter.getView(modulo(i,adapterCount),null,this);
         FrameLayout fl=getFrameForChild();
         if (newView != null) {
           fl.addView(newView);
         }
-        mActiveViews[index]=fl;
+        mViewsMap.put(index,new ViewAndIndex(fl,newRelativeIndex));
         addChild(fl);
         applyTransformForChildAtIndex(fl,newRelativeIndex);
         animateViewForTransition(-1,newRelativeIndex,fl);
       }
-      mActiveViews[index].bringToFront();
+      mViewsMap.get(index).view.bringToFront();
     }
     for (int i=0; i < mViewsToBringToFront.size(); i++) {
       View v=mViewsToBringToFront.get(i);
