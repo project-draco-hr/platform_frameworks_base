@@ -1,50 +1,62 @@
 {
-  Long earliestFuturePollTime=null;
+  long earliestFuturePollTime=Long.MAX_VALUE;
+  long nextPendingSyncTime=Long.MAX_VALUE;
   try {
     waitUntilReadyToRun();
+    mSyncManagerWakeLock.acquire();
     earliestFuturePollTime=scheduleReadyPeriodicSyncs();
 switch (msg.what) {
-case SyncHandler.MESSAGE_SYNC_FINISHED:
-      if (Log.isLoggable(TAG,Log.VERBOSE)) {
-        Log.v(TAG,"handleSyncHandlerMessage: MESSAGE_SYNC_FINISHED");
+case SyncHandler.MESSAGE_CANCEL:
+{
+        Pair<Account,String> payload=(Pair<Account,String>)msg.obj;
+        if (Log.isLoggable(TAG,Log.VERBOSE)) {
+          Log.d(TAG,"handleSyncHandlerMessage: MESSAGE_SERVICE_CANCEL: " + payload.first + ", "+ payload.second);
+        }
+        cancelActiveSyncLocked(payload.first,payload.second);
+        nextPendingSyncTime=maybeStartNextSyncLocked();
+        break;
       }
-    SyncHandlerMessagePayload payload=(SyncHandlerMessagePayload)msg.obj;
-  if (mActiveSyncContext != payload.activeSyncContext) {
-    Log.d(TAG,"handleSyncHandlerMessage: sync context doesn't match, " + "dropping: mActiveSyncContext " + mActiveSyncContext + " != "+ payload.activeSyncContext);
-    return;
-  }
-runSyncFinishedOrCanceled(payload.syncResult);
-runStateIdle();
+case SyncHandler.MESSAGE_SYNC_FINISHED:
+    if (Log.isLoggable(TAG,Log.VERBOSE)) {
+      Log.v(TAG,"handleSyncHandlerMessage: MESSAGE_SYNC_FINISHED");
+    }
+  SyncHandlerMessagePayload payload=(SyncHandlerMessagePayload)msg.obj;
+if (!isSyncStillActive(payload.activeSyncContext)) {
+  Log.d(TAG,"handleSyncHandlerMessage: dropping since the " + "sync is no longer active: " + payload.activeSyncContext);
+  break;
+}
+runSyncFinishedOrCanceledLocked(payload.syncResult,payload.activeSyncContext);
+nextPendingSyncTime=maybeStartNextSyncLocked();
 break;
 case SyncHandler.MESSAGE_SERVICE_CONNECTED:
 {
 ServiceConnectionData msgData=(ServiceConnectionData)msg.obj;
 if (Log.isLoggable(TAG,Log.VERBOSE)) {
-Log.d(TAG,"handleSyncHandlerMessage: MESSAGE_SERVICE_CONNECTED: " + msgData.activeSyncContext + " active is "+ mActiveSyncContext);
+Log.d(TAG,"handleSyncHandlerMessage: MESSAGE_SERVICE_CONNECTED: " + msgData.activeSyncContext);
 }
-if (mActiveSyncContext == msgData.activeSyncContext) {
-runBoundToSyncAdapter(msgData.syncAdapter);
+if (isSyncStillActive(msgData.activeSyncContext)) {
+runBoundToSyncAdapter(msgData.activeSyncContext,msgData.syncAdapter);
 }
 break;
 }
 case SyncHandler.MESSAGE_SERVICE_DISCONNECTED:
 {
-ServiceConnectionData msgData=(ServiceConnectionData)msg.obj;
+final ActiveSyncContext currentSyncContext=((ServiceConnectionData)msg.obj).activeSyncContext;
 if (Log.isLoggable(TAG,Log.VERBOSE)) {
-Log.d(TAG,"handleSyncHandlerMessage: MESSAGE_SERVICE_DISCONNECTED: " + msgData.activeSyncContext + " active is "+ mActiveSyncContext);
+Log.d(TAG,"handleSyncHandlerMessage: MESSAGE_SERVICE_DISCONNECTED: " + currentSyncContext);
 }
-if (mActiveSyncContext == msgData.activeSyncContext) {
-if (mActiveSyncContext.mSyncAdapter != null) {
+if (isSyncStillActive(currentSyncContext)) {
+if (currentSyncContext.mSyncAdapter != null) {
 try {
-mActiveSyncContext.mSyncAdapter.cancelSync(mActiveSyncContext);
+currentSyncContext.mSyncAdapter.cancelSync(currentSyncContext);
 }
  catch (RemoteException e) {
 }
 }
 SyncResult syncResult=new SyncResult();
 syncResult.stats.numIoExceptions++;
-runSyncFinishedOrCanceled(syncResult);
-runStateIdle();
+runSyncFinishedOrCanceledLocked(syncResult,currentSyncContext);
+nextPendingSyncTime=maybeStartNextSyncLocked();
 }
 break;
 }
@@ -56,18 +68,7 @@ Log.v(TAG,"handleSyncHandlerMessage: MESSAGE_SYNC_ALARM");
 }
 mAlarmScheduleTime=null;
 try {
-if (mActiveSyncContext != null) {
-if (isLoggable) {
-Log.v(TAG,"handleSyncHandlerMessage: sync context is active");
-}
-runStateSyncing();
-}
-if (mActiveSyncContext == null) {
-if (isLoggable) {
-Log.v(TAG,"handleSyncHandlerMessage: " + "sync context is not active");
-}
-runStateIdle();
-}
+nextPendingSyncTime=maybeStartNextSyncLocked();
 }
   finally {
 mHandleAlarmWakeLock.release();
@@ -78,18 +79,14 @@ case SyncHandler.MESSAGE_CHECK_ALARMS:
 if (Log.isLoggable(TAG,Log.VERBOSE)) {
 Log.v(TAG,"handleSyncHandlerMessage: MESSAGE_CHECK_ALARMS");
 }
+nextPendingSyncTime=maybeStartNextSyncLocked();
 break;
 }
 }
   finally {
-final boolean isSyncInProgress=mActiveSyncContext != null;
-if (!isSyncInProgress && mSyncWakeLock != null) {
-mSyncWakeLock.release();
-mSyncWakeLock=null;
-}
-manageSyncNotification();
-manageErrorNotification();
-manageSyncAlarm(earliestFuturePollTime);
+manageSyncNotificationLocked();
+manageSyncAlarmLocked(earliestFuturePollTime,nextPendingSyncTime);
 mSyncTimeTracker.update();
+mSyncManagerWakeLock.release();
 }
 }

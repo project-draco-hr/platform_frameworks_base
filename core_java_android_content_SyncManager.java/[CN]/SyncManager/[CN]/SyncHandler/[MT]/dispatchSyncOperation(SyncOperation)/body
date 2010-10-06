@@ -1,0 +1,40 @@
+{
+  if (Log.isLoggable(TAG,Log.VERBOSE)) {
+    Log.v(TAG,"maybeStartNextSync: we are going to sync " + op);
+    Log.v(TAG,"num active syncs: " + mActiveSyncContexts.size());
+    for (    ActiveSyncContext syncContext : mActiveSyncContexts) {
+      Log.v(TAG,syncContext.toString());
+    }
+  }
+  if (op.isInitialization()) {
+    Iterator<ActiveSyncContext> iterator=mActiveSyncContexts.iterator();
+    while (iterator.hasNext()) {
+      ActiveSyncContext syncContext=iterator.next();
+      if (!syncContext.mSyncOperation.isInitialization() && syncContext.mSyncOperation.account.type.equals(op.account.type) && syncContext.mSyncOperation.authority.equals(op.authority)) {
+        Log.d(TAG,"canceling and rescheduling " + syncContext.mSyncOperation + " since we are about to start a sync that used the "+ "same sync adapter, "+ op);
+        iterator.remove();
+        runSyncFinishedOrCanceledLocked(null,syncContext);
+        scheduleSyncOperation(syncContext.mSyncOperation);
+      }
+    }
+  }
+  SyncAdapterType syncAdapterType=SyncAdapterType.newKey(op.authority,op.account.type);
+  RegisteredServicesCache.ServiceInfo<SyncAdapterType> syncAdapterInfo=mSyncAdapters.getServiceInfo(syncAdapterType);
+  if (syncAdapterInfo == null) {
+    Log.d(TAG,"can't find a sync adapter for " + syncAdapterType + ", removing settings for it");
+    mSyncStorageEngine.removeAuthority(op.account,op.authority);
+    return false;
+  }
+  ActiveSyncContext activeSyncContext=new ActiveSyncContext(op,insertStartSyncEvent(op),syncAdapterInfo.uid);
+  activeSyncContext.mSyncInfo=mSyncStorageEngine.addActiveSync(activeSyncContext);
+  mActiveSyncContexts.add(activeSyncContext);
+  if (Log.isLoggable(TAG,Log.VERBOSE)) {
+    Log.v(TAG,"dispatchSyncOperation: starting " + activeSyncContext);
+  }
+  if (!activeSyncContext.bindToSyncAdapter(syncAdapterInfo)) {
+    Log.e(TAG,"Bind attempt failed to " + syncAdapterInfo);
+    closeActiveSyncContext(activeSyncContext);
+    return false;
+  }
+  return true;
+}

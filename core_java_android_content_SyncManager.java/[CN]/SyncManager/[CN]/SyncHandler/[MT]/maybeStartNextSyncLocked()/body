@@ -1,0 +1,135 @@
+{
+  final boolean isLoggable=Log.isLoggable(TAG,Log.VERBOSE);
+  if (isLoggable)   Log.v(TAG,"maybeStartNextSync");
+  if (!mDataConnectionIsConnected) {
+    if (isLoggable) {
+      Log.v(TAG,"maybeStartNextSync: no data connection, skipping");
+    }
+    return Long.MAX_VALUE;
+  }
+  if (mStorageIsLow) {
+    if (isLoggable) {
+      Log.v(TAG,"maybeStartNextSync: memory low, skipping");
+    }
+    return Long.MAX_VALUE;
+  }
+  Account[] accounts=mAccounts;
+  if (accounts == INITIAL_ACCOUNTS_ARRAY) {
+    if (isLoggable) {
+      Log.v(TAG,"maybeStartNextSync: accounts not known, skipping");
+    }
+    return Long.MAX_VALUE;
+  }
+  final boolean backgroundDataUsageAllowed=getConnectivityManager().getBackgroundDataSetting();
+  final boolean masterSyncAutomatically=mSyncStorageEngine.getMasterSyncAutomatically();
+  final long now=SystemClock.elapsedRealtime();
+  long nextReadyToRunTime=Long.MAX_VALUE;
+  ArrayList<SyncOperation> operations=new ArrayList<SyncOperation>();
+synchronized (mSyncQueue) {
+    if (isLoggable) {
+      Log.v(TAG,"build the operation array, syncQueue size is " + mSyncQueue.mOperationsMap.size());
+    }
+    Iterator<SyncOperation> operationIterator=mSyncQueue.mOperationsMap.values().iterator();
+    while (operationIterator.hasNext()) {
+      final SyncOperation op=operationIterator.next();
+      if (!ArrayUtils.contains(mAccounts,op.account)) {
+        operationIterator.remove();
+        mSyncStorageEngine.deleteFromPending(op.pendingOperation);
+        continue;
+      }
+      int syncableState=mSyncStorageEngine.getIsSyncable(op.account,op.authority);
+      if (syncableState == 0) {
+        operationIterator.remove();
+        mSyncStorageEngine.deleteFromPending(op.pendingOperation);
+        continue;
+      }
+      if (op.effectiveRunTime > now) {
+        if (nextReadyToRunTime > op.effectiveRunTime) {
+          nextReadyToRunTime=op.effectiveRunTime;
+        }
+        continue;
+      }
+      if (!op.extras.getBoolean(ContentResolver.SYNC_EXTRAS_IGNORE_SETTINGS,false) && (syncableState > 0) && (!masterSyncAutomatically || !backgroundDataUsageAllowed || !mSyncStorageEngine.getSyncAutomatically(op.account,op.authority))) {
+        operationIterator.remove();
+        mSyncStorageEngine.deleteFromPending(op.pendingOperation);
+        continue;
+      }
+      operations.add(op);
+    }
+  }
+  if (isLoggable)   Log.v(TAG,"sort the candidate operations, size " + operations.size());
+  Collections.sort(operations);
+  if (isLoggable)   Log.v(TAG,"dispatch all ready sync operations");
+  for (int i=0, N=operations.size(); i < N; i++) {
+    final SyncOperation candidate=operations.get(i);
+    final boolean candidateIsInitialization=candidate.isInitialization();
+    int numInit=0;
+    int numRegular=0;
+    ActiveSyncContext conflict=null;
+    ActiveSyncContext longRunning=null;
+    ActiveSyncContext toReschedule=null;
+    for (    ActiveSyncContext activeSyncContext : mActiveSyncContexts) {
+      final SyncOperation activeOp=activeSyncContext.mSyncOperation;
+      if (activeOp.isInitialization()) {
+        numInit++;
+      }
+ else {
+        numRegular++;
+      }
+      if (activeOp.account.type.equals(candidate.account.type) && activeOp.authority.equals(candidate.authority)) {
+        conflict=activeSyncContext;
+      }
+ else {
+        if (candidateIsInitialization == activeOp.isInitialization() && activeSyncContext.mStartTime + MAX_TIME_PER_SYNC < now) {
+          longRunning=activeSyncContext;
+        }
+      }
+    }
+    if (isLoggable) {
+      Log.v(TAG,"candidate " + (i + 1) + " of "+ N+ ": "+ candidate);
+      Log.v(TAG,"  numActiveInit=" + numInit + ", numActiveRegular="+ numRegular);
+      Log.v(TAG,"  longRunning: " + longRunning);
+      Log.v(TAG,"  conflict: " + conflict);
+    }
+    if (conflict != null) {
+      if (candidateIsInitialization && !conflict.mSyncOperation.isInitialization() && numInit < MAX_SIMULTANEOUS_INITIALIZATION_SYNCS) {
+        toReschedule=conflict;
+        if (Log.isLoggable(TAG,Log.VERBOSE)) {
+          Log.v(TAG,"canceling and rescheduling sync since an initialization " + "takes higher priority, " + conflict);
+        }
+      }
+ else       if (candidate.expedited && !conflict.mSyncOperation.expedited && (candidateIsInitialization == conflict.mSyncOperation.isInitialization())) {
+        toReschedule=conflict;
+        if (Log.isLoggable(TAG,Log.VERBOSE)) {
+          Log.v(TAG,"canceling and rescheduling sync since an expedited " + "takes higher priority, " + conflict);
+        }
+      }
+ else {
+        continue;
+      }
+    }
+ else {
+      final boolean roomAvailable=candidateIsInitialization ? numInit < MAX_SIMULTANEOUS_INITIALIZATION_SYNCS : numRegular < MAX_SIMULTANEOUS_REGULAR_SYNCS;
+      if (roomAvailable) {
+      }
+ else       if (longRunning != null && (candidateIsInitialization == longRunning.mSyncOperation.isInitialization())) {
+        toReschedule=longRunning;
+        if (Log.isLoggable(TAG,Log.VERBOSE)) {
+          Log.v(TAG,"canceling and rescheduling sync since it ran roo long, " + longRunning);
+        }
+      }
+ else {
+        continue;
+      }
+    }
+    if (toReschedule != null) {
+      runSyncFinishedOrCanceledLocked(null,toReschedule);
+      scheduleSyncOperation(toReschedule.mSyncOperation);
+    }
+synchronized (mSyncQueue) {
+      mSyncQueue.remove(candidate);
+    }
+    dispatchSyncOperation(candidate);
+  }
+  return nextReadyToRunTime;
+}
