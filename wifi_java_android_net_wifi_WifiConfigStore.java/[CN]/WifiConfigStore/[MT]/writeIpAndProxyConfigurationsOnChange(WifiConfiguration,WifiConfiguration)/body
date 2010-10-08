@@ -1,41 +1,100 @@
 {
-  boolean newNetwork=(newConfig.networkId == INVALID_NETWORK_ID);
-  boolean writeConfigToFile=false;
-  if (newConfig.ipAssignment != IpAssignment.UNASSIGNED) {
-    if (newNetwork || (currentConfig.ipAssignment != newConfig.ipAssignment) || (currentConfig.ipConfig.ipAddress != newConfig.ipConfig.ipAddress)|| (currentConfig.ipConfig.gateway != newConfig.ipConfig.gateway)|| (currentConfig.ipConfig.netmask != newConfig.ipConfig.netmask)|| (currentConfig.ipConfig.dns1 != newConfig.ipConfig.dns1)|| (currentConfig.ipConfig.dns2 != newConfig.ipConfig.dns2)) {
-      currentConfig.ipAssignment=newConfig.ipAssignment;
-      currentConfig.ipConfig=newConfig.ipConfig;
-      writeConfigToFile=true;
-    }
-  }
-  if (newConfig.proxySettings != ProxySettings.UNASSIGNED) {
-    InetSocketAddress newSockAddr=newConfig.proxyProperties.getSocketAddress();
-    String newExclusionList=newConfig.proxyProperties.getExclusionList();
-    InetSocketAddress currentSockAddr=currentConfig.proxyProperties.getSocketAddress();
-    String currentExclusionList=currentConfig.proxyProperties.getExclusionList();
-    boolean socketAddressDiffers=false;
-    boolean exclusionListDiffers=false;
-    if (newSockAddr != null && currentSockAddr != null) {
-      socketAddressDiffers=!currentSockAddr.equals(newSockAddr);
-    }
- else     if (newSockAddr != null || currentSockAddr != null) {
-      socketAddressDiffers=true;
-    }
-    if (newExclusionList != null && currentExclusionList != null) {
-      exclusionListDiffers=currentExclusionList.equals(newExclusionList);
-    }
- else     if (newExclusionList != null || currentExclusionList != null) {
-      exclusionListDiffers=true;
-    }
-    if (newNetwork || (currentConfig.proxySettings != newConfig.proxySettings) || socketAddressDiffers|| exclusionListDiffers) {
-      currentConfig.proxySettings=newConfig.proxySettings;
-      currentConfig.proxyProperties=newConfig.proxyProperties;
-      Log.d(TAG,"proxy change SSID = " + currentConfig.SSID + " proxyProperties: "+ currentConfig.proxyProperties.toString());
-      writeConfigToFile=true;
-    }
-  }
-  if (writeConfigToFile) {
-    writeIpAndProxyConfigurations();
-    sendConfigChangeBroadcast();
-  }
+  boolean ipChanged=false;
+  boolean proxyChanged=false;
+  LinkProperties linkProperties=new LinkProperties();
+switch (newConfig.ipAssignment) {
+case STATIC:
+    Collection<LinkAddress> currentLinkAddresses=currentConfig.linkProperties.getLinkAddresses();
+  Collection<LinkAddress> newLinkAddresses=newConfig.linkProperties.getLinkAddresses();
+Collection<InetAddress> currentDnses=currentConfig.linkProperties.getDnses();
+Collection<InetAddress> newDnses=newConfig.linkProperties.getDnses();
+InetAddress currentGateway=currentConfig.linkProperties.getGateway();
+InetAddress newGateway=newConfig.linkProperties.getGateway();
+boolean linkAddressesDiffer=!currentLinkAddresses.containsAll(newLinkAddresses) || (currentLinkAddresses.size() != newLinkAddresses.size());
+boolean dnsesDiffer=!currentDnses.containsAll(newDnses) || (currentDnses.size() != newDnses.size());
+boolean gatewaysDiffer=(currentGateway == null) || !currentGateway.equals(newGateway);
+if ((currentConfig.ipAssignment != newConfig.ipAssignment) || linkAddressesDiffer || dnsesDiffer|| gatewaysDiffer) {
+ipChanged=true;
+}
+break;
+case DHCP:
+if (currentConfig.ipAssignment != newConfig.ipAssignment) {
+ipChanged=true;
+}
+break;
+case UNASSIGNED:
+break;
+default :
+Log.e(TAG,"Ignore invalid ip assignment during write");
+break;
+}
+switch (newConfig.proxySettings) {
+case STATIC:
+InetSocketAddress newSockAddr=null;
+String newExclusionList=null;
+InetSocketAddress currentSockAddr=null;
+String currentExclusionList=null;
+ProxyProperties newHttpProxy=newConfig.linkProperties.getHttpProxy();
+if (newHttpProxy != null) {
+newSockAddr=newHttpProxy.getSocketAddress();
+newExclusionList=newHttpProxy.getExclusionList();
+}
+ProxyProperties currentHttpProxy=currentConfig.linkProperties.getHttpProxy();
+if (currentHttpProxy != null) {
+currentSockAddr=currentHttpProxy.getSocketAddress();
+currentExclusionList=currentHttpProxy.getExclusionList();
+}
+boolean socketAddressDiffers=false;
+boolean exclusionListDiffers=false;
+if (newSockAddr != null && currentSockAddr != null) {
+socketAddressDiffers=!currentSockAddr.equals(newSockAddr);
+}
+ else if (newSockAddr != null || currentSockAddr != null) {
+socketAddressDiffers=true;
+}
+if (newExclusionList != null && currentExclusionList != null) {
+exclusionListDiffers=!currentExclusionList.equals(newExclusionList);
+}
+ else if (newExclusionList != null || currentExclusionList != null) {
+exclusionListDiffers=true;
+}
+if ((currentConfig.proxySettings != newConfig.proxySettings) || socketAddressDiffers || exclusionListDiffers) {
+proxyChanged=true;
+}
+break;
+case NONE:
+if (currentConfig.proxySettings != newConfig.proxySettings) {
+proxyChanged=true;
+}
+break;
+case UNASSIGNED:
+break;
+default :
+Log.e(TAG,"Ignore invalid proxy configuration during write");
+break;
+}
+if (!ipChanged) {
+addIpSettingsFromConfig(linkProperties,currentConfig);
+}
+ else {
+currentConfig.ipAssignment=newConfig.ipAssignment;
+addIpSettingsFromConfig(linkProperties,newConfig);
+Log.d(TAG,"IP config changed SSID = " + currentConfig.SSID + " linkProperties: "+ linkProperties.toString());
+}
+if (!proxyChanged) {
+linkProperties.setHttpProxy(currentConfig.linkProperties.getHttpProxy());
+}
+ else {
+currentConfig.proxySettings=newConfig.proxySettings;
+linkProperties.setHttpProxy(newConfig.linkProperties.getHttpProxy());
+Log.d(TAG,"proxy changed SSID = " + currentConfig.SSID);
+if (linkProperties.getHttpProxy() != null) {
+Log.d(TAG," proxyProperties: " + linkProperties.getHttpProxy().toString());
+}
+}
+if (ipChanged || proxyChanged) {
+currentConfig.linkProperties=linkProperties;
+writeIpAndProxyConfigurations();
+sendConfigChangeBroadcast();
+}
 }
