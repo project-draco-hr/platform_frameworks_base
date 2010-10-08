@@ -1,49 +1,46 @@
 {
+  waitForReady();
+  warnOnNotMounted();
   final ObbInfo obbInfo=getObbInfo();
+  final ObbState obbState;
 synchronized (mObbMounts) {
-    if (!isObbMounted(obbInfo.filename)) {
-      removeObbState(mObbState);
-      sendNewStatusOrIgnore(mObbState.filename,Environment.MEDIA_UNMOUNTED);
-      return;
-    }
-    if (!mObbState.filename.equals(obbInfo.filename)) {
-      removeObbState(mObbState);
-      mObbState=mObbPathToStateMap.get(obbInfo.filename);
-    }
+    obbState=mObbPathToStateMap.get(obbInfo.filename);
   }
-  boolean unmounted=false;
-synchronized (mObbState) {
-    if (!mObbState.mounted) {
-      sendNewStatusOrIgnore(obbInfo.filename,Environment.MEDIA_UNMOUNTED);
-      return;
+  if (obbState == null) {
+    sendNewStatusOrIgnore(OnObbStateChangeListener.ERROR_NOT_MOUNTED);
+    return;
+  }
+  if (obbState.callerUid != mObbState.callerUid) {
+    Slog.w(TAG,"Permission denied attempting to unmount OBB " + obbInfo.filename + " (owned by "+ obbInfo.packageName+ ")");
+    sendNewStatusOrIgnore(OnObbStateChangeListener.ERROR_PERMISSION_DENIED);
+    return;
+  }
+  mObbState.filename=obbInfo.filename;
+  int rc=StorageResultCode.OperationSucceeded;
+  String cmd=String.format("obb unmount %s%s",mObbState.filename,(mForceUnmount ? " force" : ""));
+  try {
+    mConnector.doCommand(cmd);
+  }
+ catch (  NativeDaemonConnectorException e) {
+    int code=e.getCode();
+    if (code == VoldResponseCode.OpFailedStorageBusy) {
+      rc=StorageResultCode.OperationFailedStorageBusy;
     }
-    int rc=StorageResultCode.OperationSucceeded;
-    String cmd=String.format("obb unmount %s%s",mObbState.filename,(mForceUnmount ? " force" : ""));
-    try {
-      mConnector.doCommand(cmd);
+ else     if (code == VoldResponseCode.OpFailedStorageNotFound) {
+      rc=StorageResultCode.OperationSucceeded;
     }
- catch (    NativeDaemonConnectorException e) {
-      int code=e.getCode();
-      if (code == VoldResponseCode.OpFailedStorageBusy) {
-        rc=StorageResultCode.OperationFailedStorageBusy;
-      }
- else       if (code == VoldResponseCode.OpFailedStorageNotFound) {
-        rc=StorageResultCode.OperationSucceeded;
-      }
  else {
-        rc=StorageResultCode.OperationFailedInternalError;
-      }
-    }
-    if (rc == StorageResultCode.OperationSucceeded) {
-      mObbState.mounted=false;
-      unmounted=true;
+      rc=StorageResultCode.OperationFailedInternalError;
     }
   }
-  if (unmounted) {
-    removeObbState(mObbState);
-    sendNewStatusOrIgnore(mObbState.filename,Environment.MEDIA_UNMOUNTED);
+  if (rc == StorageResultCode.OperationSucceeded) {
+synchronized (mObbMounts) {
+      removeObbStateLocked(obbState);
+    }
+    sendNewStatusOrIgnore(OnObbStateChangeListener.UNMOUNTED);
   }
  else {
-    sendNewStatusOrIgnore(mObbState.filename,Environment.MEDIA_MOUNTED);
+    Slog.w(TAG,"Could not mount OBB: " + mObbState.filename);
+    sendNewStatusOrIgnore(OnObbStateChangeListener.ERROR_COULD_NOT_UNMOUNT);
   }
 }

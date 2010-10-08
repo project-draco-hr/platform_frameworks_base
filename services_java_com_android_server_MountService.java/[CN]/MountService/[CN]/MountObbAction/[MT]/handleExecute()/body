@@ -1,50 +1,58 @@
 {
+  waitForReady();
+  warnOnNotMounted();
   final ObbInfo obbInfo=getObbInfo();
-  if (!mObbState.filename.equals(obbInfo.filename)) {
-    if (DEBUG_OBB)     Slog.i(TAG,"OBB filename " + mObbState.filename + " is actually "+ obbInfo.filename);
-synchronized (mObbMounts) {
-      if (isObbMounted(obbInfo.filename)) {
-        if (DEBUG_OBB)         Slog.i(TAG,"OBB already mounted as " + obbInfo.filename);
-        removeObbState(mObbState);
-        sendNewStatusOrIgnore(obbInfo.filename,Environment.MEDIA_MOUNTED);
-        return;
-      }
-      ObbState newObbState=new ObbState(obbInfo.filename,mObbState.token,mObbState.callerUid);
-      replaceObbState(mObbState,newObbState);
-      mObbState=newObbState;
-    }
-  }
   if (!isUidOwnerOfPackageOrSystem(obbInfo.packageName,mObbState.callerUid)) {
-    throw new IllegalArgumentException("Caller package does not match OBB file");
+    Slog.w(TAG,"Denied attempt to mount OBB " + obbInfo.filename + " which is owned by "+ obbInfo.packageName);
+    sendNewStatusOrIgnore(OnObbStateChangeListener.ERROR_PERMISSION_DENIED);
+    return;
   }
-  boolean mounted=false;
-  int rc;
-synchronized (mObbState) {
-    if (mObbState.mounted) {
-      sendNewStatusOrIgnore(mObbState.filename,Environment.MEDIA_MOUNTED);
+  final boolean isMounted;
+synchronized (mObbMounts) {
+    isMounted=mObbPathToStateMap.containsKey(obbInfo.filename);
+  }
+  if (isMounted) {
+    Slog.w(TAG,"Attempt to mount OBB which is already mounted: " + obbInfo.filename);
+    sendNewStatusOrIgnore(OnObbStateChangeListener.ERROR_ALREADY_MOUNTED);
+    return;
+  }
+  mObbState.filename=obbInfo.filename;
+  final String hashedKey;
+  if (mKey == null) {
+    hashedKey="none";
+  }
+ else {
+    final MessageDigest md;
+    try {
+      md=MessageDigest.getInstance("MD5");
+    }
+ catch (    NoSuchAlgorithmException e) {
+      Slog.e(TAG,"Could not load MD5 algorithm",e);
+      sendNewStatusOrIgnore(OnObbStateChangeListener.ERROR_PERMISSION_DENIED);
       return;
     }
-    rc=StorageResultCode.OperationSucceeded;
-    String cmd=String.format("obb mount %s %s %d",mObbState.filename,mKey != null ? mKey : "none",mObbState.callerUid);
-    try {
-      mConnector.doCommand(cmd);
-    }
- catch (    NativeDaemonConnectorException e) {
-      int code=e.getCode();
-      if (code != VoldResponseCode.OpFailedStorageBusy) {
-        rc=StorageResultCode.OperationFailedInternalError;
-      }
-    }
-    if (rc == StorageResultCode.OperationSucceeded) {
-      mObbState.mounted=mounted=true;
+    hashedKey=HexDump.toHexString(md.digest(mKey.getBytes()));
+  }
+  int rc=StorageResultCode.OperationSucceeded;
+  String cmd=String.format("obb mount %s %s %d",mObbState.filename,hashedKey,mObbState.callerUid);
+  try {
+    mConnector.doCommand(cmd);
+  }
+ catch (  NativeDaemonConnectorException e) {
+    int code=e.getCode();
+    if (code != VoldResponseCode.OpFailedStorageBusy) {
+      rc=StorageResultCode.OperationFailedInternalError;
     }
   }
-  if (mounted) {
-    sendNewStatusOrIgnore(mObbState.filename,Environment.MEDIA_MOUNTED);
+  if (rc == StorageResultCode.OperationSucceeded) {
+    if (DEBUG_OBB)     Slog.d(TAG,"Successfully mounted OBB " + mObbState.filename);
+synchronized (mObbMounts) {
+      addObbStateLocked(mObbState);
+    }
+    sendNewStatusOrIgnore(OnObbStateChangeListener.MOUNTED);
   }
  else {
     Slog.e(TAG,"Couldn't mount OBB file: " + rc);
-    removeObbState(mObbState);
-    sendNewStatusOrIgnore(mObbState.filename,Environment.MEDIA_UNMOUNTED);
+    sendNewStatusOrIgnore(OnObbStateChangeListener.ERROR_COULD_NOT_MOUNT);
   }
 }
