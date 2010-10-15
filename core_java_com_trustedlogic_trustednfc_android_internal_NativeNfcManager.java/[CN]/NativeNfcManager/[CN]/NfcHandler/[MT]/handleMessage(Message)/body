@@ -2,42 +2,66 @@
   try {
 switch (msg.what) {
 case MSG_NDEF_TAG:
-      Log.d(TAG,"Checking for NDEF tag message");
-    NativeNfcTag tag=(NativeNfcTag)msg.obj;
-  if (tag.doConnect()) {
-    if (tag.checkNDEF()) {
-      byte[] buff=tag.doRead();
+      Log.d(TAG,"Tag detected, notifying applications");
+    NativeNfcTag nativeTag=(NativeNfcTag)msg.obj;
+  if (nativeTag.doConnect()) {
+    if (nativeTag.checkNDEF()) {
+      byte[] buff=nativeTag.doRead();
       if (buff != null) {
-        NdefMessage msgNdef=new NdefMessage(buff);
-        if (msgNdef != null) {
-          Intent NdefMessageIntent=new Intent();
-          NdefMessageIntent.setAction(NfcManager.NDEF_TAG_DISCOVERED_ACTION);
-          NdefMessageIntent.putExtra(NfcManager.NDEF_MESSAGE_EXTRA,msgNdef);
-          Log.d(TAG,"NDEF message found, broadcasting to applications");
-          mContext.sendOrderedBroadcast(NdefMessageIntent,android.Manifest.permission.NFC_NOTIFY);
-          tag.doAsyncDisconnect();
+        NdefMessage[] msgNdef=new NdefMessage[1];
+        try {
+          msgNdef[0]=new NdefMessage(buff);
+          NdefTag tag=new NdefTag(convertType(nativeTag.getType()),nativeTag.getUid(),nativeTag.getHandle(),msgNdef);
+          Intent intent=new Intent();
+          intent.setAction(NfcAdapter.ACTION_NDEF_TAG_DISCOVERED);
+          intent.putExtra(NfcAdapter.EXTRA_TAG,tag);
+          intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+          Log.d(TAG,"NDEF tag found, starting corresponding activity");
+          try {
+            mContext.startActivity(intent);
+          }
+ catch (          ActivityNotFoundException e) {
+            Log.w(TAG,"No activity found, disconnecting");
+            nativeTag.doAsyncDisconnect();
+          }
+        }
+ catch (        FormatException e) {
+          Log.w(TAG,"Unable to create NDEF message object (tag empty or not well formated)");
+          nativeTag.doAsyncDisconnect();
         }
       }
  else {
         Log.w(TAG,"Unable to read NDEF message (tag empty or not well formated)");
-        tag.doAsyncDisconnect();
+        nativeTag.doAsyncDisconnect();
       }
     }
  else {
-      Log.d(TAG,"Tag is *not* NDEF compliant");
-      tag.doAsyncDisconnect();
+      Intent intent=new Intent();
+      Tag tag=new Tag(convertType(nativeTag.getType()),false,nativeTag.getUid(),nativeTag.getHandle());
+      intent.setAction(NfcAdapter.ACTION_TAG_DISCOVERED);
+      intent.putExtra(NfcAdapter.EXTRA_TAG,tag);
+      intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+      Log.d(TAG,"Non-NDEF tag found, starting corresponding activity");
+      try {
+        mContext.startActivity(intent);
+      }
+ catch (      ActivityNotFoundException e) {
+        Log.w(TAG,"No activity found, disconnecting");
+        nativeTag.doAsyncDisconnect();
+      }
     }
   }
  else {
-    tag.doAsyncDisconnect();
+    Log.w(TAG,"Failed to connect to tag");
+    nativeTag.doAsyncDisconnect();
   }
 break;
 case MSG_CARD_EMULATION:
 Log.d(TAG,"Card Emulation message");
 byte[] aid=(byte[])msg.obj;
 Intent TransactionIntent=new Intent();
-TransactionIntent.setAction(NfcManager.TRANSACTION_DETECTED_ACTION);
-TransactionIntent.putExtra(NfcManager.AID_EXTRA,aid);
+TransactionIntent.setAction(NfcAdapter.ACTION_TRANSACTION_DETECTED);
+TransactionIntent.putExtra(NfcAdapter.EXTRA_AID,aid);
 Log.d(TAG,"Broadcasting Card Emulation event");
 mContext.sendOrderedBroadcast(TransactionIntent,android.Manifest.permission.NFC_NOTIFY);
 break;
@@ -51,7 +75,7 @@ if (doActivateLlcp()) {
 Log.d(TAG,"Initiator Activate LLCP OK");
 Intent LlcpLinkIntent=new Intent();
 LlcpLinkIntent.setAction(INTERNAL_LLCP_LINK_STATE_CHANGED_ACTION);
-LlcpLinkIntent.putExtra(INTERNAL_LLCP_LINK_STATE_CHANGED_EXTRA,NfcManager.LLCP_LINK_STATE_ACTIVATED);
+LlcpLinkIntent.putExtra(INTERNAL_LLCP_LINK_STATE_CHANGED_EXTRA,NfcAdapter.LLCP_LINK_STATE_ACTIVATED);
 Log.d(TAG,"Broadcasting internal LLCP activation");
 mContext.sendBroadcast(LlcpLinkIntent);
 }
@@ -67,7 +91,7 @@ if (doActivateLlcp()) {
 Log.d(TAG,"Target Activate LLCP OK");
 Intent LlcpLinkIntent=new Intent();
 LlcpLinkIntent.setAction(INTERNAL_LLCP_LINK_STATE_CHANGED_ACTION);
-LlcpLinkIntent.putExtra(INTERNAL_LLCP_LINK_STATE_CHANGED_EXTRA,NfcManager.LLCP_LINK_STATE_ACTIVATED);
+LlcpLinkIntent.putExtra(INTERNAL_LLCP_LINK_STATE_CHANGED_EXTRA,NfcAdapter.LLCP_LINK_STATE_ACTIVATED);
 Log.d(TAG,"Broadcasting internal LLCP activation");
 mContext.sendBroadcast(LlcpLinkIntent);
 }
@@ -77,8 +101,8 @@ break;
 case MSG_LLCP_LINK_DEACTIVATED:
 Log.d(TAG,"LLCP Link Deactivated message");
 Intent LlcpLinkIntent=new Intent();
-LlcpLinkIntent.setAction(NfcManager.LLCP_LINK_STATE_CHANGED_ACTION);
-LlcpLinkIntent.putExtra(NfcManager.LLCP_LINK_STATE_CHANGED_EXTRA,NfcManager.LLCP_LINK_STATE_DEACTIVATED);
+LlcpLinkIntent.setAction(NfcAdapter.ACTION_LLCP_LINK_STATE_CHANGED);
+LlcpLinkIntent.putExtra(NfcAdapter.EXTRA_LLCP_LINK_STATE_CHANGED,NfcAdapter.LLCP_LINK_STATE_DEACTIVATED);
 Log.d(TAG,"Broadcasting LLCP deactivation");
 mContext.sendOrderedBroadcast(LlcpLinkIntent,android.Manifest.permission.NFC_LLCP);
 break;
