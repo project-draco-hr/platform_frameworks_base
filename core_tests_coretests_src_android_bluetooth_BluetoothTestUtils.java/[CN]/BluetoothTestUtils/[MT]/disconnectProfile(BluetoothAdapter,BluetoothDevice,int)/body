@@ -1,0 +1,53 @@
+{
+  int mask=(ConnectProfileReceiver.STATE_DISCONNECTING_FLAG | ConnectProfileReceiver.STATE_DISCONNECTED_FLAG);
+  long start=-1;
+  if (!adapter.isEnabled()) {
+    fail(String.format("disconnectProfile() bluetooth not enabled: device=%s, profile=%d",device,profile));
+  }
+  if (!adapter.getBondedDevices().contains(device)) {
+    fail(String.format("disconnectProfile() device not paired: device=%s, profile=%d",device,profile));
+  }
+  BluetoothProfile proxy=connectProxy(adapter,profile);
+  if (proxy == null) {
+    fail(String.format("disconnectProfile() unknown profile: device=%s, profile=%d",device,profile));
+  }
+  ConnectProfileReceiver receiver=getConnectProfileReceiver(device,profile,mask);
+  int state=proxy.getConnectionState(device);
+switch (state) {
+case BluetoothProfile.STATE_CONNECTED:
+case BluetoothProfile.STATE_CONNECTING:
+    start=System.currentTimeMillis();
+  assertTrue(proxy.disconnect(device));
+break;
+case BluetoothProfile.STATE_DISCONNECTED:
+removeReceiver(receiver);
+return;
+case BluetoothProfile.STATE_DISCONNECTING:
+mask=0;
+break;
+default :
+removeReceiver(receiver);
+fail(String.format("disconnectProfile() invalid state: device=%s, profile=%d, " + "state=%d",device,profile,state));
+}
+long s=System.currentTimeMillis();
+while (System.currentTimeMillis() - s < DISCONNECT_PROFILE_TIMEOUT) {
+state=proxy.getConnectionState(device);
+if (state == BluetoothProfile.STATE_DISCONNECTED) {
+if ((receiver.getFiredFlags() & mask) == mask) {
+long finish=receiver.getCompletedTime();
+if (start != -1 && finish != -1) {
+writeOutput(String.format("disconnectProfile() completed in %d ms: " + "device=%s, profile=%d",(finish - start),device,profile));
+}
+ else {
+writeOutput(String.format("disconnectProfile() completed: device=%s, " + "profile=%d",device,profile));
+}
+removeReceiver(receiver);
+return;
+}
+}
+sleep(POLL_TIME);
+}
+int firedFlags=receiver.getFiredFlags();
+removeReceiver(receiver);
+fail(String.format("disconnectProfile() timeout: device=%s, profile=%s, " + "state=%d (expected %d), flags=0x%x (expected 0x%x)",device,profile,state,BluetoothProfile.STATE_DISCONNECTED,firedFlags,mask));
+}
