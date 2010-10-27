@@ -1,0 +1,84 @@
+{
+  boolean logOutlier=false;
+  long dischargeDuration=0;
+  mBatteryLevelCritical=mBatteryLevel <= mCriticalBatteryLevel;
+  if (mAcOnline) {
+    mPlugType=BatteryManager.BATTERY_PLUGGED_AC;
+  }
+ else   if (mUsbOnline) {
+    mPlugType=BatteryManager.BATTERY_PLUGGED_USB;
+  }
+ else {
+    mPlugType=BATTERY_PLUGGED_NONE;
+  }
+  try {
+    mBatteryStats.setBatteryState(mBatteryStatus,mBatteryHealth,mPlugType,mBatteryLevel,mBatteryTemperature,mBatteryVoltage);
+  }
+ catch (  RemoteException e) {
+  }
+  shutdownIfNoPower();
+  shutdownIfOverTemp();
+  if (mBatteryStatus != mLastBatteryStatus || mBatteryHealth != mLastBatteryHealth || mBatteryPresent != mLastBatteryPresent || mBatteryLevel != mLastBatteryLevel || mPlugType != mLastPlugType || mBatteryVoltage != mLastBatteryVoltage || mBatteryTemperature != mLastBatteryTemperature || mInvalidCharger != mLastInvalidCharger) {
+    if (mPlugType != mLastPlugType) {
+      if (mLastPlugType == BATTERY_PLUGGED_NONE) {
+        if (mDischargeStartTime != 0 && mDischargeStartLevel != mBatteryLevel) {
+          dischargeDuration=SystemClock.elapsedRealtime() - mDischargeStartTime;
+          logOutlier=true;
+          EventLog.writeEvent(EventLogTags.BATTERY_DISCHARGE,dischargeDuration,mDischargeStartLevel,mBatteryLevel);
+          mDischargeStartTime=0;
+        }
+      }
+ else       if (mPlugType == BATTERY_PLUGGED_NONE) {
+        mDischargeStartTime=SystemClock.elapsedRealtime();
+        mDischargeStartLevel=mBatteryLevel;
+      }
+    }
+    if (mBatteryStatus != mLastBatteryStatus || mBatteryHealth != mLastBatteryHealth || mBatteryPresent != mLastBatteryPresent || mPlugType != mLastPlugType) {
+      EventLog.writeEvent(EventLogTags.BATTERY_STATUS,mBatteryStatus,mBatteryHealth,mBatteryPresent ? 1 : 0,mPlugType,mBatteryTechnology);
+    }
+    if (mBatteryLevel != mLastBatteryLevel || mBatteryVoltage != mLastBatteryVoltage || mBatteryTemperature != mLastBatteryTemperature) {
+      EventLog.writeEvent(EventLogTags.BATTERY_LEVEL,mBatteryLevel,mBatteryVoltage,mBatteryTemperature);
+    }
+    if (mBatteryLevelCritical && !mLastBatteryLevelCritical && mPlugType == BATTERY_PLUGGED_NONE) {
+      dischargeDuration=SystemClock.elapsedRealtime() - mDischargeStartTime;
+      logOutlier=true;
+    }
+    final boolean plugged=mPlugType != BATTERY_PLUGGED_NONE;
+    final boolean oldPlugged=mLastPlugType != BATTERY_PLUGGED_NONE;
+    final boolean sendBatteryLow=!plugged && mBatteryStatus != BatteryManager.BATTERY_STATUS_UNKNOWN && mBatteryLevel <= mLowBatteryWarningLevel && (oldPlugged || mLastBatteryLevel > mLowBatteryWarningLevel);
+    sendIntent();
+    Intent statusIntent=new Intent();
+    statusIntent.setFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY_BEFORE_BOOT);
+    if (mPlugType != 0 && mLastPlugType == 0) {
+      statusIntent.setAction(Intent.ACTION_POWER_CONNECTED);
+      mContext.sendBroadcast(statusIntent);
+    }
+ else     if (mPlugType == 0 && mLastPlugType != 0) {
+      statusIntent.setAction(Intent.ACTION_POWER_DISCONNECTED);
+      mContext.sendBroadcast(statusIntent);
+    }
+    if (sendBatteryLow) {
+      mSentLowBatteryBroadcast=true;
+      statusIntent.setAction(Intent.ACTION_BATTERY_LOW);
+      mContext.sendBroadcast(statusIntent);
+    }
+ else     if (mSentLowBatteryBroadcast && mLastBatteryLevel >= mLowBatteryCloseWarningLevel) {
+      mSentLowBatteryBroadcast=false;
+      statusIntent.setAction(Intent.ACTION_BATTERY_OKAY);
+      mContext.sendBroadcast(statusIntent);
+    }
+    mLed.updateLightsLocked();
+    if (logOutlier && dischargeDuration != 0) {
+      logOutlier(dischargeDuration);
+    }
+    mLastBatteryStatus=mBatteryStatus;
+    mLastBatteryHealth=mBatteryHealth;
+    mLastBatteryPresent=mBatteryPresent;
+    mLastBatteryLevel=mBatteryLevel;
+    mLastPlugType=mPlugType;
+    mLastBatteryVoltage=mBatteryVoltage;
+    mLastBatteryTemperature=mBatteryTemperature;
+    mLastBatteryLevelCritical=mBatteryLevelCritical;
+    mLastInvalidCharger=mInvalidCharger;
+  }
+}
