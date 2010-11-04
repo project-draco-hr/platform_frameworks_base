@@ -55,35 +55,45 @@
       if (isSyncable == 0) {
         continue;
       }
+      final RegisteredServicesCache.ServiceInfo<SyncAdapterType> syncAdapterInfo=mSyncAdapters.getServiceInfo(SyncAdapterType.newKey(authority,account.type));
+      if (syncAdapterInfo == null) {
+        continue;
+      }
+      final boolean allowParallelSyncs=syncAdapterInfo.type.allowParallelSyncs();
+      final boolean isAlwaysSyncable=syncAdapterInfo.type.isAlwaysSyncable();
+      if (isSyncable < 0 && isAlwaysSyncable) {
+        mSyncStorageEngine.setIsSyncable(account,authority,1);
+        isSyncable=1;
+      }
       if (onlyThoseWithUnkownSyncableState && isSyncable >= 0) {
         continue;
       }
-      final RegisteredServicesCache.ServiceInfo<SyncAdapterType> syncAdapterInfo=mSyncAdapters.getServiceInfo(SyncAdapterType.newKey(authority,account.type));
-      if (syncAdapterInfo != null) {
-        if (!syncAdapterInfo.type.supportsUploading() && uploadOnly) {
-          continue;
+      if (!syncAdapterInfo.type.supportsUploading() && uploadOnly) {
+        continue;
+      }
+      boolean syncAllowed=(isSyncable < 0) || ignoreSettings || (backgroundDataUsageAllowed && masterSyncAutomatically && mSyncStorageEngine.getSyncAutomatically(account,authority));
+      if (!syncAllowed) {
+        if (isLoggable) {
+          Log.d(TAG,"scheduleSync: sync of " + account + ", "+ authority+ " is not allowed, dropping request");
         }
-        boolean syncAllowed=(isSyncable < 0) || ignoreSettings || (backgroundDataUsageAllowed && masterSyncAutomatically && mSyncStorageEngine.getSyncAutomatically(account,authority));
-        if (!syncAllowed) {
-          if (isLoggable) {
-            Log.d(TAG,"scheduleSync: sync of " + account + ", "+ authority+ " is not allowed, dropping request");
-          }
-          continue;
+        continue;
+      }
+      Pair<Long,Long> backoff=mSyncStorageEngine.getBackoff(account,authority);
+      long delayUntil=mSyncStorageEngine.getDelayUntilTime(account,authority);
+      final long backoffTime=backoff != null ? backoff.first : 0;
+      if (isSyncable < 0) {
+        Bundle newExtras=new Bundle();
+        newExtras.putBoolean(ContentResolver.SYNC_EXTRAS_INITIALIZE,true);
+        if (isLoggable) {
+          Log.v(TAG,"scheduleSync:" + " delay " + delay + ", source "+ source+ ", account "+ account+ ", authority "+ authority+ ", extras "+ newExtras);
         }
-        Pair<Long,Long> backoff=mSyncStorageEngine.getBackoff(account,authority);
-        long delayUntil=mSyncStorageEngine.getDelayUntilTime(account,authority);
-        final long backoffTime=backoff != null ? backoff.first : 0;
-        if (isSyncable < 0) {
-          Bundle newExtras=new Bundle();
-          newExtras.putBoolean(ContentResolver.SYNC_EXTRAS_INITIALIZE,true);
-          scheduleSyncOperation(new SyncOperation(account,source,authority,newExtras,0,backoffTime,delayUntil));
+        scheduleSyncOperation(new SyncOperation(account,source,authority,newExtras,0,backoffTime,delayUntil,allowParallelSyncs));
+      }
+      if (!onlyThoseWithUnkownSyncableState) {
+        if (isLoggable) {
+          Log.v(TAG,"scheduleSync:" + " delay " + delay + ", source "+ source+ ", account "+ account+ ", authority "+ authority+ ", extras "+ extras);
         }
-        if (!onlyThoseWithUnkownSyncableState) {
-          if (isLoggable) {
-            Log.v(TAG,"scheduleSync:" + " delay " + delay + ", source "+ source+ ", account "+ account+ ", authority "+ authority+ ", extras "+ extras);
-          }
-          scheduleSyncOperation(new SyncOperation(account,source,authority,extras,delay,backoffTime,delayUntil));
-        }
+        scheduleSyncOperation(new SyncOperation(account,source,authority,extras,delay,backoffTime,delayUntil,allowParallelSyncs));
       }
     }
   }
