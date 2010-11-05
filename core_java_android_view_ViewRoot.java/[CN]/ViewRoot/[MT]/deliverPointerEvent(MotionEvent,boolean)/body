@@ -1,0 +1,78 @@
+{
+  if (mView == null || !mAdded) {
+    finishPointerEvent(event,sendDone,false);
+    return;
+  }
+  if (mTranslator != null) {
+    mTranslator.translateEventInScreenToAppWindow(event);
+  }
+  boolean isDown=event.getAction() == MotionEvent.ACTION_DOWN;
+  if (isDown) {
+    ensureTouchMode(true);
+  }
+  if (Config.LOGV) {
+    captureMotionLog("captureDispatchPointer",event);
+  }
+  if (mCurScrollY != 0) {
+    event.offsetLocation(0,mCurScrollY);
+  }
+  if (MEASURE_LATENCY) {
+    lt.sample("A Dispatching TouchEvents",System.nanoTime() - event.getEventTimeNano());
+  }
+  mLastTouchPoint.x=event.getRawX();
+  mLastTouchPoint.y=event.getRawY();
+  boolean handled=mView.dispatchTouchEvent(event);
+  if (MEASURE_LATENCY) {
+    lt.sample("B Dispatched TouchEvents ",System.nanoTime() - event.getEventTimeNano());
+  }
+  if (handled) {
+    finishPointerEvent(event,sendDone,true);
+    return;
+  }
+  final int edgeFlags=event.getEdgeFlags();
+  if (edgeFlags != 0 && mView instanceof ViewGroup) {
+    final int edgeSlop=mViewConfiguration.getScaledEdgeSlop();
+    int direction=View.FOCUS_UP;
+    int x=(int)event.getX();
+    int y=(int)event.getY();
+    final int[] deltas=new int[2];
+    if ((edgeFlags & MotionEvent.EDGE_TOP) != 0) {
+      direction=View.FOCUS_DOWN;
+      if ((edgeFlags & MotionEvent.EDGE_LEFT) != 0) {
+        deltas[0]=edgeSlop;
+        x+=edgeSlop;
+      }
+ else       if ((edgeFlags & MotionEvent.EDGE_RIGHT) != 0) {
+        deltas[0]=-edgeSlop;
+        x-=edgeSlop;
+      }
+    }
+ else     if ((edgeFlags & MotionEvent.EDGE_BOTTOM) != 0) {
+      direction=View.FOCUS_UP;
+      if ((edgeFlags & MotionEvent.EDGE_LEFT) != 0) {
+        deltas[0]=edgeSlop;
+        x+=edgeSlop;
+      }
+ else       if ((edgeFlags & MotionEvent.EDGE_RIGHT) != 0) {
+        deltas[0]=-edgeSlop;
+        x-=edgeSlop;
+      }
+    }
+ else     if ((edgeFlags & MotionEvent.EDGE_LEFT) != 0) {
+      direction=View.FOCUS_RIGHT;
+    }
+ else     if ((edgeFlags & MotionEvent.EDGE_RIGHT) != 0) {
+      direction=View.FOCUS_LEFT;
+    }
+    View nearest=FocusFinder.getInstance().findNearestTouchable(((ViewGroup)mView),x,y,direction,deltas);
+    if (nearest != null) {
+      event.offsetLocation(deltas[0],deltas[1]);
+      event.setEdgeFlags(0);
+      if (mView.dispatchTouchEvent(event)) {
+        finishPointerEvent(event,sendDone,true);
+        return;
+      }
+    }
+  }
+  finishPointerEvent(event,sendDone,false);
+}
