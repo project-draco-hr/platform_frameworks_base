@@ -1,2 +1,54 @@
 {
+synchronized (WebView.class) {
+    if (sPackageInstallationReceiver != null) {
+      return;
+    }
+    IntentFilter filter=new IntentFilter(Intent.ACTION_PACKAGE_ADDED);
+    filter.addAction(Intent.ACTION_PACKAGE_REMOVED);
+    filter.addDataScheme("package");
+    sPackageInstallationReceiver=new BroadcastReceiver(){
+      @Override public void onReceive(      Context context,      Intent intent){
+        final String action=intent.getAction();
+        final String packageName=intent.getData().getSchemeSpecificPart();
+        final boolean replacing=intent.getBooleanExtra(Intent.EXTRA_REPLACING,false);
+        if (Intent.ACTION_PACKAGE_REMOVED.equals(action) && replacing) {
+          return;
+        }
+        if (sGoogleApps.contains(packageName) && mWebViewCore != null) {
+          if (Intent.ACTION_PACKAGE_ADDED.equals(action)) {
+            mWebViewCore.sendMessage(EventHub.ADD_PACKAGE_NAME,packageName);
+          }
+ else {
+            mWebViewCore.sendMessage(EventHub.REMOVE_PACKAGE_NAME,packageName);
+          }
+        }
+        PluginManager pm=PluginManager.getInstance(context);
+        if (pm.containsPluginPermissionAndSignatures(packageName)) {
+          pm.refreshPlugins(Intent.ACTION_PACKAGE_ADDED.equals(action));
+        }
+      }
+    }
+;
+    context.getApplicationContext().registerReceiver(sPackageInstallationReceiver,filter);
+  }
+  AsyncTask<Void,Void,Set<String>> task=new AsyncTask<Void,Void,Set<String>>(){
+    @Override protected Set<String> doInBackground(    Void... unused){
+      Set<String> installedPackages=new HashSet<String>();
+      PackageManager pm=mContext.getPackageManager();
+      List<PackageInfo> packages=pm.getInstalledPackages(0);
+      for (      PackageInfo p : packages) {
+        if (sGoogleApps.contains(p.packageName)) {
+          installedPackages.add(p.packageName);
+        }
+      }
+      return installedPackages;
+    }
+    @Override protected void onPostExecute(    Set<String> installedPackages){
+      if (mWebViewCore != null) {
+        mWebViewCore.sendMessage(EventHub.ADD_PACKAGE_NAMES,installedPackages);
+      }
+    }
+  }
+;
+  task.execute();
 }
