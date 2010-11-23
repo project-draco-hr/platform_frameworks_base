@@ -35,6 +35,7 @@
     r.resultTo=null;
   }
   boolean addingToTask=false;
+  TaskRecord reuseTask=null;
   if (((launchFlags & Intent.FLAG_ACTIVITY_NEW_TASK) != 0 && (launchFlags & Intent.FLAG_ACTIVITY_MULTIPLE_TASK) == 0) || r.launchMode == ActivityInfo.LAUNCH_SINGLE_TASK || r.launchMode == ActivityInfo.LAUNCH_SINGLE_INSTANCE) {
     if (r.resultTo == null) {
       ActivityRecord taskTop=r.launchMode != ActivityInfo.LAUNCH_SINGLE_INSTANCE ? findTaskLocked(intent,r.info) : findActivityLocked(intent,r.info);
@@ -47,6 +48,7 @@
           r.intent.addFlags(Intent.FLAG_ACTIVITY_BROUGHT_TO_FRONT);
           boolean callerAtFront=sourceRecord == null || curTop.task == sourceRecord.task;
           if (callerAtFront) {
+            moveHomeToFrontFromLaunchLocked(launchFlags);
             moveTaskToFrontLocked(taskTop.task,r);
           }
         }
@@ -59,8 +61,13 @@
           }
           return START_RETURN_INTENT_TO_CALLER;
         }
-        if ((launchFlags & Intent.FLAG_ACTIVITY_CLEAR_TOP) != 0 || r.launchMode == ActivityInfo.LAUNCH_SINGLE_TASK || r.launchMode == ActivityInfo.LAUNCH_SINGLE_INSTANCE) {
-          ActivityRecord top=performClearTaskLocked(taskTop.task.taskId,r,launchFlags,true);
+        if ((launchFlags & (Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK)) == (Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK)) {
+          reuseTask=taskTop.task;
+          performClearTaskLocked(taskTop.task.taskId);
+          reuseTask.setIntent(r.intent,r.info);
+        }
+ else         if ((launchFlags & Intent.FLAG_ACTIVITY_CLEAR_TOP) != 0 || r.launchMode == ActivityInfo.LAUNCH_SINGLE_TASK || r.launchMode == ActivityInfo.LAUNCH_SINGLE_INSTANCE) {
+          ActivityRecord top=performClearTaskLocked(taskTop.task.taskId,r,launchFlags);
           if (top != null) {
             if (top.frontOfTask) {
               top.task.setIntent(r.intent,r.info);
@@ -93,7 +100,7 @@
  else         if (!taskTop.task.rootWasReset) {
           taskTop.task.setIntent(r.intent,r.info);
         }
-        if (!addingToTask) {
+        if (!addingToTask && reuseTask == null) {
           if (doResume) {
             resumeTopActivityLocked(null);
           }
@@ -130,20 +137,26 @@
   }
   boolean newTask=false;
   if (r.resultTo == null && !addingToTask && (launchFlags & Intent.FLAG_ACTIVITY_NEW_TASK) != 0) {
-    mService.mCurTask++;
-    if (mService.mCurTask <= 0) {
-      mService.mCurTask=1;
+    if (reuseTask == null) {
+      mService.mCurTask++;
+      if (mService.mCurTask <= 0) {
+        mService.mCurTask=1;
+      }
+      r.task=new TaskRecord(mService.mCurTask,r.info,intent);
+      if (DEBUG_TASKS)       Slog.v(TAG,"Starting new activity " + r + " in new task "+ r.task);
     }
-    r.task=new TaskRecord(mService.mCurTask,r.info,intent,(r.info.flags & ActivityInfo.FLAG_CLEAR_TASK_ON_LAUNCH) != 0);
-    if (DEBUG_TASKS)     Slog.v(TAG,"Starting new activity " + r + " in new task "+ r.task);
+ else {
+      r.task=reuseTask;
+    }
     newTask=true;
     if (mMainStack) {
       mService.addRecentTaskLocked(r.task);
     }
+    moveHomeToFrontFromLaunchLocked(launchFlags);
   }
  else   if (sourceRecord != null) {
     if (!addingToTask && (launchFlags & Intent.FLAG_ACTIVITY_CLEAR_TOP) != 0) {
-      ActivityRecord top=performClearTaskLocked(sourceRecord.task.taskId,r,launchFlags,true);
+      ActivityRecord top=performClearTaskLocked(sourceRecord.task.taskId,r,launchFlags);
       if (top != null) {
         logStartActivity(EventLogTags.AM_NEW_INTENT,r,top.task);
         top.deliverNewIntentLocked(callingUid,r.intent);
@@ -171,7 +184,7 @@
  else {
     final int N=mHistory.size();
     ActivityRecord prev=N > 0 ? (ActivityRecord)mHistory.get(N - 1) : null;
-    r.task=prev != null ? prev.task : new TaskRecord(mService.mCurTask,r.info,intent,(r.info.flags & ActivityInfo.FLAG_CLEAR_TASK_ON_LAUNCH) != 0);
+    r.task=prev != null ? prev.task : new TaskRecord(mService.mCurTask,r.info,intent);
     if (DEBUG_TASKS)     Slog.v(TAG,"Starting new activity " + r + " in new guessed "+ r.task);
   }
   if (grantedUriPermissions != null && callingUid > 0) {
