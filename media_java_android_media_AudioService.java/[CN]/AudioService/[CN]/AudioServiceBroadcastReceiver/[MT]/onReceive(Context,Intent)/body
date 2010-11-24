@@ -72,16 +72,19 @@ break;
 }
 }
 boolean isConnected=(mConnectedDevices.containsKey(device) && mConnectedDevices.get(device).equals(address));
+synchronized (mScoClients) {
 if (isConnected && state != BluetoothProfile.STATE_CONNECTED) {
 AudioSystem.setDeviceConnectionState(device,AudioSystem.DEVICE_STATE_UNAVAILABLE,address);
 mConnectedDevices.remove(device);
 mBluetoothHeadsetDevice=null;
-clearAllScoClients();
+clearAllScoClients(null,false);
+mScoAudioState=SCO_STATE_INACTIVE;
 }
  else if (!isConnected && state == BluetoothProfile.STATE_CONNECTED) {
 AudioSystem.setDeviceConnectionState(device,AudioSystem.DEVICE_STATE_AVAILABLE,address);
 mConnectedDevices.put(new Integer(device),address);
 mBluetoothHeadsetDevice=btDevice;
+}
 }
 }
  else if (action.equals(Intent.ACTION_HEADSET_PLUG)) {
@@ -137,28 +140,42 @@ mConnectedDevices.put(new Integer(AudioSystem.DEVICE_OUT_DGTL_DOCK_HEADSET),"");
 }
 }
  else if (action.equals(BluetoothHeadset.ACTION_AUDIO_STATE_CHANGED)) {
-int state=intent.getIntExtra(BluetoothProfile.EXTRA_STATE,-1);
+boolean broadcast=false;
+int audioState=AudioManager.SCO_AUDIO_STATE_ERROR;
 synchronized (mScoClients) {
-if (!mScoClients.isEmpty()) {
-switch (state) {
+int btState=intent.getIntExtra(BluetoothProfile.EXTRA_STATE,-1);
+if (!mScoClients.isEmpty() && mScoAudioState == SCO_STATE_ACTIVE_INTERNAL) {
+broadcast=true;
+}
+switch (btState) {
 case BluetoothHeadset.STATE_AUDIO_CONNECTED:
-state=AudioManager.SCO_AUDIO_STATE_CONNECTED;
+audioState=AudioManager.SCO_AUDIO_STATE_CONNECTED;
+if (mScoAudioState != SCO_STATE_ACTIVE_INTERNAL) {
+mScoAudioState=SCO_STATE_ACTIVE_EXTERNAL;
+}
 break;
 case BluetoothHeadset.STATE_AUDIO_DISCONNECTED:
-state=AudioManager.SCO_AUDIO_STATE_DISCONNECTED;
+audioState=AudioManager.SCO_AUDIO_STATE_DISCONNECTED;
+mScoAudioState=SCO_STATE_INACTIVE;
 break;
 case BluetoothHeadset.STATE_AUDIO_CONNECTING:
-break;
+if (mScoAudioState != SCO_STATE_ACTIVE_INTERNAL) {
+mScoAudioState=SCO_STATE_ACTIVE_EXTERNAL;
+}
 default :
-state=AudioManager.SCO_AUDIO_STATE_ERROR;
+broadcast=false;
 break;
 }
-if (state != AudioManager.SCO_AUDIO_STATE_ERROR) {
+}
+if (broadcast) {
 Intent newIntent=new Intent(AudioManager.ACTION_SCO_AUDIO_STATE_CHANGED);
-newIntent.putExtra(AudioManager.EXTRA_SCO_AUDIO_STATE,state);
+newIntent.putExtra(AudioManager.EXTRA_SCO_AUDIO_STATE,audioState);
 mContext.sendStickyBroadcast(newIntent);
 }
 }
-}
+ else if (action.equals(Intent.ACTION_BOOT_COMPLETED)) {
+Intent newIntent=new Intent(AudioManager.ACTION_SCO_AUDIO_STATE_CHANGED);
+newIntent.putExtra(AudioManager.EXTRA_SCO_AUDIO_STATE,AudioManager.SCO_AUDIO_STATE_DISCONNECTED);
+mContext.sendStickyBroadcast(newIntent);
 }
 }
