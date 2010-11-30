@@ -1,0 +1,53 @@
+{
+  final String packageName=app.packageName;
+  if (DEBUG)   Slog.d(TAG,"processOneRestore packageName=" + packageName);
+  File backupDataName=new File(mDataDir,packageName + ".restore");
+  File newStateName=new File(mStateDir,packageName + ".new");
+  File savedStateName=new File(mStateDir,packageName);
+  ParcelFileDescriptor backupData=null;
+  ParcelFileDescriptor newState=null;
+  int token=mTokenGenerator.nextInt();
+  try {
+    backupData=ParcelFileDescriptor.open(backupDataName,ParcelFileDescriptor.MODE_READ_WRITE | ParcelFileDescriptor.MODE_CREATE | ParcelFileDescriptor.MODE_TRUNCATE);
+    if (mTransport.getRestoreData(backupData) != BackupConstants.TRANSPORT_OK) {
+      Slog.e(TAG,"Error getting restore data for " + packageName);
+      EventLog.writeEvent(EventLogTags.RESTORE_TRANSPORT_FAILURE);
+      return;
+    }
+    backupData.close();
+    backupData=ParcelFileDescriptor.open(backupDataName,ParcelFileDescriptor.MODE_READ_ONLY);
+    newState=ParcelFileDescriptor.open(newStateName,ParcelFileDescriptor.MODE_READ_WRITE | ParcelFileDescriptor.MODE_CREATE | ParcelFileDescriptor.MODE_TRUNCATE);
+    prepareOperationTimeout(token,TIMEOUT_RESTORE_INTERVAL);
+    agent.doRestore(backupData,appVersionCode,newState,token,mBackupManagerBinder);
+    boolean success=waitUntilOperationComplete(token);
+    if (!success) {
+      throw new RuntimeException("restore timeout");
+    }
+    newStateName.delete();
+    int size=(int)backupDataName.length();
+    EventLog.writeEvent(EventLogTags.RESTORE_PACKAGE,packageName,size);
+  }
+ catch (  Exception e) {
+    Slog.e(TAG,"Error restoring data for " + packageName,e);
+    EventLog.writeEvent(EventLogTags.RESTORE_AGENT_FAILURE,packageName,e.toString());
+    clearApplicationDataSynchronous(packageName);
+  }
+ finally {
+    backupDataName.delete();
+    try {
+      if (backupData != null)       backupData.close();
+    }
+ catch (    IOException e) {
+    }
+    try {
+      if (newState != null)       newState.close();
+    }
+ catch (    IOException e) {
+    }
+    backupData=newState=null;
+    mCurrentOperations.delete(token);
+    if (needFullBackup) {
+      newStateName.delete();
+    }
+  }
+}
