@@ -1,56 +1,62 @@
 {
   checkLock();
   try {
-    long current=System.currentTimeMillis();
     if (mViewRoot == null) {
       return new SceneResult(SceneStatus.ERROR_NOT_INFLATED);
     }
     int w_spec, h_spec;
-    int renderScreenWidth=mParams.getScreenWidth();
-    int renderScreenHeight=mParams.getScreenHeight();
     RenderingMode renderingMode=mParams.getRenderingMode();
-    if (renderingMode != RenderingMode.NORMAL) {
-      w_spec=MeasureSpec.makeMeasureSpec(renderScreenWidth,renderingMode.isHorizExpand() ? MeasureSpec.UNSPECIFIED : MeasureSpec.EXACTLY);
-      h_spec=MeasureSpec.makeMeasureSpec(renderScreenHeight - mScreenOffset,renderingMode.isVertExpand() ? MeasureSpec.UNSPECIFIED : MeasureSpec.EXACTLY);
-      mViewRoot.measure(w_spec,h_spec);
-      if (renderingMode.isHorizExpand()) {
-        int neededWidth=mViewRoot.getChildAt(0).getMeasuredWidth();
-        if (neededWidth > renderScreenWidth) {
-          renderScreenWidth=neededWidth;
+    boolean newRenderSize=false;
+    if (mMeasuredScreenWidth == -1) {
+      newRenderSize=true;
+      mMeasuredScreenWidth=mParams.getScreenWidth();
+      mMeasuredScreenHeight=mParams.getScreenHeight();
+      if (renderingMode != RenderingMode.NORMAL) {
+        w_spec=MeasureSpec.makeMeasureSpec(mMeasuredScreenWidth,renderingMode.isHorizExpand() ? MeasureSpec.UNSPECIFIED : MeasureSpec.EXACTLY);
+        h_spec=MeasureSpec.makeMeasureSpec(mMeasuredScreenHeight - mScreenOffset,renderingMode.isVertExpand() ? MeasureSpec.UNSPECIFIED : MeasureSpec.EXACTLY);
+        mViewRoot.measure(w_spec,h_spec);
+        if (renderingMode.isHorizExpand()) {
+          int neededWidth=mViewRoot.getChildAt(0).getMeasuredWidth();
+          if (neededWidth > mMeasuredScreenWidth) {
+            mMeasuredScreenWidth=neededWidth;
+          }
         }
-      }
-      if (renderingMode.isVertExpand()) {
-        int neededHeight=mViewRoot.getChildAt(0).getMeasuredHeight();
-        if (neededHeight > renderScreenHeight - mScreenOffset) {
-          renderScreenHeight=neededHeight + mScreenOffset;
+        if (renderingMode.isVertExpand()) {
+          int neededHeight=mViewRoot.getChildAt(0).getMeasuredHeight();
+          if (neededHeight > mMeasuredScreenHeight - mScreenOffset) {
+            mMeasuredScreenHeight=neededHeight + mScreenOffset;
+          }
         }
       }
     }
-    w_spec=MeasureSpec.makeMeasureSpec(renderScreenWidth,MeasureSpec.EXACTLY);
-    h_spec=MeasureSpec.makeMeasureSpec(renderScreenHeight - mScreenOffset,MeasureSpec.EXACTLY);
+    w_spec=MeasureSpec.makeMeasureSpec(mMeasuredScreenWidth,MeasureSpec.EXACTLY);
+    h_spec=MeasureSpec.makeMeasureSpec(mMeasuredScreenHeight - mScreenOffset,MeasureSpec.EXACTLY);
     mViewRoot.measure(w_spec,h_spec);
-    mViewRoot.layout(0,mScreenOffset,renderScreenWidth,renderScreenHeight);
-    if (mParams.getImageFactory() != null) {
-      mImage=mParams.getImageFactory().getImage(renderScreenWidth,renderScreenHeight - mScreenOffset);
-    }
+    mViewRoot.layout(0,mScreenOffset,mMeasuredScreenWidth,mMeasuredScreenHeight);
+    if (newRenderSize || mCanvas == null) {
+      if (mParams.getImageFactory() != null) {
+        mImage=mParams.getImageFactory().getImage(mMeasuredScreenWidth,mMeasuredScreenHeight - mScreenOffset);
+      }
  else {
-      mImage=new BufferedImage(renderScreenWidth,renderScreenHeight - mScreenOffset,BufferedImage.TYPE_INT_ARGB);
+        mImage=new BufferedImage(mMeasuredScreenWidth,mMeasuredScreenHeight - mScreenOffset,BufferedImage.TYPE_INT_ARGB);
+      }
+      if (mParams.isCustomBackgroundEnabled()) {
+        Graphics2D gc=mImage.createGraphics();
+        gc.setColor(new Color(mParams.getCustomBackgroundColor(),true));
+        gc.fillRect(0,0,mMeasuredScreenWidth,mMeasuredScreenHeight - mScreenOffset);
+        gc.dispose();
+      }
+      Bitmap bitmap=Bitmap_Delegate.createBitmap(mImage,true,Density.getEnum(mParams.getDensity()));
+      mCanvas=new Canvas(bitmap);
+      mCanvas.setDensity(mParams.getDensity());
     }
-    if (mParams.isCustomBackgroundEnabled()) {
-      Graphics2D gc=mImage.createGraphics();
-      gc.setColor(new Color(mParams.getCustomBackgroundColor(),true));
-      gc.fillRect(0,0,renderScreenWidth,renderScreenHeight - mScreenOffset);
-      gc.dispose();
-    }
-    Bitmap bitmap=Bitmap_Delegate.createBitmap(mImage,true,Density.getEnum(mParams.getDensity()));
-    Canvas canvas=new Canvas(bitmap);
-    canvas.setDensity(mParams.getDensity());
-    Canvas_Delegate canvasDelegate=Canvas_Delegate.getDelegate(canvas);
+    Canvas_Delegate canvasDelegate=Canvas_Delegate.getDelegate(mCanvas);
     canvasDelegate.setLogger(mParams.getLogger());
-    mViewRoot.draw(canvas);
-    canvasDelegate.dispose();
+    long preDrawTime=System.currentTimeMillis();
+    mViewRoot.draw(mCanvas);
+    long drawTime=System.currentTimeMillis();
     mViewInfo=visit(((ViewGroup)mViewRoot).getChildAt(0),mContext);
-    System.out.println("rendering (ms): " + (System.currentTimeMillis() - current));
+    System.out.println(String.format("rendering (ms): %03d",drawTime - preDrawTime));
     return SceneResult.SUCCESS;
   }
  catch (  Throwable e) {
