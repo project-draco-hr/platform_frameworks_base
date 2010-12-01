@@ -18,8 +18,8 @@ synchronized (sFirstDrawHandlers) {
     mAttachInfo.mTreeObserver.dispatchOnScrollChanged();
   }
   int yoff;
-  final boolean scrolling=mScroller != null && mScroller.computeScrollOffset();
-  if (scrolling) {
+  boolean animating=mScroller != null && mScroller.computeScrollOffset();
+  if (animating) {
     yoff=mScroller.getCurrY();
   }
  else {
@@ -31,9 +31,28 @@ synchronized (sFirstDrawHandlers) {
   }
   float appScale=mAttachInfo.mApplicationScale;
   boolean scalingRequired=mAttachInfo.mScalingRequired;
+  int resizeAlpha=0;
+  if (mResizeBitmap != null) {
+    long deltaTime=SystemClock.uptimeMillis() - mResizeBitmapStartTime;
+    if (deltaTime < mResizeBitmapDuration) {
+      float amt=deltaTime / (float)mResizeBitmapDuration;
+      amt=mResizeInterpolator.getInterpolation(amt);
+      animating=true;
+      resizeAlpha=255 - (int)(amt * 255);
+    }
+ else {
+      disposeResizeBitmap();
+    }
+  }
   Rect dirty=mDirty;
   if (mSurfaceHolder != null) {
     dirty.setEmpty();
+    if (animating) {
+      if (mScroller != null) {
+        mScroller.abortAnimation();
+      }
+      disposeResizeBitmap();
+    }
     return;
   }
   if (fullRedrawNeeded) {
@@ -44,9 +63,11 @@ synchronized (sFirstDrawHandlers) {
     if (!dirty.isEmpty() || mIsAnimating) {
       mIsAnimating=false;
       dirty.setEmpty();
-      mAttachInfo.mHardwareRenderer.draw(mView,mAttachInfo,yoff);
+      mHardwareYOffset=yoff;
+      mResizeAlpha=resizeAlpha;
+      mAttachInfo.mHardwareRenderer.draw(mView,mAttachInfo,this);
     }
-    if (scrolling) {
+    if (animating) {
       mFullRedrawNeeded=true;
       scheduleTraversals();
     }
@@ -129,7 +150,7 @@ catch (    IllegalArgumentException e) {
   if (LOCAL_LOGV) {
     Log.v(TAG,"Surface " + surface + " unlockCanvasAndPost");
   }
-  if (scrolling) {
+  if (animating) {
     mFullRedrawNeeded=true;
     scheduleTraversals();
   }
