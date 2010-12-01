@@ -1,0 +1,138 @@
+{
+  Log.d(TAG,"getPropertyList handle: " + handle + " format: "+ format+ " depth: "+ depth);
+  if (depth > 1) {
+    return new MtpPropertyList(0,MtpConstants.RESPONSE_SPECIFICATION_BY_DEPTH_UNSUPPORTED);
+  }
+  String where;
+  String[] whereArgs;
+  if (format == 0) {
+    whereArgs=new String[]{Integer.toString(handle)};
+    if (depth == 1) {
+      where=PARENT_WHERE;
+    }
+ else {
+      where=ID_WHERE;
+    }
+  }
+ else {
+    whereArgs=new String[]{Integer.toString(handle),Integer.toString(format)};
+    if (depth == 1) {
+      where=PARENT_FORMAT_WHERE;
+    }
+ else {
+      where=ID_FORMAT_WHERE;
+    }
+  }
+  Cursor c=null;
+  try {
+    if (depth > 0 || mColumns.length > 1) {
+      c=mProvider.query(mUri,mColumns,where,whereArgs,null);
+      if (c == null) {
+        return new MtpPropertyList(0,MtpConstants.RESPONSE_INVALID_OBJECT_HANDLE);
+      }
+    }
+    int count=(c == null ? 1 : c.getCount());
+    MtpPropertyList result=new MtpPropertyList(count * mProperties.length,MtpConstants.RESPONSE_OK);
+    for (int objectIndex=0; objectIndex < count; objectIndex++) {
+      if (c != null) {
+        c.moveToNext();
+      }
+      if (depth == 1) {
+        handle=(int)c.getLong(0);
+      }
+      for (int propertyIndex=0; propertyIndex < mProperties.length; propertyIndex++) {
+        Property property=mProperties[propertyIndex];
+        int propertyCode=property.code;
+        int column=property.column;
+switch (propertyCode) {
+case MtpConstants.PROPERTY_STORAGE_ID:
+          result.append(handle,propertyCode,MtpConstants.TYPE_UINT32,storageID);
+        break;
+case MtpConstants.PROPERTY_PROTECTION_STATUS:
+      result.append(handle,propertyCode,MtpConstants.TYPE_UINT16,0);
+    break;
+case MtpConstants.PROPERTY_OBJECT_FILE_NAME:
+  String value=c.getString(column);
+if (value != null) {
+  result.append(handle,propertyCode,nameFromPath(value));
+}
+ else {
+  result.setResult(MtpConstants.RESPONSE_INVALID_OBJECT_HANDLE);
+}
+break;
+case MtpConstants.PROPERTY_NAME:
+String name=c.getString(column);
+if (name == null) {
+name=queryString(handle,Audio.PlaylistsColumns.NAME);
+}
+if (name == null) {
+name=queryString(handle,Files.FileColumns.DATA);
+if (name != null) {
+name=nameFromPath(name);
+}
+}
+if (name != null) {
+result.append(handle,propertyCode,name);
+}
+ else {
+result.setResult(MtpConstants.RESPONSE_INVALID_OBJECT_HANDLE);
+}
+break;
+case MtpConstants.PROPERTY_DATE_MODIFIED:
+case MtpConstants.PROPERTY_DATE_ADDED:
+result.append(handle,propertyCode,format_date_time(c.getInt(column)));
+break;
+case MtpConstants.PROPERTY_ORIGINAL_RELEASE_DATE:
+int year=c.getInt(column);
+String dateTime=Integer.toString(year) + "0101T000000";
+result.append(handle,propertyCode,dateTime);
+break;
+case MtpConstants.PROPERTY_PERSISTENT_UID:
+long puid=storageID;
+puid<<=32;
+puid+=handle;
+result.append(handle,propertyCode,MtpConstants.TYPE_UINT128,puid);
+break;
+case MtpConstants.PROPERTY_TRACK:
+result.append(handle,propertyCode,MtpConstants.TYPE_UINT16,c.getInt(column) % 1000);
+break;
+case MtpConstants.PROPERTY_ARTIST:
+result.append(handle,propertyCode,queryAudio(handle,Audio.AudioColumns.ARTIST));
+break;
+case MtpConstants.PROPERTY_ALBUM_NAME:
+result.append(handle,propertyCode,queryAudio(handle,Audio.AudioColumns.ALBUM));
+break;
+case MtpConstants.PROPERTY_GENRE:
+String genre=queryGenre(handle);
+if (genre != null) {
+result.append(handle,propertyCode,genre);
+}
+ else {
+result.setResult(MtpConstants.RESPONSE_INVALID_OBJECT_HANDLE);
+}
+break;
+default :
+if (property.type == MtpConstants.TYPE_STR) {
+result.append(handle,propertyCode,c.getString(column));
+}
+ else if (property.type == MtpConstants.TYPE_UNDEFINED) {
+result.append(handle,propertyCode,property.type,0);
+}
+ else {
+result.append(handle,propertyCode,property.type,c.getLong(column));
+}
+break;
+}
+}
+}
+return result;
+}
+ catch (RemoteException e) {
+return new MtpPropertyList(0,MtpConstants.RESPONSE_GENERAL_ERROR);
+}
+ finally {
+if (c != null) {
+c.close();
+}
+}
+}
