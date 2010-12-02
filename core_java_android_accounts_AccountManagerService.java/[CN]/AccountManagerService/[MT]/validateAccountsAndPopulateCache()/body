@@ -1,0 +1,49 @@
+{
+  boolean accountDeleted=false;
+  SQLiteDatabase db=mOpenHelper.getWritableDatabase();
+  Cursor cursor=db.query(TABLE_ACCOUNTS,new String[]{ACCOUNTS_ID,ACCOUNTS_TYPE,ACCOUNTS_NAME},null,null,null,null,null);
+  try {
+synchronized (mCacheLock) {
+      mAccountCache.clear();
+      final HashMap<String,ArrayList<String>> accountNamesByType=new HashMap<String,ArrayList<String>>();
+      while (cursor.moveToNext()) {
+        final long accountId=cursor.getLong(0);
+        final String accountType=cursor.getString(1);
+        final String accountName=cursor.getString(2);
+        if (mAuthenticatorCache.getServiceInfo(AuthenticatorDescription.newKey(accountType)) == null) {
+          Log.d(TAG,"deleting account " + accountName + " because type "+ accountType+ " no longer has a registered authenticator");
+          db.delete(TABLE_ACCOUNTS,ACCOUNTS_ID + "=" + accountId,null);
+          accountDeleted=true;
+          final Account account=new Account(accountName,accountType);
+          mUserDataCache.remove(account);
+          mAuthTokenCache.remove(account);
+        }
+ else {
+          ArrayList<String> accountNames=accountNamesByType.get(accountType);
+          if (accountNames == null) {
+            accountNames=new ArrayList<String>();
+            accountNamesByType.put(accountType,accountNames);
+          }
+          accountNames.add(accountName);
+        }
+      }
+      for (      HashMap.Entry<String,ArrayList<String>> cur : accountNamesByType.entrySet()) {
+        final String accountType=cur.getKey();
+        final ArrayList<String> accountNames=cur.getValue();
+        final Account[] accountsForType=new Account[accountNames.size()];
+        int i=0;
+        for (        String accountName : accountNames) {
+          accountsForType[i]=new Account(accountName,accountType);
+          ++i;
+        }
+        mAccountCache.put(accountType,accountsForType);
+      }
+    }
+  }
+  finally {
+    cursor.close();
+    if (accountDeleted) {
+      sendAccountsChangedBroadcast();
+    }
+  }
+}
