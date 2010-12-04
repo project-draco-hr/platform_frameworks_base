@@ -2,53 +2,55 @@
   String ssid=config.SSID;
   config.SSID=convertToQuotedString(ssid);
   if (!mWifiManager.isWifiEnabled()) {
-    Log.v(LOG_TAG,"Wifi is not enabled, enable it");
+    log("Wifi is not enabled, enable it");
     mWifiManager.setWifiEnabled(true);
+    if (!waitForWifiState(WifiManager.WIFI_STATE_ENABLED,2 * SHORT_TIMEOUT)) {
+      log("wait for WIFI_STATE_ENABLED failed");
+      return false;
+    }
   }
-  List<ScanResult> netList=mWifiManager.getScanResults();
-  if (netList == null) {
-    Log.v(LOG_TAG,"scan results are null");
-    mWifiManager.startScanActive();
-    mScanResultIsAvailable=false;
-    long startTime=System.currentTimeMillis();
-    while (!mScanResultIsAvailable) {
-      if ((System.currentTimeMillis() - startTime) > WIFI_SCAN_TIMEOUT) {
-        return false;
+  boolean foundApInScanResults=false;
+  for (int retry=0; retry < 5; retry++) {
+    List<ScanResult> netList=mWifiManager.getScanResults();
+    if (netList != null) {
+      log("size of scan result list: " + netList.size());
+      for (int i=0; i < netList.size(); i++) {
+        ScanResult sr=netList.get(i);
+        if (sr.SSID.equals(ssid)) {
+          log("found " + ssid + " in the scan result list");
+          log("retry: " + retry);
+          foundApInScanResults=true;
+          mWifiManager.connectNetwork(config);
+          break;
+        }
       }
+    }
+    if (foundApInScanResults) {
+      return true;
+    }
+ else {
+      mWifiManager.startScanActive();
+      mScanResultIsAvailable=false;
+      long startTime=System.currentTimeMillis();
+      while (!mScanResultIsAvailable) {
+        if ((System.currentTimeMillis() - startTime) > WIFI_SCAN_TIMEOUT) {
+          log("wait for scan results timeout");
+          return false;
+        }
 synchronized (this) {
-        try {
-          this.wait(WAIT_FOR_SCAN_RESULT);
+          try {
+            this.wait(WAIT_FOR_SCAN_RESULT);
+          }
+ catch (          InterruptedException e) {
+            e.printStackTrace();
+          }
+          if ((mWifiManager.getScanResults() == null) || (mWifiManager.getScanResults().size() <= 0)) {
+            continue;
+          }
+          mScanResultIsAvailable=true;
         }
- catch (        InterruptedException e) {
-          e.printStackTrace();
-        }
-        if ((mWifiManager.getScanResults() == null) || (mWifiManager.getScanResults().size() <= 0)) {
-          continue;
-        }
-        mScanResultIsAvailable=true;
       }
     }
   }
-  netList=mWifiManager.getScanResults();
-  for (int i=0; i < netList.size(); i++) {
-    ScanResult sr=netList.get(i);
-    if (sr.SSID.equals(ssid)) {
-      Log.v(LOG_TAG,"found " + ssid + " in the scan result list");
-      int networkId=mWifiManager.addNetwork(config);
-      mWifiManager.enableNetwork(networkId,true);
-      mWifiManager.saveConfiguration();
-      List<WifiConfiguration> wifiNetworks=mWifiManager.getConfiguredNetworks();
-      for (      WifiConfiguration netConfig : wifiNetworks) {
-        Log.v(LOG_TAG,netConfig.toString());
-      }
-      mWifiManager.reconnect();
-      break;
-    }
-  }
-  List<WifiConfiguration> netConfList=mWifiManager.getConfiguredNetworks();
-  if (netConfList.size() <= 0) {
-    Log.v(LOG_TAG,ssid + " is not available");
-    return false;
-  }
-  return true;
+  return false;
 }
