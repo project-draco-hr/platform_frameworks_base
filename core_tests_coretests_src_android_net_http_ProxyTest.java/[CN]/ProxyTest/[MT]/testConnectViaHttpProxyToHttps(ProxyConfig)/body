@@ -1,0 +1,23 @@
+{
+  TestSSLContext testSSLContext=TestSSLContext.create();
+  server.useHttps(testSSLContext.serverContext.getSocketFactory(),true);
+  MockResponse connectResponse=new MockResponse().setResponseCode(200);
+  connectResponse.getHeaders().clear();
+  server.enqueue(connectResponse);
+  server.enqueue(new MockResponse().setResponseCode(200).setBody("this response comes via a secure proxy"));
+  server.play();
+  HttpClient httpProxyClient=new DefaultHttpClient();
+  SSLSocketFactory sslSocketFactory=new SSLSocketFactory(testSSLContext.clientContext.getSocketFactory());
+  sslSocketFactory.setHostnameVerifier(new AllowAllHostnameVerifier());
+  httpProxyClient.getConnectionManager().getSchemeRegistry().register(new Scheme("https",sslSocketFactory,443));
+  HttpGet request=new HttpGet("https://android.com/foo");
+  proxyConfig.configure(server,httpProxyClient,request);
+  HttpResponse response=httpProxyClient.execute(request);
+  assertEquals("this response comes via a secure proxy",contentToString(response));
+  RecordedRequest connect=server.takeRequest();
+  assertEquals("Connect line failure on proxy " + proxyConfig,"CONNECT android.com:443 HTTP/1.1",connect.getRequestLine());
+  assertContains(connect.getHeaders(),"Host: android.com");
+  RecordedRequest get=server.takeRequest();
+  assertEquals("GET /foo HTTP/1.1",get.getRequestLine());
+  assertContains(get.getHeaders(),"Host: android.com");
+}
