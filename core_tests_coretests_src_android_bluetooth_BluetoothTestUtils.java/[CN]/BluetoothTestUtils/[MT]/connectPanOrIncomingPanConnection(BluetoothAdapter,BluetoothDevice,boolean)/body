@@ -1,0 +1,63 @@
+{
+  long start=-1;
+  int mask, role;
+  String methodName;
+  if (connect) {
+    methodName="connectPan()";
+    mask=(ConnectPanReceiver.STATE_CONNECTED_FLAG | ConnectPanReceiver.STATE_CONNECTING_FLAG);
+    role=BluetoothPan.LOCAL_PANU_ROLE;
+  }
+ else {
+    methodName="incomingPanConnection()";
+    mask=ConnectPanReceiver.STATE_CONNECTED_FLAG;
+    role=BluetoothPan.LOCAL_NAP_ROLE;
+  }
+  if (!adapter.isEnabled()) {
+    fail(String.format("%s bluetooth not enabled: device=%s",methodName,device));
+  }
+  if (!adapter.getBondedDevices().contains(device)) {
+    fail(String.format("%s device not paired: device=%s",methodName,device));
+  }
+  BluetoothPan pan=new BluetoothPan(mContext);
+  assertNotNull(pan);
+  ConnectPanReceiver receiver=getConnectPanReceiver(device,role,mask);
+  int state=pan.getPanDeviceState(device);
+switch (state) {
+case BluetoothPan.STATE_CONNECTED:
+    removeReceiver(receiver);
+  return;
+case BluetoothPan.STATE_CONNECTING:
+mask=0;
+break;
+case BluetoothPan.STATE_DISCONNECTED:
+case BluetoothPan.STATE_DISCONNECTING:
+start=System.currentTimeMillis();
+if (role == BluetoothPan.LOCAL_PANU_ROLE) {
+Log.i("BT","connect to pan");
+assertTrue(pan.connect(device));
+}
+break;
+default :
+removeReceiver(receiver);
+fail(String.format("%s invalid state: device=%s, state=%d",methodName,device,state));
+}
+long s=System.currentTimeMillis();
+while (System.currentTimeMillis() - s < CONNECT_DISCONNECT_PROFILE_TIMEOUT) {
+state=pan.getPanDeviceState(device);
+if (state == BluetoothPan.STATE_CONNECTED && (receiver.getFiredFlags() & mask) == mask) {
+long finish=receiver.getCompletedTime();
+if (start != -1 && finish != -1) {
+writeOutput(String.format("%s completed in %d ms: device=%s",methodName,(finish - start),device));
+}
+ else {
+writeOutput(String.format("%s completed: device=%s",methodName,device));
+}
+removeReceiver(receiver);
+return;
+}
+sleep(POLL_TIME);
+}
+int firedFlags=receiver.getFiredFlags();
+removeReceiver(receiver);
+fail(String.format("%s timeout: device=%s, state=%d (expected %d), " + "flags=0x%x (expected 0x%s)",methodName,device,state,BluetoothPan.STATE_CONNECTED,firedFlags,mask));
+}
