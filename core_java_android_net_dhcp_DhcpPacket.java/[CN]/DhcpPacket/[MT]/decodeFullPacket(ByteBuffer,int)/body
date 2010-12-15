@@ -1,0 +1,203 @@
+{
+  int transactionId;
+  InetAddress clientIp;
+  InetAddress yourIp;
+  InetAddress nextIp;
+  InetAddress relayIp;
+  byte[] clientMac;
+  List<InetAddress> dnsServers=null;
+  InetAddress gateway=null;
+  Integer leaseTime=null;
+  InetAddress serverIdentifier=null;
+  InetAddress netMask=null;
+  String message=null;
+  String vendorId=null;
+  byte[] expectedParams=null;
+  String hostName=null;
+  String domainName=null;
+  InetAddress ipSrc=null;
+  InetAddress ipDst=null;
+  InetAddress bcAddr=null;
+  InetAddress requestedIp=null;
+  byte dhcpType=(byte)0xFF;
+  packet.order(ByteOrder.BIG_ENDIAN);
+  if (pktType == ENCAP_L2) {
+    byte[] l2dst=new byte[6];
+    byte[] l2src=new byte[6];
+    packet.get(l2dst);
+    packet.get(l2src);
+    short l2type=packet.getShort();
+    if (l2type != 0x0800)     return null;
+  }
+  if ((pktType == ENCAP_L2) || (pktType == ENCAP_L3)) {
+    byte ipType=packet.get();
+    byte ipDiffServicesField=packet.get();
+    short ipTotalLength=packet.getShort();
+    short ipIdentification=packet.getShort();
+    byte ipFlags=packet.get();
+    byte ipFragOffset=packet.get();
+    byte ipTTL=packet.get();
+    byte ipProto=packet.get();
+    short ipChksm=packet.getShort();
+    ipSrc=readIpAddress(packet);
+    ipDst=readIpAddress(packet);
+    if (ipProto != IP_TYPE_UDP)     return null;
+    short udpSrcPort=packet.getShort();
+    short udpDstPort=packet.getShort();
+    short udpLen=packet.getShort();
+    short udpChkSum=packet.getShort();
+    if ((udpSrcPort != DHCP_SERVER) && (udpSrcPort != DHCP_CLIENT))     return null;
+  }
+  byte type=packet.get();
+  byte hwType=packet.get();
+  byte addrLen=packet.get();
+  byte hops=packet.get();
+  transactionId=packet.getInt();
+  short elapsed=packet.getShort();
+  short bootpFlags=packet.getShort();
+  boolean broadcast=(bootpFlags & 0x8000) != 0;
+  byte[] ipv4addr=new byte[4];
+  try {
+    packet.get(ipv4addr);
+    clientIp=InetAddress.getByAddress(ipv4addr);
+    packet.get(ipv4addr);
+    yourIp=InetAddress.getByAddress(ipv4addr);
+    packet.get(ipv4addr);
+    nextIp=InetAddress.getByAddress(ipv4addr);
+    packet.get(ipv4addr);
+    relayIp=InetAddress.getByAddress(ipv4addr);
+  }
+ catch (  UnknownHostException ex) {
+    return null;
+  }
+  clientMac=new byte[addrLen];
+  packet.get(clientMac);
+  packet.position(packet.position() + (16 - addrLen) + 64+ 128);
+  int dhcpMagicCookie=packet.getInt();
+  if (dhcpMagicCookie != 0x63825363)   return null;
+  boolean notFinishedOptions=true;
+  while ((packet.position() < packet.limit()) && notFinishedOptions) {
+    byte optionType=packet.get();
+    if (optionType == (byte)0xFF) {
+      notFinishedOptions=false;
+    }
+ else {
+      byte optionLen=packet.get();
+      int expectedLen=0;
+switch (optionType) {
+case DHCP_SUBNET_MASK:
+        netMask=readIpAddress(packet);
+      expectedLen=4;
+    break;
+case DHCP_ROUTER:
+  gateway=readIpAddress(packet);
+expectedLen=4;
+break;
+case DHCP_DNS_SERVER:
+dnsServers=new ArrayList<InetAddress>();
+expectedLen=0;
+for (expectedLen=0; expectedLen < optionLen; expectedLen+=4) {
+dnsServers.add(readIpAddress(packet));
+}
+break;
+case DHCP_HOST_NAME:
+expectedLen=optionLen;
+hostName=readAsciiString(packet,optionLen);
+break;
+case DHCP_DOMAIN_NAME:
+expectedLen=optionLen;
+domainName=readAsciiString(packet,optionLen);
+break;
+case DHCP_BROADCAST_ADDRESS:
+bcAddr=readIpAddress(packet);
+expectedLen=4;
+break;
+case DHCP_REQUESTED_IP:
+requestedIp=readIpAddress(packet);
+expectedLen=4;
+break;
+case DHCP_LEASE_TIME:
+leaseTime=Integer.valueOf(packet.getInt());
+expectedLen=4;
+break;
+case DHCP_MESSAGE_TYPE:
+dhcpType=packet.get();
+expectedLen=1;
+break;
+case DHCP_SERVER_IDENTIFIER:
+serverIdentifier=readIpAddress(packet);
+expectedLen=4;
+break;
+case DHCP_PARAMETER_LIST:
+expectedParams=new byte[optionLen];
+packet.get(expectedParams);
+expectedLen=optionLen;
+break;
+case DHCP_MESSAGE:
+expectedLen=optionLen;
+message=readAsciiString(packet,optionLen);
+break;
+case DHCP_VENDOR_CLASS_ID:
+expectedLen=optionLen;
+vendorId=readAsciiString(packet,optionLen);
+break;
+case DHCP_CLIENT_IDENTIFIER:
+{
+byte[] id=new byte[optionLen];
+packet.get(id);
+expectedLen=optionLen;
+}
+break;
+default :
+for (int i=0; i < optionLen; i++) {
+expectedLen++;
+byte throwaway=packet.get();
+}
+}
+if (expectedLen != optionLen) {
+return null;
+}
+}
+}
+DhcpPacket newPacket;
+switch (dhcpType) {
+case -1:
+return null;
+case DHCP_MESSAGE_TYPE_DISCOVER:
+newPacket=new DhcpDiscoverPacket(transactionId,clientMac,broadcast);
+break;
+case DHCP_MESSAGE_TYPE_OFFER:
+newPacket=new DhcpOfferPacket(transactionId,broadcast,ipSrc,yourIp,clientMac);
+break;
+case DHCP_MESSAGE_TYPE_REQUEST:
+newPacket=new DhcpRequestPacket(transactionId,clientIp,clientMac,broadcast);
+break;
+case DHCP_MESSAGE_TYPE_DECLINE:
+newPacket=new DhcpDeclinePacket(transactionId,clientIp,yourIp,nextIp,relayIp,clientMac);
+break;
+case DHCP_MESSAGE_TYPE_ACK:
+newPacket=new DhcpAckPacket(transactionId,broadcast,ipSrc,yourIp,clientMac);
+break;
+case DHCP_MESSAGE_TYPE_NAK:
+newPacket=new DhcpNakPacket(transactionId,clientIp,yourIp,nextIp,relayIp,clientMac);
+break;
+case DHCP_MESSAGE_TYPE_INFORM:
+newPacket=new DhcpInformPacket(transactionId,clientIp,yourIp,nextIp,relayIp,clientMac);
+break;
+default :
+System.out.println("Unimplemented type: " + dhcpType);
+return null;
+}
+newPacket.mBroadcastAddress=bcAddr;
+newPacket.mDnsServers=dnsServers;
+newPacket.mDomainName=domainName;
+newPacket.mGateway=gateway;
+newPacket.mHostName=hostName;
+newPacket.mLeaseTime=leaseTime;
+newPacket.mMessage=message;
+newPacket.mRequestedIp=requestedIp;
+newPacket.mRequestedParams=expectedParams;
+newPacket.mServerIdentifier=serverIdentifier;
+newPacket.mSubnetMask=netMask;
+return newPacket;
+}
