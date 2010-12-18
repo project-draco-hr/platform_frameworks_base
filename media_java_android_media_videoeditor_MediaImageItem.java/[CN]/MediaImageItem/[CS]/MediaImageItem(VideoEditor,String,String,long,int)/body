@@ -1,21 +1,123 @@
 {
   super(editor,mediaItemId,filename,renderingMode);
-  final BitmapFactory.Options dbo=new BitmapFactory.Options();
-  dbo.inJustDecodeBounds=true;
-  BitmapFactory.decodeFile(filename,dbo);
-  mWidth=dbo.outWidth;
-  mHeight=dbo.outHeight;
-  mDurationMs=durationMs;
-  mAspectRatio=MediaProperties.ASPECT_RATIO_4_3;
-  final Pair<Integer,Integer>[] resolutions=MediaProperties.getSupportedResolutions(mAspectRatio);
-  final Pair<Integer,Integer> maxResolution=resolutions[resolutions.length - 1];
-  if (mHeight > maxResolution.second) {
-    scaleImage(filename,maxResolution.first,maxResolution.second);
-    mScaledWidth=maxResolution.first;
-    mScaledHeight=maxResolution.second;
-  }
+  mMANativeHelper=((VideoEditorImpl)editor).getNativeContext();
+  mVideoEditor=((VideoEditorImpl)editor);
+  try {
+    final Properties properties=mMANativeHelper.getMediaProperties(filename);
+switch (mMANativeHelper.getFileType(properties.fileType)) {
+case MediaProperties.FILE_JPEG:
+      break;
+case MediaProperties.FILE_PNG:
+    break;
+default :
+  throw new IllegalArgumentException("Unsupported Input File Type");
+}
+}
+ catch (Exception e) {
+throw new IllegalArgumentException("Unsupported file or file not found");
+}
+final BitmapFactory.Options dbo=new BitmapFactory.Options();
+dbo.inJustDecodeBounds=true;
+BitmapFactory.decodeFile(filename,dbo);
+mWidth=dbo.outWidth;
+mHeight=dbo.outHeight;
+mDurationMs=durationMs;
+mDecodedFilename=String.format(mMANativeHelper.getProjectPath() + "/" + "decoded"+ getId()+ ".rgb");
+final FileOutputStream fl=new FileOutputStream(mDecodedFilename);
+final DataOutputStream dos=new DataOutputStream(fl);
+try {
+mAspectRatio=mMANativeHelper.getAspectRatio(mWidth,mHeight);
+}
+ catch (IllegalArgumentException e) {
+throw new IllegalArgumentException("Null width and height");
+}
+mGeneratedClipHeight=0;
+mGeneratedClipWidth=0;
+final Pair<Integer,Integer>[] resolutions=MediaProperties.getSupportedResolutions(mAspectRatio);
+final Pair<Integer,Integer> maxResolution=resolutions[resolutions.length - 1];
+if (mHeight > maxResolution.second) {
+final Bitmap scaledImage=scaleImage(filename,maxResolution.first,maxResolution.second);
+mScaledFilename=String.format(mMANativeHelper.getProjectPath() + "/" + "scaled"+ getId()+ ".JPG");
+if (!((new File(mScaledFilename)).exists())) {
+super.mRegenerateClip=true;
+final FileOutputStream f1=new FileOutputStream(mScaledFilename);
+scaledImage.compress(Bitmap.CompressFormat.JPEG,50,f1);
+f1.close();
+}
+mScaledWidth=scaledImage.getWidth();
+mScaledHeight=scaledImage.getHeight();
+int mNewWidth=0;
+int mNewHeight=0;
+if ((mScaledWidth % 2) != 0) {
+mNewWidth=mScaledWidth - 1;
+}
  else {
-    mScaledWidth=mWidth;
-    mScaledHeight=mHeight;
-  }
+mNewWidth=mScaledWidth;
+}
+if ((mScaledHeight % 2) != 0) {
+mNewHeight=mScaledHeight - 1;
+}
+ else {
+mNewHeight=mScaledHeight;
+}
+final int[] framingBuffer=new int[mNewWidth];
+final ByteBuffer byteBuffer=ByteBuffer.allocate(framingBuffer.length * 4);
+IntBuffer intBuffer;
+final byte[] array=byteBuffer.array();
+int tmp=0;
+while (tmp < mNewHeight) {
+scaledImage.getPixels(framingBuffer,0,mScaledWidth,0,tmp,mNewWidth,1);
+intBuffer=byteBuffer.asIntBuffer();
+intBuffer.put(framingBuffer,0,mNewWidth);
+dos.write(array);
+tmp+=1;
+}
+mScaledWidth=mNewWidth;
+mScaledHeight=mNewHeight;
+scaledImage.recycle();
+}
+ else {
+final Bitmap scaledImage=BitmapFactory.decodeFile(filename);
+mScaledFilename=String.format(mMANativeHelper.getProjectPath() + "/" + "scaled"+ getId()+ ".JPG");
+if (!((new File(mScaledFilename)).exists())) {
+super.mRegenerateClip=true;
+FileOutputStream f1=new FileOutputStream(mScaledFilename);
+scaledImage.compress(Bitmap.CompressFormat.JPEG,50,f1);
+f1.close();
+}
+mScaledWidth=scaledImage.getWidth();
+mScaledHeight=scaledImage.getHeight();
+int mNewWidth=0;
+int mNewheight=0;
+if ((mScaledWidth % 2) != 0) {
+mNewWidth=mScaledWidth - 1;
+}
+ else {
+mNewWidth=mScaledWidth;
+}
+if ((mScaledHeight % 2) != 0) {
+mNewheight=mScaledHeight - 1;
+}
+ else {
+mNewheight=mScaledHeight;
+}
+Bitmap imageBitmap=BitmapFactory.decodeFile(mScaledFilename);
+final int[] framingBuffer=new int[mNewWidth];
+ByteBuffer byteBuffer=ByteBuffer.allocate(framingBuffer.length * 4);
+IntBuffer intBuffer;
+byte[] array=byteBuffer.array();
+int tmp=0;
+while (tmp < mNewheight) {
+imageBitmap.getPixels(framingBuffer,0,mScaledWidth,0,tmp,mNewWidth,1);
+intBuffer=byteBuffer.asIntBuffer();
+intBuffer.put(framingBuffer,0,mNewWidth);
+dos.write(array);
+tmp+=1;
+}
+mScaledWidth=mNewWidth;
+mScaledHeight=mNewheight;
+imageBitmap.recycle();
+}
+fl.close();
+System.gc();
 }
