@@ -1,14 +1,14 @@
 {
   if (DBG)   Log.d(TAG,getName() + message.toString() + "\n");
   WifiConfiguration config;
+  boolean eventLoggingEnabled=true;
 switch (message.what) {
 case CMD_STOP_SUPPLICANT:
-    EventLog.writeEvent(EVENTLOG_WIFI_EVENT_HANDLED,message.what);
-  Log.d(TAG,"stopping supplicant");
-if (!WifiNative.stopSupplicant()) {
-  Log.e(TAG,"Failed to stop supplicant, issue kill");
-  WifiNative.killSupplicant();
-}
+    Log.d(TAG,"stopping supplicant");
+  if (!WifiNative.stopSupplicant()) {
+    Log.e(TAG,"Failed to stop supplicant, issue kill");
+    WifiNative.killSupplicant();
+  }
 handleNetworkDisconnect();
 setWifiState(WIFI_STATE_DISABLING);
 sendSupplicantConnectionChangedBroadcast(false);
@@ -16,7 +16,6 @@ mSupplicantStateTracker.sendMessage(CMD_RESET_SUPPLICANT_STATE);
 transitionTo(mSupplicantStoppingState);
 break;
 case SUP_DISCONNECTION_EVENT:
-EventLog.writeEvent(EVENTLOG_WIFI_EVENT_HANDLED,message.what);
 Log.e(TAG,"Connection lost, restart supplicant");
 WifiNative.killSupplicant();
 WifiNative.closeSupplicantConnection();
@@ -27,6 +26,7 @@ transitionTo(mDriverLoadedState);
 sendMessageDelayed(CMD_START_SUPPLICANT,SUPPLICANT_RESTART_INTERVAL_MSECS);
 break;
 case SCAN_RESULTS_EVENT:
+eventLoggingEnabled=false;
 setScanResults(WifiNative.scanResultsCommand());
 sendScanResultsAvailableBroadcast();
 break;
@@ -35,27 +35,25 @@ boolean ok=WifiNative.pingCommand();
 mReplyChannel.replyToMessage(message,message.what,ok ? SUCCESS : FAILURE);
 break;
 case CMD_ADD_OR_UPDATE_NETWORK:
-EventLog.writeEvent(EVENTLOG_WIFI_EVENT_HANDLED,message.what);
 config=(WifiConfiguration)message.obj;
 mReplyChannel.replyToMessage(message,CMD_ADD_OR_UPDATE_NETWORK,WifiConfigStore.addOrUpdateNetwork(config));
 break;
 case CMD_REMOVE_NETWORK:
-EventLog.writeEvent(EVENTLOG_WIFI_EVENT_HANDLED,message.what);
 ok=WifiConfigStore.removeNetwork(message.arg1);
 mReplyChannel.replyToMessage(message,message.what,ok ? SUCCESS : FAILURE);
 break;
 case CMD_ENABLE_NETWORK:
-EventLog.writeEvent(EVENTLOG_WIFI_EVENT_HANDLED,message.what);
 ok=WifiConfigStore.enableNetwork(message.arg1,message.arg2 == 1);
 mReplyChannel.replyToMessage(message,message.what,ok ? SUCCESS : FAILURE);
 break;
+case CMD_ENABLE_ALL_NETWORKS:
+WifiConfigStore.enableAllNetworks();
+break;
 case CMD_DISABLE_NETWORK:
-EventLog.writeEvent(EVENTLOG_WIFI_EVENT_HANDLED,message.what);
 ok=WifiConfigStore.disableNetwork(message.arg1);
 mReplyChannel.replyToMessage(message,message.what,ok ? SUCCESS : FAILURE);
 break;
 case CMD_BLACKLIST_NETWORK:
-EventLog.writeEvent(EVENTLOG_WIFI_EVENT_HANDLED,message.what);
 WifiNative.addToBlacklistCommand((String)message.obj);
 break;
 case CMD_CLEAR_BLACKLIST:
@@ -75,7 +73,6 @@ ibm.dataChanged("com.android.providers.settings");
 break;
 case CMD_START_AP:
 Log.d(TAG,"Failed to start soft AP with a running supplicant");
-EventLog.writeEvent(EVENTLOG_WIFI_EVENT_HANDLED,message.what);
 setWifiApState(WIFI_AP_STATE_FAILED);
 break;
 case CMD_SET_SCAN_MODE:
@@ -90,6 +87,9 @@ WifiConfigStore.forgetNetwork(message.arg1);
 break;
 default :
 return NOT_HANDLED;
+}
+if (eventLoggingEnabled) {
+EventLog.writeEvent(EVENTLOG_WIFI_EVENT_HANDLED,message.what);
 }
 return HANDLED;
 }
