@@ -1,10 +1,36 @@
 {
+  int status;
 synchronized (mSoundEffectsLock) {
+    if (!mBootCompleted) {
+      Log.w(TAG,"loadSoundEffects() called before boot complete");
+      return false;
+    }
     if (mSoundPool != null) {
       return true;
     }
     mSoundPool=new SoundPool(NUM_SOUNDPOOL_CHANNELS,AudioSystem.STREAM_SYSTEM,0);
     if (mSoundPool == null) {
+      Log.w(TAG,"loadSoundEffects() could not allocate sound pool");
+      return false;
+    }
+    try {
+      mSoundPoolCallBack=null;
+      mSoundPoolListenerThread=new SoundPoolListenerThread();
+      mSoundPoolListenerThread.start();
+      mSoundEffectsLock.wait();
+    }
+ catch (    InterruptedException e) {
+      Log.w(TAG,"Interrupted while waiting sound pool listener thread.");
+    }
+    if (mSoundPoolCallBack == null) {
+      Log.w(TAG,"loadSoundEffects() could not create SoundPool listener or thread");
+      if (mSoundPoolLooper != null) {
+        mSoundPoolLooper.quit();
+        mSoundPoolLooper=null;
+      }
+      mSoundPoolListenerThread=null;
+      mSoundPool.release();
+      mSoundPool=null;
       return false;
     }
     int[] poolId=new int[SOUND_EFFECT_FILES.length];
@@ -23,11 +49,29 @@ synchronized (mSoundEffectsLock) {
         if (sampleId <= 0) {
           Log.w(TAG,"Soundpool could not load file: " + filePath);
         }
+        mSoundPoolCallBack.setLastSample(sampleId);
       }
  else {
         SOUND_EFFECT_FILES_MAP[effect][1]=poolId[SOUND_EFFECT_FILES_MAP[effect][0]];
       }
     }
+    try {
+      mSoundEffectsLock.wait();
+      status=mSoundPoolCallBack.status();
+    }
+ catch (    java.lang.InterruptedException e) {
+      status=-1;
+    }
+    if (mSoundPoolLooper != null) {
+      mSoundPoolLooper.quit();
+      mSoundPoolLooper=null;
+    }
+    mSoundPoolListenerThread=null;
+    if (status != 0) {
+      Log.w(TAG,"loadSoundEffects(), Error " + mSoundPoolCallBack.status() + " while loading samples");
+      mSoundPool.release();
+      mSoundPool=null;
+    }
   }
-  return true;
+  return (status == 0);
 }
