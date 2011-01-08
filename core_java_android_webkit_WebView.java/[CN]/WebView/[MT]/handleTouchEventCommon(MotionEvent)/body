@@ -1,0 +1,358 @@
+{
+  int action=ev.getAction();
+  float x=ev.getX();
+  float y=ev.getY();
+  long eventTime=ev.getEventTime();
+  x=Math.min(x,getViewWidth() - 1);
+  y=Math.min(y,getViewHeightWithTitle() - 1);
+  float fDeltaX=mLastTouchX - x;
+  float fDeltaY=mLastTouchY - y;
+  int deltaX=(int)fDeltaX;
+  int deltaY=(int)fDeltaY;
+  int contentX=viewToContentX((int)x + mScrollX);
+  int contentY=viewToContentY((int)y + mScrollY);
+switch (action) {
+case MotionEvent.ACTION_DOWN:
+{
+      mPreventDefault=PREVENT_DEFAULT_NO;
+      mConfirmMove=false;
+      mInitialHitTestResult=null;
+      if (!mScroller.isFinished()) {
+        mScroller.abortAnimation();
+        mTouchMode=TOUCH_DRAG_START_MODE;
+        mConfirmMove=true;
+        mPrivateHandler.removeMessages(RESUME_WEBCORE_PRIORITY);
+      }
+ else       if (mPrivateHandler.hasMessages(RELEASE_SINGLE_TAP)) {
+        mPrivateHandler.removeMessages(RELEASE_SINGLE_TAP);
+        if (getSettings().supportTouchOnly()) {
+          removeTouchHighlight(true);
+        }
+        if (deltaX * deltaX + deltaY * deltaY < mDoubleTapSlopSquare) {
+          mTouchMode=TOUCH_DOUBLE_TAP_MODE;
+        }
+ else {
+          doShortPress();
+          mTouchMode=TOUCH_INIT_MODE;
+          mDeferTouchProcess=(!inFullScreenMode() && mForwardTouchEvents) ? hitFocusedPlugin(contentX,contentY) : false;
+        }
+      }
+ else {
+        mTouchMode=TOUCH_INIT_MODE;
+        mDeferTouchProcess=(!inFullScreenMode() && mForwardTouchEvents) ? hitFocusedPlugin(contentX,contentY) : false;
+        mWebViewCore.sendMessage(EventHub.UPDATE_FRAME_CACHE_IF_LOADING);
+        if (getSettings().supportTouchOnly()) {
+          TouchHighlightData data=new TouchHighlightData();
+          data.mX=contentX;
+          data.mY=contentY;
+          data.mSlop=viewToContentDimension(mNavSlop);
+          mWebViewCore.sendMessageDelayed(EventHub.GET_TOUCH_HIGHLIGHT_RECTS,data,ViewConfiguration.getTapTimeout());
+          if (DEBUG_TOUCH_HIGHLIGHT) {
+            if (getSettings().getNavDump()) {
+              mTouchHighlightX=(int)x + mScrollX;
+              mTouchHighlightY=(int)y + mScrollY;
+              mPrivateHandler.postDelayed(new Runnable(){
+                public void run(){
+                  mTouchHighlightX=mTouchHighlightY=0;
+                  invalidate();
+                }
+              }
+,TOUCH_HIGHLIGHT_ELAPSE_TIME);
+            }
+          }
+        }
+        if (mLogEvent && eventTime - mLastTouchUpTime < 1000) {
+          EventLog.writeEvent(EventLogTags.BROWSER_DOUBLE_TAP_DURATION,(eventTime - mLastTouchUpTime),eventTime);
+        }
+        if (mSelectingText) {
+          mDrawSelectionPointer=false;
+          mSelectionStarted=nativeStartSelection(contentX,contentY);
+          if (DebugFlags.WEB_VIEW) {
+            Log.v(LOGTAG,"select=" + contentX + ","+ contentY);
+          }
+          invalidate();
+        }
+      }
+      if (mTouchMode == TOUCH_INIT_MODE || mTouchMode == TOUCH_DOUBLE_TAP_MODE) {
+        mPrivateHandler.sendEmptyMessageDelayed(SWITCH_TO_SHORTPRESS,TAP_TIMEOUT);
+        mPrivateHandler.sendEmptyMessageDelayed(SWITCH_TO_LONGPRESS,LONG_PRESS_TIMEOUT);
+        if (inFullScreenMode() || mDeferTouchProcess) {
+          mPreventDefault=PREVENT_DEFAULT_YES;
+        }
+ else         if (mForwardTouchEvents) {
+          mPreventDefault=PREVENT_DEFAULT_MAYBE_YES;
+        }
+ else {
+          mPreventDefault=PREVENT_DEFAULT_NO;
+        }
+        if (shouldForwardTouchEvent()) {
+          TouchEventData ted=new TouchEventData();
+          ted.mAction=action;
+          ted.mPoints=new Point[1];
+          ted.mPoints[0]=new Point(contentX,contentY);
+          ted.mMetaState=ev.getMetaState();
+          ted.mReprocess=mDeferTouchProcess;
+          mWebViewCore.sendMessage(EventHub.TOUCH_EVENT,ted);
+          if (mDeferTouchProcess) {
+            mLastTouchX=x;
+            mLastTouchY=y;
+            break;
+          }
+          if (!inFullScreenMode()) {
+            mPrivateHandler.removeMessages(PREVENT_DEFAULT_TIMEOUT);
+            mPrivateHandler.sendMessageDelayed(mPrivateHandler.obtainMessage(PREVENT_DEFAULT_TIMEOUT,action,0),TAP_TIMEOUT);
+          }
+        }
+      }
+      startTouch(x,y,eventTime);
+      break;
+    }
+case MotionEvent.ACTION_MOVE:
+{
+    boolean firstMove=false;
+    if (!mConfirmMove && (deltaX * deltaX + deltaY * deltaY) >= mTouchSlopSquare) {
+      mPrivateHandler.removeMessages(SWITCH_TO_SHORTPRESS);
+      mPrivateHandler.removeMessages(SWITCH_TO_LONGPRESS);
+      mConfirmMove=true;
+      firstMove=true;
+      if (mTouchMode == TOUCH_DOUBLE_TAP_MODE) {
+        mTouchMode=TOUCH_INIT_MODE;
+      }
+      if (getSettings().supportTouchOnly()) {
+        removeTouchHighlight(true);
+      }
+    }
+    if (shouldForwardTouchEvent() && mConfirmMove && (firstMove || eventTime - mLastSentTouchTime > mCurrentTouchInterval)) {
+      TouchEventData ted=new TouchEventData();
+      ted.mAction=action;
+      ted.mPoints=new Point[1];
+      ted.mPoints[0]=new Point(contentX,contentY);
+      ted.mMetaState=ev.getMetaState();
+      ted.mReprocess=mDeferTouchProcess;
+      mWebViewCore.sendMessage(EventHub.TOUCH_EVENT,ted);
+      mLastSentTouchTime=eventTime;
+      if (mDeferTouchProcess) {
+        break;
+      }
+      if (firstMove && !inFullScreenMode()) {
+        mPrivateHandler.sendMessageDelayed(mPrivateHandler.obtainMessage(PREVENT_DEFAULT_TIMEOUT,action,0),TAP_TIMEOUT);
+      }
+    }
+    if (mTouchMode == TOUCH_DONE_MODE || mPreventDefault == PREVENT_DEFAULT_YES) {
+      break;
+    }
+    if (mVelocityTracker == null) {
+      Log.e(LOGTAG,"Got null mVelocityTracker when " + "mPreventDefault = " + mPreventDefault + " mDeferTouchProcess = "+ mDeferTouchProcess+ " mTouchMode = "+ mTouchMode);
+    }
+    mVelocityTracker.addMovement(ev);
+    if (mSelectingText && mSelectionStarted) {
+      if (DebugFlags.WEB_VIEW) {
+        Log.v(LOGTAG,"extend=" + contentX + ","+ contentY);
+      }
+      ViewParent parent=getParent();
+      if (parent != null) {
+        parent.requestDisallowInterceptTouchEvent(true);
+      }
+      mAutoScrollX=x <= mMinAutoScrollX ? -SELECT_SCROLL : x >= mMaxAutoScrollX ? SELECT_SCROLL : 0;
+      mAutoScrollY=y <= mMinAutoScrollY ? -SELECT_SCROLL : y >= mMaxAutoScrollY ? SELECT_SCROLL : 0;
+      if ((mAutoScrollX != 0 || mAutoScrollY != 0) && !mSentAutoScrollMessage) {
+        mSentAutoScrollMessage=true;
+        mPrivateHandler.sendEmptyMessageDelayed(SCROLL_SELECT_TEXT,SELECT_SCROLL_INTERVAL);
+      }
+      if (deltaX != 0 || deltaY != 0) {
+        nativeExtendSelection(contentX,contentY);
+        invalidate();
+      }
+      break;
+    }
+    if (mTouchMode != TOUCH_DRAG_MODE && mTouchMode != TOUCH_DRAG_LAYER_MODE) {
+      if (!mConfirmMove) {
+        break;
+      }
+      if (mPreventDefault == PREVENT_DEFAULT_MAYBE_YES || mPreventDefault == PREVENT_DEFAULT_NO_FROM_TOUCH_DOWN) {
+        mLastTouchTime=eventTime;
+        break;
+      }
+      mTouchMode=TOUCH_DRAG_MODE;
+      mLastTouchX=x;
+      mLastTouchY=y;
+      fDeltaX=0.0f;
+      fDeltaY=0.0f;
+      deltaX=0;
+      deltaY=0;
+      startScrollingLayer(x,y);
+      startDrag();
+    }
+    boolean done=false;
+    boolean keepScrollBarsVisible=false;
+    if (Math.abs(fDeltaX) < 1.0f && Math.abs(fDeltaY) < 1.0f) {
+      mLastTouchX=x;
+      mLastTouchY=y;
+      keepScrollBarsVisible=done=true;
+    }
+ else {
+      if (mSnapScrollMode == SNAP_X || mSnapScrollMode == SNAP_Y) {
+        int ax=Math.abs(deltaX);
+        int ay=Math.abs(deltaY);
+        if (mSnapScrollMode == SNAP_X) {
+          if (ay > MAX_SLOPE_FOR_DIAG * ax && ay > MIN_BREAK_SNAP_CROSS_DISTANCE) {
+            mSnapScrollMode=SNAP_NONE;
+          }
+          if (ax > MAX_SLOPE_FOR_DIAG * ay && (mSnapPositive ? deltaX < -mMinLockSnapReverseDistance : deltaX > mMinLockSnapReverseDistance)) {
+            mSnapScrollMode|=SNAP_LOCK;
+          }
+        }
+ else {
+          if (ax > MAX_SLOPE_FOR_DIAG * ay && ax > MIN_BREAK_SNAP_CROSS_DISTANCE) {
+            mSnapScrollMode=SNAP_NONE;
+          }
+          if (ay > MAX_SLOPE_FOR_DIAG * ax && (mSnapPositive ? deltaY < -mMinLockSnapReverseDistance : deltaY > mMinLockSnapReverseDistance)) {
+            mSnapScrollMode|=SNAP_LOCK;
+          }
+        }
+      }
+      if (mSnapScrollMode != SNAP_NONE) {
+        if ((mSnapScrollMode & SNAP_X) == SNAP_X) {
+          deltaY=0;
+        }
+ else {
+          deltaX=0;
+        }
+      }
+      if ((deltaX | deltaY) != 0) {
+        if (deltaX != 0) {
+          mLastTouchX=x;
+        }
+        if (deltaY != 0) {
+          mLastTouchY=y;
+        }
+        mHeldMotionless=MOTIONLESS_FALSE;
+      }
+ else {
+        mLastTouchX=x;
+        mLastTouchY=y;
+        keepScrollBarsVisible=true;
+      }
+      mLastTouchTime=eventTime;
+      mUserScroll=true;
+    }
+    doDrag(deltaX,deltaY);
+    if (keepScrollBarsVisible && mTouchMode != TOUCH_DRAG_LAYER_MODE) {
+      if (mHeldMotionless != MOTIONLESS_TRUE) {
+        mHeldMotionless=MOTIONLESS_TRUE;
+        invalidate();
+      }
+      awakenScrollBars(ViewConfiguration.getScrollDefaultDelay(),false);
+      return !done;
+    }
+    break;
+  }
+case MotionEvent.ACTION_UP:
+{
+  if (!isFocused())   requestFocus();
+  if (shouldForwardTouchEvent()) {
+    TouchEventData ted=new TouchEventData();
+    ted.mAction=action;
+    ted.mPoints=new Point[1];
+    ted.mPoints[0]=new Point(contentX,contentY);
+    ted.mMetaState=ev.getMetaState();
+    ted.mReprocess=mDeferTouchProcess;
+    mWebViewCore.sendMessage(EventHub.TOUCH_EVENT,ted);
+  }
+  mLastTouchUpTime=eventTime;
+  if (mSentAutoScrollMessage) {
+    mAutoScrollX=mAutoScrollY=0;
+  }
+switch (mTouchMode) {
+case TOUCH_DOUBLE_TAP_MODE:
+    mPrivateHandler.removeMessages(SWITCH_TO_SHORTPRESS);
+  mPrivateHandler.removeMessages(SWITCH_TO_LONGPRESS);
+if (inFullScreenMode() || mDeferTouchProcess) {
+  TouchEventData ted=new TouchEventData();
+  ted.mAction=WebViewCore.ACTION_DOUBLETAP;
+  ted.mPoints=new Point[1];
+  ted.mPoints[0]=new Point(contentX,contentY);
+  ted.mMetaState=ev.getMetaState();
+  ted.mReprocess=mDeferTouchProcess;
+  mWebViewCore.sendMessage(EventHub.TOUCH_EVENT,ted);
+}
+ else if (mPreventDefault != PREVENT_DEFAULT_YES) {
+  mZoomManager.handleDoubleTap(mLastTouchX,mLastTouchY);
+  mTouchMode=TOUCH_DONE_MODE;
+}
+break;
+case TOUCH_INIT_MODE:
+case TOUCH_SHORTPRESS_START_MODE:
+case TOUCH_SHORTPRESS_MODE:
+mPrivateHandler.removeMessages(SWITCH_TO_SHORTPRESS);
+mPrivateHandler.removeMessages(SWITCH_TO_LONGPRESS);
+if (mConfirmMove) {
+Log.w(LOGTAG,"Miss a drag as we are waiting for" + " WebCore's response for touch down.");
+if (mPreventDefault != PREVENT_DEFAULT_YES && (computeMaxScrollX() > 0 || computeMaxScrollY() > 0)) {
+WebViewCore.reducePriority();
+WebViewCore.pauseUpdatePicture(mWebViewCore);
+}
+ else {
+invalidate();
+break;
+}
+}
+ else {
+if (mSelectingText) {
+if (!nativeHitSelection(contentX,contentY)) {
+selectionDone();
+}
+break;
+}
+if (mTouchMode == TOUCH_INIT_MODE && (canZoomIn() || canZoomOut())) {
+mPrivateHandler.sendEmptyMessageDelayed(RELEASE_SINGLE_TAP,ViewConfiguration.getDoubleTapTimeout());
+}
+ else {
+doShortPress();
+}
+break;
+}
+case TOUCH_DRAG_MODE:
+case TOUCH_DRAG_LAYER_MODE:
+mPrivateHandler.removeMessages(DRAG_HELD_MOTIONLESS);
+mPrivateHandler.removeMessages(AWAKEN_SCROLL_BARS);
+if (eventTime - mLastTouchTime <= MIN_FLING_TIME) {
+if (mVelocityTracker == null) {
+Log.e(LOGTAG,"Got null mVelocityTracker when " + "mPreventDefault = " + mPreventDefault + " mDeferTouchProcess = "+ mDeferTouchProcess);
+}
+mVelocityTracker.addMovement(ev);
+mHeldMotionless=MOTIONLESS_IGNORE;
+doFling();
+break;
+}
+ else {
+if (mScroller.springBack(mScrollX,mScrollY,0,computeMaxScrollX(),0,computeMaxScrollY())) {
+invalidate();
+}
+}
+mHeldMotionless=MOTIONLESS_TRUE;
+invalidate();
+case TOUCH_DRAG_START_MODE:
+mLastVelocity=0;
+WebViewCore.resumePriority();
+if (!mSelectingText) {
+WebViewCore.resumeUpdatePicture(mWebViewCore);
+}
+break;
+}
+stopTouch();
+break;
+}
+case MotionEvent.ACTION_CANCEL:
+{
+if (mTouchMode == TOUCH_DRAG_MODE) {
+mScroller.springBack(mScrollX,mScrollY,0,computeMaxScrollX(),0,computeMaxScrollY());
+invalidate();
+}
+cancelWebCoreTouchEvent(contentX,contentY,false);
+cancelTouch();
+break;
+}
+}
+return true;
+}
