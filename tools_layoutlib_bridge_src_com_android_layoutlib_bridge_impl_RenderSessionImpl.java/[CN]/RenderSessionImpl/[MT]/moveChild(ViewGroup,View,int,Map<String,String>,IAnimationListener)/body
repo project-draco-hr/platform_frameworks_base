@@ -8,23 +8,52 @@
   final ViewGroup previousParent=(ViewGroup)childView.getParent();
   if (listener != null) {
     final LayoutParams params=layoutParams;
-    new AnimationThread(this,"moveChild",listener){
-      @Override public Result preAnimation(){
-        LayoutTransition removeTransition=new LayoutTransition();
-        previousParent.setLayoutTransition(removeTransition);
-        removeTransition.setDuration(LayoutTransition.DISAPPEARING,0);
-        if (previousParent != newParentView) {
-          newParentView.setLayoutTransition(new LayoutTransition());
+    if (previousParent != newParentView) {
+      new Thread("not animated moveChild"){
+        @Override public void run(){
+          Result result=moveView(previousParent,newParentView,childView,index,params);
+          if (result.isSuccess() == false) {
+            listener.done(result);
+          }
+          result=acquire(250);
+          if (result.isSuccess() == false) {
+            listener.done(result);
+            return;
+          }
+          try {
+            result=render();
+            if (result.isSuccess()) {
+              listener.onNewFrame(RenderSessionImpl.this.getSession());
+            }
+          }
+  finally {
+            release();
+          }
+          listener.done(result);
         }
-        newParentView.getLayoutTransition().setDuration(LayoutTransition.APPEARING,0);
-        return moveView(previousParent,newParentView,childView,index,params);
       }
-      @Override public void postAnimation(){
-        previousParent.setLayoutTransition(null);
-        newParentView.setLayoutTransition(null);
-      }
-    }
 .start();
+    }
+ else {
+      new AnimationThread(this,"moveChild",listener){
+        @Override public Result preAnimation(){
+          LayoutTransition transition=new LayoutTransition();
+          previousParent.setLayoutTransition(transition);
+          transition.setDuration(LayoutTransition.DISAPPEARING,100);
+          transition.setStartDelay(LayoutTransition.CHANGE_DISAPPEARING,100);
+          transition.setDuration(LayoutTransition.CHANGE_DISAPPEARING,100);
+          transition.setDuration(LayoutTransition.CHANGE_APPEARING,100);
+          transition.setStartDelay(LayoutTransition.APPEARING,100);
+          transition.setDuration(LayoutTransition.APPEARING,100);
+          return moveView(previousParent,newParentView,childView,index,params);
+        }
+        @Override public void postAnimation(){
+          previousParent.setLayoutTransition(null);
+          newParentView.setLayoutTransition(null);
+        }
+      }
+.start();
+    }
     return SUCCESS.createResult(layoutParams);
   }
   Result result=moveView(previousParent,newParentView,childView,index,layoutParams);
