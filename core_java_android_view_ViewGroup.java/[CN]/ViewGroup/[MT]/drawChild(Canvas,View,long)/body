@@ -16,7 +16,7 @@
   boolean concatMatrix=false;
   boolean scalingRequired=false;
   boolean caching;
-  final int layerType=child.getLayerType();
+  int layerType=child.getLayerType();
   if ((flags & FLAG_CHILDREN_DRAWN_WITH_CACHE) == FLAG_CHILDREN_DRAWN_WITH_CACHE || (flags & FLAG_ALWAYS_DRAWN_WITH_CACHE) == FLAG_ALWAYS_DRAWN_WITH_CACHE) {
     caching=true;
     if (mAttachInfo != null)     scalingRequired=mAttachInfo.mScalingRequired;
@@ -92,6 +92,7 @@
   if (caching) {
     if (!canvas.isHardwareAccelerated()) {
       if (layerType != LAYER_TYPE_NONE) {
+        layerType=LAYER_TYPE_SOFTWARE;
         child.buildDrawingCache(true);
       }
       cache=child.getDrawingCache(true);
@@ -158,12 +159,11 @@
           }
           if (layerType != LAYER_TYPE_NONE && child.mLayerPaint != null) {
             child.mLayerPaint.setAlpha(multipliedAlpha);
-            canvas.saveLayer(sx,sy,sx + cr - cl,sy + cb - ct,child.mLayerPaint,layerFlags);
           }
  else {
             canvas.saveLayerAlpha(sx,sy,sx + cr - cl,sy + cb - ct,multipliedAlpha,layerFlags);
+            layerSaved=true;
           }
-          layerSaved=true;
         }
  else {
           if (layerType != LAYER_TYPE_NONE && child.mLayerPaint != null) {
@@ -192,24 +192,34 @@
     }
   }
   if (hasNoCache) {
+    boolean layerRendered=false;
     if (!layerSaved && layerType == LAYER_TYPE_HARDWARE) {
-      canvas.saveLayer(sx,sy,sx + cr - cl,sy + cb - ct,child.mLayerPaint,Canvas.HAS_ALPHA_LAYER_SAVE_FLAG | Canvas.CLIP_TO_LAYER_SAVE_FLAG);
+      final HardwareLayer layer=child.getHardwareLayer(canvas);
+      if (layer != null && layer.isValid()) {
+        ((HardwareCanvas)canvas).drawHardwareLayer(0,0,cr - cl,cb - ct,layer,child.mLayerPaint);
+        layerRendered=true;
+      }
+ else {
+        canvas.saveLayer(sx,sy,sx + cr - cl,sy + cb - ct,child.mLayerPaint,Canvas.HAS_ALPHA_LAYER_SAVE_FLAG | Canvas.CLIP_TO_LAYER_SAVE_FLAG);
+      }
     }
-    if (!hasDisplayList) {
-      if ((child.mPrivateFlags & SKIP_DRAW) == SKIP_DRAW) {
-        if (ViewDebug.TRACE_HIERARCHY) {
-          ViewDebug.trace(this,ViewDebug.HierarchyTraceType.DRAW);
+    if (!layerRendered) {
+      if (!hasDisplayList) {
+        if ((child.mPrivateFlags & SKIP_DRAW) == SKIP_DRAW) {
+          if (ViewDebug.TRACE_HIERARCHY) {
+            ViewDebug.trace(this,ViewDebug.HierarchyTraceType.DRAW);
+          }
+          child.mPrivateFlags&=~DIRTY_MASK;
+          child.dispatchDraw(canvas);
         }
+ else {
+          child.draw(canvas);
+        }
+      }
+ else {
         child.mPrivateFlags&=~DIRTY_MASK;
-        child.dispatchDraw(canvas);
+        ((HardwareCanvas)canvas).drawDisplayList(displayList);
       }
- else {
-        child.draw(canvas);
-      }
-    }
- else {
-      child.mPrivateFlags&=~DIRTY_MASK;
-      ((HardwareCanvas)canvas).drawDisplayList(displayList);
     }
   }
  else   if (cache != null) {
