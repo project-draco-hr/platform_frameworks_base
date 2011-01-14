@@ -1,15 +1,21 @@
 {
-  SetupResult result;
-  String[] response=((String[])ar.result);
+  DataCallState response=(DataCallState)ar.result;
   ConnectionParams cp=(ConnectionParams)ar.userObj;
+  SetupResult result;
   if (ar.exception != null) {
-    if (DBG)     log("DataConnection Init failed " + ar.exception);
+    if (DBG) {
+      log("onSetupConnectionCompleted failed, ar.exception=" + ar.exception + " response="+ response);
+    }
     if (ar.exception instanceof CommandException && ((CommandException)(ar.exception)).getCommandError() == CommandException.Error.RADIO_NOT_AVAILABLE) {
       result=SetupResult.ERR_BadCommand;
       result.mFailCause=FailCause.RADIO_NOT_AVAILABLE;
     }
+ else     if ((response == null) || (response.version < 4)) {
+      result=SetupResult.ERR_GetLastErrorFromRil;
+    }
  else {
-      result=SetupResult.ERR_Other;
+      result=SetupResult.ERR_RilError;
+      result.mFailCause=FailCause.fromInt(response.status);
     }
   }
  else   if (cp.tag != mTag) {
@@ -19,56 +25,89 @@
     result=SetupResult.ERR_Stale;
   }
  else {
+    log("onSetupConnectionCompleted received DataCallState: " + response);
     LinkProperties linkProperties=new LinkProperties();
-    if (response.length >= 2) {
-      cid=Integer.parseInt(response[0]);
-      String interfaceName=response[1];
-      result=SetupResult.SUCCESS;
+    if (response.status == FailCause.NONE.getErrorCode()) {
       try {
-        String prefix="net." + interfaceName + ".";
-        NetworkInterface networkInterface=NetworkInterface.getByName(interfaceName);
-        linkProperties.setInterfaceName(interfaceName);
-        String gatewayAddress=SystemProperties.get(prefix + "gw");
-        linkProperties.setGateway(InetAddress.getByName(gatewayAddress));
-        for (        InterfaceAddress addr : networkInterface.getInterfaceAddresses()) {
-          linkProperties.addLinkAddress(new LinkAddress(addr));
+        cid=response.cid;
+        linkProperties.setInterfaceName(response.ifname);
+        for (        String addr : response.addresses) {
+          LinkAddress la;
+          if (!InetAddress.isNumeric(addr)) {
+            EventLogTags.writeBadIpAddress(addr);
+            throw new UnknownHostException("Non-numeric ip addr=" + addr);
+          }
+          InetAddress ia=InetAddress.getByName(addr);
+          if (ia instanceof Inet4Address) {
+            la=new LinkAddress(ia,32);
+          }
+ else {
+            la=new LinkAddress(ia,128);
+          }
+          linkProperties.addLinkAddress(la);
         }
-        String dnsServers[]=new String[2];
-        dnsServers[0]=SystemProperties.get(prefix + "dns1");
-        dnsServers[1]=SystemProperties.get(prefix + "dns2");
-        if (isDnsOk(dnsServers)) {
-          linkProperties.addDns(InetAddress.getByName(dnsServers[0]));
-          linkProperties.addDns(InetAddress.getByName(dnsServers[1]));
+        if (response.dnses.length != 0) {
+          for (          String addr : response.dnses) {
+            if (!InetAddress.isNumeric(addr)) {
+              EventLogTags.writePdpBadDnsAddress("dns=" + addr);
+              throw new UnknownHostException("Non-numeric dns addr=" + addr);
+            }
+            InetAddress ia=InetAddress.getByName(addr);
+            linkProperties.addDns(ia);
+          }
+          result=SetupResult.SUCCESS;
         }
  else {
-          result=SetupResult.ERR_BadDns;
+          String prefix="net." + response.ifname + ".";
+          String dnsServers[]=new String[2];
+          dnsServers[0]=SystemProperties.get(prefix + "dns1");
+          dnsServers[1]=SystemProperties.get(prefix + "dns2");
+          if (isDnsOk(dnsServers)) {
+            for (            String dnsAddr : dnsServers) {
+              if (!InetAddress.isNumeric(dnsAddr)) {
+                EventLogTags.writePdpBadDnsAddress("dnsAddr=" + dnsAddr);
+                throw new UnknownHostException("Non-numeric dns addr=" + dnsAddr);
+              }
+              InetAddress ia=InetAddress.getByName(dnsAddr);
+              linkProperties.addDns(ia);
+            }
+            result=SetupResult.SUCCESS;
+          }
+ else {
+            StringBuilder sb=new StringBuilder();
+            for (            String dnsAddr : dnsServers) {
+              sb.append(dnsAddr);
+              sb.append(" ");
+            }
+            EventLogTags.writePdpBadDnsAddress("Unacceptable dns addresses=" + sb);
+            throw new UnknownHostException("Unacceptable dns addresses=" + sb);
+          }
         }
       }
- catch (      UnknownHostException e1) {
-        log("onSetupCompleted: UnknowHostException " + e1);
-        e1.printStackTrace();
-        result=SetupResult.ERR_Other;
-      }
-catch (      SocketException e2) {
-        log("onSetupCompleted: SocketException " + e2);
-        e2.printStackTrace();
-        result=SetupResult.ERR_Other;
+ catch (      UnknownHostException e) {
+        log("onSetupCompleted: UnknownHostException " + e);
+        e.printStackTrace();
+        result=SetupResult.ERR_UnacceptableParameter;
       }
     }
  else {
-      log("onSetupCompleted: error; expected number of responses >= 2 was " + response.length);
-      result=SetupResult.ERR_Other;
+      if (response.version < 4) {
+        result=SetupResult.ERR_GetLastErrorFromRil;
+      }
+ else {
+        result=SetupResult.ERR_RilError;
+      }
     }
     if (result != SetupResult.SUCCESS) {
-      log("onSetupCompleted with an error clearing LinkProperties");
+      log("onSetupConnectionCompleted with an error, clearing LinkProperties");
       linkProperties.clear();
     }
     mLinkProperties=linkProperties;
   }
   if (DBG) {
-    log("DataConnection setup result='" + result + "' on cid="+ cid);
+    log("onSetupConnectionCompleted: DataConnection setup result='" + result + "' on cid="+ cid);
     if (result == SetupResult.SUCCESS) {
-      log("LinkProperties: " + mLinkProperties.toString());
+      log("onSetupConnectionCompleted: LinkProperties: " + mLinkProperties.toString());
     }
   }
   return result;
