@@ -1,0 +1,62 @@
+{
+  long start=-1;
+  int mask, role;
+  String methodName;
+  if (disconnect) {
+    methodName="disconnectPan()";
+    mask=(ConnectPanReceiver.STATE_DISCONNECTED_FLAG | ConnectPanReceiver.STATE_DISCONNECTING_FLAG);
+    role=BluetoothPan.LOCAL_PANU_ROLE;
+  }
+ else {
+    methodName="incomingPanDisconnection()";
+    mask=ConnectPanReceiver.STATE_DISCONNECTED_FLAG;
+    role=BluetoothPan.LOCAL_NAP_ROLE;
+  }
+  if (!adapter.isEnabled()) {
+    fail(String.format("%s bluetooth not enabled: device=%s",methodName,device));
+  }
+  if (!adapter.getBondedDevices().contains(device)) {
+    fail(String.format("%s device not paired: device=%s",methodName,device));
+  }
+  BluetoothPan pan=new BluetoothPan(mContext);
+  assertNotNull(pan);
+  ConnectPanReceiver receiver=getConnectPanReceiver(device,role,mask);
+  int state=pan.getPanDeviceState(device);
+switch (state) {
+case BluetoothInputDevice.STATE_CONNECTED:
+case BluetoothInputDevice.STATE_CONNECTING:
+    start=System.currentTimeMillis();
+  if (role == BluetoothPan.LOCAL_PANU_ROLE) {
+    assertTrue(pan.disconnect(device));
+  }
+break;
+case BluetoothInputDevice.STATE_DISCONNECTED:
+removeReceiver(receiver);
+return;
+case BluetoothInputDevice.STATE_DISCONNECTING:
+mask=0;
+break;
+default :
+removeReceiver(receiver);
+fail(String.format("%s invalid state: device=%s, state=%d",methodName,device,state));
+}
+long s=System.currentTimeMillis();
+while (System.currentTimeMillis() - s < CONNECT_DISCONNECT_PROFILE_TIMEOUT) {
+state=pan.getPanDeviceState(device);
+if (state == BluetoothInputDevice.STATE_DISCONNECTED && (receiver.getFiredFlags() & mask) == mask) {
+long finish=receiver.getCompletedTime();
+if (start != -1 && finish != -1) {
+writeOutput(String.format("%s completed in %d ms: device=%s",methodName,(finish - start),device));
+}
+ else {
+writeOutput(String.format("%s completed: device=%s",methodName,device));
+}
+removeReceiver(receiver);
+return;
+}
+sleep(POLL_TIME);
+}
+int firedFlags=receiver.getFiredFlags();
+removeReceiver(receiver);
+fail(String.format("%s timeout: device=%s, state=%d (expected %d), " + "flags=0x%x (expected 0x%s)",methodName,device,state,BluetoothInputDevice.STATE_DISCONNECTED,firedFlags,mask));
+}
