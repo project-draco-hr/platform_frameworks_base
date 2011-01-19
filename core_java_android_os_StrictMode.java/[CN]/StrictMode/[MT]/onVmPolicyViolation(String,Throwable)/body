@@ -1,16 +1,31 @@
 {
-  if ((sVmPolicyMask & PENALTY_LOG) != 0) {
+  final boolean penaltyDropbox=(sVmPolicyMask & PENALTY_DROPBOX) != 0;
+  final boolean penaltyDeath=(sVmPolicyMask & PENALTY_DEATH) != 0;
+  final boolean penaltyLog=(sVmPolicyMask & PENALTY_LOG) != 0;
+  final ViolationInfo info=new ViolationInfo(originStack,sVmPolicyMask);
+  final Integer fingerprint=info.hashCode();
+  final long now=SystemClock.uptimeMillis();
+  long lastViolationTime=0;
+  long timeSinceLastViolationMillis=Long.MAX_VALUE;
+synchronized (sLastVmViolationTime) {
+    if (sLastVmViolationTime.containsKey(fingerprint)) {
+      lastViolationTime=sLastVmViolationTime.get(fingerprint);
+      timeSinceLastViolationMillis=now - lastViolationTime;
+    }
+    if (timeSinceLastViolationMillis > MIN_LOG_INTERVAL_MS) {
+      sLastVmViolationTime.put(fingerprint,now);
+    }
+  }
+  Log.d(TAG,"Time since last vm violation: " + timeSinceLastViolationMillis);
+  if (penaltyLog && timeSinceLastViolationMillis > MIN_LOG_INTERVAL_MS) {
     Log.e(TAG,message,originStack);
   }
-  boolean penaltyDropbox=(sVmPolicyMask & PENALTY_DROPBOX) != 0;
-  boolean penaltyDeath=(sVmPolicyMask & PENALTY_DEATH) != 0;
-  int violationMaskSubset=PENALTY_DROPBOX | DETECT_VM_CURSOR_LEAKS;
-  ViolationInfo info=new ViolationInfo(originStack,sVmPolicyMask);
+  int violationMaskSubset=PENALTY_DROPBOX | (ALL_VM_DETECT_BITS & sVmPolicyMask);
   if (penaltyDropbox && !penaltyDeath) {
     dropboxViolationAsync(violationMaskSubset,info);
     return;
   }
-  if (penaltyDropbox) {
+  if (penaltyDropbox && lastViolationTime == 0) {
     final int savedPolicyMask=getThreadPolicyMask();
     try {
       setThreadPolicyMask(0);
