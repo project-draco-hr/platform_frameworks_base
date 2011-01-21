@@ -1,23 +1,29 @@
 {
   mRemoteViewsFactory=IRemoteViewsFactory.Stub.asInterface(service);
-  mConnected=true;
   final RemoteViewsAdapter adapter=mAdapter.get();
   if (adapter == null)   return;
   adapter.mWorkerQueue.post(new Runnable(){
     @Override public void run(){
-      if (adapter.mServiceConnection.isConnected()) {
+      if (adapter.mNotifyDataSetChangedAfterOnServiceConnected) {
+        adapter.onNotifyDataSetChanged();
+      }
+ else {
         IRemoteViewsFactory factory=adapter.mServiceConnection.getRemoteViewsFactory();
         try {
-          factory.onDataSetChanged();
+          if (!factory.isCreated()) {
+            factory.onDataSetChanged();
+          }
         }
  catch (        Exception e) {
           Log.e(TAG,"Error notifying factory of data set changed in " + "onServiceConnected(): " + e.getMessage());
-          e.printStackTrace();
           return;
         }
-        adapter.updateMetaData();
+        adapter.updateTemporaryMetaData();
         adapter.mMainQueue.post(new Runnable(){
           @Override public void run(){
+synchronized (adapter.mCache) {
+              adapter.mCache.commitTemporaryMetaData();
+            }
             final RemoteAdapterConnectionCallback callback=adapter.mCallback.get();
             if (callback != null) {
               callback.onRemoteAdapterConnected();
@@ -26,6 +32,9 @@
         }
 );
       }
+      adapter.enqueueDeferredUnbindServiceMessage();
+      mIsConnected=true;
+      mIsConnecting=false;
     }
   }
 );
