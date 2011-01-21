@@ -1,3 +1,83 @@
 {
-  showOnly(childIndex,animate,false);
+  if (mAdapter == null)   return;
+  final int adapterCount=getCount();
+  if (adapterCount == 0)   return;
+  for (int i=0; i < mPreviousViews.size(); i++) {
+    View viewToRemove=mViewsMap.get(mPreviousViews.get(i)).view;
+    mViewsMap.remove(mPreviousViews.get(i));
+    viewToRemove.clearAnimation();
+    if (viewToRemove instanceof ViewGroup) {
+      ViewGroup vg=(ViewGroup)viewToRemove;
+      vg.removeAllViewsInLayout();
+    }
+    applyTransformForChildAtIndex(viewToRemove,-1);
+    removeViewInLayout(viewToRemove);
+  }
+  mPreviousViews.clear();
+  int newWindowStartUnbounded=childIndex - mActiveOffset;
+  int newWindowEndUnbounded=newWindowStartUnbounded + getNumActiveViews() - 1;
+  int newWindowStart=Math.max(0,newWindowStartUnbounded);
+  int newWindowEnd=Math.min(adapterCount - 1,newWindowEndUnbounded);
+  if (mLoopViews) {
+    newWindowStart=newWindowStartUnbounded;
+    newWindowEnd=newWindowEndUnbounded;
+  }
+  int rangeStart=modulo(newWindowStart,getWindowSize());
+  int rangeEnd=modulo(newWindowEnd,getWindowSize());
+  boolean wrap=false;
+  if (rangeStart > rangeEnd) {
+    wrap=true;
+  }
+  for (  Integer index : mViewsMap.keySet()) {
+    boolean remove=false;
+    if (!wrap && (index < rangeStart || index > rangeEnd)) {
+      remove=true;
+    }
+ else     if (wrap && (index > rangeEnd && index < rangeStart)) {
+      remove=true;
+    }
+    if (remove) {
+      View previousView=mViewsMap.get(index).view;
+      int oldRelativeIndex=mViewsMap.get(index).index;
+      mPreviousViews.add(index);
+      animateViewForTransition(oldRelativeIndex,-1,previousView);
+    }
+  }
+  if (!(newWindowStart == mCurrentWindowStart && newWindowEnd == mCurrentWindowEnd && newWindowStartUnbounded == mCurrentWindowStartUnbounded)) {
+    for (int i=newWindowStart; i <= newWindowEnd; i++) {
+      int index=modulo(i,getWindowSize());
+      int oldRelativeIndex;
+      if (mViewsMap.containsKey(index)) {
+        oldRelativeIndex=mViewsMap.get(index).index;
+      }
+ else {
+        oldRelativeIndex=-1;
+      }
+      int newRelativeIndex=i - newWindowStartUnbounded;
+      boolean inOldRange=mViewsMap.containsKey(index) && !mPreviousViews.contains(index);
+      if (inOldRange) {
+        View view=mViewsMap.get(index).view;
+        mViewsMap.get(index).index=newRelativeIndex;
+        applyTransformForChildAtIndex(view,newRelativeIndex);
+        animateViewForTransition(oldRelativeIndex,newRelativeIndex,view);
+      }
+ else {
+        View newView=mAdapter.getView(modulo(i,adapterCount),null,this);
+        FrameLayout fl=getFrameForChild();
+        if (newView != null) {
+          fl.addView(newView);
+        }
+        mViewsMap.put(index,new ViewAndIndex(fl,newRelativeIndex));
+        addChild(fl);
+        applyTransformForChildAtIndex(fl,newRelativeIndex);
+        animateViewForTransition(-1,newRelativeIndex,fl);
+      }
+      mViewsMap.get(index).view.bringToFront();
+    }
+    mCurrentWindowStart=newWindowStart;
+    mCurrentWindowEnd=newWindowEnd;
+    mCurrentWindowStartUnbounded=newWindowStartUnbounded;
+  }
+  requestLayout();
+  invalidate();
 }
