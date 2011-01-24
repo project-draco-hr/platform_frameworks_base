@@ -22,7 +22,7 @@
     if (mAttachInfo != null)     scalingRequired=mAttachInfo.mScalingRequired;
   }
  else {
-    caching=layerType != LAYER_TYPE_NONE;
+    caching=(layerType != LAYER_TYPE_NONE) || canvas.isHardwareAccelerated();
   }
   if (a != null) {
     final boolean initialized=a.isInitialized();
@@ -84,6 +84,10 @@
   if (alpha <= ViewConfiguration.ALPHA_THRESHOLD && (child.mPrivateFlags & ALPHA_SET) == 0 && !(child instanceof SurfaceView)) {
     return more;
   }
+  if (canvas.isHardwareAccelerated()) {
+    child.mRecreateDisplayList=(child.mPrivateFlags & INVALIDATED) == INVALIDATED;
+    child.mPrivateFlags&=~INVALIDATED;
+  }
   child.computeScroll();
   final int sx=child.mScrollX;
   final int sy=child.mScrollY;
@@ -102,7 +106,7 @@
         child.buildDrawingCache(true);
         cache=child.getDrawingCache(true);
       }
- else {
+ else       if (layerType == LAYER_TYPE_NONE) {
         displayList=child.getDisplayList();
       }
     }
@@ -110,7 +114,7 @@
   final boolean hasDisplayList=displayList != null && displayList.isReady();
   final boolean hasNoCache=cache == null || hasDisplayList;
   final int restoreTo=canvas.save();
-  if (hasNoCache) {
+  if (cache == null && !hasDisplayList) {
     canvas.translate(cl - sx,ct - sy);
   }
  else {
@@ -125,7 +129,7 @@
     if (transformToApply != null || !childHasIdentityMatrix) {
       int transX=0;
       int transY=0;
-      if (hasNoCache) {
+      if (cache == null && !hasDisplayList) {
         transX=-sx;
         transY=-sy;
       }
@@ -178,11 +182,11 @@
     child.mPrivateFlags&=~ALPHA_SET;
   }
   if ((flags & FLAG_CLIP_CHILDREN) == FLAG_CLIP_CHILDREN) {
-    if (hasNoCache) {
+    if (cache == null && !hasDisplayList) {
       canvas.clipRect(sx,sy,sx + (cr - cl),sy + (cb - ct));
     }
  else {
-      if (!scalingRequired) {
+      if (!scalingRequired || cache == null) {
         canvas.clipRect(0,0,cr - cl,cb - ct);
       }
  else {
@@ -217,7 +221,9 @@
       }
  else {
         child.mPrivateFlags&=~DIRTY_MASK;
-        ((HardwareCanvas)canvas).drawDisplayList(displayList);
+        if (mRecreateDisplayList || mLayerType != LAYER_TYPE_NONE) {
+          ((HardwareCanvas)canvas).drawDisplayList(displayList);
+        }
       }
     }
   }
@@ -246,5 +252,9 @@
     child.onSetAlpha(255);
     finishAnimatingView(child,a);
   }
+  if (more && canvas.isHardwareAccelerated()) {
+    invalidate();
+  }
+  child.mRecreateDisplayList=false;
   return more;
 }
