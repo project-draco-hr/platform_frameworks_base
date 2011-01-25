@@ -1,22 +1,110 @@
 {
-  float x=event.values[_DATA_X];
-  float y=event.values[_DATA_Y];
-  float z=event.values[_DATA_Z];
-  float magnitude=vectorMagnitude(x,y,z);
-  float deviation=Math.abs(magnitude - SensorManager.STANDARD_GRAVITY);
-  handleAccelerationDistrust(deviation);
-  float alpha=1;
-  if (mAccelerationDistrust > 0) {
-    alpha=ACCELERATING_LOWPASS_ALPHA;
+  final boolean log=mOrientationListener.mLogEnabled;
+  float x=event.values[ACCELEROMETER_DATA_X];
+  float y=event.values[ACCELEROMETER_DATA_Y];
+  float z=event.values[ACCELEROMETER_DATA_Z];
+  if (log) {
+    Slog.v(TAG,"Raw acceleration vector: " + "x=" + x + ", y="+ y+ ", z="+ z);
   }
-  float newTiltAngle=tiltAngle(z,magnitude);
-  mTiltAngle=lowpassFilter(newTiltAngle,mTiltAngle,alpha);
-  float absoluteTilt=Math.abs(mTiltAngle);
-  checkFullyTilted(absoluteTilt);
-  if (mTiltDistrust > 0) {
-    return;
+  final float timeDeltaMS=(event.timestamp - mLastTimestamp) * 0.000001f;
+  boolean skipSample;
+  if (timeDeltaMS <= 0 || timeDeltaMS > MAX_FILTER_DELTA_TIME_MS || (x == 0 && y == 0 && z == 0)) {
+    if (log) {
+      Slog.v(TAG,"Resetting orientation listener.");
+    }
+    for (int i=0; i < 4; i++) {
+      mConfidence[i]=0;
+    }
+    skipSample=true;
   }
-  float newOrientationAngle=computeNewOrientation(x,y);
-  filterOrientation(absoluteTilt,newOrientationAngle);
-  calculateNewRotation(mOrientationAngle,absoluteTilt);
+ else {
+    final float alpha=timeDeltaMS / (FILTER_TIME_CONSTANT_MS + timeDeltaMS) * FILTER_GAIN;
+    x=alpha * (x - mLastFilteredX) + mLastFilteredX;
+    y=alpha * (y - mLastFilteredY) + mLastFilteredY;
+    z=alpha * (z - mLastFilteredZ) + mLastFilteredZ;
+    if (log) {
+      Slog.v(TAG,"Filtered acceleration vector: " + "x=" + x + ", y="+ y+ ", z="+ z);
+    }
+    skipSample=false;
+  }
+  mLastTimestamp=event.timestamp;
+  mLastFilteredX=x;
+  mLastFilteredY=y;
+  mLastFilteredZ=z;
+  boolean orientationChanged=false;
+  if (!skipSample) {
+    int proposedOrientation=ROTATION_UNKNOWN;
+    float combinedConfidence=1.0f;
+    final float magnitude=(float)Math.sqrt(x * x + y * y + z * z);
+    if (magnitude < MIN_ACCELERATION_MAGNITUDE || magnitude > MAX_ACCELERATION_MAGNITUDE) {
+      if (log) {
+        Slog.v(TAG,"Ignoring sensor data, magnitude out of range: " + "magnitude=" + magnitude);
+      }
+    }
+ else {
+      final int tiltAngle=(int)Math.round(Math.asin(z / magnitude) * RADIANS_TO_DEGREES);
+      if (Math.abs(tiltAngle) > MAX_TILT) {
+        if (log) {
+          Slog.v(TAG,"Ignoring sensor data, tilt angle too high: " + "magnitude=" + magnitude + ", tiltAngle="+ tiltAngle);
+        }
+      }
+ else {
+        int orientationAngle=(int)Math.round(-Math.atan2(-x,y) * RADIANS_TO_DEGREES);
+        if (orientationAngle < 0) {
+          orientationAngle+=360;
+        }
+        int nearestOrientation=(orientationAngle + 45) / 90;
+        int nearestOrientationAngle=nearestOrientation * 90;
+        if (nearestOrientation == 4) {
+          nearestOrientation=0;
+        }
+        if (isTiltAngleAcceptable(nearestOrientation,tiltAngle) && isOrientationAngleAcceptable(nearestOrientation,orientationAngle)) {
+          proposedOrientation=nearestOrientation;
+          final float idealOrientationAngle=nearestOrientationAngle;
+          final float orientationConfidence=confidence(orientationAngle,idealOrientationAngle,ORIENTATION_ANGLE_CONFIDENCE_SCALE);
+          final float idealTiltAngle=0;
+          final float tiltConfidence=confidence(tiltAngle,idealTiltAngle,TILT_ANGLE_CONFIDENCE_SCALE);
+          final float idealMagnitude=SensorManager.STANDARD_GRAVITY;
+          final float magnitudeConfidence=confidence(magnitude,idealMagnitude,MAGNITUDE_CONFIDENCE_SCALE);
+          combinedConfidence=orientationConfidence * tiltConfidence * magnitudeConfidence;
+          if (log) {
+            Slog.v(TAG,"Proposal: " + "magnitude=" + magnitude + ", tiltAngle="+ tiltAngle+ ", orientationAngle="+ orientationAngle+ ", proposedOrientation="+ proposedOrientation+ ", combinedConfidence="+ combinedConfidence+ ", orientationConfidence="+ orientationConfidence+ ", tiltConfidence="+ tiltConfidence+ ", magnitudeConfidence="+ magnitudeConfidence);
+          }
+        }
+ else {
+          if (log) {
+            Slog.v(TAG,"Ignoring sensor data, no proposal: " + "magnitude=" + magnitude + ", tiltAngle="+ tiltAngle+ ", orientationAngle="+ orientationAngle);
+          }
+        }
+      }
+    }
+    final float confidenceAmount=combinedConfidence * timeDeltaMS / ORIENTATION_SETTLE_TIME_MS;
+    for (int i=0; i < 4; i++) {
+      if (i == proposedOrientation) {
+        mConfidence[i]+=confidenceAmount;
+        if (mConfidence[i] >= 1.0f) {
+          mConfidence[i]=1.0f;
+          if (i != mRotation) {
+            if (log) {
+              Slog.v(TAG,"Orientation changed!  rotation=" + i);
+            }
+            mRotation=i;
+            orientationChanged=true;
+          }
+        }
+      }
+ else {
+        mConfidence[i]-=confidenceAmount;
+        if (mConfidence[i] < 0.0f) {
+          mConfidence[i]=0.0f;
+        }
+      }
+    }
+  }
+  if (log) {
+    Slog.v(TAG,"Result: rotation=" + mRotation + ", confidence=["+ mConfidence[0]+ ", "+ mConfidence[1]+ ", "+ mConfidence[2]+ ", "+ mConfidence[3]+ "], timeDeltaMS="+ timeDeltaMS);
+  }
+  if (orientationChanged) {
+    mOrientationListener.onOrientationChanged(mRotation);
+  }
 }
