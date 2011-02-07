@@ -472,7 +472,8 @@ boolean blurring=false;
 boolean dimming=false;
 boolean covered=false;
 boolean syswin=false;
-boolean backgroundFillerShown=false;
+boolean backgroundFillerWasShown=mBackgroundFillerTarget != null;
+mBackgroundFillerTarget=null;
 final int N=mWindows.size();
 for (i=N - 1; i >= 0; i--) {
 WindowState w=mWindows.get(i);
@@ -670,6 +671,14 @@ if (someoneLosingFocus && w == mCurrentFocus && canBeSeen) {
 focusDisplayed=true;
 }
 final boolean obscuredChanged=w.mObscured != obscured;
+if (mBackgroundFillerTarget != null) {
+if (w.isAnimating()) {
+  mBackgroundFillerTarget=w;
+}
+ else if (w.mIsWallpaper) {
+  mBackgroundFillerTarget=w;
+}
+}
 if (!(w.mObscured=obscured)) {
 if (w.mSurface != null) {
   if ((attrFlags & FLAG_KEEP_SCREEN_ON) != 0) {
@@ -689,28 +698,9 @@ boolean opaqueDrawn=canBeSeen && w.isOpaqueDrawn();
 if (opaqueDrawn && w.isFullscreen(dw,dh)) {
   obscured=true;
 }
- else if (opaqueDrawn && w.needsBackgroundFiller(dw,dh)) {
-  if (SHOW_TRANSACTIONS)   Slog.d(TAG,"showing background filler");
+ else if (w.needsBackgroundFiller(dw,dh) && (canBeSeen || w.isAnimating())) {
   obscured=true;
-  if (mBackgroundFillerSurface == null) {
-    try {
-      mBackgroundFillerSurface=new Surface(mFxSession,0,"BackGroundFiller",0,dw,dh,PixelFormat.OPAQUE,Surface.FX_SURFACE_NORMAL);
-    }
- catch (    Exception e) {
-      Slog.e(TAG,"Exception creating filler surface",e);
-    }
-  }
-  try {
-    mBackgroundFillerSurface.setPosition(0,0);
-    mBackgroundFillerSurface.setSize(dw,dh);
-    mBackgroundFillerSurface.setLayer(w.mAnimLayer - 1);
-    mBackgroundFillerSurface.show();
-  }
- catch (  RuntimeException e) {
-    Slog.e(TAG,"Exception showing filler surface");
-  }
-  backgroundFillerShown=true;
-  mBackgroundFillerShown=true;
+  mBackgroundFillerTarget=w;
 }
  else if (canBeSeen && !obscured && (attrFlags & FLAG_BLUR_BEHIND | FLAG_DIM_BEHIND) != 0) {
   if (localLOGV)   Slog.v(TAG,"Win " + w + ": blurring="+ blurring+ " obscured="+ obscured+ " displayed="+ displayed);
@@ -728,13 +718,13 @@ if (opaqueDrawn && w.isFullscreen(dw,dh)) {
     if (!blurring) {
       blurring=true;
       if (mBlurSurface == null) {
-        if (SHOW_TRANSACTIONS)         Slog.i(TAG,"  BLUR " + mBlurSurface + ": CREATE");
         try {
           mBlurSurface=new Surface(mFxSession,0,"BlurSurface",-1,16,16,PixelFormat.OPAQUE,Surface.FX_SURFACE_BLUR);
         }
  catch (        Exception e) {
           Slog.e(TAG,"Exception creating Blur surface",e);
         }
+        if (SHOW_TRANSACTIONS)         Slog.i(TAG,"  BLUR " + mBlurSurface + ": CREATE");
       }
       if (mBlurSurface != null) {
         if (SHOW_TRANSACTIONS)         Slog.i(TAG,"  BLUR " + mBlurSurface + ": pos=(0,0) ("+ dw+ "x"+ dh+ "), layer="+ (w.mAnimLayer - 1));
@@ -760,9 +750,30 @@ if (obscuredChanged && mWallpaperTarget == w) {
 updateWallpaperVisibilityLocked();
 }
 }
-if (backgroundFillerShown == false && mBackgroundFillerShown) {
-mBackgroundFillerShown=false;
-if (SHOW_TRANSACTIONS) Slog.d(TAG,"hiding background filler");
+if (mBackgroundFillerTarget != null) {
+if (mBackgroundFillerSurface == null) {
+try {
+  mBackgroundFillerSurface=new Surface(mFxSession,0,"BackGroundFiller",0,dw,dh,PixelFormat.OPAQUE,Surface.FX_SURFACE_NORMAL);
+}
+ catch (Exception e) {
+  Slog.e(TAG,"Exception creating filler surface",e);
+}
+if (SHOW_TRANSACTIONS) Slog.i(TAG,"  BG FILLER " + mBackgroundFillerSurface + ": CREATE");
+}
+try {
+if (SHOW_TRANSACTIONS) Slog.i(TAG,"  BG FILLER " + mBackgroundFillerSurface + " SHOW: pos=(0,0) ("+ dw+ "x"+ dh+ ") layer="+ (mBackgroundFillerTarget.mLayer - 1));
+mBackgroundFillerSurface.setPosition(0,0);
+mBackgroundFillerSurface.setSize(dw,dh);
+mBackgroundFillerSurface.setLayer(mBackgroundFillerTarget.mLayer - 1);
+mBackgroundFillerSurface.show();
+}
+ catch (RuntimeException e) {
+Slog.e(TAG,"Exception showing filler surface");
+}
+}
+ else if (backgroundFillerWasShown) {
+mBackgroundFillerTarget=null;
+if (SHOW_TRANSACTIONS) Slog.i(TAG,"  BG FILLER " + mBackgroundFillerSurface + " HIDE");
 try {
 mBackgroundFillerSurface.hide();
 }
