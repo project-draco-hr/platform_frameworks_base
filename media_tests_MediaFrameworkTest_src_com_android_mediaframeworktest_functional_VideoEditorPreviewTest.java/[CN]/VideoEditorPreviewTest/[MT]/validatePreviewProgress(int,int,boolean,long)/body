@@ -1,0 +1,51 @@
+{
+  final int[] progressUpdate=new int[100];
+  final Semaphore blockTillPreviewCompletes=new Semaphore(1);
+  previewStart=false;
+  previewStop=false;
+  mVideoEditor.generatePreview(new MediaProcessingProgressListener(){
+    int i=0;
+    public void onProgress(    Object item,    int action,    int progress){
+      progressUpdate[i++]=progress;
+    }
+  }
+);
+  mVideoEditorHelper.checkProgressCBValues(progressUpdate);
+  final SurfaceHolder surfaceHolder=MediaFrameworkTest.mSurfaceView.getHolder();
+  long waitingTime=minWaitingTime;
+  if (endMs == -1) {
+    waitingTime+=duration;
+  }
+ else {
+    waitingTime+=(endMs - startMs);
+  }
+  blockTillPreviewCompletes.acquire();
+  try {
+    mVideoEditor.startPreview(surfaceHolder,startMs,endMs,loop,1,new PreviewProgressListener(){
+      public void onProgress(      VideoEditor videoEditor,      long timeMs,      OverlayData overlayData){
+        if (overlayData != null) {
+          if (overlayData.needsRendering()) {
+            overlayData.renderOverlay(MediaFrameworkTest.mDestBitmap);
+            mEventHandler.sendMessage(mEventHandler.obtainMessage(1,2,3));
+          }
+        }
+      }
+      public void onStart(      VideoEditor videoEditor){
+        setPreviewStart();
+      }
+      public void onStop(      VideoEditor videoEditor){
+        setPreviewStop();
+        blockTillPreviewCompletes.release();
+      }
+    }
+);
+  }
+ catch (  Exception e) {
+    blockTillPreviewCompletes.release();
+  }
+  blockTillPreviewCompletes.tryAcquire(waitingTime,TimeUnit.MILLISECONDS);
+  mVideoEditor.stopPreview();
+  assertTrue("Preview Failed to start",previewStart);
+  assertTrue("Preview Failed to stop",previewStop);
+  blockTillPreviewCompletes.release();
+}

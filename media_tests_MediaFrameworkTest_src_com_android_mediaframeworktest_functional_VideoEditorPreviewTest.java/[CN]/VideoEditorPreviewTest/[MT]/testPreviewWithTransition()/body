@@ -1,0 +1,92 @@
+{
+  final String videoItemFileName1=INPUT_FILE_PATH + "H263_profile0_176x144_10fps_96kbps_0_25.3gp";
+  final String imageItemFileName1=INPUT_FILE_PATH + "IMG_1600x1200.jpg";
+  final String videoItemFileName2=INPUT_FILE_PATH + "MPEG4_SP_800x480_515kbps_15fps_AMR_NB_8KHz_12.2kbps_m_0_26.mp4";
+  final String maskFilename=INPUT_FILE_PATH + "TransitionSpiral_QVGA.jpg";
+  previewStart=false;
+  previewStop=false;
+  final Semaphore blockTillPreviewCompletes=new Semaphore(1);
+  final MediaVideoItem mediaVideoItem1=mVideoEditorHelper.createMediaItem(mVideoEditor,"m1",videoItemFileName1,MediaItem.RENDERING_MODE_BLACK_BORDER);
+  mediaVideoItem1.setExtractBoundaries(0,10000);
+  mVideoEditor.addMediaItem(mediaVideoItem1);
+  final MediaImageItem mediaImageItem1=mVideoEditorHelper.createMediaItem(mVideoEditor,"m2",imageItemFileName1,10000,MediaItem.RENDERING_MODE_BLACK_BORDER);
+  mVideoEditor.addMediaItem(mediaImageItem1);
+  final MediaVideoItem mediaVideoItem2=mVideoEditorHelper.createMediaItem(mVideoEditor,"m3",videoItemFileName2,MediaItem.RENDERING_MODE_BLACK_BORDER);
+  mediaVideoItem2.setExtractBoundaries(0,10000);
+  mVideoEditor.addMediaItem(mediaVideoItem2);
+  final TransitionCrossfade transition1And2CrossFade=mVideoEditorHelper.createTCrossFade("transition_1_2_CF",mediaVideoItem1,mediaImageItem1,2000,Transition.BEHAVIOR_MIDDLE_FAST);
+  mVideoEditor.addTransition(transition1And2CrossFade);
+  final TransitionAlpha transition2And3Alpha=mVideoEditorHelper.createTAlpha("transition_2_3",mediaImageItem1,mediaVideoItem2,4000,Transition.BEHAVIOR_SPEED_UP,maskFilename,50,true);
+  mVideoEditor.addTransition(transition2And3Alpha);
+  final TransitionFadeBlack transition1FadeBlack=mVideoEditorHelper.createTFadeBlack("transition_1FB",null,mediaVideoItem1,2000,Transition.BEHAVIOR_MIDDLE_FAST);
+  mVideoEditor.addTransition(transition1FadeBlack);
+  List<Transition> transitionList=mVideoEditor.getAllTransitions();
+  assertEquals("Transition List Size",3,transitionList.size());
+  assertEquals("Transition 1",transition1And2CrossFade,transitionList.get(0));
+  assertEquals("Transition 2",transition2And3Alpha,transitionList.get(1));
+  assertEquals("Transition 3",transition1FadeBlack,transitionList.get(2));
+  mVideoEditor.setAspectRatio(MediaProperties.ASPECT_RATIO_3_2);
+  final int[] progressValues=new int[300];
+  mVideoEditor.generatePreview(new MediaProcessingProgressListener(){
+    int i=0;
+    public void onProgress(    Object item,    int action,    int progress){
+      if (item instanceof TransitionCrossfade) {
+        progressValues[i]=progress;
+        assertEquals("Object",item,transition1And2CrossFade);
+        assertEquals("Action",action,MediaProcessingProgressListener.ACTION_ENCODE);
+      }
+ else       if (item instanceof TransitionAlpha) {
+        progressValues[i]=progress;
+        assertEquals("Object",item,transition2And3Alpha);
+        assertEquals("Action",action,MediaProcessingProgressListener.ACTION_ENCODE);
+      }
+ else       if (item instanceof TransitionFadeBlack) {
+        progressValues[i]=progress;
+        assertEquals("Object",item,transition1FadeBlack);
+        assertEquals("Action",action,MediaProcessingProgressListener.ACTION_ENCODE);
+      }
+      i++;
+    }
+  }
+);
+  mVideoEditorHelper.checkProgressCBValues(progressValues);
+  final SurfaceHolder surfaceHolder=MediaFrameworkTest.mSurfaceView.getHolder();
+  long waitingTime=minWaitingTime + 10000;
+  blockTillPreviewCompletes.acquire();
+  try {
+    mVideoEditor.startPreview(surfaceHolder,0,10000,false,1,new PreviewProgressListener(){
+      public void onProgress(      VideoEditor videoEditor,      long timeMs,      OverlayData overlayData){
+      }
+      public void onStart(      VideoEditor videoEditor){
+        setPreviewStart();
+      }
+      public void onStop(      VideoEditor videoEditor){
+        setPreviewStop();
+        blockTillPreviewCompletes.release();
+      }
+    }
+);
+  }
+ catch (  Exception e) {
+    blockTillPreviewCompletes.release();
+  }
+  blockTillPreviewCompletes.tryAcquire(waitingTime,TimeUnit.MILLISECONDS);
+  mVideoEditor.stopPreview();
+  blockTillPreviewCompletes.release();
+  assertTrue("Preview Failed to start",previewStart);
+  assertTrue("Preview Failed to stop",previewStop);
+  assertEquals("Removing Transition " + transition1And2CrossFade.getId(),transition1And2CrossFade,mVideoEditor.removeTransition(transition1And2CrossFade.getId()));
+  transitionList=mVideoEditor.getAllTransitions();
+  assertEquals("Transition List Size",2,transitionList.size());
+  assertEquals("Transition 1",transition2And3Alpha,transitionList.get(0));
+  assertEquals("Transition 2",transition1FadeBlack,transitionList.get(1));
+  validatePreviewProgress(0,-1,false,mVideoEditor.getDuration());
+  final TransitionSliding transition1And2Sliding=mVideoEditorHelper.createTSliding("transition_1_2Sliding",mediaVideoItem1,mediaImageItem1,4000,Transition.BEHAVIOR_MIDDLE_FAST,TransitionSliding.DIRECTION_LEFT_OUT_RIGHT_IN);
+  mVideoEditor.addTransition(transition1And2Sliding);
+  transitionList=mVideoEditor.getAllTransitions();
+  assertEquals("Transition List Size",3,transitionList.size());
+  assertEquals("Transition 1",transition2And3Alpha,transitionList.get(0));
+  assertEquals("Transition 2",transition1FadeBlack,transitionList.get(1));
+  assertEquals("Transition 3",transition1And2Sliding,transitionList.get(2));
+  validatePreviewProgress(5000,-1,false,(mVideoEditor.getDuration()));
+}
