@@ -1,0 +1,48 @@
+{
+  debugLog("updateTetherState:" + iface);
+  IBinder b=ServiceManager.getService(Context.NETWORKMANAGEMENT_SERVICE);
+  INetworkManagementService service=INetworkManagementService.Stub.asInterface(b);
+  ConnectivityManager cm=(ConnectivityManager)mContext.getSystemService(Context.CONNECTIVITY_SERVICE);
+  String[] bluetoothRegexs=cm.getTetherableBluetoothRegexs();
+  String[] currentIfaces=new String[0];
+  try {
+    currentIfaces=service.listInterfaces();
+  }
+ catch (  Exception e) {
+    Log.e(TAG,"Error listing Interfaces :" + e);
+    return null;
+  }
+  boolean found=false;
+  for (  String currIface : currentIfaces) {
+    if (currIface.equals(iface)) {
+      found=true;
+      break;
+    }
+  }
+  if (!found)   return null;
+  String address=createNewTetheringAddressLocked();
+  if (address == null)   return null;
+  InterfaceConfiguration ifcg=null;
+  try {
+    ifcg=service.getInterfaceConfig(iface);
+    if (ifcg != null) {
+      InetAddress addr=null;
+      if (ifcg.addr == null || (addr=ifcg.addr.getAddress()) == null || addr.equals(InetAddress.getByName("0.0.0.0")) || addr.equals(InetAddress.getByName("::0"))) {
+        addr=InetAddress.getByName(address);
+      }
+      ifcg.interfaceFlags=ifcg.interfaceFlags.replace("down","up");
+      ifcg.addr=new LinkAddress(addr,BLUETOOTH_PREFIX_LENGTH);
+      ifcg.interfaceFlags=ifcg.interfaceFlags.replace("running","");
+      ifcg.interfaceFlags=ifcg.interfaceFlags.replace("  "," ");
+      service.setInterfaceConfig(iface,ifcg);
+      if (cm.tether(iface) != ConnectivityManager.TETHER_ERROR_NO_ERROR) {
+        Log.e(TAG,"Error tethering " + iface);
+      }
+    }
+  }
+ catch (  Exception e) {
+    Log.e(TAG,"Error configuring interface " + iface + ", :"+ e);
+    return null;
+  }
+  return address;
+}
