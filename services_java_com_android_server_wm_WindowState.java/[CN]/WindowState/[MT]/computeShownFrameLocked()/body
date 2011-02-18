@@ -1,0 +1,79 @@
+{
+  final boolean selfTransformation=mHasLocalTransformation;
+  Transformation attachedTransformation=(mAttachedWindow != null && mAttachedWindow.mHasLocalTransformation) ? mAttachedWindow.mTransformation : null;
+  Transformation appTransformation=(mAppToken != null && mAppToken.hasTransformation) ? mAppToken.transformation : null;
+  if (mAttrs.type == TYPE_WALLPAPER && mService.mLowerWallpaperTarget == null && mService.mWallpaperTarget != null) {
+    if (mService.mWallpaperTarget.mHasLocalTransformation && mService.mWallpaperTarget.mAnimation != null && !mService.mWallpaperTarget.mAnimation.getDetachWallpaper()) {
+      attachedTransformation=mService.mWallpaperTarget.mTransformation;
+      if (WindowManagerService.DEBUG_WALLPAPER && attachedTransformation != null) {
+        Slog.v(WindowManagerService.TAG,"WP target attached xform: " + attachedTransformation);
+      }
+    }
+    if (mService.mWallpaperTarget.mAppToken != null && mService.mWallpaperTarget.mAppToken.hasTransformation && mService.mWallpaperTarget.mAppToken.animation != null && !mService.mWallpaperTarget.mAppToken.animation.getDetachWallpaper()) {
+      appTransformation=mService.mWallpaperTarget.mAppToken.transformation;
+      if (WindowManagerService.DEBUG_WALLPAPER && appTransformation != null) {
+        Slog.v(WindowManagerService.TAG,"WP target app xform: " + appTransformation);
+      }
+    }
+  }
+  final boolean screenAnimation=mService.mScreenRotationAnimation != null && mService.mScreenRotationAnimation.isAnimating();
+  if (selfTransformation || attachedTransformation != null || appTransformation != null || screenAnimation) {
+    final Rect frame=mFrame;
+    final float tmpFloats[]=mService.mTmpFloats;
+    final Matrix tmpMatrix=mTmpMatrix;
+    tmpMatrix.setTranslate(0,0);
+    if (selfTransformation) {
+      tmpMatrix.postConcat(mTransformation.getMatrix());
+    }
+    tmpMatrix.postTranslate(frame.left + mXOffset,frame.top + mYOffset);
+    if (attachedTransformation != null) {
+      tmpMatrix.postConcat(attachedTransformation.getMatrix());
+    }
+    if (appTransformation != null) {
+      tmpMatrix.postConcat(appTransformation.getMatrix());
+    }
+    if (screenAnimation) {
+      tmpMatrix.postConcat(mService.mScreenRotationAnimation.getEnterTransformation().getMatrix());
+    }
+    mHaveMatrix=true;
+    tmpMatrix.getValues(tmpFloats);
+    mDsDx=tmpFloats[Matrix.MSCALE_X];
+    mDtDx=tmpFloats[Matrix.MSKEW_Y];
+    mDsDy=tmpFloats[Matrix.MSKEW_X];
+    mDtDy=tmpFloats[Matrix.MSCALE_Y];
+    int x=(int)tmpFloats[Matrix.MTRANS_X];
+    int y=(int)tmpFloats[Matrix.MTRANS_Y];
+    int w=frame.width();
+    int h=frame.height();
+    mShownFrame.set(x,y,x + w,y + h);
+    mShownAlpha=mAlpha;
+    if (!mService.mLimitedAlphaCompositing || (!PixelFormat.formatHasAlpha(mAttrs.format) || (isIdentityMatrix(mDsDx,mDtDx,mDsDy,mDtDy) && x == frame.left && y == frame.top))) {
+      if (selfTransformation) {
+        mShownAlpha*=mTransformation.getAlpha();
+      }
+      if (attachedTransformation != null) {
+        mShownAlpha*=attachedTransformation.getAlpha();
+      }
+      if (appTransformation != null) {
+        mShownAlpha*=appTransformation.getAlpha();
+      }
+      if (screenAnimation) {
+        mShownAlpha*=mService.mScreenRotationAnimation.getEnterTransformation().getAlpha();
+      }
+    }
+ else {
+    }
+    if (WindowManagerService.localLOGV)     Slog.v(WindowManagerService.TAG,"Continuing animation in " + this + ": "+ mShownFrame+ ", alpha="+ mTransformation.getAlpha());
+    return;
+  }
+  mShownFrame.set(mFrame);
+  if (mXOffset != 0 || mYOffset != 0) {
+    mShownFrame.offset(mXOffset,mYOffset);
+  }
+  mShownAlpha=mAlpha;
+  mHaveMatrix=false;
+  mDsDx=1;
+  mDtDx=0;
+  mDsDy=0;
+  mDtDy=1;
+}

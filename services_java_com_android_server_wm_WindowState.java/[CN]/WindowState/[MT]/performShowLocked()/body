@@ -1,0 +1,50 @@
+{
+  if (WindowManagerService.DEBUG_VISIBILITY) {
+    RuntimeException e=null;
+    if (!WindowManagerService.HIDE_STACK_CRAWLS) {
+      e=new RuntimeException();
+      e.fillInStackTrace();
+    }
+    Slog.v(WindowManagerService.TAG,"performShow on " + this + ": readyToShow="+ mReadyToShow+ " readyForDisplay="+ isReadyForDisplay()+ " starting="+ (mAttrs.type == TYPE_APPLICATION_STARTING),e);
+  }
+  if (mReadyToShow && isReadyForDisplay()) {
+    if (WindowManagerService.SHOW_TRANSACTIONS || WindowManagerService.DEBUG_ORIENTATION)     WindowManagerService.logSurface(this,"SHOW (performShowLocked)",null);
+    if (WindowManagerService.DEBUG_VISIBILITY)     Slog.v(WindowManagerService.TAG,"Showing " + this + " during animation: policyVis="+ mPolicyVisibility+ " attHidden="+ mAttachedHidden+ " tok.hiddenRequested="+ (mAppToken != null ? mAppToken.hiddenRequested : false)+ " tok.hidden="+ (mAppToken != null ? mAppToken.hidden : false)+ " animating="+ mAnimating+ " tok animating="+ (mAppToken != null ? mAppToken.animating : false));
+    if (!mService.showSurfaceRobustlyLocked(this)) {
+      return false;
+    }
+    mLastAlpha=-1;
+    mHasDrawn=true;
+    mLastHidden=false;
+    mReadyToShow=false;
+    mService.enableScreenIfNeededLocked();
+    mService.applyEnterAnimationLocked(this);
+    int i=mChildWindows.size();
+    while (i > 0) {
+      i--;
+      WindowState c=mChildWindows.get(i);
+      if (c.mAttachedHidden) {
+        c.mAttachedHidden=false;
+        if (c.mSurface != null) {
+          c.performShowLocked();
+          mService.mLayoutNeeded=true;
+        }
+      }
+    }
+    if (mAttrs.type != TYPE_APPLICATION_STARTING && mAppToken != null) {
+      mAppToken.firstWindowDrawn=true;
+      if (mAppToken.startingData != null) {
+        if (WindowManagerService.DEBUG_STARTING_WINDOW || WindowManagerService.DEBUG_ANIM)         Slog.v(WindowManagerService.TAG,"Finish starting " + mToken + ": first real window is shown, no animation");
+        if (mAnimation != null) {
+          mAnimation.cancel();
+          mAnimation=null;
+          mAnimating=true;
+        }
+        mService.mFinishedStarting.add(mAppToken);
+        mService.mH.sendEmptyMessage(H.FINISHED_STARTING);
+      }
+      mAppToken.updateReportedVisibilityLocked();
+    }
+  }
+  return true;
+}

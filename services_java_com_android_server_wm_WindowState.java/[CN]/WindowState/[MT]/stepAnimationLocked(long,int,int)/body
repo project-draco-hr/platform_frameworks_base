@@ -1,0 +1,88 @@
+{
+  if (!mService.mDisplayFrozen && mService.mPolicy.isScreenOn()) {
+    if (!mDrawPending && !mCommitDrawPending && mAnimation != null) {
+      mHasTransformation=true;
+      mHasLocalTransformation=true;
+      if (!mLocalAnimating) {
+        if (WindowManagerService.DEBUG_ANIM)         Slog.v(WindowManagerService.TAG,"Starting animation in " + this + " @ "+ currentTime+ ": ww="+ mFrame.width()+ " wh="+ mFrame.height()+ " dw="+ dw+ " dh="+ dh+ " scale="+ mService.mWindowAnimationScale);
+        mAnimation.initialize(mFrame.width(),mFrame.height(),dw,dh);
+        mAnimation.setStartTime(currentTime);
+        mLocalAnimating=true;
+        mAnimating=true;
+      }
+      mTransformation.clear();
+      final boolean more=mAnimation.getTransformation(currentTime,mTransformation);
+      if (WindowManagerService.DEBUG_ANIM)       Slog.v(WindowManagerService.TAG,"Stepped animation in " + this + ": more="+ more+ ", xform="+ mTransformation);
+      if (more) {
+        return true;
+      }
+      if (WindowManagerService.DEBUG_ANIM)       Slog.v(WindowManagerService.TAG,"Finished animation in " + this + " @ "+ currentTime);
+      if (mAnimation != null) {
+        mAnimation.cancel();
+        mAnimation=null;
+      }
+    }
+    mHasLocalTransformation=false;
+    if ((!mLocalAnimating || mAnimationIsEntrance) && mAppToken != null && mAppToken.animation != null) {
+      mAnimating=true;
+      mHasTransformation=true;
+      mTransformation.clear();
+      return false;
+    }
+ else     if (mHasTransformation) {
+      mAnimating=true;
+    }
+ else     if (isAnimating()) {
+      mAnimating=true;
+    }
+  }
+ else   if (mAnimation != null) {
+    mAnimating=true;
+    mLocalAnimating=true;
+    mAnimation.cancel();
+    mAnimation=null;
+  }
+  if (!mAnimating && !mLocalAnimating) {
+    return false;
+  }
+  if (WindowManagerService.DEBUG_ANIM)   Slog.v(WindowManagerService.TAG,"Animation done in " + this + ": exiting="+ mExiting+ ", reportedVisible="+ (mAppToken != null ? mAppToken.reportedVisible : false));
+  mAnimating=false;
+  mLocalAnimating=false;
+  if (mAnimation != null) {
+    mAnimation.cancel();
+    mAnimation=null;
+  }
+  mAnimLayer=mLayer;
+  if (mIsImWindow) {
+    mAnimLayer+=mService.mInputMethodAnimLayerAdjustment;
+  }
+ else   if (mIsWallpaper) {
+    mAnimLayer+=mService.mWallpaperAnimLayerAdjustment;
+  }
+  if (WindowManagerService.DEBUG_LAYERS)   Slog.v(WindowManagerService.TAG,"Stepping win " + this + " anim layer: "+ mAnimLayer);
+  mHasTransformation=false;
+  mHasLocalTransformation=false;
+  if (mPolicyVisibility != mPolicyVisibilityAfterAnim) {
+    if (WindowManagerService.DEBUG_VISIBILITY) {
+      Slog.v(WindowManagerService.TAG,"Policy visibility changing after anim in " + this + ": "+ mPolicyVisibilityAfterAnim);
+    }
+    mPolicyVisibility=mPolicyVisibilityAfterAnim;
+    if (!mPolicyVisibility) {
+      if (mService.mCurrentFocus == this) {
+        mService.mFocusMayChange=true;
+      }
+      mService.enableScreenIfNeededLocked();
+    }
+  }
+  mTransformation.clear();
+  if (mHasDrawn && mAttrs.type == WindowManager.LayoutParams.TYPE_APPLICATION_STARTING && mAppToken != null && mAppToken.firstWindowDrawn && mAppToken.startingData != null) {
+    if (WindowManagerService.DEBUG_STARTING_WINDOW)     Slog.v(WindowManagerService.TAG,"Finish starting " + mToken + ": first real window done animating");
+    mService.mFinishedStarting.add(mAppToken);
+    mService.mH.sendEmptyMessage(H.FINISHED_STARTING);
+  }
+  finishExit();
+  if (mAppToken != null) {
+    mAppToken.updateReportedVisibilityLocked();
+  }
+  return false;
+}
