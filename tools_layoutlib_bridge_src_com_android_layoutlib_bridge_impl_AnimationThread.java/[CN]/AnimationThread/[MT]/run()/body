@@ -1,0 +1,68 @@
+{
+  Bridge.prepareThread();
+  try {
+    Handler_Delegate.setCallback(new IHandlerCallback(){
+      public void sendMessageAtTime(      Handler handler,      Message msg,      long uptimeMillis){
+        if (msg.what == ValueAnimator.ANIMATION_START || msg.what == ValueAnimator.ANIMATION_FRAME) {
+          mQueue.add(new MessageBundle(handler,msg,uptimeMillis));
+        }
+ else {
+        }
+      }
+    }
+);
+    Result result=preAnimation();
+    if (result.isSuccess() == false) {
+      mListener.done(result);
+    }
+    RenderSession session=mSession.getSession();
+    do {
+      if (mListener.isCanceled()) {
+        break;
+      }
+      MessageBundle bundle=mQueue.poll();
+      if (bundle == null) {
+        break;
+      }
+      long currentTime=System.currentTimeMillis();
+      if (currentTime < bundle.mUptimeMillis) {
+        try {
+          sleep(bundle.mUptimeMillis - currentTime);
+        }
+ catch (        InterruptedException e) {
+          e.printStackTrace();
+        }
+      }
+      if (mListener.isCanceled()) {
+        break;
+      }
+      result=mSession.acquire(250);
+      if (result.isSuccess() == false) {
+        mListener.done(result);
+        return;
+      }
+      try {
+        if (mListener.isCanceled()) {
+          break;
+        }
+        bundle.mTarget.handleMessage(bundle.mMessage);
+        if (mSession.render(false).isSuccess()) {
+          mListener.onNewFrame(session);
+        }
+      }
+  finally {
+        mSession.release();
+      }
+    }
+ while (mListener.isCanceled() == false && mQueue.size() > 0);
+    mListener.done(Status.SUCCESS.createResult());
+  }
+ catch (  Throwable throwable) {
+    mListener.done(Status.ERROR_UNKNOWN.createResult("Error playing animation",throwable));
+  }
+ finally {
+    postAnimation();
+    Handler_Delegate.setCallback(null);
+    Bridge.cleanupThread();
+  }
+}
