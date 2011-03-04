@@ -1,15 +1,15 @@
 {
-  ApnContext apnContext=null;
-  if (ar.userObj instanceof ApnContext) {
-    apnContext=(ApnContext)ar.userObj;
+  String reason=null;
+  if (ar.userObj instanceof String) {
+    reason=(String)ar.userObj;
   }
   if (ar.exception == null) {
     if (DBG) {
-      log(String.format("onDataSetupComplete: success apn=%s",apnContext.getWaitingApns().get(0).apn));
+      log(String.format("onDataSetupComplete: success apn=%s",mWaitingApns.get(0).apn));
     }
-    mLinkProperties=getLinkProperties(apnContext.getDataConnection());
-    mLinkCapabilities=getLinkCapabilities(apnContext.getDataConnection());
-    ApnSetting apn=apnContext.getDataConnection().getApn();
+    mLinkProperties=getLinkProperties(mPendingDataConnection);
+    mLinkCapabilities=getLinkCapabilities(mPendingDataConnection);
+    ApnSetting apn=mPendingDataConnection.getApn();
     if (apn.proxy != null && apn.proxy.length() != 0) {
       try {
         ProxyProperties proxy=new ProxyProperties(apn.proxy,Integer.parseInt(apn.port),null);
@@ -19,20 +19,18 @@
         loge("NumberFormatException making ProxyProperties (" + apn.port + "): "+ e);
       }
     }
-    if (TextUtils.equals(apnContext.getApnType(),Phone.APN_TYPE_DEFAULT)) {
+    if (isApnTypeActive(Phone.APN_TYPE_DEFAULT)) {
       SystemProperties.set("gsm.defaultpdpcontext.active","true");
       if (canSetPreferApn && mPreferredApn == null) {
-        log("PREFERED APN is null");
-        mPreferredApn=apnContext.getApnSetting();
-        if (mPreferredApn != null) {
-          setPreferredApn(mPreferredApn.id);
-        }
+        log("PREFERRED APN is null");
+        mPreferredApn=mActiveApn;
+        setPreferredApn(mPreferredApn.id);
       }
     }
  else {
       SystemProperties.set("gsm.defaultpdpcontext.active","false");
     }
-    notifyDefaultData(apnContext);
+    notifyDefaultData(reason);
   }
  else {
     GsmDataConnection.FailCause cause;
@@ -40,7 +38,7 @@
     if (DBG) {
       String apnString;
       try {
-        apnString=apnContext.getWaitingApns().get(0).apn;
+        apnString=mWaitingApns.get(0).apn;
       }
  catch (      Exception e) {
         apnString="<unknown>";
@@ -51,24 +49,24 @@
       GsmCellLocation loc=((GsmCellLocation)mPhone.getCellLocation());
       EventLog.writeEvent(EventLogTags.PDP_SETUP_FAIL,cause.ordinal(),loc != null ? loc.getCid() : -1,TelephonyManager.getDefault().getNetworkType());
     }
-    if (cause.isPermanentFail())     apnContext.decPermFailCount();
-    apnContext.removeNextApn();
-    if (DBG)     log(String.format("onDataSetupComplete: mWaitingApns.size=%d" + " mWaitingApnsPermanenatFailureCountDown=%d",apnContext.getWaitingApns().size(),apnContext.getPermFailCount()));
-    if (apnContext.getWaitingApns().isEmpty()) {
-      if (apnContext.getPermFailCount() == 0) {
+    mWaitingApnsPermanentFailureCountDown-=cause.isPermanentFail() ? 1 : 0;
+    mWaitingApns.remove(0);
+    if (DBG)     log(String.format("onDataSetupComplete: mWaitingApns.size=%d" + " mWaitingApnsPermanenatFailureCountDown=%d",mWaitingApns.size(),mWaitingApnsPermanentFailureCountDown));
+    if (mWaitingApns.isEmpty()) {
+      if (mWaitingApnsPermanentFailureCountDown == 0) {
         if (DBG)         log("onDataSetupComplete: Permanent failures stop retrying");
-        apnContext.setState(State.FAILED);
+        notifyNoData(cause);
         notifyDataConnection(Phone.REASON_APN_FAILED);
       }
  else {
         if (DBG)         log("onDataSetupComplete: Not all permanent failures, retry");
-        startDelayedRetry(cause,apnContext);
+        startDelayedRetry(cause,reason);
       }
     }
  else {
       if (DBG)       log("onDataSetupComplete: Try next APN");
-      apnContext.setState(State.SCANNING);
-      sendMessageDelayed(obtainMessage(EVENT_TRY_SETUP_DATA,apnContext),APN_DELAY_MILLIS);
+      setState(State.SCANNING);
+      sendMessageDelayed(obtainMessage(EVENT_TRY_SETUP_DATA,reason),APN_DELAY_MILLIS);
     }
   }
 }
