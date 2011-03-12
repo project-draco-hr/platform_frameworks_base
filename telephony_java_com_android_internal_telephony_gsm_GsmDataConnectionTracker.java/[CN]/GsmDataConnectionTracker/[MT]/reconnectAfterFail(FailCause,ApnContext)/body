@@ -1,0 +1,39 @@
+{
+  if (apnContext == null) {
+    Log.d(LOG_TAG,"It is impossible");
+    return;
+  }
+  if (apnContext.getState() == State.FAILED) {
+    if (!mRetryMgr.isRetryNeeded()) {
+      if (!apnContext.getApnType().equals(Phone.APN_TYPE_DEFAULT)) {
+        notifyDataConnection(Phone.REASON_APN_FAILED);
+        return;
+      }
+      if (mReregisterOnReconnectFailure) {
+        mRetryMgr.retryForeverUsingLastTimeout();
+      }
+ else {
+        log("PDP activate failed, Reregistering to the network");
+        mReregisterOnReconnectFailure=true;
+        mPhone.getServiceStateTracker().reRegisterNetwork(null);
+        mRetryMgr.resetRetryCount();
+        return;
+      }
+    }
+    int nextReconnectDelay=mRetryMgr.getRetryTimer();
+    log("PDP activate failed. Scheduling next attempt for " + (nextReconnectDelay / 1000) + "s");
+    AlarmManager am=(AlarmManager)mPhone.getContext().getSystemService(Context.ALARM_SERVICE);
+    Intent intent=new Intent(INTENT_RECONNECT_ALARM);
+    intent.putExtra(INTENT_RECONNECT_ALARM_EXTRA_REASON,apnContext.getReason());
+    intent.putExtra(INTENT_RECONNECT_ALARM_EXTRA_TYPE,apnContext.getApnType());
+    apnContext.setReconnectIntent(PendingIntent.getBroadcast(mPhone.getContext(),0,intent,0));
+    am.set(AlarmManager.ELAPSED_REALTIME_WAKEUP,SystemClock.elapsedRealtime() + nextReconnectDelay,apnContext.getReconnectIntent());
+    mRetryMgr.increaseRetryCount();
+    if (!shouldPostNotification(lastFailCauseCode)) {
+      Log.d(LOG_TAG,"NOT Posting GPRS Unavailable notification " + "-- likely transient error");
+    }
+ else {
+      notifyNoData(lastFailCauseCode,apnContext);
+    }
+  }
+}
