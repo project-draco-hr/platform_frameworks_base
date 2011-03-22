@@ -1,0 +1,129 @@
+{
+  if (mSettingsFilename.exists()) {
+    if (!mBackupSettingsFilename.exists()) {
+      if (!mSettingsFilename.renameTo(mBackupSettingsFilename)) {
+        Log.wtf(PackageManagerService.TAG,"Unable to backup package manager settings, " + " current changes will be lost at reboot");
+        return;
+      }
+    }
+ else {
+      mSettingsFilename.delete();
+      Slog.w(PackageManagerService.TAG,"Preserving older settings backup");
+    }
+  }
+  mPastSignatures.clear();
+  try {
+    FileOutputStream fstr=new FileOutputStream(mSettingsFilename);
+    BufferedOutputStream str=new BufferedOutputStream(fstr);
+    XmlSerializer serializer=new FastXmlSerializer();
+    serializer.setOutput(str,"utf-8");
+    serializer.startDocument(null,true);
+    serializer.setFeature("http://xmlpull.org/v1/doc/features.html#indent-output",true);
+    serializer.startTag(null,"packages");
+    serializer.startTag(null,"last-platform-version");
+    serializer.attribute(null,"internal",Integer.toString(mInternalSdkPlatform));
+    serializer.attribute(null,"external",Integer.toString(mExternalSdkPlatform));
+    serializer.endTag(null,"last-platform-version");
+    serializer.startTag(null,"permission-trees");
+    for (    BasePermission bp : mPermissionTrees.values()) {
+      writePermission(serializer,bp);
+    }
+    serializer.endTag(null,"permission-trees");
+    serializer.startTag(null,"permissions");
+    for (    BasePermission bp : mPermissions.values()) {
+      writePermission(serializer,bp);
+    }
+    serializer.endTag(null,"permissions");
+    for (    PackageSetting pkg : mPackages.values()) {
+      writePackage(serializer,pkg);
+    }
+    for (    PackageSetting pkg : mDisabledSysPackages.values()) {
+      writeDisabledSysPackage(serializer,pkg);
+    }
+    serializer.startTag(null,"preferred-activities");
+    for (    PreferredActivity pa : mPreferredActivities.filterSet()) {
+      serializer.startTag(null,"item");
+      pa.writeToXml(serializer);
+      serializer.endTag(null,"item");
+    }
+    serializer.endTag(null,"preferred-activities");
+    for (    SharedUserSetting usr : mSharedUsers.values()) {
+      serializer.startTag(null,"shared-user");
+      serializer.attribute(null,"name",usr.name);
+      serializer.attribute(null,"userId",Integer.toString(usr.userId));
+      usr.signatures.writeXml(serializer,"sigs",mPastSignatures);
+      serializer.startTag(null,"perms");
+      for (      String name : usr.grantedPermissions) {
+        serializer.startTag(null,"item");
+        serializer.attribute(null,"name",name);
+        serializer.endTag(null,"item");
+      }
+      serializer.endTag(null,"perms");
+      serializer.endTag(null,"shared-user");
+    }
+    if (mPackagesToBeCleaned.size() > 0) {
+      for (int i=0; i < mPackagesToBeCleaned.size(); i++) {
+        serializer.startTag(null,"cleaning-package");
+        serializer.attribute(null,"name",mPackagesToBeCleaned.get(i));
+        serializer.endTag(null,"cleaning-package");
+      }
+    }
+    if (mRenamedPackages.size() > 0) {
+      for (      HashMap.Entry<String,String> e : mRenamedPackages.entrySet()) {
+        serializer.startTag(null,"renamed-package");
+        serializer.attribute(null,"new",e.getKey());
+        serializer.attribute(null,"old",e.getValue());
+        serializer.endTag(null,"renamed-package");
+      }
+    }
+    serializer.endTag(null,"packages");
+    serializer.endDocument();
+    str.flush();
+    FileUtils.sync(fstr);
+    str.close();
+    mBackupSettingsFilename.delete();
+    FileUtils.setPermissions(mSettingsFilename.toString(),FileUtils.S_IRUSR | FileUtils.S_IWUSR | FileUtils.S_IRGRP| FileUtils.S_IWGRP| FileUtils.S_IROTH,-1,-1);
+    File tempFile=new File(mPackageListFilename.toString() + ".tmp");
+    JournaledFile journal=new JournaledFile(mPackageListFilename,tempFile);
+    fstr=new FileOutputStream(journal.chooseForWrite());
+    str=new BufferedOutputStream(fstr);
+    try {
+      StringBuilder sb=new StringBuilder();
+      for (      PackageSetting pkg : mPackages.values()) {
+        ApplicationInfo ai=pkg.pkg.applicationInfo;
+        String dataPath=ai.dataDir;
+        boolean isDebug=(ai.flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0;
+        if (dataPath.indexOf(" ") >= 0 || ai.uid <= Process.FIRST_APPLICATION_UID)         continue;
+        sb.setLength(0);
+        sb.append(ai.packageName);
+        sb.append(" ");
+        sb.append((int)ai.uid);
+        sb.append(isDebug ? " 1 " : " 0 ");
+        sb.append(dataPath);
+        sb.append("\n");
+        str.write(sb.toString().getBytes());
+      }
+      str.flush();
+      FileUtils.sync(fstr);
+      str.close();
+      journal.commit();
+    }
+ catch (    Exception e) {
+      journal.rollback();
+    }
+    FileUtils.setPermissions(mPackageListFilename.toString(),FileUtils.S_IRUSR | FileUtils.S_IWUSR | FileUtils.S_IRGRP| FileUtils.S_IWGRP| FileUtils.S_IROTH,-1,-1);
+    writeStoppedLP();
+    return;
+  }
+ catch (  XmlPullParserException e) {
+    Log.wtf(PackageManagerService.TAG,"Unable to write package manager settings, " + "current changes will be lost at reboot",e);
+  }
+catch (  java.io.IOException e) {
+    Log.wtf(PackageManagerService.TAG,"Unable to write package manager settings, " + "current changes will be lost at reboot",e);
+  }
+  if (mSettingsFilename.exists()) {
+    if (!mSettingsFilename.delete()) {
+      Log.wtf(PackageManagerService.TAG,"Failed to clean up mangled file: " + mSettingsFilename);
+    }
+  }
+}
