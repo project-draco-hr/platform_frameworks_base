@@ -3,17 +3,8 @@
     pw.println("Permission Denial: can't dump ActivityManager from from pid=" + Binder.getCallingPid() + ", uid="+ Binder.getCallingUid()+ " without permission "+ android.Manifest.permission.DUMP);
     return;
   }
-  boolean dumpStar=true;
-  boolean dumpLibs=false;
-  boolean dumpFeatures=false;
-  boolean dumpResolvers=false;
-  boolean dumpPermissions=false;
-  boolean dumpPackages=false;
-  boolean dumpSharedUsers=false;
-  boolean dumpMessages=false;
-  boolean dumpProviders=false;
+  DumpState dumpState=new DumpState();
   String packageName=null;
-  boolean showFilters=false;
   int opti=0;
   while (opti < args.length) {
     String opt=args[opti];
@@ -41,7 +32,7 @@
       return;
     }
  else     if ("-f".equals(opt)) {
-      showFilters=true;
+      dumpState.setOptionEnabled(DumpState.OPTION_SHOW_FILTERS);
     }
  else {
       pw.println("Unknown argument: " + opt + "; use -h for help");
@@ -54,45 +45,35 @@
       packageName=cmd;
     }
  else     if ("l".equals(cmd) || "libraries".equals(cmd)) {
-      dumpStar=false;
-      dumpLibs=true;
+      dumpState.setDump(DumpState.DUMP_LIBS);
     }
  else     if ("f".equals(cmd) || "features".equals(cmd)) {
-      dumpStar=false;
-      dumpFeatures=true;
+      dumpState.setDump(DumpState.DUMP_FEATURES);
     }
  else     if ("r".equals(cmd) || "resolvers".equals(cmd)) {
-      dumpStar=false;
-      dumpResolvers=true;
+      dumpState.setDump(DumpState.DUMP_RESOLVERS);
     }
  else     if ("perm".equals(cmd) || "permissions".equals(cmd)) {
-      dumpStar=false;
-      dumpPermissions=true;
+      dumpState.setDump(DumpState.DUMP_PERMISSIONS);
     }
  else     if ("p".equals(cmd) || "packages".equals(cmd)) {
-      dumpStar=false;
-      dumpPackages=true;
+      dumpState.setDump(DumpState.DUMP_PACKAGES);
     }
  else     if ("s".equals(cmd) || "shared-users".equals(cmd)) {
-      dumpStar=false;
-      dumpSharedUsers=true;
+      dumpState.setDump(DumpState.DUMP_SHARED_USERS);
     }
  else     if ("prov".equals(cmd) || "providers".equals(cmd)) {
-      dumpStar=false;
-      dumpProviders=true;
+      dumpState.setDump(DumpState.DUMP_PROVIDERS);
     }
  else     if ("m".equals(cmd) || "messages".equals(cmd)) {
-      dumpStar=false;
-      dumpMessages=true;
+      dumpState.setDump(DumpState.DUMP_MESSAGES);
     }
   }
-  boolean printedTitle=false;
 synchronized (mPackages) {
-    if ((dumpStar || dumpLibs) && packageName == null) {
-      if (printedTitle)       pw.println(" ");
-      printedTitle=true;
+    if (dumpState.isDumping(DumpState.DUMP_LIBS) && packageName == null) {
+      if (dumpState.onTitlePrinted())       pw.println(" ");
       pw.println("Libraries:");
-      Iterator<String> it=mSharedLibraries.keySet().iterator();
+      final Iterator<String> it=mSharedLibraries.keySet().iterator();
       while (it.hasNext()) {
         String name=it.next();
         pw.print("  ");
@@ -101,9 +82,8 @@ synchronized (mPackages) {
         pw.println(mSharedLibraries.get(name));
       }
     }
-    if ((dumpStar || dumpFeatures) && packageName == null) {
-      if (printedTitle)       pw.println(" ");
-      printedTitle=true;
+    if (dumpState.isDumping(DumpState.DUMP_FEATURES) && packageName == null) {
+      if (dumpState.onTitlePrinted())       pw.println(" ");
       pw.println("Features:");
       Iterator<String> it=mAvailableFeatures.keySet().iterator();
       while (it.hasNext()) {
@@ -112,68 +92,33 @@ synchronized (mPackages) {
         pw.println(name);
       }
     }
-    if (dumpStar || dumpResolvers) {
-      if (mActivities.dump(pw,printedTitle ? "\nActivity Resolver Table:" : "Activity Resolver Table:","  ",packageName,showFilters)) {
-        printedTitle=true;
+    if (dumpState.isDumping(DumpState.DUMP_RESOLVERS)) {
+      if (mActivities.dump(pw,dumpState.getTitlePrinted() ? "\nActivity Resolver Table:" : "Activity Resolver Table:","  ",packageName,dumpState.isOptionEnabled(DumpState.OPTION_SHOW_FILTERS))) {
+        dumpState.setTitlePrinted(true);
       }
-      if (mReceivers.dump(pw,printedTitle ? "\nReceiver Resolver Table:" : "Receiver Resolver Table:","  ",packageName,showFilters)) {
-        printedTitle=true;
+      if (mReceivers.dump(pw,dumpState.getTitlePrinted() ? "\nReceiver Resolver Table:" : "Receiver Resolver Table:","  ",packageName,dumpState.isOptionEnabled(DumpState.OPTION_SHOW_FILTERS))) {
+        dumpState.setTitlePrinted(true);
       }
-      if (mServices.dump(pw,printedTitle ? "\nService Resolver Table:" : "Service Resolver Table:","  ",packageName,showFilters)) {
-        printedTitle=true;
+      if (mServices.dump(pw,dumpState.getTitlePrinted() ? "\nService Resolver Table:" : "Service Resolver Table:","  ",packageName,dumpState.isOptionEnabled(DumpState.OPTION_SHOW_FILTERS))) {
+        dumpState.setTitlePrinted(true);
       }
-      if (mSettings.mPreferredActivities.dump(pw,printedTitle ? "\nPreferred Activities:" : "Preferred Activities:","  ",packageName,showFilters)) {
-        printedTitle=true;
-      }
-    }
-    boolean printedSomething=false;
-    if (dumpStar || dumpPermissions) {
-      for (      BasePermission p : mSettings.mPermissions.values()) {
-        if (packageName != null && !packageName.equals(p.sourcePackage)) {
-          continue;
-        }
-        if (!printedSomething) {
-          if (printedTitle)           pw.println(" ");
-          pw.println("Permissions:");
-          printedSomething=true;
-          printedTitle=true;
-        }
-        pw.print("  Permission [");
-        pw.print(p.name);
-        pw.print("] (");
-        pw.print(Integer.toHexString(System.identityHashCode(p)));
-        pw.println("):");
-        pw.print("    sourcePackage=");
-        pw.println(p.sourcePackage);
-        pw.print("    uid=");
-        pw.print(p.uid);
-        pw.print(" gids=");
-        pw.print(arrayToString(p.gids));
-        pw.print(" type=");
-        pw.print(p.type);
-        pw.print(" prot=");
-        pw.println(p.protectionLevel);
-        if (p.packageSetting != null) {
-          pw.print("    packageSetting=");
-          pw.println(p.packageSetting);
-        }
-        if (p.perm != null) {
-          pw.print("    perm=");
-          pw.println(p.perm);
-        }
+      if (mSettings.mPreferredActivities.dump(pw,dumpState.getTitlePrinted() ? "\nPreferred Activities:" : "Preferred Activities:","  ",packageName,dumpState.isOptionEnabled(DumpState.OPTION_SHOW_FILTERS))) {
+        dumpState.setTitlePrinted(true);
       }
     }
-    if (dumpStar || dumpProviders) {
-      printedSomething=false;
+    if (dumpState.isDumping(DumpState.DUMP_PERMISSIONS)) {
+      mSettings.dumpPermissionsLPr(pw,packageName,dumpState);
+    }
+    if (dumpState.isDumping(DumpState.DUMP_PROVIDERS)) {
+      boolean printedSomething=false;
       for (      PackageParser.Provider p : mProviders.values()) {
         if (packageName != null && !packageName.equals(p.info.packageName)) {
           continue;
         }
         if (!printedSomething) {
-          if (printedTitle)           pw.println(" ");
+          if (dumpState.onTitlePrinted())           pw.println(" ");
           pw.println("Registered ContentProviders:");
           printedSomething=true;
-          printedTitle=true;
         }
         pw.print("  [");
         pw.print(p.info.authority);
@@ -181,233 +126,23 @@ synchronized (mPackages) {
         pw.println(p.toString());
       }
     }
-    printedSomething=false;
-    SharedUserSetting packageSharedUser=null;
-    if (dumpStar || dumpPackages) {
-      SimpleDateFormat sdf=new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
-      Date date=new Date();
-      for (      PackageSetting ps : mSettings.mPackages.values()) {
-        if (packageName != null && !packageName.equals(ps.realName) && !packageName.equals(ps.name)) {
-          continue;
-        }
-        if (!printedSomething) {
-          if (printedTitle)           pw.println(" ");
-          pw.println("Packages:");
-          printedSomething=true;
-          printedTitle=true;
-        }
-        packageSharedUser=ps.sharedUser;
-        pw.print("  Package [");
-        pw.print(ps.realName != null ? ps.realName : ps.name);
-        pw.print("] (");
-        pw.print(Integer.toHexString(System.identityHashCode(ps)));
-        pw.println("):");
-        if (ps.realName != null) {
-          pw.print("    compat name=");
-          pw.println(ps.name);
-        }
-        pw.print("    userId=");
-        pw.print(ps.userId);
-        pw.print(" gids=");
-        pw.println(arrayToString(ps.gids));
-        pw.print("    sharedUser=");
-        pw.println(ps.sharedUser);
-        pw.print("    pkg=");
-        pw.println(ps.pkg);
-        pw.print("    codePath=");
-        pw.println(ps.codePathString);
-        pw.print("    resourcePath=");
-        pw.println(ps.resourcePathString);
-        pw.print("    nativeLibraryPath=");
-        pw.println(ps.nativeLibraryPathString);
-        pw.print("    versionCode=");
-        pw.println(ps.versionCode);
-        if (ps.pkg != null) {
-          pw.print("    versionName=");
-          pw.println(ps.pkg.mVersionName);
-          pw.print("    dataDir=");
-          pw.println(ps.pkg.applicationInfo.dataDir);
-          pw.print("    targetSdk=");
-          pw.println(ps.pkg.applicationInfo.targetSdkVersion);
-          if (ps.pkg.mOperationPending) {
-            pw.println("    mOperationPending=true");
-          }
-          pw.print("    supportsScreens=[");
-          boolean first=true;
-          if ((ps.pkg.applicationInfo.flags & ApplicationInfo.FLAG_SUPPORTS_SMALL_SCREENS) != 0) {
-            if (!first)             pw.print(", ");
-            first=false;
-            pw.print("small");
-          }
-          if ((ps.pkg.applicationInfo.flags & ApplicationInfo.FLAG_SUPPORTS_NORMAL_SCREENS) != 0) {
-            if (!first)             pw.print(", ");
-            first=false;
-            pw.print("medium");
-          }
-          if ((ps.pkg.applicationInfo.flags & ApplicationInfo.FLAG_SUPPORTS_LARGE_SCREENS) != 0) {
-            if (!first)             pw.print(", ");
-            first=false;
-            pw.print("large");
-          }
-          if ((ps.pkg.applicationInfo.flags & ApplicationInfo.FLAG_SUPPORTS_XLARGE_SCREENS) != 0) {
-            if (!first)             pw.print(", ");
-            first=false;
-            pw.print("xlarge");
-          }
-          if ((ps.pkg.applicationInfo.flags & ApplicationInfo.FLAG_RESIZEABLE_FOR_SCREENS) != 0) {
-            if (!first)             pw.print(", ");
-            first=false;
-            pw.print("resizeable");
-          }
-          if ((ps.pkg.applicationInfo.flags & ApplicationInfo.FLAG_SUPPORTS_SCREEN_DENSITIES) != 0) {
-            if (!first)             pw.print(", ");
-            first=false;
-            pw.print("anyDensity");
-          }
-        }
-        pw.println("]");
-        pw.print("    timeStamp=");
-        date.setTime(ps.timeStamp);
-        pw.println(sdf.format(date));
-        pw.print("    firstInstallTime=");
-        date.setTime(ps.firstInstallTime);
-        pw.println(sdf.format(date));
-        pw.print("    lastUpdateTime=");
-        date.setTime(ps.lastUpdateTime);
-        pw.println(sdf.format(date));
-        if (ps.installerPackageName != null) {
-          pw.print("    installerPackageName=");
-          pw.println(ps.installerPackageName);
-        }
-        pw.print("    signatures=");
-        pw.println(ps.signatures);
-        pw.print("    permissionsFixed=");
-        pw.print(ps.permissionsFixed);
-        pw.print(" haveGids=");
-        pw.println(ps.haveGids);
-        pw.print("    pkgFlags=0x");
-        pw.print(Integer.toHexString(ps.pkgFlags));
-        pw.print(" installStatus=");
-        pw.print(ps.installStatus);
-        pw.print(" stopped=");
-        pw.print(ps.stopped);
-        pw.print(" enabled=");
-        pw.println(ps.enabled);
-        if (ps.disabledComponents.size() > 0) {
-          pw.println("    disabledComponents:");
-          for (          String s : ps.disabledComponents) {
-            pw.print("      ");
-            pw.println(s);
-          }
-        }
-        if (ps.enabledComponents.size() > 0) {
-          pw.println("    enabledComponents:");
-          for (          String s : ps.enabledComponents) {
-            pw.print("      ");
-            pw.println(s);
-          }
-        }
-        if (ps.grantedPermissions.size() > 0) {
-          pw.println("    grantedPermissions:");
-          for (          String s : ps.grantedPermissions) {
-            pw.print("      ");
-            pw.println(s);
-          }
-        }
-      }
+    if (dumpState.isDumping(DumpState.DUMP_PACKAGES)) {
+      mSettings.dumpPackagesLPr(pw,packageName,dumpState);
     }
-    printedSomething=false;
-    if (dumpStar || dumpPackages) {
-      if (mSettings.mRenamedPackages.size() > 0) {
-        for (        HashMap.Entry<String,String> e : mSettings.mRenamedPackages.entrySet()) {
-          if (packageName != null && !packageName.equals(e.getKey()) && !packageName.equals(e.getValue())) {
-            continue;
-          }
-          if (!printedSomething) {
-            if (printedTitle)             pw.println(" ");
-            pw.println("Renamed packages:");
-            printedSomething=true;
-            printedTitle=true;
-          }
-          pw.print("  ");
-          pw.print(e.getKey());
-          pw.print(" -> ");
-          pw.println(e.getValue());
-        }
-      }
-      printedSomething=false;
-      if (mSettings.mDisabledSysPackages.size() > 0) {
-        for (        PackageSetting ps : mSettings.mDisabledSysPackages.values()) {
-          if (packageName != null && !packageName.equals(ps.realName) && !packageName.equals(ps.name)) {
-            continue;
-          }
-          if (!printedSomething) {
-            if (printedTitle)             pw.println(" ");
-            pw.println("Hidden system packages:");
-            printedSomething=true;
-            printedTitle=true;
-          }
-          pw.print("  Package [");
-          pw.print(ps.realName != null ? ps.realName : ps.name);
-          pw.print("] (");
-          pw.print(Integer.toHexString(System.identityHashCode(ps)));
-          pw.println("):");
-          if (ps.realName != null) {
-            pw.print("    compat name=");
-            pw.println(ps.name);
-          }
-          pw.print("    userId=");
-          pw.println(ps.userId);
-          pw.print("    sharedUser=");
-          pw.println(ps.sharedUser);
-          pw.print("    codePath=");
-          pw.println(ps.codePathString);
-          pw.print("    resourcePath=");
-          pw.println(ps.resourcePathString);
-        }
-      }
+    if (dumpState.isDumping(DumpState.DUMP_SHARED_USERS)) {
+      mSettings.dumpSharedUsersLPr(pw,packageName,dumpState);
     }
-    printedSomething=false;
-    if (dumpStar || dumpSharedUsers) {
-      for (      SharedUserSetting su : mSettings.mSharedUsers.values()) {
-        if (packageName != null && su != packageSharedUser) {
-          continue;
-        }
-        if (!printedSomething) {
-          if (printedTitle)           pw.println(" ");
-          pw.println("Shared users:");
-          printedSomething=true;
-          printedTitle=true;
-        }
-        pw.print("  SharedUser [");
-        pw.print(su.name);
-        pw.print("] (");
-        pw.print(Integer.toHexString(System.identityHashCode(su)));
-        pw.println("):");
-        pw.print("    userId=");
-        pw.print(su.userId);
-        pw.print(" gids=");
-        pw.println(arrayToString(su.gids));
-        pw.println("    grantedPermissions:");
-        for (        String s : su.grantedPermissions) {
-          pw.print("      ");
-          pw.println(s);
-        }
-      }
-    }
-    if ((dumpStar || dumpMessages) && packageName == null) {
-      if (printedTitle)       pw.println(" ");
-      printedTitle=true;
-      pw.println("Settings parse messages:");
-      pw.print(mSettings.mReadMessages.toString());
+    if (dumpState.isDumping(DumpState.DUMP_MESSAGES) && packageName == null) {
+      if (dumpState.onTitlePrinted())       pw.println(" ");
+      mSettings.dumpReadMessagesLPr(pw,dumpState);
       pw.println(" ");
       pw.println("Package warning messages:");
-      File fname=getSettingsProblemFile();
+      final File fname=getSettingsProblemFile();
       FileInputStream in=null;
       try {
         in=new FileInputStream(fname);
-        int avail=in.available();
-        byte[] data=new byte[avail];
+        final int avail=in.available();
+        final byte[] data=new byte[avail];
         in.read(data);
         pw.print(new String(data));
       }
