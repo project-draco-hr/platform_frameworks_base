@@ -1,0 +1,68 @@
+{
+  mLastScanError=PackageManager.INSTALL_SUCCEEDED;
+  String scanPath=scanFile.getPath();
+  parseFlags|=mDefParseFlags;
+  PackageParser pp=new PackageParser(scanPath);
+  pp.setSeparateProcesses(mSeparateProcesses);
+  final PackageParser.Package pkg=pp.parsePackage(scanFile,scanPath,mMetrics,parseFlags);
+  if (pkg == null) {
+    mLastScanError=pp.getParseError();
+    return null;
+  }
+  PackageSetting ps=null;
+  PackageSetting updatedPkg;
+synchronized (mPackages) {
+    String oldName=mSettings.mRenamedPackages.get(pkg.packageName);
+    if (pkg.mOriginalPackages != null && pkg.mOriginalPackages.contains(oldName)) {
+      ps=mSettings.peekPackageLPr(oldName);
+    }
+    if (ps == null) {
+      ps=mSettings.peekPackageLPr(pkg.packageName);
+    }
+    updatedPkg=mSettings.mDisabledSysPackages.get(ps != null ? ps.name : pkg.packageName);
+  }
+  if (updatedPkg != null && (parseFlags & PackageParser.PARSE_IS_SYSTEM) != 0) {
+    if (ps != null && !ps.codePath.equals(scanFile)) {
+      if (pkg.mVersionCode < ps.versionCode) {
+        Log.i(TAG,"Package " + ps.name + " at "+ scanFile+ " ignored: updated version "+ ps.versionCode+ " better than this "+ pkg.mVersionCode);
+        mLastScanError=PackageManager.INSTALL_FAILED_DUPLICATE_PACKAGE;
+        return null;
+      }
+ else {
+synchronized (mPackages) {
+          mPackages.remove(ps.name);
+        }
+        Slog.w(TAG,"Package " + ps.name + " at "+ scanFile+ "reverting from "+ ps.codePathString+ ": new version "+ pkg.mVersionCode+ " better than installed "+ ps.versionCode);
+        InstallArgs args=new FileInstallArgs(ps.codePathString,ps.resourcePathString,ps.nativeLibraryPathString);
+        args.cleanUpResourcesLI();
+        mSettings.enableSystemPackageLPw(ps.name);
+      }
+    }
+  }
+  if (updatedPkg != null) {
+    parseFlags|=PackageParser.PARSE_IS_SYSTEM;
+  }
+  if (!collectCertificatesLI(pp,ps,pkg,scanFile,parseFlags)) {
+    Slog.w(TAG,"Failed verifying certificates for package:" + pkg.packageName);
+    return null;
+  }
+  if (ps != null && !ps.codePath.equals(ps.resourcePath)) {
+    parseFlags|=PackageParser.PARSE_FORWARD_LOCK;
+  }
+  String codePath=null;
+  String resPath=null;
+  if ((parseFlags & PackageParser.PARSE_FORWARD_LOCK) != 0) {
+    if (ps != null && ps.resourcePathString != null) {
+      resPath=ps.resourcePathString;
+    }
+ else {
+      Slog.e(TAG,"Resource path not set for pkg : " + pkg.packageName);
+    }
+  }
+ else {
+    resPath=pkg.mScanPath;
+  }
+  codePath=pkg.mScanPath;
+  setApplicationInfoPaths(pkg,codePath,resPath);
+  return scanPackageLI(pkg,parseFlags,scanMode | SCAN_UPDATE_SIGNATURE,currentTime);
+}

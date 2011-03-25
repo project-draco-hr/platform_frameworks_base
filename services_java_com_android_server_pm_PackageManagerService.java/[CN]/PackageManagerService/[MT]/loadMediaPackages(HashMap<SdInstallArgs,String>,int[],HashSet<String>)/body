@@ -1,0 +1,64 @@
+{
+  ArrayList<String> pkgList=new ArrayList<String>();
+  Set<SdInstallArgs> keys=processCids.keySet();
+  boolean doGc=false;
+  for (  SdInstallArgs args : keys) {
+    String codePath=processCids.get(args);
+    if (DEBUG_SD_INSTALL)     Log.i(TAG,"Loading container : " + args.cid);
+    int retCode=PackageManager.INSTALL_FAILED_CONTAINER_ERROR;
+    try {
+      if (args.doPreInstall(PackageManager.INSTALL_SUCCEEDED) != PackageManager.INSTALL_SUCCEEDED) {
+        Slog.e(TAG,"Failed to mount cid : " + args.cid + " when installing from sdcard");
+        continue;
+      }
+      if (codePath == null || !codePath.equals(args.getCodePath())) {
+        Slog.e(TAG,"Container " + args.cid + " cachepath "+ args.getCodePath()+ " does not match one in settings "+ codePath);
+        continue;
+      }
+      int parseFlags=PackageParser.PARSE_ON_SDCARD | mDefParseFlags;
+      doGc=true;
+synchronized (mInstallLock) {
+        final PackageParser.Package pkg=scanPackageLI(new File(codePath),parseFlags,0,0);
+        if (pkg != null) {
+synchronized (mPackages) {
+            retCode=PackageManager.INSTALL_SUCCEEDED;
+            pkgList.add(pkg.packageName);
+            args.doPostInstall(PackageManager.INSTALL_SUCCEEDED);
+          }
+        }
+ else {
+          Slog.i(TAG,"Failed to install pkg from  " + codePath + " from sdcard");
+        }
+      }
+    }
+  finally {
+      if (retCode != PackageManager.INSTALL_SUCCEEDED) {
+        removeCids.add(args.cid);
+      }
+    }
+  }
+synchronized (mPackages) {
+    final boolean regrantPermissions=mSettings.mExternalSdkPlatform != mSdkVersion;
+    if (regrantPermissions)     Slog.i(TAG,"Platform changed from " + mSettings.mExternalSdkPlatform + " to "+ mSdkVersion+ "; regranting permissions for external storage");
+    mSettings.mExternalSdkPlatform=mSdkVersion;
+    updatePermissionsLPw(null,null,true,regrantPermissions,regrantPermissions);
+    mSettings.writeLPr();
+  }
+  if (pkgList.size() > 0) {
+    sendResourcesChangedBroadcast(true,pkgList,uidArr,null);
+  }
+  if (doGc) {
+    Runtime.getRuntime().gc();
+  }
+  if (removeCids != null) {
+    for (    String cid : removeCids) {
+      if (cid.startsWith(mTempContainerPrefix)) {
+        Log.i(TAG,"Destroying stale temporary container " + cid);
+        PackageHelper.destroySdDir(cid);
+      }
+ else {
+        Log.w(TAG,"Container " + cid + " is stale");
+      }
+    }
+  }
+}

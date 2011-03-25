@@ -1,0 +1,55 @@
+{
+  PackageParser.Package newPackage=null;
+  String pkgName=deletedPackage.packageName;
+  boolean deletedPkg=true;
+  boolean updatedSettings=false;
+  long origUpdateTime;
+  if (pkg.mExtras != null) {
+    origUpdateTime=((PackageSetting)pkg.mExtras).lastUpdateTime;
+  }
+ else {
+    origUpdateTime=0;
+  }
+  if (!deletePackageLI(pkgName,true,PackageManager.DONT_DELETE_DATA,res.removedInfo,true)) {
+    res.returnCode=PackageManager.INSTALL_FAILED_REPLACE_COULDNT_DELETE;
+    deletedPkg=false;
+  }
+ else {
+    mLastScanError=PackageManager.INSTALL_SUCCEEDED;
+    newPackage=scanPackageLI(pkg,parseFlags,scanMode | SCAN_UPDATE_TIME,System.currentTimeMillis());
+    if (newPackage == null) {
+      Slog.w(TAG,"Package couldn't be installed in " + pkg.mPath);
+      if ((res.returnCode=mLastScanError) == PackageManager.INSTALL_SUCCEEDED) {
+        res.returnCode=PackageManager.INSTALL_FAILED_INVALID_APK;
+      }
+    }
+ else {
+      updateSettingsLI(newPackage,installerPackageName,res);
+      updatedSettings=true;
+    }
+  }
+  if (res.returnCode != PackageManager.INSTALL_SUCCEEDED) {
+    if (updatedSettings) {
+      deletePackageLI(pkgName,true,PackageManager.DONT_DELETE_DATA,res.removedInfo,true);
+    }
+    if (deletedPkg) {
+      File restoreFile=new File(deletedPackage.mPath);
+      if (restoreFile == null) {
+        Slog.e(TAG,"Failed allocating storage when restoring pkg : " + pkgName);
+        return;
+      }
+      boolean oldOnSd=isExternal(deletedPackage);
+      int oldParseFlags=mDefParseFlags | PackageParser.PARSE_CHATTY | (isForwardLocked(deletedPackage) ? PackageParser.PARSE_FORWARD_LOCK : 0)| (oldOnSd ? PackageParser.PARSE_ON_SDCARD : 0);
+      int oldScanMode=(oldOnSd ? 0 : SCAN_MONITOR) | SCAN_UPDATE_SIGNATURE | SCAN_UPDATE_TIME;
+      if (scanPackageLI(restoreFile,oldParseFlags,oldScanMode,origUpdateTime) == null) {
+        Slog.e(TAG,"Failed to restore package : " + pkgName + " after failed upgrade");
+        return;
+      }
+synchronized (mPackages) {
+        updatePermissionsLPw(deletedPackage.packageName,deletedPackage,true,false,false);
+        mSettings.writeLPr();
+      }
+      Slog.i(TAG,"Successfully restored package : " + pkgName + " after failed upgrade");
+    }
+  }
+}

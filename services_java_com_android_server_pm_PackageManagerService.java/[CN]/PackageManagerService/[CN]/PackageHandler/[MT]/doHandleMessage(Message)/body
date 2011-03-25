@@ -1,0 +1,235 @@
+{
+switch (msg.what) {
+case INIT_COPY:
+{
+      if (DEBUG_SD_INSTALL)       Log.i(TAG,"init_copy");
+      HandlerParams params=(HandlerParams)msg.obj;
+      int idx=mPendingInstalls.size();
+      if (DEBUG_SD_INSTALL)       Log.i(TAG,"idx=" + idx);
+      if (!mBound) {
+        if (!connectToService()) {
+          Slog.e(TAG,"Failed to bind to media container service");
+          params.serviceError();
+          return;
+        }
+ else {
+          mPendingInstalls.add(idx,params);
+        }
+      }
+ else {
+        mPendingInstalls.add(idx,params);
+        if (idx == 0) {
+          mHandler.sendEmptyMessage(MCS_BOUND);
+        }
+      }
+      break;
+    }
+case MCS_BOUND:
+{
+    if (DEBUG_SD_INSTALL)     Log.i(TAG,"mcs_bound");
+    if (msg.obj != null) {
+      mContainerService=(IMediaContainerService)msg.obj;
+    }
+    if (mContainerService == null) {
+      Slog.e(TAG,"Cannot bind to media container service");
+      for (      HandlerParams params : mPendingInstalls) {
+        mPendingInstalls.remove(0);
+        params.serviceError();
+      }
+      mPendingInstalls.clear();
+    }
+ else     if (mPendingInstalls.size() > 0) {
+      HandlerParams params=mPendingInstalls.get(0);
+      if (params != null) {
+        params.startCopy();
+      }
+    }
+ else {
+      Slog.w(TAG,"Empty queue");
+    }
+    break;
+  }
+case MCS_RECONNECT:
+{
+  if (DEBUG_SD_INSTALL)   Log.i(TAG,"mcs_reconnect");
+  if (mPendingInstalls.size() > 0) {
+    if (mBound) {
+      disconnectService();
+    }
+    if (!connectToService()) {
+      Slog.e(TAG,"Failed to bind to media container service");
+      for (      HandlerParams params : mPendingInstalls) {
+        mPendingInstalls.remove(0);
+        params.serviceError();
+      }
+      mPendingInstalls.clear();
+    }
+  }
+  break;
+}
+case MCS_UNBIND:
+{
+if (DEBUG_SD_INSTALL) Log.i(TAG,"mcs_unbind");
+if (mPendingInstalls.size() > 0) {
+  mPendingInstalls.remove(0);
+}
+if (mPendingInstalls.size() == 0) {
+  if (mBound) {
+    disconnectService();
+  }
+}
+ else {
+  mHandler.sendEmptyMessage(MCS_BOUND);
+}
+break;
+}
+case MCS_GIVE_UP:
+{
+if (DEBUG_SD_INSTALL) Log.i(TAG,"mcs_giveup too many retries");
+mPendingInstalls.remove(0);
+break;
+}
+case SEND_PENDING_BROADCAST:
+{
+String packages[];
+ArrayList<String> components[];
+int size=0;
+int uids[];
+Process.setThreadPriority(Process.THREAD_PRIORITY_DEFAULT);
+synchronized (mPackages) {
+if (mPendingBroadcasts == null) {
+return;
+}
+size=mPendingBroadcasts.size();
+if (size <= 0) {
+return;
+}
+packages=new String[size];
+components=new ArrayList[size];
+uids=new int[size];
+Iterator<HashMap.Entry<String,ArrayList<String>>> it=mPendingBroadcasts.entrySet().iterator();
+int i=0;
+while (it.hasNext() && i < size) {
+HashMap.Entry<String,ArrayList<String>> ent=it.next();
+packages[i]=ent.getKey();
+components[i]=ent.getValue();
+PackageSetting ps=mSettings.mPackages.get(ent.getKey());
+uids[i]=(ps != null) ? ps.userId : -1;
+i++;
+}
+size=i;
+mPendingBroadcasts.clear();
+}
+for (int i=0; i < size; i++) {
+sendPackageChangedBroadcast(packages[i],true,components[i],uids[i]);
+}
+Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND);
+break;
+}
+case START_CLEANING_PACKAGE:
+{
+String packageName=(String)msg.obj;
+Process.setThreadPriority(Process.THREAD_PRIORITY_DEFAULT);
+synchronized (mPackages) {
+if (!mSettings.mPackagesToBeCleaned.contains(packageName)) {
+mSettings.mPackagesToBeCleaned.add(packageName);
+}
+}
+Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND);
+startCleaningPackages();
+}
+break;
+case POST_INSTALL:
+{
+if (DEBUG_INSTALL) Log.v(TAG,"Handling post-install for " + msg.arg1);
+PostInstallData data=mRunningInstalls.get(msg.arg1);
+mRunningInstalls.delete(msg.arg1);
+boolean deleteOld=false;
+if (data != null) {
+InstallArgs args=data.args;
+PackageInstalledInfo res=data.res;
+if (res.returnCode == PackageManager.INSTALL_SUCCEEDED) {
+res.removedInfo.sendBroadcast(false,true);
+Bundle extras=new Bundle(1);
+extras.putInt(Intent.EXTRA_UID,res.uid);
+final boolean update=res.removedInfo.removedPackage != null;
+if (update) {
+extras.putBoolean(Intent.EXTRA_REPLACING,true);
+}
+sendPackageBroadcast(Intent.ACTION_PACKAGE_ADDED,res.pkg.applicationInfo.packageName,extras,null,null);
+if (update) {
+sendPackageBroadcast(Intent.ACTION_PACKAGE_REPLACED,res.pkg.applicationInfo.packageName,extras,null,null);
+sendPackageBroadcast(Intent.ACTION_MY_PACKAGE_REPLACED,null,null,res.pkg.applicationInfo.packageName,null);
+}
+if (res.removedInfo.args != null) {
+deleteOld=true;
+}
+}
+Runtime.getRuntime().gc();
+if (deleteOld) {
+synchronized (mInstallLock) {
+res.removedInfo.args.doPostDeleteLI(true);
+}
+}
+if (args.observer != null) {
+try {
+args.observer.packageInstalled(res.name,res.returnCode);
+}
+ catch (RemoteException e) {
+Slog.i(TAG,"Observer no longer exists.");
+}
+}
+}
+ else {
+Slog.e(TAG,"Bogus post-install token " + msg.arg1);
+}
+}
+break;
+case UPDATED_MEDIA_STATUS:
+{
+if (DEBUG_SD_INSTALL) Log.i(TAG,"Got message UPDATED_MEDIA_STATUS");
+boolean reportStatus=msg.arg1 == 1;
+boolean doGc=msg.arg2 == 1;
+if (DEBUG_SD_INSTALL) Log.i(TAG,"reportStatus=" + reportStatus + ", doGc = "+ doGc);
+if (doGc) {
+Runtime.getRuntime().gc();
+}
+if (msg.obj != null) {
+Set<SdInstallArgs> args=(Set<SdInstallArgs>)msg.obj;
+if (DEBUG_SD_INSTALL) Log.i(TAG,"Unloading all containers");
+unloadAllContainers(args);
+}
+if (reportStatus) {
+try {
+if (DEBUG_SD_INSTALL) Log.i(TAG,"Invoking MountService call back");
+PackageHelper.getMountService().finishMediaUpdate();
+}
+ catch (RemoteException e) {
+Log.e(TAG,"MountService not running?");
+}
+}
+}
+break;
+case WRITE_SETTINGS:
+{
+Process.setThreadPriority(Process.THREAD_PRIORITY_DEFAULT);
+synchronized (mPackages) {
+removeMessages(WRITE_SETTINGS);
+removeMessages(WRITE_STOPPED_PACKAGES);
+mSettings.writeLPr();
+}
+Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND);
+}
+break;
+case WRITE_STOPPED_PACKAGES:
+{
+Process.setThreadPriority(Process.THREAD_PRIORITY_DEFAULT);
+synchronized (mPackages) {
+removeMessages(WRITE_STOPPED_PACKAGES);
+mSettings.writeStoppedLPr();
+}
+Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND);
+}
+break;
+}
+}
