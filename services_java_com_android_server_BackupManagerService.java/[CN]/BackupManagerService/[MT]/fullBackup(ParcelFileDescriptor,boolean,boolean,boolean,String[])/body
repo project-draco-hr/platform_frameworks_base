@@ -1,0 +1,47 @@
+{
+  mContext.enforceCallingPermission(android.Manifest.permission.BACKUP,"fullBackup");
+  if (!doAllApps) {
+    if (!includeShared) {
+      if (pkgList == null || pkgList.length == 0) {
+        throw new IllegalArgumentException("Backup requested but neither shared nor any apps named");
+      }
+    }
+  }
+  if (DEBUG)   Slog.v(TAG,"Requesting full backup: apks=" + includeApks + " shared="+ includeShared+ " all="+ doAllApps+ " pkgs="+ pkgList);
+  long oldId=Binder.clearCallingIdentity();
+  try {
+    FullBackupParams params=new FullBackupParams(fd,includeApks,includeShared,doAllApps,pkgList);
+    final int token=generateToken();
+synchronized (mFullConfirmations) {
+      mFullConfirmations.put(token,params);
+    }
+    if (DEBUG)     Slog.d(TAG,"Starting confirmation UI, token=" + token);
+    try {
+      Intent confIntent=new Intent(FullBackup.FULL_BACKUP_INTENT_ACTION);
+      confIntent.setClassName("com.android.backupconfirm","com.android.backupconfirm.BackupRestoreConfirmation");
+      confIntent.putExtra(FullBackup.CONF_TOKEN_INTENT_EXTRA,token);
+      confIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+      mContext.startActivity(confIntent);
+    }
+ catch (    ActivityNotFoundException e) {
+      Slog.e(TAG,"Unable to launch full backup confirmation",e);
+      mFullConfirmations.delete(token);
+      return;
+    }
+    mPowerManager.userActivity(SystemClock.uptimeMillis(),false);
+    if (DEBUG)     Slog.d(TAG,"Posting conf timeout msg after " + TIMEOUT_FULL_CONFIRMATION + " millis");
+    Message msg=mBackupHandler.obtainMessage(MSG_FULL_CONFIRMATION_TIMEOUT,token,0,params);
+    mBackupHandler.sendMessageDelayed(msg,TIMEOUT_FULL_CONFIRMATION);
+    if (DEBUG)     Slog.d(TAG,"Waiting for full backup completion...");
+    waitForCompletion(params);
+    if (DEBUG)     Slog.d(TAG,"...Full backup operation complete!");
+  }
+  finally {
+    Binder.restoreCallingIdentity(oldId);
+    try {
+      fd.close();
+    }
+ catch (    IOException e) {
+    }
+  }
+}
