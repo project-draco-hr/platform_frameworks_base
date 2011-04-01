@@ -77,8 +77,7 @@ if (isConnected && state != BluetoothProfile.STATE_CONNECTED) {
 AudioSystem.setDeviceConnectionState(device,AudioSystem.DEVICE_STATE_UNAVAILABLE,address);
 mConnectedDevices.remove(device);
 mBluetoothHeadsetDevice=null;
-clearAllScoClients(null,false);
-mScoAudioState=SCO_STATE_INACTIVE;
+resetBluetoothSco();
 }
  else if (!isConnected && state == BluetoothProfile.STATE_CONNECTED) {
 AudioSystem.setDeviceConnectionState(device,AudioSystem.DEVICE_STATE_AVAILABLE,address);
@@ -154,26 +153,26 @@ mConnectedDevices.put(new Integer(AudioSystem.DEVICE_OUT_DGTL_DOCK_HEADSET),"");
 }
  else if (action.equals(BluetoothHeadset.ACTION_AUDIO_STATE_CHANGED)) {
 boolean broadcast=false;
-int audioState=AudioManager.SCO_AUDIO_STATE_ERROR;
+int state=AudioManager.SCO_AUDIO_STATE_ERROR;
 synchronized (mScoClients) {
 int btState=intent.getIntExtra(BluetoothProfile.EXTRA_STATE,-1);
-if (!mScoClients.isEmpty() && mScoAudioState == SCO_STATE_ACTIVE_INTERNAL) {
+if (!mScoClients.isEmpty() && (mScoAudioState == SCO_STATE_ACTIVE_INTERNAL || mScoAudioState == SCO_STATE_ACTIVATE_REQ || mScoAudioState == SCO_STATE_DEACTIVATE_REQ)) {
 broadcast=true;
 }
 switch (btState) {
 case BluetoothHeadset.STATE_AUDIO_CONNECTED:
-audioState=AudioManager.SCO_AUDIO_STATE_CONNECTED;
-if (mScoAudioState != SCO_STATE_ACTIVE_INTERNAL) {
+state=AudioManager.SCO_AUDIO_STATE_CONNECTED;
+if (mScoAudioState != SCO_STATE_ACTIVE_INTERNAL && mScoAudioState != SCO_STATE_DEACTIVATE_REQ && mScoAudioState != SCO_STATE_DEACTIVATE_EXT_REQ) {
 mScoAudioState=SCO_STATE_ACTIVE_EXTERNAL;
 }
 break;
 case BluetoothHeadset.STATE_AUDIO_DISCONNECTED:
-audioState=AudioManager.SCO_AUDIO_STATE_DISCONNECTED;
+state=AudioManager.SCO_AUDIO_STATE_DISCONNECTED;
 mScoAudioState=SCO_STATE_INACTIVE;
 clearAllScoClients(null,false);
 break;
 case BluetoothHeadset.STATE_AUDIO_CONNECTING:
-if (mScoAudioState != SCO_STATE_ACTIVE_INTERNAL) {
+if (mScoAudioState != SCO_STATE_ACTIVE_INTERNAL && mScoAudioState != SCO_STATE_DEACTIVATE_REQ && mScoAudioState != SCO_STATE_DEACTIVATE_EXT_REQ) {
 mScoAudioState=SCO_STATE_ACTIVE_EXTERNAL;
 }
 default :
@@ -182,14 +181,18 @@ break;
 }
 }
 if (broadcast) {
+broadcastScoConnectionState(state);
 Intent newIntent=new Intent(AudioManager.ACTION_SCO_AUDIO_STATE_CHANGED);
-newIntent.putExtra(AudioManager.EXTRA_SCO_AUDIO_STATE,audioState);
+newIntent.putExtra(AudioManager.EXTRA_SCO_AUDIO_STATE,state);
 mContext.sendStickyBroadcast(newIntent);
 }
 }
  else if (action.equals(Intent.ACTION_BOOT_COMPLETED)) {
 mBootCompleted=true;
 sendMsg(mAudioHandler,MSG_LOAD_SOUND_EFFECTS,SHARED_MSG,SENDMSG_NOOP,0,0,null,0);
+mScoConnectionState=AudioManager.SCO_AUDIO_STATE_ERROR;
+resetBluetoothSco();
+getBluetoothHeadset();
 Intent newIntent=new Intent(AudioManager.ACTION_SCO_AUDIO_STATE_CHANGED);
 newIntent.putExtra(AudioManager.EXTRA_SCO_AUDIO_STATE,AudioManager.SCO_AUDIO_STATE_DISCONNECTED);
 mContext.sendStickyBroadcast(newIntent);
