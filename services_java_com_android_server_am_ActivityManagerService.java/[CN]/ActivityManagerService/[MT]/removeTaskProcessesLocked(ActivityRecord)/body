@@ -1,0 +1,47 @@
+{
+  TaskRecord tr=root.task;
+  Intent baseIntent=new Intent(tr.intent != null ? tr.intent : tr.affinityIntent);
+  ComponentName component=baseIntent.getComponent();
+  if (component == null) {
+    Slog.w(TAG,"Now component for base intent of task: " + tr);
+    return;
+  }
+  ArrayList<ServiceRecord> services=new ArrayList<ServiceRecord>();
+  for (  ServiceRecord sr : mServices.values()) {
+    if (sr.packageName.equals(component.getPackageName())) {
+      services.add(sr);
+    }
+  }
+  for (int i=0; i < services.size(); i++) {
+    ServiceRecord sr=services.get(i);
+    if (sr.startRequested) {
+      if ((sr.serviceInfo.flags & ServiceInfo.FLAG_STOP_WITH_TASK) != 0) {
+        stopServiceLocked(sr);
+      }
+ else {
+        sr.pendingStarts.add(new ServiceRecord.StartItem(sr,true,sr.makeNextStartId(),baseIntent,-1));
+        if (sr.app != null && sr.app.thread != null) {
+          sendServiceArgsLocked(sr,false);
+        }
+      }
+    }
+  }
+  ArrayList<ProcessRecord> procs=new ArrayList<ProcessRecord>();
+  SparseArray<ProcessRecord> appProcs=mProcessNames.getMap().get(component.getPackageName());
+  if (appProcs != null) {
+    for (int i=0; i < appProcs.size(); i++) {
+      procs.add(appProcs.valueAt(i));
+    }
+  }
+  for (int i=0; i < procs.size(); i++) {
+    ProcessRecord pr=procs.get(i);
+    if (pr.setSchedGroup == Process.THREAD_GROUP_BG_NONINTERACTIVE) {
+      Slog.i(TAG,"Killing " + pr + ": remove task");
+      EventLog.writeEvent(EventLogTags.AM_KILL,pr.pid,pr.processName,pr.setAdj,"remove task");
+      Process.killProcessQuiet(pr.pid);
+    }
+ else {
+      pr.waitingToKill="remove task";
+    }
+  }
+}
