@@ -24,56 +24,87 @@
   if (DEBUG_ORIENTATION)   Slog.v(TAG,"Overwriting rotation value from " + rotation);
   rotation=mPolicy.rotationForOrientationLw(mForcedAppOrientation,mRotation,mDisplayEnabled);
   if (DEBUG_ORIENTATION)   Slog.v(TAG,"new rotation is set to " + rotation);
-  changed=mDisplayEnabled && mRotation != rotation;
-  if (changed) {
-    if (DEBUG_ORIENTATION)     Slog.v(TAG,"Rotation changed to " + rotation + " from "+ mRotation+ " (forceApp="+ mForcedAppOrientation+ ", req="+ mRequestedRotation+ ")");
-    mRotation=rotation;
-    mWindowsFreezingScreen=true;
-    mH.removeMessages(H.WINDOW_FREEZE_TIMEOUT);
-    mH.sendMessageDelayed(mH.obtainMessage(H.WINDOW_FREEZE_TIMEOUT),2000);
-    mWaitingForConfig=true;
-    mLayoutNeeded=true;
-    startFreezingDisplayLocked(inTransaction);
-    Slog.i(TAG,"Setting rotation to " + rotation + ", animFlags="+ animFlags);
-    mInputManager.setDisplayOrientation(0,rotation);
-    if (mDisplayEnabled) {
-      if (CUSTOM_SCREEN_ROTATION && mScreenRotationAnimation != null && mScreenRotationAnimation.hasScreenshot()) {
-        Surface.freezeDisplay(0);
-        if (!inTransaction) {
-          if (SHOW_TRANSACTIONS)           Slog.i(TAG,">>> OPEN TRANSACTION setRotationUnchecked");
-          Surface.openTransaction();
-        }
-        try {
-          if (mScreenRotationAnimation != null) {
-            mScreenRotationAnimation.setRotation(rotation);
-          }
-        }
-  finally {
-          if (!inTransaction) {
-            Surface.closeTransaction();
-            if (SHOW_TRANSACTIONS)             Slog.i(TAG,"<<< CLOSE TRANSACTION setRotationUnchecked");
-          }
-        }
-        Surface.setOrientation(0,rotation,animFlags);
-        Surface.unfreezeDisplay(0);
+  int desiredRotation=rotation;
+  int lockedRotation=mPolicy.getLockedRotationLw();
+  if (lockedRotation >= 0 && rotation != lockedRotation) {
+    rotation=lockedRotation;
+switch (lockedRotation) {
+case Surface.ROTATION_0:
+      if (rotation == Surface.ROTATION_180) {
+        desiredRotation=lockedRotation;
       }
- else {
-        Surface.setOrientation(0,rotation,animFlags);
-      }
-    }
-    for (int i=mWindows.size() - 1; i >= 0; i--) {
-      WindowState w=mWindows.get(i);
-      if (w.mSurface != null) {
-        w.mOrientationChanging=true;
-      }
-    }
-    for (int i=mRotationWatchers.size() - 1; i >= 0; i--) {
-      try {
-        mRotationWatchers.get(i).onRotationChanged(rotation);
-      }
- catch (      RemoteException e) {
-      }
-    }
+    break;
+case Surface.ROTATION_90:
+  if (rotation == Surface.ROTATION_270) {
+    desiredRotation=lockedRotation;
   }
-  return changed;
+break;
+case Surface.ROTATION_180:
+if (rotation == Surface.ROTATION_0) {
+desiredRotation=lockedRotation;
+}
+break;
+case Surface.ROTATION_270:
+if (rotation == Surface.ROTATION_90) {
+desiredRotation=lockedRotation;
+}
+break;
+}
+}
+changed=mDisplayEnabled && mRotation != rotation;
+if (mAltOrientation != (rotation != desiredRotation)) {
+changed=true;
+mAltOrientation=rotation != desiredRotation;
+}
+if (changed) {
+if (DEBUG_ORIENTATION) Slog.v(TAG,"Rotation changed to " + rotation + " from "+ mRotation+ " (forceApp="+ mForcedAppOrientation+ ", req="+ mRequestedRotation+ ")");
+mRotation=rotation;
+mWindowsFreezingScreen=true;
+mH.removeMessages(H.WINDOW_FREEZE_TIMEOUT);
+mH.sendMessageDelayed(mH.obtainMessage(H.WINDOW_FREEZE_TIMEOUT),2000);
+mWaitingForConfig=true;
+mLayoutNeeded=true;
+startFreezingDisplayLocked(inTransaction);
+Slog.i(TAG,"Setting rotation to " + rotation + ", animFlags="+ animFlags);
+mInputManager.setDisplayOrientation(0,rotation);
+if (mDisplayEnabled) {
+if (CUSTOM_SCREEN_ROTATION && mScreenRotationAnimation != null && mScreenRotationAnimation.hasScreenshot()) {
+Surface.freezeDisplay(0);
+if (!inTransaction) {
+if (SHOW_TRANSACTIONS) Slog.i(TAG,">>> OPEN TRANSACTION setRotationUnchecked");
+Surface.openTransaction();
+}
+try {
+if (mScreenRotationAnimation != null) {
+mScreenRotationAnimation.setRotation(rotation);
+}
+}
+  finally {
+if (!inTransaction) {
+Surface.closeTransaction();
+if (SHOW_TRANSACTIONS) Slog.i(TAG,"<<< CLOSE TRANSACTION setRotationUnchecked");
+}
+}
+Surface.setOrientation(0,rotation,animFlags);
+Surface.unfreezeDisplay(0);
+}
+ else {
+Surface.setOrientation(0,rotation,animFlags);
+}
+}
+for (int i=mWindows.size() - 1; i >= 0; i--) {
+WindowState w=mWindows.get(i);
+if (w.mSurface != null) {
+w.mOrientationChanging=true;
+}
+}
+for (int i=mRotationWatchers.size() - 1; i >= 0; i--) {
+try {
+mRotationWatchers.get(i).onRotationChanged(rotation);
+}
+ catch (RemoteException e) {
+}
+}
+}
+return changed;
 }
