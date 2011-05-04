@@ -9,7 +9,8 @@ synchronized (this) {
         throw new SecurityException("Unable to find app for caller " + caller + " (pid="+ Binder.getCallingPid()+ ") when getting content provider "+ name);
       }
     }
-    cpr=mProvidersByName.get(name);
+    int userId=UserId.getUserId(r != null ? r.info.uid : Binder.getCallingUid());
+    cpr=mProviderMap.getProviderByName(name,userId);
     boolean providerRunning=cpr != null;
     if (providerRunning) {
       cpi=cpr.info;
@@ -60,6 +61,7 @@ synchronized (this) {
       if (cpi == null) {
         return null;
       }
+      cpi.applicationInfo=getAppInfoForUser(cpi.applicationInfo,Binder.getOrigCallingUser());
       String msg;
       if ((msg=checkContentProviderPermissionLocked(cpi,r)) != null) {
         throw new SecurityException(msg);
@@ -68,7 +70,7 @@ synchronized (this) {
         throw new IllegalArgumentException("Attempt to launch content provider before system ready");
       }
       ComponentName comp=new ComponentName(cpi.packageName,cpi.name);
-      cpr=mProvidersByClass.get(comp);
+      cpr=mProviderMap.getProviderByClass(comp,Binder.getOrigCallingUser());
       final boolean firstClass=cpr == null;
       if (firstClass) {
         try {
@@ -77,6 +79,7 @@ synchronized (this) {
             Slog.w(TAG,"No package info for content provider " + cpi.name);
             return null;
           }
+          ai=getAppInfoForUser(ai,Binder.getOrigCallingUser());
           cpr=new ContentProviderRecord(cpi,ai,comp);
         }
  catch (        RemoteException ex) {
@@ -120,9 +123,9 @@ catch (          IllegalArgumentException e) {
         }
       }
       if (firstClass) {
-        mProvidersByClass.put(comp,cpr);
+        mProviderMap.putProviderByClass(comp,cpr);
       }
-      mProvidersByName.put(name,cpr);
+      mProviderMap.putProviderByName(name,cpr);
       incProviderCount(r,cpr);
     }
   }
@@ -134,6 +137,9 @@ synchronized (cpr) {
         return null;
       }
       try {
+        if (DEBUG_MU) {
+          Slog.v(TAG_MU,"Waiting to start provider " + cpr + " launchingApp="+ cpr.launchingApp);
+        }
         cpr.wait();
       }
  catch (      InterruptedException ex) {
