@@ -6,6 +6,8 @@
   final long currentTime=SystemClock.uptimeMillis();
   final int dw=mCurDisplayWidth;
   final int dh=mCurDisplayHeight;
+  final int innerDw=mPolicy.getNonDecorDisplayWidth(dw);
+  final int innerDh=mPolicy.getNonDecorDisplayHeight(dh);
   int i;
   if (mFocusMayChange) {
     mFocusMayChange=false;
@@ -84,13 +86,13 @@
       boolean tokensAnimating=false;
       final int NAT=mAppTokens.size();
       for (i=0; i < NAT; i++) {
-        if (mAppTokens.get(i).stepAnimationLocked(currentTime,dw,dh)) {
+        if (mAppTokens.get(i).stepAnimationLocked(currentTime,innerDw,innerDh)) {
           tokensAnimating=true;
         }
       }
       final int NEAT=mExitingAppTokens.size();
       for (i=0; i < NEAT; i++) {
-        if (mExitingAppTokens.get(i).stepAnimationLocked(currentTime,dw,dh)) {
+        if (mExitingAppTokens.get(i).stepAnimationLocked(currentTime,innerDw,innerDh)) {
           tokensAnimating=true;
         }
       }
@@ -126,8 +128,8 @@
             }
           }
           final boolean wasAnimating=w.mAnimating;
-          int animDw=dw;
-          int animDh=dh;
+          int animDw=innerDw;
+          int animDh=innerDh;
           if (w.shouldAnimateMove()) {
             Animation a=AnimationUtils.loadAnimation(mContext,com.android.internal.R.anim.window_move_from_decor);
             w.setAnimation(a);
@@ -299,6 +301,7 @@
           LayoutParams animLp=null;
           int bestAnimLayer=-1;
           boolean fullscreenAnim=false;
+          boolean needBgFiller=false;
           if (DEBUG_APP_TRANSITIONS)           Slog.v(TAG,"New wallpaper target=" + mWallpaperTarget + ", lower target="+ mLowerWallpaperTarget+ ", upper target="+ mUpperWallpaperTarget);
           int foundWallpapers=0;
           final int NC=mClosingApps.size();
@@ -322,9 +325,10 @@
             if (wtoken.appFullscreen) {
               WindowState ws=wtoken.findMainWindow();
               if (ws != null) {
-                if ((ws.mAttrs.flags & FLAG_COMPATIBLE_WINDOW) != 0) {
+                if (ws.mNeedsBackgroundFiller) {
                   animLp=ws.mAttrs;
                   bestAnimLayer=Integer.MAX_VALUE;
+                  needBgFiller=true;
                 }
  else                 if (!fullscreenAnim || ws.mLayer > bestAnimLayer) {
                   animLp=ws.mAttrs;
@@ -377,7 +381,7 @@ case WindowManagerPolicy.TRANSIT_TASK_TO_BACK:
     wtoken.reportedVisible=false;
     wtoken.inPendingTransaction=false;
     wtoken.animation=null;
-    setTokenVisibilityLocked(wtoken,animLp,true,transit,false);
+    setTokenVisibilityLocked(wtoken,animLp,true,transit,false,needBgFiller);
     wtoken.updateReportedVisibilityLocked();
     wtoken.waitingToShow=false;
     wtoken.showAllWindowsLocked();
@@ -388,7 +392,7 @@ case WindowManagerPolicy.TRANSIT_TASK_TO_BACK:
     if (DEBUG_APP_TRANSITIONS)     Slog.v(TAG,"Now closing app" + wtoken);
     wtoken.inPendingTransaction=false;
     wtoken.animation=null;
-    setTokenVisibilityLocked(wtoken,animLp,false,transit,false);
+    setTokenVisibilityLocked(wtoken,animLp,false,transit,false,needBgFiller);
     wtoken.updateReportedVisibilityLocked();
     wtoken.waitingToHide=false;
     wtoken.allDrawn=true;
@@ -718,10 +722,10 @@ if (w.mSurface != null) {
   }
 }
 boolean opaqueDrawn=canBeSeen && w.isOpaqueDrawn();
-if (opaqueDrawn && w.isFullscreen(dw,dh)) {
+if (opaqueDrawn && w.isFullscreen(innerDw,innerDh)) {
   obscured=true;
 }
- else if (w.needsBackgroundFiller(dw,dh) && (canBeSeen || w.isAnimating())) {
+ else if (w.mNeedsBackgroundFiller && w.mHasDrawn && w.mViewVisibility == View.VISIBLE && (canBeSeen || w.isAnimating())) {
   obscured=true;
   mBackgroundFillerTarget=w;
 }
