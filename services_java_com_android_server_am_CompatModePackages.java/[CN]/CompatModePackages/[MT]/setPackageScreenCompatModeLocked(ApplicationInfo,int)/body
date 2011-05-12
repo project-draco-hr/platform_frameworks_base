@@ -1,0 +1,70 @@
+{
+  final String packageName=ai.packageName;
+  boolean changed=false;
+  boolean enable;
+switch (mode) {
+case ActivityManager.COMPAT_MODE_DISABLED:
+    enable=false;
+  break;
+case ActivityManager.COMPAT_MODE_ENABLED:
+enable=true;
+break;
+case ActivityManager.COMPAT_MODE_TOGGLE:
+enable=!mPackages.contains(packageName);
+break;
+default :
+Slog.w(TAG,"Unknown screen compat mode req #" + mode + "; ignoring");
+return;
+}
+if (enable) {
+if (!mPackages.contains(packageName)) {
+changed=true;
+mPackages.add(packageName);
+}
+}
+ else {
+if (mPackages.contains(packageName)) {
+changed=true;
+mPackages.remove(packageName);
+}
+}
+if (changed) {
+CompatibilityInfo ci=compatibilityInfoForPackageLocked(ai);
+if (ci.alwaysSupportsScreen()) {
+Slog.w(TAG,"Ignoring compat mode change of " + packageName + "; compatibility never needed");
+return;
+}
+if (ci.neverSupportsScreen()) {
+Slog.w(TAG,"Ignoring compat mode change of " + packageName + "; compatibility always needed");
+return;
+}
+mHandler.removeMessages(MSG_WRITE);
+Message msg=mHandler.obtainMessage(MSG_WRITE);
+mHandler.sendMessageDelayed(msg,10000);
+for (int i=mService.mLruProcesses.size() - 1; i >= 0; i--) {
+ProcessRecord app=mService.mLruProcesses.get(i);
+if (!app.pkgList.contains(packageName)) {
+continue;
+}
+try {
+if (app.thread != null) {
+if (DEBUG_CONFIGURATION) Slog.v(TAG,"Sending to proc " + app.processName + " new compat "+ ci);
+app.thread.updatePackageCompatibilityInfo(packageName,ci);
+}
+}
+ catch (Exception e) {
+}
+}
+for (int i=mService.mMainStack.mHistory.size() - 1; i >= 0; i--) {
+ActivityRecord a=(ActivityRecord)mService.mMainStack.mHistory.get(i);
+if (a.info.packageName.equals(packageName)) {
+a.forceNewConfig=true;
+}
+}
+ActivityRecord starting=mService.mMainStack.topRunningActivityLocked(null);
+if (starting != null) {
+mService.mMainStack.ensureActivityConfigurationLocked(starting,0);
+mService.mMainStack.ensureActivitiesVisibleLocked(starting,0);
+}
+}
+}
