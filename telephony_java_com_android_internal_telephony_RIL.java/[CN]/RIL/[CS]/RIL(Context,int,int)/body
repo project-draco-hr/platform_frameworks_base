@@ -1,55 +1,33 @@
 {
   super(context);
+  if (RILJ_LOGD) {
+    riljLog("RIL(context, networkMode=" + networkMode + " cdmaSubscription="+ cdmaSubscription+ ")");
+  }
   mCdmaSubscription=cdmaSubscription;
   mNetworkMode=networkMode;
-switch (networkMode) {
-case RILConstants.NETWORK_MODE_WCDMA_PREF:
-case RILConstants.NETWORK_MODE_GSM_ONLY:
-case RILConstants.NETWORK_MODE_WCDMA_ONLY:
-case RILConstants.NETWORK_MODE_GSM_UMTS:
-    mPhoneType=RILConstants.GSM_PHONE;
-  break;
-case RILConstants.NETWORK_MODE_CDMA:
-case RILConstants.NETWORK_MODE_CDMA_NO_EVDO:
-case RILConstants.NETWORK_MODE_EVDO_NO_CDMA:
-mPhoneType=RILConstants.CDMA_PHONE;
-break;
-case RILConstants.NETWORK_MODE_GLOBAL:
-mPhoneType=RILConstants.CDMA_PHONE;
-break;
-case RILConstants.NETWORK_MODE_LTE_ONLY:
-if (SystemProperties.getBoolean(TelephonyProperties.PROPERTY_NETWORK_LTE_ON_CDMA,false)) {
-mPhoneType=RILConstants.CDMA_PHONE;
-}
+  mPhoneType=RILConstants.NO_PHONE;
+  PowerManager pm=(PowerManager)context.getSystemService(Context.POWER_SERVICE);
+  mWakeLock=pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,LOG_TAG);
+  mWakeLock.setReferenceCounted(false);
+  mWakeLockTimeout=SystemProperties.getInt(TelephonyProperties.PROPERTY_WAKE_LOCK_TIMEOUT,DEFAULT_WAKE_LOCK_TIMEOUT);
+  mRequestMessagesPending=0;
+  mRequestMessagesWaiting=0;
+  mSenderThread=new HandlerThread("RILSender");
+  mSenderThread.start();
+  Looper looper=mSenderThread.getLooper();
+  mSender=new RILSender(looper);
+  String carrier=SystemProperties.get("ro.carrier");
+  if (WIFI_ONLY_CARRIER.equals(carrier)) {
+    riljLog("Not starting RILReceiver: wifi-only");
+  }
  else {
-mPhoneType=RILConstants.GSM_PHONE;
-}
-break;
-default :
-mPhoneType=RILConstants.CDMA_PHONE;
-}
-PowerManager pm=(PowerManager)context.getSystemService(Context.POWER_SERVICE);
-mWakeLock=pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,LOG_TAG);
-mWakeLock.setReferenceCounted(false);
-mWakeLockTimeout=SystemProperties.getInt(TelephonyProperties.PROPERTY_WAKE_LOCK_TIMEOUT,DEFAULT_WAKE_LOCK_TIMEOUT);
-mRequestMessagesPending=0;
-mRequestMessagesWaiting=0;
-mSenderThread=new HandlerThread("RILSender");
-mSenderThread.start();
-Looper looper=mSenderThread.getLooper();
-mSender=new RILSender(looper);
-String carrier=SystemProperties.get("ro.carrier");
-if (WIFI_ONLY_CARRIER.equals(carrier)) {
-riljLog("Not starting RILReceiver: wifi-only");
-}
- else {
-riljLog("Starting RILReceiver");
-mReceiver=new RILReceiver();
-mReceiverThread=new Thread(mReceiver,"RILReceiver");
-mReceiverThread.start();
-IntentFilter filter=new IntentFilter();
-filter.addAction(Intent.ACTION_SCREEN_ON);
-filter.addAction(Intent.ACTION_SCREEN_OFF);
-context.registerReceiver(mIntentReceiver,filter);
-}
+    riljLog("Starting RILReceiver");
+    mReceiver=new RILReceiver();
+    mReceiverThread=new Thread(mReceiver,"RILReceiver");
+    mReceiverThread.start();
+    IntentFilter filter=new IntentFilter();
+    filter.addAction(Intent.ACTION_SCREEN_ON);
+    filter.addAction(Intent.ACTION_SCREEN_OFF);
+    context.registerReceiver(mIntentReceiver,filter);
+  }
 }
