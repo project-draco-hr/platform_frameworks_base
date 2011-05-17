@@ -18,19 +18,22 @@
     app.curSchedGroup=Process.THREAD_GROUP_DEFAULT;
     return (app.curAdj=app.maxAdj);
   }
+  final boolean hadForegroundActivities=app.foregroundActivities;
   app.adjTypeCode=ActivityManager.RunningAppProcessInfo.REASON_UNKNOWN;
   app.adjSource=null;
   app.adjTarget=null;
   app.keeping=false;
   app.empty=false;
   app.hidden=false;
+  app.foregroundActivities=false;
+  final int activitiesSize=app.activities.size();
   int adj;
   int schedGroup;
-  int N;
   if (app == TOP_APP) {
     adj=FOREGROUND_APP_ADJ;
     schedGroup=Process.THREAD_GROUP_DEFAULT;
     app.adjType="top-activity";
+    app.foregroundActivities=true;
   }
  else   if (app.instrumentationClass != null) {
     adj=FOREGROUND_APP_ADJ;
@@ -47,45 +50,52 @@
     schedGroup=Process.THREAD_GROUP_DEFAULT;
     app.adjType="exec-service";
   }
- else   if ((N=app.activities.size()) != 0) {
-    app.hidden=true;
+ else   if (activitiesSize > 0) {
     adj=hiddenAdj;
     schedGroup=Process.THREAD_GROUP_BG_NONINTERACTIVE;
+    app.hidden=true;
     app.adjType="bg-activities";
-    N=app.activities.size();
-    for (int j=0; j < N; j++) {
-      ActivityRecord r=app.activities.get(j);
+  }
+ else {
+    adj=hiddenAdj;
+    schedGroup=Process.THREAD_GROUP_BG_NONINTERACTIVE;
+    app.hidden=true;
+    app.empty=true;
+    app.adjType="bg-empty";
+  }
+  if (!app.foregroundActivities && activitiesSize > 0) {
+    for (int j=0; j < activitiesSize; j++) {
+      final ActivityRecord r=app.activities.get(j);
       if (r.visible) {
-        app.hidden=false;
-        adj=VISIBLE_APP_ADJ;
+        if (adj > VISIBLE_APP_ADJ) {
+          adj=VISIBLE_APP_ADJ;
+          app.adjType="visible";
+        }
         schedGroup=Process.THREAD_GROUP_DEFAULT;
-        app.adjType="visible";
+        app.hidden=false;
+        app.foregroundActivities=true;
         break;
       }
  else       if (r.state == ActivityState.PAUSING || r.state == ActivityState.PAUSED || r.state == ActivityState.STOPPING) {
-        adj=PERCEPTIBLE_APP_ADJ;
-        app.adjType="stopping";
+        if (adj > PERCEPTIBLE_APP_ADJ) {
+          adj=PERCEPTIBLE_APP_ADJ;
+          app.adjType="stopping";
+        }
+        app.foregroundActivities=true;
       }
     }
-  }
- else {
-    app.hidden=true;
-    app.empty=true;
-    schedGroup=Process.THREAD_GROUP_BG_NONINTERACTIVE;
-    adj=hiddenAdj;
-    app.adjType="bg-empty";
   }
   if (adj > PERCEPTIBLE_APP_ADJ) {
     if (app.foregroundServices) {
       adj=PERCEPTIBLE_APP_ADJ;
-      schedGroup=Process.THREAD_GROUP_DEFAULT;
       app.adjType="foreground-service";
+      schedGroup=Process.THREAD_GROUP_DEFAULT;
     }
  else     if (app.forcingToForeground != null) {
       adj=PERCEPTIBLE_APP_ADJ;
-      schedGroup=Process.THREAD_GROUP_DEFAULT;
       app.adjType="force-foreground";
       app.adjSource=app.forcingToForeground;
+      schedGroup=Process.THREAD_GROUP_DEFAULT;
     }
   }
   if (adj > HEAVY_WEIGHT_APP_ADJ && app == mHeavyWeightProcess) {
@@ -249,5 +259,8 @@
   }
   app.curAdj=adj;
   app.curSchedGroup=schedGroup;
+  if (hadForegroundActivities != app.foregroundActivities) {
+    mHandler.obtainMessage(DISPATCH_FOREGROUND_ACTIVITIES_CHANGED,app).sendToTarget();
+  }
   return adj;
 }
