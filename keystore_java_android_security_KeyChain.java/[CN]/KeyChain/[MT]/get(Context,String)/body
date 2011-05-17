@@ -1,32 +1,9 @@
 {
-  if (context == null) {
-    throw new NullPointerException("context == null");
-  }
   if (alias == null) {
     throw new NullPointerException("alias == null");
   }
-  ensureNotOnMainThread(context);
-  final BlockingQueue<IKeyChainService> q=new LinkedBlockingQueue<IKeyChainService>(1);
-  ServiceConnection keyChainServiceConnection=new ServiceConnection(){
-    @Override public void onServiceConnected(    ComponentName name,    IBinder service){
-      try {
-        q.put(IKeyChainService.Stub.asInterface(service));
-      }
- catch (      InterruptedException e) {
-        throw new AssertionError(e);
-      }
-    }
-    @Override public void onServiceDisconnected(    ComponentName name){
-    }
-  }
-;
-  boolean isBound=context.bindService(new Intent(IKeyChainService.class.getName()),keyChainServiceConnection,Context.BIND_AUTO_CREATE);
-  if (!isBound) {
-    throw new AssertionError("could not bind to KeyChainService");
-  }
-  IKeyChainService keyChainService;
+  KeyChainConnection keyChainConnection=bind(context);
   try {
-    keyChainService=q.take();
     AccountManager accountManager=AccountManager.get(context);
     Account account=accountManager.getAccountsByType(ACCOUNT_TYPE)[0];
     AccountManagerFuture<Bundle> future=accountManager.getAuthToken(account,alias,false,null,null);
@@ -53,11 +30,12 @@ catch (    AuthenticatorException e) {
     if (authToken == null) {
       throw new AssertionError("Invalid authtoken");
     }
+    IKeyChainService keyChainService=keyChainConnection.getService();
     byte[] privateKeyBytes=keyChainService.getPrivateKey(alias,authToken);
     byte[] certificateBytes=keyChainService.getCertificate(alias,authToken);
     return new KeyChainResult(toPrivateKey(privateKeyBytes),toCertificate(certificateBytes));
   }
   finally {
-    context.unbindService(keyChainServiceConnection);
+    keyChainConnection.close();
   }
 }
