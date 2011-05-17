@@ -19,32 +19,56 @@
   if (descriptors != null && descriptors.length >= 3) {
     newStderr=new PrintStream(new FileOutputStream(descriptors[2]));
   }
-  int pid;
+  int pid=-1;
+  FileDescriptor childPipeFd=null;
+  FileDescriptor serverPipeFd=null;
   try {
     parsedArgs=new Arguments(args);
     applyUidSecurityPolicy(parsedArgs,peer);
-    applyDebuggerSecurityPolicy(parsedArgs);
     applyRlimitSecurityPolicy(parsedArgs,peer);
     applyCapabilitiesSecurityPolicy(parsedArgs,peer);
+    applyInvokeWithSecurityPolicy(parsedArgs,peer);
+    applyDebuggerSystemProperty(parsedArgs);
+    applyInvokeWithSystemProperty(parsedArgs);
     int[][] rlimits=null;
     if (parsedArgs.rlimits != null) {
       rlimits=parsedArgs.rlimits.toArray(intArray2d);
     }
+    if (parsedArgs.runtimeInit && parsedArgs.invokeWith != null) {
+      FileDescriptor[] pipeFds=Libcore.os.pipe();
+      childPipeFd=pipeFds[1];
+      serverPipeFd=pipeFds[0];
+      ZygoteInit.setCloseOnExec(serverPipeFd,true);
+    }
     pid=Zygote.forkAndSpecialize(parsedArgs.uid,parsedArgs.gid,parsedArgs.gids,parsedArgs.debugFlags,rlimits);
   }
- catch (  IllegalArgumentException ex) {
+ catch (  IOException ex) {
+    logAndPrintError(newStderr,"Exception creating pipe",ex);
+  }
+catch (  ErrnoException ex) {
+    logAndPrintError(newStderr,"Exception creating pipe",ex);
+  }
+catch (  IllegalArgumentException ex) {
     logAndPrintError(newStderr,"Invalid zygote arguments",ex);
-    pid=-1;
   }
 catch (  ZygoteSecurityException ex) {
     logAndPrintError(newStderr,"Zygote security policy prevents request: ",ex);
-    pid=-1;
   }
-  if (pid == 0) {
-    handleChildProc(parsedArgs,descriptors,newStderr);
-    return true;
-  }
+  try {
+    if (pid == 0) {
+      IoUtils.closeQuietly(serverPipeFd);
+      serverPipeFd=null;
+      handleChildProc(parsedArgs,descriptors,childPipeFd,newStderr);
+      return true;
+    }
  else {
-    return handleParentProc(pid,descriptors,parsedArgs);
+      IoUtils.closeQuietly(childPipeFd);
+      childPipeFd=null;
+      return handleParentProc(pid,descriptors,serverPipeFd,parsedArgs);
+    }
+  }
+  finally {
+    IoUtils.closeQuietly(childPipeFd);
+    IoUtils.closeQuietly(serverPipeFd);
   }
 }
