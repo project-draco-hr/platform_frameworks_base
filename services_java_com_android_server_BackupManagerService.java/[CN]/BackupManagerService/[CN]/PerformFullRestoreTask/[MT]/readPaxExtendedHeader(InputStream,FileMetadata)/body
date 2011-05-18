@@ -1,0 +1,43 @@
+{
+  if (info.size > 32 * 1024) {
+    Slog.w(TAG,"Suspiciously large pax header size " + info.size + " - aborting");
+    throw new IOException("Sanity failure: pax header size " + info.size);
+  }
+  int numBlocks=(int)((info.size + 511) >> 9);
+  byte[] data=new byte[numBlocks * 512];
+  int nRead=instream.read(data);
+  if (nRead != data.length) {
+    return false;
+  }
+  final int contentSize=(int)info.size;
+  int offset=0;
+  do {
+    int eol=offset + 1;
+    while (eol < contentSize && data[eol] != ' ')     eol++;
+    if (eol >= contentSize) {
+      throw new IOException("Invalid pax data");
+    }
+    int linelen=(int)extractRadix(data,offset,eol - offset,10);
+    int key=eol + 1;
+    eol=offset + linelen - 1;
+    int value;
+    for (value=key + 1; data[value] != '=' && value <= eol; value++)     ;
+    if (value > eol) {
+      throw new IOException("Invalid pax declaration");
+    }
+    String keyStr=new String(data,key,value - key,"UTF-8");
+    String valStr=new String(data,value + 1,eol - value - 1,"UTF-8");
+    if ("path".equals(keyStr)) {
+      info.path=valStr;
+    }
+ else     if ("size".equals(keyStr)) {
+      info.size=Long.parseLong(valStr);
+    }
+ else {
+      if (DEBUG)       Slog.i(TAG,"Unhandled pax key: " + key);
+    }
+    offset+=linelen;
+  }
+ while (offset < contentSize);
+  return true;
+}
