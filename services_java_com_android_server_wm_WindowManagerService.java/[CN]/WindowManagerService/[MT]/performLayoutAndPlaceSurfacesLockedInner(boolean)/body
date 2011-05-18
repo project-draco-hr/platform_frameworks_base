@@ -301,7 +301,6 @@
           LayoutParams animLp=null;
           int bestAnimLayer=-1;
           boolean fullscreenAnim=false;
-          boolean needBgFiller=false;
           if (DEBUG_APP_TRANSITIONS)           Slog.v(TAG,"New wallpaper target=" + mWallpaperTarget + ", lower target="+ mLowerWallpaperTarget+ ", upper target="+ mUpperWallpaperTarget);
           int foundWallpapers=0;
           final int NC=mClosingApps.size();
@@ -325,15 +324,8 @@
             if (wtoken.appFullscreen) {
               WindowState ws=wtoken.findMainWindow();
               if (ws != null) {
-                if (ws.mNeedsBackgroundFiller) {
-                  animLp=ws.mAttrs;
-                  bestAnimLayer=Integer.MAX_VALUE;
-                  needBgFiller=true;
-                }
- else                 if (!fullscreenAnim || ws.mLayer > bestAnimLayer) {
-                  animLp=ws.mAttrs;
-                  bestAnimLayer=ws.mLayer;
-                }
+                animLp=ws.mAttrs;
+                bestAnimLayer=ws.mLayer;
                 fullscreenAnim=true;
               }
             }
@@ -381,7 +373,7 @@ case WindowManagerPolicy.TRANSIT_TASK_TO_BACK:
     wtoken.reportedVisible=false;
     wtoken.inPendingTransaction=false;
     wtoken.animation=null;
-    setTokenVisibilityLocked(wtoken,animLp,true,transit,false,needBgFiller);
+    setTokenVisibilityLocked(wtoken,animLp,true,transit,false);
     wtoken.updateReportedVisibilityLocked();
     wtoken.waitingToShow=false;
     wtoken.showAllWindowsLocked();
@@ -392,7 +384,7 @@ case WindowManagerPolicy.TRANSIT_TASK_TO_BACK:
     if (DEBUG_APP_TRANSITIONS)     Slog.v(TAG,"Now closing app" + wtoken);
     wtoken.inPendingTransaction=false;
     wtoken.animation=null;
-    setTokenVisibilityLocked(wtoken,animLp,false,transit,false,needBgFiller);
+    setTokenVisibilityLocked(wtoken,animLp,false,transit,false);
     wtoken.updateReportedVisibilityLocked();
     wtoken.waitingToHide=false;
     wtoken.allDrawn=true;
@@ -499,8 +491,6 @@ boolean blurring=false;
 boolean dimming=false;
 boolean covered=false;
 boolean syswin=false;
-boolean backgroundFillerWasShown=mBackgroundFillerTarget != null;
-mBackgroundFillerTarget=null;
 final int N=mWindows.size();
 for (i=N - 1; i >= 0; i--) {
 WindowState w=mWindows.get(i);
@@ -509,19 +499,15 @@ final WindowManager.LayoutParams attrs=w.mAttrs;
 final int attrFlags=attrs.flags;
 if (w.mSurface != null) {
 w.computeShownFrameLocked();
-if (localLOGV) Slog.v(TAG,"Placing surface #" + i + " "+ w.mSurface+ ": new="+ w.mShownFrame+ ", old="+ w.mLastShownFrame);
+if (localLOGV) Slog.v(TAG,"Placing surface #" + i + " "+ w.mSurface+ ": new="+ w.mShownFrame);
 int width, height;
 if ((w.mAttrs.flags & w.mAttrs.FLAG_SCALED) != 0) {
   width=w.mRequestedWidth;
   height=w.mRequestedHeight;
-  w.mLastRequestedWidth=width;
-  w.mLastRequestedHeight=height;
-  w.mLastShownFrame.set(w.mShownFrame);
 }
  else {
-  width=w.mShownFrame.width();
-  height=w.mShownFrame.height();
-  w.mLastShownFrame.set(w.mShownFrame);
+  width=w.mCompatFrame.width();
+  height=w.mCompatFrame.height();
 }
 if (w.mSurface != null) {
   if (w.mSurfaceX != w.mShownFrame.left || w.mSurfaceY != w.mShownFrame.top) {
@@ -567,13 +553,14 @@ if (!w.mAppFreezing && w.mLayoutSeq == mLayoutSeq) {
   if (DEBUG_CONFIGURATION && configChanged) {
     Slog.v(TAG,"Win " + w + " config changed: "+ mCurConfiguration);
   }
-  if (localLOGV)   Slog.v(TAG,"Resizing " + w + ": configChanged="+ configChanged+ " last="+ w.mLastFrame+ " frame="+ w.mFrame);
-  boolean frameChanged=!w.mLastFrame.equals(w.mFrame);
+  if (localLOGV)   Slog.v(TAG,"Resizing " + w + ": configChanged="+ configChanged+ " last="+ w.mLastCompatFrame+ " frame="+ w.mCompatFrame);
+  boolean frameChanged=!w.mLastCompatFrame.equals(w.mCompatFrame);
   if (frameChanged || w.mContentInsetsChanged || w.mVisibleInsetsChanged|| w.mSurfaceResized|| configChanged) {
     if (DEBUG_RESIZE || DEBUG_ORIENTATION) {
       Slog.v(TAG,"Resize reasons: " + "frameChanged=" + frameChanged + " contentInsetsChanged="+ w.mContentInsetsChanged+ " visibleInsetsChanged="+ w.mVisibleInsetsChanged+ " surfaceResized="+ w.mSurfaceResized+ " configChanged="+ configChanged);
     }
     w.mLastFrame.set(w.mFrame);
+    w.mLastCompatFrame.set(w.mCompatFrame);
     w.mLastContentInsets.set(w.mContentInsets);
     w.mLastVisibleInsets.set(w.mVisibleInsets);
     if (mDisplayFrozen) {
@@ -594,7 +581,7 @@ if (!w.mAppFreezing && w.mLayoutSeq == mLayoutSeq) {
         w.mAppToken.allDrawn=false;
       }
     }
-    if (DEBUG_RESIZE || DEBUG_ORIENTATION)     Slog.v(TAG,"Resizing window " + w + " to "+ w.mFrame);
+    if (DEBUG_RESIZE || DEBUG_ORIENTATION)     Slog.v(TAG,"Resizing window " + w + " to "+ w.mCompatFrame);
     mResizingWindows.add(w);
   }
  else   if (w.mOrientationChanging) {
@@ -698,14 +685,6 @@ if (someoneLosingFocus && w == mCurrentFocus && canBeSeen) {
 focusDisplayed=true;
 }
 final boolean obscuredChanged=w.mObscured != obscured;
-if (mBackgroundFillerTarget != null) {
-if (w.isAnimating()) {
-  mBackgroundFillerTarget=w;
-}
- else if (w.mIsWallpaper) {
-  mBackgroundFillerTarget=w;
-}
-}
 if (!(w.mObscured=obscured)) {
 if (w.mSurface != null) {
   if ((attrFlags & FLAG_KEEP_SCREEN_ON) != 0) {
@@ -724,10 +703,6 @@ if (w.mSurface != null) {
 boolean opaqueDrawn=canBeSeen && w.isOpaqueDrawn();
 if (opaqueDrawn && w.isFullscreen(innerDw,innerDh)) {
   obscured=true;
-}
- else if (w.mNeedsBackgroundFiller && w.mHasDrawn && w.mViewVisibility == View.VISIBLE && (canBeSeen || w.isAnimating())) {
-  obscured=true;
-  mBackgroundFillerTarget=w;
 }
  else if (canBeSeen && !obscured && (attrFlags & FLAG_BLUR_BEHIND | FLAG_DIM_BEHIND) != 0) {
   if (localLOGV)   Slog.v(TAG,"Win " + w + ": blurring="+ blurring+ " obscured="+ obscured+ " displayed="+ displayed);
@@ -777,37 +752,6 @@ if (obscuredChanged && mWallpaperTarget == w) {
 updateWallpaperVisibilityLocked();
 }
 }
-if (mBackgroundFillerTarget != null) {
-if (mBackgroundFillerSurface == null) {
-try {
-  mBackgroundFillerSurface=new Surface(mFxSession,0,"BackGroundFiller",0,dw,dh,PixelFormat.OPAQUE,Surface.FX_SURFACE_NORMAL);
-}
- catch (Exception e) {
-  Slog.e(TAG,"Exception creating filler surface",e);
-}
-if (SHOW_TRANSACTIONS) Slog.i(TAG,"  BG FILLER " + mBackgroundFillerSurface + ": CREATE");
-}
-try {
-if (SHOW_TRANSACTIONS) Slog.i(TAG,"  BG FILLER " + mBackgroundFillerSurface + " SHOW: pos=(0,0) ("+ dw+ "x"+ dh+ ") layer="+ (mBackgroundFillerTarget.mLayer - 1));
-mBackgroundFillerSurface.setPosition(0,0);
-mBackgroundFillerSurface.setSize(dw,dh);
-mBackgroundFillerSurface.setLayer(mBackgroundFillerTarget.mLayer - LAYER_OFFSET_DIM);
-mBackgroundFillerSurface.show();
-}
- catch (RuntimeException e) {
-Slog.e(TAG,"Exception showing filler surface");
-}
-}
- else if (backgroundFillerWasShown) {
-mBackgroundFillerTarget=null;
-if (SHOW_TRANSACTIONS) Slog.i(TAG,"  BG FILLER " + mBackgroundFillerSurface + " HIDE");
-try {
-mBackgroundFillerSurface.hide();
-}
- catch (RuntimeException e) {
-Slog.e(TAG,"Exception hiding filler surface",e);
-}
-}
 if (mDimAnimator != null && mDimAnimator.mDimShown) {
 animating|=mDimAnimator.updateSurface(dimming,currentTime,mDisplayFrozen || !mPolicy.isScreenOn());
 }
@@ -852,14 +796,14 @@ do {
 i--;
 WindowState win=mResizingWindows.get(i);
 try {
-if (DEBUG_RESIZE || DEBUG_ORIENTATION) Slog.v(TAG,"Reporting new frame to " + win + ": "+ win.mFrame);
+if (DEBUG_RESIZE || DEBUG_ORIENTATION) Slog.v(TAG,"Reporting new frame to " + win + ": "+ win.mCompatFrame);
 int diff=0;
 boolean configChanged=win.mConfiguration != mCurConfiguration && (win.mConfiguration == null || (diff=mCurConfiguration.diff(win.mConfiguration)) != 0);
 if ((DEBUG_RESIZE || DEBUG_ORIENTATION || DEBUG_CONFIGURATION) && configChanged) {
-  Slog.i(TAG,"Sending new config to window " + win + ": "+ win.mFrame.width()+ "x"+ win.mFrame.height()+ " / "+ mCurConfiguration+ " / 0x"+ Integer.toHexString(diff));
+  Slog.i(TAG,"Sending new config to window " + win + ": "+ win.mCompatFrame.width()+ "x"+ win.mCompatFrame.height()+ " / "+ mCurConfiguration+ " / 0x"+ Integer.toHexString(diff));
 }
 win.mConfiguration=mCurConfiguration;
-win.mClient.resized(win.mFrame.width(),win.mFrame.height(),win.mLastContentInsets,win.mLastVisibleInsets,win.mDrawPending,configChanged ? win.mConfiguration : null);
+win.mClient.resized(win.mCompatFrame.width(),win.mCompatFrame.height(),win.mLastContentInsets,win.mLastVisibleInsets,win.mDrawPending,configChanged ? win.mConfiguration : null);
 win.mContentInsetsChanged=false;
 win.mVisibleInsetsChanged=false;
 win.mSurfaceResized=false;
