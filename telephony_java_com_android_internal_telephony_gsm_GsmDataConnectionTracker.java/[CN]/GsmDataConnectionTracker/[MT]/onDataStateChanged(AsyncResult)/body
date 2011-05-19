@@ -1,13 +1,56 @@
 {
   ArrayList<DataCallState> dataCallStates;
-  if (DBG)   log("onDataStateChanged(ar) E");
+  if (DBG)   log("onDataStateChanged(ar): E");
   dataCallStates=(ArrayList<DataCallState>)(ar.result);
   if (ar.exception != null) {
     if (DBG)     log("onDataStateChanged(ar): exception; likely radio not available, ignore");
     return;
   }
-  for (  ApnContext apnContext : mApnContexts.values()) {
-    onDataStateChanged(dataCallStates,apnContext);
+  HashMap<Integer,DataCallState> response;
+  response=new HashMap<Integer,DataCallState>();
+  if (DBG)   log("onDataStateChanged(ar): DataCallState size=" + dataCallStates.size());
+  for (  DataCallState dc : dataCallStates) {
+    response.put(dc.cid,dc);
+    if (DBG)     log("onDataStateChanged(ar): " + dc.cid + ": "+ dc.toString());
   }
-  if (DBG)   log("onDataStateChanged(ar) X");
+  if (DBG)   log("    ApnContext size=" + mApnContexts.values().size());
+  for (  ApnContext apnContext : mApnContexts.values()) {
+    if (DBG) {
+      log("onDataStateChanged(ar): " + apnContext.toString());
+      if (apnContext.getDataConnection() != null) {
+        log("onDataStateChanged(ar): " + apnContext.getDataConnection().toString());
+      }
+    }
+    DataConnectionAc dcac=apnContext.getDataConnectionAc();
+    if (dcac == null) {
+      continue;
+    }
+    int connectionId=dcac.getCidSync();
+    if (apnContext.getState() == State.CONNECTED) {
+      if (response.containsKey(connectionId)) {
+        DataCallState newState=response.get(connectionId);
+        if (DBG)         log("onDataStateChanged(ar): Found ConnId=" + connectionId + " newState="+ newState.toString());
+        if (newState.active != 0) {
+          boolean changed=dcac.updateLinkPropertiesDataCallStateSync(newState);
+          if (changed) {
+            if (DBG)             log("onDataStateChanged(ar): Found and changed, notify");
+            mPhone.notifyDataConnection(Phone.REASON_LINK_PROPERTIES_CHANGED,apnContext.getApnType());
+            if (SystemProperties.getBoolean("telephony.ignore-state-changes",true)) {
+              log("onDataStateChanged(ar): STOPSHIP don't reset, continue");
+              continue;
+            }
+          }
+ else {
+            if (DBG)             log("onDataStateChanged(ar): Found but no change, skip");
+            continue;
+          }
+        }
+      }
+      if (DBG)       log("onDataStateChanged(ar): reset connection.");
+      int cid=getCellLocationId();
+      EventLog.writeEvent(EventLogTags.PDP_NETWORK_DROP,cid,TelephonyManager.getDefault().getNetworkType());
+      cleanUpConnection(true,apnContext);
+    }
+  }
+  if (DBG)   log("onDataStateChanged(ar): X");
 }
