@@ -1,0 +1,87 @@
+{
+  final Animator anim=baseAnimator.clone();
+  anim.setTarget(child);
+  anim.setupStartValues();
+  Animator currentAnimation=pendingAnimations.get(child);
+  if (currentAnimation != null) {
+    currentAnimation.cancel();
+    pendingAnimations.remove(child);
+  }
+  pendingAnimations.put(child,anim);
+  ValueAnimator pendingAnimRemover=ValueAnimator.ofFloat(0f,1f).setDuration(duration + 100);
+  pendingAnimRemover.addListener(new AnimatorListenerAdapter(){
+    @Override public void onAnimationEnd(    Animator animation){
+      pendingAnimations.remove(child);
+    }
+  }
+);
+  pendingAnimRemover.start();
+  final View.OnLayoutChangeListener listener=new View.OnLayoutChangeListener(){
+    public void onLayoutChange(    View v,    int left,    int top,    int right,    int bottom,    int oldLeft,    int oldTop,    int oldRight,    int oldBottom){
+      anim.setupEndValues();
+      if (anim instanceof ValueAnimator) {
+        boolean valuesDiffer=false;
+        ValueAnimator valueAnim=(ValueAnimator)anim;
+        PropertyValuesHolder[] oldValues=valueAnim.getValues();
+        for (int i=0; i < oldValues.length; ++i) {
+          PropertyValuesHolder pvh=oldValues[i];
+          KeyframeSet keyframeSet=pvh.mKeyframeSet;
+          if (keyframeSet.mFirstKeyframe == null || keyframeSet.mLastKeyframe == null || !keyframeSet.mFirstKeyframe.getValue().equals(keyframeSet.mLastKeyframe.getValue())) {
+            valuesDiffer=true;
+          }
+        }
+        if (!valuesDiffer) {
+          return;
+        }
+      }
+      long startDelay;
+      if (changeReason == APPEARING) {
+        startDelay=mChangingAppearingDelay + staggerDelay;
+        staggerDelay+=mChangingAppearingStagger;
+      }
+ else {
+        startDelay=mChangingDisappearingDelay + staggerDelay;
+        staggerDelay+=mChangingDisappearingStagger;
+      }
+      anim.setStartDelay(startDelay);
+      anim.setDuration(duration);
+      Animator prevAnimation=currentChangingAnimations.get(child);
+      if (prevAnimation != null) {
+        prevAnimation.cancel();
+      }
+      Animator pendingAnimation=pendingAnimations.get(child);
+      if (pendingAnimation != null) {
+        pendingAnimations.remove(child);
+      }
+      currentChangingAnimations.put(child,anim);
+      parent.requestTransitionStart(LayoutTransition.this);
+      child.removeOnLayoutChangeListener(this);
+      layoutChangeListenerMap.remove(child);
+    }
+  }
+;
+  anim.addListener(new AnimatorListenerAdapter(){
+    @Override public void onAnimationStart(    Animator animator){
+      if (mListeners != null) {
+        for (        TransitionListener listener : mListeners) {
+          listener.startTransition(LayoutTransition.this,parent,child,changeReason == APPEARING ? CHANGE_APPEARING : CHANGE_DISAPPEARING);
+        }
+      }
+    }
+    @Override public void onAnimationCancel(    Animator animator){
+      child.removeOnLayoutChangeListener(listener);
+      layoutChangeListenerMap.remove(child);
+    }
+    @Override public void onAnimationEnd(    Animator animator){
+      currentChangingAnimations.remove(child);
+      if (mListeners != null) {
+        for (        TransitionListener listener : mListeners) {
+          listener.endTransition(LayoutTransition.this,parent,child,changeReason == APPEARING ? CHANGE_APPEARING : CHANGE_DISAPPEARING);
+        }
+      }
+    }
+  }
+);
+  child.addOnLayoutChangeListener(listener);
+  layoutChangeListenerMap.put(child,listener);
+}
