@@ -1,20 +1,53 @@
 {
 synchronized (mMethodMap) {
     final Pair<String,String> lastIme=mSettings.getLastInputMethodAndSubtypeLocked();
-    if (lastIme == null)     return false;
-    final InputMethodInfo lastImi=mMethodMap.get(lastIme.first);
-    if (lastImi == null)     return false;
-    final boolean imiIdIsSame=lastImi.getId().equals(mCurMethodId);
-    final int lastSubtypeHash=Integer.valueOf(lastIme.second);
-    if (imiIdIsSame && lastSubtypeHash == NOT_A_SUBTYPE_ID)     return false;
-    int currentSubtypeHash=mCurrentSubtype == null ? NOT_A_SUBTYPE_ID : mCurrentSubtype.hashCode();
-    if (!imiIdIsSame || lastSubtypeHash != currentSubtypeHash) {
-      if (DEBUG) {
-        Slog.d(TAG,"Switch to: " + lastImi.getId() + ", "+ lastIme.second+ ", from: "+ mCurMethodId+ ", "+ currentSubtypeHash);
+    final InputMethodInfo lastImi;
+    if (lastIme == null) {
+      lastImi=mMethodMap.get(lastIme.first);
+    }
+ else {
+      lastImi=null;
+    }
+    String targetLastImiId=null;
+    int subtypeId=NOT_A_SUBTYPE_ID;
+    if (lastIme != null && lastImi != null) {
+      final boolean imiIdIsSame=lastImi.getId().equals(mCurMethodId);
+      final int lastSubtypeHash=Integer.valueOf(lastIme.second);
+      final int currentSubtypeHash=mCurrentSubtype == null ? NOT_A_SUBTYPE_ID : mCurrentSubtype.hashCode();
+      if (!imiIdIsSame || lastSubtypeHash != currentSubtypeHash) {
+        targetLastImiId=lastIme.first;
+        subtypeId=getSubtypeIdFromHashCode(lastImi,lastSubtypeHash);
       }
-      setInputMethodWithSubtypeId(token,lastIme.first,getSubtypeIdFromHashCode(lastImi,lastSubtypeHash));
+    }
+    if (TextUtils.isEmpty(targetLastImiId) && !canAddToLastInputMethod(mCurrentSubtype)) {
+      final List<InputMethodInfo> enabled=mSettings.getEnabledInputMethodListLocked();
+      if (enabled != null) {
+        final int N=enabled.size();
+        final String locale=mCurrentSubtype == null ? mRes.getConfiguration().locale.toString() : mCurrentSubtype.getLocale();
+        for (int i=0; i < N; ++i) {
+          final InputMethodInfo imi=enabled.get(i);
+          if (imi.getSubtypeCount() > 0 && isSystemIme(imi)) {
+            InputMethodSubtype keyboardSubtype=findLastResortApplicableSubtypeLocked(mRes,getSubtypes(imi),SUBTYPE_MODE_KEYBOARD,locale,true);
+            if (keyboardSubtype != null) {
+              targetLastImiId=imi.getId();
+              subtypeId=getSubtypeIdFromHashCode(imi,keyboardSubtype.hashCode());
+              if (keyboardSubtype.getLocale().equals(locale)) {
+                break;
+              }
+            }
+          }
+        }
+      }
+    }
+    if (!TextUtils.isEmpty(targetLastImiId)) {
+      if (DEBUG) {
+        Slog.d(TAG,"Switch to: " + lastImi.getId() + ", "+ lastIme.second+ ", from: "+ mCurMethodId+ ", "+ subtypeId);
+      }
+      setInputMethodWithSubtypeId(token,targetLastImiId,subtypeId);
       return true;
     }
-    return false;
+ else {
+      return false;
+    }
   }
 }
