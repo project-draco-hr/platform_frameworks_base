@@ -16,7 +16,7 @@
     try {
       ZygoteInit.reopenStdio(descriptors[0],descriptors[1],descriptors[2]);
       for (      FileDescriptor fd : descriptors) {
-        ZygoteInit.closeDescriptor(fd);
+        IoUtils.closeQuietly(fd);
       }
       newStderr=System.err;
     }
@@ -24,17 +24,18 @@
       Log.e(TAG,"Error reopening stdio",ex);
     }
   }
+  if (parsedArgs.niceName != null) {
+    Process.setArgV0(parsedArgs.niceName);
+  }
   if (parsedArgs.runtimeInit) {
-    RuntimeInit.zygoteInit(parsedArgs.remainingArgs);
+    if (parsedArgs.invokeWith != null) {
+      WrapperInit.execApplication(parsedArgs.invokeWith,parsedArgs.niceName,pipeFd,parsedArgs.remainingArgs);
+    }
+ else {
+      RuntimeInit.zygoteInit(parsedArgs.remainingArgs);
+    }
   }
  else {
-    ClassLoader cloader;
-    if (parsedArgs.classpath != null) {
-      cloader=new PathClassLoader(parsedArgs.classpath,ClassLoader.getSystemClassLoader());
-    }
- else {
-      cloader=ClassLoader.getSystemClassLoader();
-    }
     String className;
     try {
       className=parsedArgs.remainingArgs[0];
@@ -45,11 +46,23 @@
     }
     String[] mainArgs=new String[parsedArgs.remainingArgs.length - 1];
     System.arraycopy(parsedArgs.remainingArgs,1,mainArgs,0,mainArgs.length);
-    try {
-      ZygoteInit.invokeStaticMain(cloader,className,mainArgs);
+    if (parsedArgs.invokeWith != null) {
+      WrapperInit.execStandalone(parsedArgs.invokeWith,parsedArgs.classpath,className,mainArgs);
     }
- catch (    RuntimeException ex) {
-      logAndPrintError(newStderr,"Error starting. ",ex);
+ else {
+      ClassLoader cloader;
+      if (parsedArgs.classpath != null) {
+        cloader=new PathClassLoader(parsedArgs.classpath,ClassLoader.getSystemClassLoader());
+      }
+ else {
+        cloader=ClassLoader.getSystemClassLoader();
+      }
+      try {
+        ZygoteInit.invokeStaticMain(cloader,className,mainArgs);
+      }
+ catch (      RuntimeException ex) {
+        logAndPrintError(newStderr,"Error starting.",ex);
+      }
     }
   }
 }
