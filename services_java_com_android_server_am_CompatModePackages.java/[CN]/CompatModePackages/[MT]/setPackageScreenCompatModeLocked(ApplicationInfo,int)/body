@@ -23,6 +23,15 @@ newFlags|=COMPAT_FLAG_ENABLED;
  else {
 newFlags&=~COMPAT_FLAG_ENABLED;
 }
+CompatibilityInfo ci=compatibilityInfoForPackageLocked(ai);
+if (ci.alwaysSupportsScreen()) {
+Slog.w(TAG,"Ignoring compat mode change of " + packageName + "; compatibility never needed");
+newFlags=0;
+}
+if (ci.neverSupportsScreen()) {
+Slog.w(TAG,"Ignoring compat mode change of " + packageName + "; compatibility always needed");
+newFlags=0;
+}
 if (newFlags != curFlags) {
 if (newFlags != 0) {
 mPackages.put(packageName,newFlags);
@@ -30,18 +39,20 @@ mPackages.put(packageName,newFlags);
  else {
 mPackages.remove(packageName);
 }
-CompatibilityInfo ci=compatibilityInfoForPackageLocked(ai);
-if (ci.alwaysSupportsScreen()) {
-Slog.w(TAG,"Ignoring compat mode change of " + packageName + "; compatibility never needed");
-return;
-}
-if (ci.neverSupportsScreen()) {
-Slog.w(TAG,"Ignoring compat mode change of " + packageName + "; compatibility always needed");
-return;
-}
+ci=compatibilityInfoForPackageLocked(ai);
 mHandler.removeMessages(MSG_WRITE);
 Message msg=mHandler.obtainMessage(MSG_WRITE);
 mHandler.sendMessageDelayed(msg,10000);
+ActivityRecord starting=mService.mMainStack.topRunningActivityLocked(null);
+for (int i=mService.mMainStack.mHistory.size() - 1; i >= 0; i--) {
+ActivityRecord a=(ActivityRecord)mService.mMainStack.mHistory.get(i);
+if (a.info.packageName.equals(packageName)) {
+a.forceNewConfig=true;
+if (starting != null && a == starting && a.visible) {
+a.startFreezingScreenLocked(starting.app,ActivityInfo.CONFIG_SCREEN_LAYOUT);
+}
+}
+}
 for (int i=mService.mLruProcesses.size() - 1; i >= 0; i--) {
 ProcessRecord app=mService.mLruProcesses.get(i);
 if (!app.pkgList.contains(packageName)) {
@@ -56,13 +67,6 @@ app.thread.updatePackageCompatibilityInfo(packageName,ci);
  catch (Exception e) {
 }
 }
-for (int i=mService.mMainStack.mHistory.size() - 1; i >= 0; i--) {
-ActivityRecord a=(ActivityRecord)mService.mMainStack.mHistory.get(i);
-if (a.info.packageName.equals(packageName)) {
-a.forceNewConfig=true;
-}
-}
-ActivityRecord starting=mService.mMainStack.topRunningActivityLocked(null);
 if (starting != null) {
 mService.mMainStack.ensureActivityConfigurationLocked(starting,0);
 mService.mMainStack.ensureActivitiesVisibleLocked(starting,0);
