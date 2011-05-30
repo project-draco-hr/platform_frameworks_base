@@ -4,40 +4,25 @@
     mTime.forceRefresh();
   }
   final long currentTime=mTime.hasCache() ? mTime.currentTimeMillis() : System.currentTimeMillis();
-  final NetworkStats current;
+  final NetworkStats summary;
+  final NetworkStats detail;
   try {
-    current=mNetworkManager.getNetworkStatsSummary();
+    summary=mNetworkManager.getNetworkStatsSummary();
+    detail=mNetworkManager.getNetworkStatsDetail();
   }
  catch (  RemoteException e) {
     Slog.w(TAG,"problem reading network stats");
     return;
   }
-  final ArrayList<String> unknownIface=Lists.newArrayList();
-  final NetworkStats pollDelta=computeStatsDelta(mLastPollStats,current);
-  final long timeStart=currentTime - pollDelta.elapsedRealtime;
-  for (  String iface : pollDelta.getKnownIfaces()) {
-    final InterfaceIdentity ident=mActiveIface.get(iface);
-    if (ident == null) {
-      unknownIface.add(iface);
-      continue;
-    }
-    final int index=pollDelta.findIndex(iface,UID_ALL);
-    final long rx=pollDelta.rx[index];
-    final long tx=pollDelta.tx[index];
-    final NetworkStatsHistory history=findOrCreateHistoryLocked(ident);
-    history.recordData(timeStart,currentTime,rx,tx);
-    history.removeBucketsBefore(currentTime - SUMMARY_MAX_HISTORY);
-  }
-  if (LOGD && unknownIface.size() > 0) {
-    Slog.w(TAG,"unknown interfaces " + unknownIface.toString() + ", ignoring those stats");
-  }
-  mLastPollStats=current;
-  final NetworkStats persistDelta=computeStatsDelta(mLastPersistStats,current);
-  for (  String iface : persistDelta.getKnownIfaces()) {
+  performSummaryPollLocked(summary,currentTime);
+  performDetailPollLocked(detail,currentTime);
+  final NetworkStats persistDelta=computeStatsDelta(mLastSummaryPersist,summary);
+  final long persistThreshold=mPersistThreshold.get();
+  for (  String iface : persistDelta.getUniqueIfaces()) {
     final int index=persistDelta.findIndex(iface,UID_ALL);
-    if (persistDelta.rx[index] > SUMMARY_PERSIST_THRESHOLD || persistDelta.tx[index] > SUMMARY_PERSIST_THRESHOLD) {
+    if (persistDelta.rx[index] > persistThreshold || persistDelta.tx[index] > persistThreshold) {
       writeStatsLocked();
-      mLastPersistStats=current;
+      mLastSummaryPersist=summary;
       break;
     }
   }
