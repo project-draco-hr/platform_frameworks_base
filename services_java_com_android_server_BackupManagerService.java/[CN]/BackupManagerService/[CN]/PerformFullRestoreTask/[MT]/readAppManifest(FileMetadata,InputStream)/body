@@ -1,0 +1,74 @@
+{
+  if (info.size > 64 * 1024) {
+    throw new IOException("Restore manifest too big; corrupt? size=" + info.size);
+  }
+  byte[] buffer=new byte[(int)info.size];
+  int nRead=0;
+  while (nRead < info.size) {
+    nRead+=instream.read(buffer,nRead,(int)info.size - nRead);
+  }
+  RestorePolicy policy=RestorePolicy.IGNORE;
+  String[] str=new String[1];
+  int offset=0;
+  try {
+    offset=extractLine(buffer,offset,str);
+    int version=Integer.parseInt(str[0]);
+    if (version == BACKUP_MANIFEST_VERSION) {
+      offset=extractLine(buffer,offset,str);
+      String manifestPackage=str[0];
+      if (manifestPackage.equals(info.packageName)) {
+        offset=extractLine(buffer,offset,str);
+        version=Integer.parseInt(str[0]);
+        offset=extractLine(buffer,offset,str);
+        int platformVersion=Integer.parseInt(str[0]);
+        offset=extractLine(buffer,offset,str);
+        info.installerPackageName=(str[0].length() > 0) ? str[0] : null;
+        offset=extractLine(buffer,offset,str);
+        boolean hasApk=str[0].equals("1");
+        offset=extractLine(buffer,offset,str);
+        int numSigs=Integer.parseInt(str[0]);
+        Signature[] sigs=null;
+        if (numSigs > 0) {
+          sigs=new Signature[numSigs];
+          for (int i=0; i < numSigs; i++) {
+            offset=extractLine(buffer,offset,str);
+            sigs[i]=new Signature(str[0]);
+          }
+          try {
+            PackageInfo pkgInfo=mPackageManager.getPackageInfo(info.packageName,PackageManager.GET_SIGNATURES);
+            if (signaturesMatch(sigs,pkgInfo)) {
+              if (pkgInfo.versionCode >= version) {
+                Slog.i(TAG,"Sig + version match; taking data");
+                policy=RestorePolicy.ACCEPT;
+              }
+ else {
+                Slog.d(TAG,"Data version " + version + " is newer than installed version "+ pkgInfo.versionCode+ " - requiring apk");
+                policy=RestorePolicy.ACCEPT_IF_APK;
+              }
+            }
+          }
+ catch (          NameNotFoundException e) {
+            if (DEBUG)             Slog.i(TAG,"Package " + info.packageName + " not installed; requiring apk in dataset");
+            policy=RestorePolicy.ACCEPT_IF_APK;
+          }
+          if (policy == RestorePolicy.ACCEPT_IF_APK && !hasApk) {
+            Slog.i(TAG,"Cannot restore package " + info.packageName + " without the matching .apk");
+          }
+        }
+ else {
+          Slog.i(TAG,"Missing signature on backed-up package " + info.packageName);
+        }
+      }
+ else {
+        Slog.i(TAG,"Expected package " + info.packageName + " but restore manifest claims "+ manifestPackage);
+      }
+    }
+ else {
+      Slog.i(TAG,"Unknown restore manifest version " + version + " for package "+ info.packageName);
+    }
+  }
+ catch (  NumberFormatException e) {
+    Slog.w(TAG,"Corrupt restore manifest for package " + info.packageName);
+  }
+  return policy;
+}
