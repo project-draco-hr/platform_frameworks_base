@@ -1,0 +1,40 @@
+{
+  if (LOGD)   Slog.v(TAG,"performPollLocked()");
+  if (mTime.getCacheAge() > TIME_CACHE_MAX_AGE) {
+    mTime.forceRefresh();
+  }
+  final long currentTime=mTime.hasCache() ? mTime.currentTimeMillis() : System.currentTimeMillis();
+  final NetworkStats current;
+  try {
+    current=mNetworkManager.getNetworkStatsSummary();
+  }
+ catch (  RemoteException e) {
+    Slog.w(TAG,"problem reading network stats");
+    return;
+  }
+  final NetworkStats pollDelta=computeStatsDelta(mLastPollStats,current);
+  final long timeStart=currentTime - pollDelta.elapsedRealtime;
+  for (  String iface : pollDelta.getKnownIfaces()) {
+    final InterfaceInfo info=mActiveIface.get(iface);
+    if (info == null) {
+      if (LOGD)       Slog.w(TAG,"unknown interface " + iface + ", ignoring stats");
+      continue;
+    }
+    final int index=pollDelta.findIndex(iface,UID_ALL);
+    final long rx=pollDelta.rx[index];
+    final long tx=pollDelta.tx[index];
+    final NetworkStatsHistory history=findOrCreateHistoryLocked(info);
+    history.recordData(timeStart,currentTime,rx,tx);
+    history.removeBucketsBefore(currentTime - SUMMARY_MAX_HISTORY);
+  }
+  mLastPollStats=current;
+  final NetworkStats persistDelta=computeStatsDelta(mLastPersistStats,current);
+  for (  String iface : persistDelta.getKnownIfaces()) {
+    final int index=persistDelta.findIndex(iface,UID_ALL);
+    if (persistDelta.rx[index] > SUMMARY_PERSIST_THRESHOLD || persistDelta.tx[index] > SUMMARY_PERSIST_THRESHOLD) {
+      writeStatsLocked();
+      mLastPersistStats=current;
+      break;
+    }
+  }
+}
