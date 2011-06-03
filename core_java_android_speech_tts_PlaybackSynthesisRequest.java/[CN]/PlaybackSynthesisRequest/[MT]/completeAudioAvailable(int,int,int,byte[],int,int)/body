@@ -1,48 +1,22 @@
 {
-  if (DBG) {
-    Log.d(TAG,"completeAudioAvailable(" + sampleRateInHz + ","+ audioFormat+ ","+ channelCount+ "byte["+ buffer.length+ "],"+ offset+ ","+ length+ ")");
+  int channelConfig=AudioPlaybackHandler.getChannelConfig(channelCount);
+  if (channelConfig == 0) {
+    Log.e(TAG,"Unsupported number of channels :" + channelCount);
+    return TextToSpeech.ERROR;
+  }
+  int bytesPerFrame=AudioPlaybackHandler.getBytesPerFrame(audioFormat);
+  if (bytesPerFrame < 0) {
+    Log.e(TAG,"Unsupported audio format :" + audioFormat);
+    return TextToSpeech.ERROR;
   }
 synchronized (mStateLock) {
     if (mStopped) {
-      if (DBG)       Log.d(TAG,"Request has been aborted.");
       return TextToSpeech.ERROR;
     }
-    if (mAudioTrack != null) {
-      Log.e(TAG,"start() called before completeAudioAvailable()");
-      cleanUp();
-      return TextToSpeech.ERROR;
-    }
-    int channelConfig=getChannelConfig(channelCount);
-    if (channelConfig < 0) {
-      Log.e(TAG,"Unsupported number of channels :" + channelCount);
-      cleanUp();
-      return TextToSpeech.ERROR;
-    }
-    int bytesPerFrame=getBytesPerFrame(audioFormat);
-    if (bytesPerFrame < 0) {
-      Log.e(TAG,"Unsupported audio format :" + audioFormat);
-      cleanUp();
-      return TextToSpeech.ERROR;
-    }
-    mAudioTrack=new AudioTrack(mStreamType,sampleRateInHz,channelConfig,audioFormat,buffer.length,AudioTrack.MODE_STATIC);
-    if (mAudioTrack == null) {
-      return TextToSpeech.ERROR;
-    }
-    try {
-      mAudioTrack.write(buffer,offset,length);
-      setupVolume(mAudioTrack,mVolume,mPan);
-      mAudioTrack.play();
-      blockUntilDone(mAudioTrack,bytesPerFrame,length);
-      mDone=true;
-      if (DBG)       Log.d(TAG,"Wrote data to audio track succesfully : " + length);
-    }
- catch (    IllegalStateException ex) {
-      Log.e(TAG,"Playback error",ex);
-      return TextToSpeech.ERROR;
-    }
- finally {
-      cleanUp();
-    }
+    SynthesisMessageParams params=new SynthesisMessageParams(mStreamType,sampleRateInHz,audioFormat,channelCount,mVolume,mPan,mDispatcher);
+    params.addBuffer(buffer,offset,length);
+    mAudioTrackHandler.enqueueSynthesisCompleteDataAvailable(params);
+    mToken=params;
   }
   return TextToSpeech.SUCCESS;
 }
