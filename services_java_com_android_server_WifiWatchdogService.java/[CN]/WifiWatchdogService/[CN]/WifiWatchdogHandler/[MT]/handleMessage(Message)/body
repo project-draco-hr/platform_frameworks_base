@@ -1,34 +1,76 @@
 {
-  if (V) {
-    myLogV("handleMessage: " + msg.what);
-  }
 switch (msg.what) {
-case MESSAGE_NETWORK_CHANGED:
-    handleNetworkChanged((String)msg.obj);
-  break;
-case ACTION_CHECK_AP:
-handleCheckAp((AccessPoint)msg.obj);
+case CHECK_SEQUENCE_STEP:
+    checkSequenceQueued=false;
+  handleStateStep();
+if (mStatus.state == WatchdogState.CHECKS_COMPLETE) {
+  queueSingleDnsCheck();
+}
+ else if (mStatus.state == WatchdogState.DNS_FULL_CHECK) {
+  sendCheckSequenceStep(DNS_PING_INTERVAL);
+}
+ else if (mStatus.state == WatchdogState.BLACKLISTED_AP) {
+  sendCheckSequenceStep(BLACKLIST_FOLLOWUP_INTERVAL);
+}
+ else if (mStatus.state != WatchdogState.INACTIVE) {
+  sendCheckSequenceStep(0);
+}
+return;
+case MESSAGE_NETWORK_EVENT:
+if (!mBroadcastsEnabled) {
+Slog.e(WWS_TAG,"MessageNetworkEvent - WatchdogService not enabled... returning");
+return;
+}
+NetworkInfo info=(NetworkInfo)msg.obj;
+switch (info.getState()) {
+case DISCONNECTED:
+mStatus.state=WatchdogState.INACTIVE;
+return;
+case CONNECTED:
+handleNewConnection();
+sendCheckSequenceStep(0);
+}
+return;
+case SINGLE_DNS_CHECK:
+singleCheckQueued=false;
+if (mStatus.state != WatchdogState.CHECKS_COMPLETE) {
+Slog.d(WWS_TAG,"Single check returning, curState: " + mStatus.state);
 break;
-case ACTION_BACKGROUND_CHECK_AP:
-handleBackgroundCheckAp((AccessPoint)msg.obj);
+}
+if (!handleSingleDnsCheck()) {
+initDnsFullCheck();
+sendCheckSequenceStep(0);
+}
+ else {
+queueSingleDnsCheck();
+}
 break;
-case ACTION_CHECK_WALLED_GARDEN:
-handleWalledGardenCheck((String)msg.obj);
+case RSSI_CHANGE_EVENT:
+updateRssi();
+if (mStatus.state == WatchdogState.CHECKS_COMPLETE) queueSingleDnsCheck();
 break;
-case MESSAGE_SLEEP:
-handleSleep((String)msg.obj);
+case SCAN_RESULTS_AVAILABLE:
+updateBssids();
 break;
-case ACTION_IDLE:
-handleIdle();
+case WIFI_STATE_CHANGE:
+if ((Integer)msg.obj == WifiManager.WIFI_STATE_DISABLING) {
+Slog.i(WWS_TAG,"WifiStateDisabling -- Resetting WatchdogState");
+mStatus=new Status();
+}
 break;
-case MESSAGE_DISABLE_WATCHDOG:
-handleIdle();
-break;
-case MESSAGE_DISCONNECTED:
-handleDisconnected();
-break;
-case MESSAGE_RESET:
-handleReset();
+case MESSAGE_CONTEXT_EVENT:
+if (isWatchdogEnabled() && !mBroadcastsEnabled) {
+mContext.registerReceiver(mBroadcastReceiver,mIntentFilter);
+mBroadcastsEnabled=true;
+Slog.i(WWS_TAG,"WifiWatchdogService enabled");
+}
+ else if (!isWatchdogEnabled() && mBroadcastsEnabled) {
+mContext.unregisterReceiver(mBroadcastReceiver);
+removeMessages(SINGLE_DNS_CHECK);
+removeMessages(CHECK_SEQUENCE_STEP);
+mBroadcastsEnabled=false;
+Slog.i(WWS_TAG,"WifiWatchdogService disabled");
+}
 break;
 }
 }

@@ -1,0 +1,71 @@
+{
+switch (mStatus.state) {
+case DNS_FULL_CHECK:
+    if (VDBG) {
+      Slog.v(WWS_TAG,"DNS_FULL_CHECK: " + mDNSCheckLogStr);
+    }
+  long pingResponseTime=mDnsPinger.pingDns(mDnsPinger.getDns(),DNS_PING_TIMEOUT_MS);
+mStatus.dnsCheckTries++;
+if (pingResponseTime >= 0) mStatus.dnsCheckSuccesses++;
+if (DBG) {
+if (pingResponseTime >= 0) {
+mDNSCheckLogStr+=" | " + pingResponseTime;
+}
+ else {
+mDNSCheckLogStr+=" | " + "x";
+}
+}
+switch (currentDnsCheckStatus()) {
+case SUCCESS:
+if (DBG) {
+Slog.d(WWS_TAG,mDNSCheckLogStr + " -- Success");
+}
+doWalledGardenCheck();
+break;
+case FAILURE:
+if (DBG) {
+Slog.d(WWS_TAG,mDNSCheckLogStr + " -- Failure");
+}
+mStatus.state=WatchdogState.DNS_CHECK_FAILURE;
+break;
+case INCOMPLETE:
+break;
+}
+break;
+case DNS_CHECK_FAILURE:
+WifiInfo wifiInfo=mWifiManager.getConnectionInfo();
+if (!mStatus.ssid.equals(wifiInfo.getSSID()) || !mStatus.bssid.equals(wifiInfo.getBSSID())) {
+Slog.i(WWS_TAG,"handleState DNS_CHECK_FAILURE:: network has changed!");
+mStatus.state=WatchdogState.INACTIVE;
+break;
+}
+if (mStatus.numFullDNSchecks >= mStatus.allBssids.size() || mStatus.numFullDNSchecks >= MAX_CHECKS_PER_SSID) {
+disableAP(wifiInfo);
+}
+ else {
+blacklistAP();
+}
+break;
+case WALLED_GARDEN_DETECTED:
+popUpBrowser();
+mStatus.state=WatchdogState.CHECKS_COMPLETE;
+break;
+case BLACKLISTED_AP:
+WifiInfo wifiInfo2=mWifiManager.getConnectionInfo();
+if (wifiInfo2.getSupplicantState() != SupplicantState.COMPLETED) {
+Slog.d(WWS_TAG,"handleState::BlacklistedAP - offline, but didn't get disconnect!");
+mStatus.state=WatchdogState.INACTIVE;
+break;
+}
+if (mStatus.bssid.equals(wifiInfo2.getBSSID())) {
+Slog.d(WWS_TAG,"handleState::BlacklistedAP - connected to same bssid");
+if (!handleSingleDnsCheck()) {
+disableAP(wifiInfo2);
+break;
+}
+}
+Slog.d(WWS_TAG,"handleState::BlacklistedAP - Simiulating a new connection");
+handleNewConnection();
+break;
+}
+}
