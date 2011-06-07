@@ -1,6 +1,6 @@
 {
   final List<PackageInfo> packagesToBackup;
-  Slog.i(TAG,"--- Performing full-dataset restore ---");
+  Slog.i(TAG,"--- Performing full-dataset backup ---");
   sendStartBackup();
   if (mAllApps) {
     packagesToBackup=mPackageManager.getInstalledPackages(PackageManager.GET_SIGNATURES);
@@ -30,48 +30,17 @@
     int N=packagesToBackup.size();
     for (int i=0; i < N; i++) {
       pkg=packagesToBackup.get(i);
-      Slog.d(TAG,"Binding to full backup agent : " + pkg.packageName);
-      IBackupAgent agent=bindToAgentSynchronous(pkg.applicationInfo,IApplicationThread.BACKUP_MODE_FULL);
-      if (agent != null) {
-        try {
-          ApplicationInfo app=pkg.applicationInfo;
-          boolean sendApk=mIncludeApks && ((app.flags & ApplicationInfo.FLAG_FORWARD_LOCK) == 0) && ((app.flags & ApplicationInfo.FLAG_SYSTEM) == 0 || (app.flags & ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0);
-          sendOnBackupPackage(pkg.packageName);
-{
-            BackupDataOutput output=new BackupDataOutput(mOutputFile.getFileDescriptor());
-            if (DEBUG)             Slog.d(TAG,"Writing manifest for " + pkg.packageName);
-            writeAppManifest(pkg,mManifestFile,sendApk);
-            FullBackup.backupToTar(pkg.packageName,null,null,mFilesDir.getAbsolutePath(),mManifestFile.getAbsolutePath(),output);
-          }
-          if (DEBUG)           Slog.d(TAG,"Calling doBackup()");
-          final int token=generateToken();
-          prepareOperationTimeout(token,TIMEOUT_FULL_BACKUP_INTERVAL);
-          agent.doBackup(null,mOutputFile,null,sendApk,token,mBackupManagerBinder);
-          boolean success=waitUntilOperationComplete(token);
-          if (!success) {
-            Slog.d(TAG,"Full backup failed on package " + pkg.packageName);
-          }
- else {
-            if (DEBUG)             Slog.d(TAG,"Full backup success: " + pkg.packageName);
-          }
-        }
- catch (        IOException e) {
-          Slog.e(TAG,"Error backing up " + pkg.packageName,e);
-        }
-      }
- else {
-        Slog.w(TAG,"Unable to bind to full agent for " + pkg.packageName);
-      }
-      tearDown(pkg);
+      backupOnePackage(pkg);
+    }
+    if (mIncludeShared) {
+      backupSharedStorage();
     }
   }
  catch (  RemoteException e) {
     Slog.e(TAG,"App died during full backup");
   }
  finally {
-    if (pkg != null) {
-      tearDown(pkg);
-    }
+    tearDown(pkg);
     try {
       mOutputFile.close();
     }
