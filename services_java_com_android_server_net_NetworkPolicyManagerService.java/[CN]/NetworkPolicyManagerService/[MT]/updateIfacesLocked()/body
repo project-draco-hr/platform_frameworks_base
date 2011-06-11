@@ -1,0 +1,57 @@
+{
+  if (LOGD)   Slog.v(TAG,"updateIfacesLocked()");
+  final NetworkState[] states;
+  try {
+    states=mConnManager.getAllNetworkState();
+  }
+ catch (  RemoteException e) {
+    Slog.w(TAG,"problem reading network state");
+    return;
+  }
+  final HashMap<NetworkIdentity,String> networks=Maps.newHashMap();
+  for (  NetworkState state : states) {
+    if (state.networkInfo.isConnected()) {
+      final String iface=state.linkProperties.getInterfaceName();
+      final NetworkIdentity ident=NetworkIdentity.buildNetworkIdentity(mContext,state);
+      networks.put(ident,iface);
+    }
+  }
+  final HashMap<StrongTemplate,String[]> rules=Maps.newHashMap();
+  final ArrayList<String> ifaceList=Lists.newArrayList();
+  for (  StrongTemplate template : mTemplatePolicy.keySet()) {
+    ifaceList.clear();
+    for (    NetworkIdentity ident : networks.keySet()) {
+      if (ident.matchesTemplate(template.networkTemplate,template.subscriberId)) {
+        final String iface=networks.get(ident);
+        ifaceList.add(iface);
+      }
+    }
+    if (ifaceList.size() > 0) {
+      final String[] ifaces=ifaceList.toArray(new String[ifaceList.size()]);
+      rules.put(template,ifaces);
+    }
+  }
+  if (mTime.getCacheAge() > TIME_CACHE_MAX_AGE) {
+    mTime.forceRefresh();
+  }
+  final long currentTime=mTime.hasCache() ? mTime.currentTimeMillis() : System.currentTimeMillis();
+  for (  StrongTemplate template : rules.keySet()) {
+    final NetworkPolicy policy=mTemplatePolicy.get(template);
+    final String[] ifaces=rules.get(policy);
+    final long start=computeLastCycleBoundary(currentTime,policy);
+    final long end=currentTime;
+    final NetworkStats stats;
+    try {
+      stats=mNetworkStats.getSummaryForNetwork(start,end,template.networkTemplate,template.subscriberId);
+    }
+ catch (    RemoteException e) {
+      Slog.w(TAG,"problem reading summary for template " + template.networkTemplate);
+      continue;
+    }
+    final long total=stats.rx[0] + stats.tx[0];
+    final long quota=Math.max(0,policy.limitBytes - total);
+    if (LOGD) {
+      Slog.d(TAG,"applying policy " + policy.toString() + " to ifaces "+ Arrays.toString(ifaces)+ " with quota "+ quota);
+    }
+  }
+}
