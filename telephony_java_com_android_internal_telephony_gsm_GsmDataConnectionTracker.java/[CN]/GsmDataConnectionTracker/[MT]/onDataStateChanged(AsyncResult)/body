@@ -6,48 +6,48 @@
     if (DBG)     log("onDataStateChanged(ar): exception; likely radio not available, ignore");
     return;
   }
-  HashMap<Integer,DataCallState> response;
-  response=new HashMap<Integer,DataCallState>();
   if (DBG)   log("onDataStateChanged(ar): DataCallState size=" + dataCallStates.size());
-  for (  DataCallState dc : dataCallStates) {
-    response.put(dc.cid,dc);
-    if (DBG)     log("onDataStateChanged(ar): " + dc.cid + ": "+ dc.toString());
+  HashMap<DataCallState,DataConnectionAc> response;
+  response=new HashMap<DataCallState,DataConnectionAc>();
+  for (  DataCallState dataCallState : dataCallStates) {
+    DataConnectionAc dcac=findDataConnectionAcByCid(dataCallState.cid);
+    if (dcac != null)     response.put(dataCallState,dcac);
   }
-  if (DBG)   log("    ApnContext size=" + mApnContexts.values().size());
-  for (  ApnContext apnContext : mApnContexts.values()) {
-    if (DBG) {
-      log("onDataStateChanged(ar): " + apnContext.toString());
-      if (apnContext.getDataConnection() != null) {
-        log("onDataStateChanged(ar): " + apnContext.getDataConnection().toString());
+  List<ApnContext> apnsToClear=findApnContextToClean(response.values());
+  for (  DataCallState newState : dataCallStates) {
+    DataConnectionAc dcac=response.get(newState);
+    if (dcac == null)     continue;
+    Collection<ApnContext> apns=dcac.getApnList();
+    ArrayList<ApnContext> connectedApns=new ArrayList<ApnContext>();
+    for (    ApnContext apnContext : apns) {
+      if ((apnContext != null) && (apnContext.getState() == State.CONNECTED)) {
+        connectedApns.add(apnContext);
       }
     }
-    DataConnectionAc dcac=apnContext.getDataConnectionAc();
-    if (dcac == null) {
+    if (connectedApns.isEmpty()) {
       continue;
     }
-    int connectionId=dcac.getCidSync();
-    if (apnContext.getState() == State.CONNECTED) {
-      if (response.containsKey(connectionId)) {
-        DataCallState newState=response.get(connectionId);
-        if (DBG)         log("onDataStateChanged(ar): Found ConnId=" + connectionId + " newState="+ newState.toString());
-        if (newState.active != 0) {
-          boolean resetConnection;
+    if (DBG)     log("onDataStateChanged(ar): Found ConnId=" + newState.cid + " newState="+ newState.toString());
+    if (newState.active != 0) {
+      boolean resetConnection;
 switch (dcac.updateLinkPropertiesDataCallStateSync(newState)) {
 case NONE:
-            if (DBG)             log("onDataStateChanged(ar): Found but no change, skip");
-          resetConnection=false;
-        break;
+        if (DBG)         log("onDataStateChanged(ar): Found but no change, skip");
+      resetConnection=false;
+    break;
 case CHANGED:
-      if (DBG)       log("onDataStateChanged(ar): Found and changed, notify");
+  for (  ApnContext apnContext : connectedApns) {
+    if (DBG)     log("onDataStateChanged(ar): Found and changed, notify (" + apnContext.toString() + ")");
     mPhone.notifyDataConnection(Phone.REASON_LINK_PROPERTIES_CHANGED,apnContext.getApnType());
-  if (SystemProperties.getBoolean("telephony.ignore-state-changes",true)) {
-    log("onDataStateChanged(ar): STOPSHIP don't reset, continue");
-    resetConnection=false;
   }
+if (SystemProperties.getBoolean("telephony.ignore-state-changes",true)) {
+  log("onDataStateChanged(ar): STOPSHIP don't reset, continue");
+  resetConnection=false;
+}
  else {
-    log("onDataStateChanged(ar): changed so resetting connection");
-    resetConnection=true;
-  }
+  log("onDataStateChanged(ar): changed so resetting connection");
+  resetConnection=true;
+}
 break;
 case RESET:
 default :
@@ -57,12 +57,15 @@ break;
 }
 if (resetConnection == false) continue;
 }
-}
 if (DBG) log("onDataStateChanged(ar): reset connection.");
+apnsToClear.addAll(connectedApns);
+}
+if (!apnsToClear.isEmpty()) {
 int cid=getCellLocationId();
 EventLog.writeEvent(EventLogTags.PDP_NETWORK_DROP,cid,TelephonyManager.getDefault().getNetworkType());
-cleanUpConnection(true,apnContext);
 }
+for (ApnContext apnContext : apnsToClear) {
+cleanUpConnection(true,apnContext);
 }
 if (DBG) log("onDataStateChanged(ar): X");
 }
