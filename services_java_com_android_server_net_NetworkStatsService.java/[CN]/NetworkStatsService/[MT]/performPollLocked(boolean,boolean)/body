@@ -1,0 +1,37 @@
+{
+  if (LOGV)   Slog.v(TAG,"performPollLocked()");
+  if (mTime.getCacheAge() > mSettings.getTimeCacheMaxAge()) {
+    mTime.forceRefresh();
+  }
+  final long currentTime=mTime.hasCache() ? mTime.currentTimeMillis() : System.currentTimeMillis();
+  final NetworkStats ifaceStats;
+  final NetworkStats uidStats;
+  try {
+    ifaceStats=mNetworkManager.getNetworkStatsSummary();
+    uidStats=detailedPoll ? mNetworkManager.getNetworkStatsDetail() : null;
+  }
+ catch (  RemoteException e) {
+    Slog.w(TAG,"problem reading network stats");
+    return;
+  }
+  performNetworkPollLocked(ifaceStats,currentTime);
+  if (detailedPoll) {
+    performUidPollLocked(uidStats,currentTime);
+  }
+  final NetworkStats persistDelta=computeStatsDelta(mLastNetworkPersist,ifaceStats);
+  final long persistThreshold=mSettings.getPersistThreshold();
+  for (  String iface : persistDelta.getUniqueIfaces()) {
+    final int index=persistDelta.findIndex(iface,UID_ALL,TAG_NONE);
+    if (forcePersist || persistDelta.rx[index] > persistThreshold || persistDelta.tx[index] > persistThreshold) {
+      writeNetworkStatsLocked();
+      if (mUidStatsLoaded) {
+        writeUidStatsLocked();
+      }
+      mLastNetworkPersist=ifaceStats;
+      break;
+    }
+  }
+  final Intent updatedIntent=new Intent(ACTION_NETWORK_STATS_UPDATED);
+  updatedIntent.setFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY);
+  mContext.sendBroadcast(updatedIntent,READ_NETWORK_USAGE_HISTORY);
+}
