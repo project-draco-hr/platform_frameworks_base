@@ -500,16 +500,27 @@ final int attrFlags=attrs.flags;
 if (w.mSurface != null) {
 w.computeShownFrameLocked();
 if (localLOGV) Slog.v(TAG,"Placing surface #" + i + " "+ w.mSurface+ ": new="+ w.mShownFrame);
-int width, height;
-if ((w.mAttrs.flags & w.mAttrs.FLAG_SCALED) != 0) {
-  width=w.mRequestedWidth;
-  height=w.mRequestedHeight;
-}
- else {
-  width=w.mCompatFrame.width();
-  height=w.mCompatFrame.height();
-}
 if (w.mSurface != null) {
+  int width, height;
+  if ((w.mAttrs.flags & w.mAttrs.FLAG_SCALED) != 0) {
+    width=w.mRequestedWidth;
+    height=w.mRequestedHeight;
+  }
+ else {
+    width=w.mCompatFrame.width();
+    height=w.mCompatFrame.height();
+  }
+  if (width < 1) {
+    width=1;
+  }
+  if (height < 1) {
+    height=1;
+  }
+  final boolean surfaceResized=w.mSurfaceW != width || w.mSurfaceH != height;
+  if (surfaceResized) {
+    w.mSurfaceW=width;
+    w.mSurfaceH=height;
+  }
   if (w.mSurfaceX != w.mShownFrame.left || w.mSurfaceY != w.mShownFrame.top) {
     try {
       if (SHOW_TRANSACTIONS)       logSurface(w,"POS " + w.mShownFrame.left + ", "+ w.mShownFrame.top,null);
@@ -524,18 +535,10 @@ if (w.mSurface != null) {
       }
     }
   }
-  if (width < 1) {
-    width=1;
-  }
-  if (height < 1) {
-    height=1;
-  }
-  if (w.mSurfaceW != width || w.mSurfaceH != height) {
+  if (surfaceResized) {
     try {
-      if (SHOW_TRANSACTIONS)       logSurface(w,"SIZE " + w.mShownFrame.width() + "x"+ w.mShownFrame.height(),null);
+      if (SHOW_TRANSACTIONS)       logSurface(w,"SIZE " + width + "x"+ height,null);
       w.mSurfaceResized=true;
-      w.mSurfaceW=width;
-      w.mSurfaceH=height;
       w.mSurface.setSize(width,height);
     }
  catch (    RuntimeException e) {
@@ -547,20 +550,18 @@ if (w.mSurface != null) {
   }
 }
 if (!w.mAppFreezing && w.mLayoutSeq == mLayoutSeq) {
-  w.mContentInsetsChanged=!w.mLastContentInsets.equals(w.mContentInsets);
-  w.mVisibleInsetsChanged=!w.mLastVisibleInsets.equals(w.mVisibleInsets);
+  w.mContentInsetsChanged|=!w.mLastContentInsets.equals(w.mContentInsets);
+  w.mVisibleInsetsChanged|=!w.mLastVisibleInsets.equals(w.mVisibleInsets);
   boolean configChanged=w.mConfiguration != mCurConfiguration && (w.mConfiguration == null || mCurConfiguration.diff(w.mConfiguration) != 0);
   if (DEBUG_CONFIGURATION && configChanged) {
     Slog.v(TAG,"Win " + w + " config changed: "+ mCurConfiguration);
   }
-  if (localLOGV)   Slog.v(TAG,"Resizing " + w + ": configChanged="+ configChanged+ " last="+ w.mLastCompatFrame+ " frame="+ w.mCompatFrame);
-  boolean frameChanged=!w.mLastCompatFrame.equals(w.mCompatFrame);
-  if (frameChanged || w.mContentInsetsChanged || w.mVisibleInsetsChanged|| w.mSurfaceResized|| configChanged) {
+  if (localLOGV)   Slog.v(TAG,"Resizing " + w + ": configChanged="+ configChanged+ " last="+ w.mLastFrame+ " frame="+ w.mFrame);
+  w.mLastFrame.set(w.mFrame);
+  if (w.mContentInsetsChanged || w.mVisibleInsetsChanged || w.mSurfaceResized|| configChanged) {
     if (DEBUG_RESIZE || DEBUG_ORIENTATION) {
-      Slog.v(TAG,"Resize reasons: " + "frameChanged=" + frameChanged + " contentInsetsChanged="+ w.mContentInsetsChanged+ " visibleInsetsChanged="+ w.mVisibleInsetsChanged+ " surfaceResized="+ w.mSurfaceResized+ " configChanged="+ configChanged);
+      Slog.v(TAG,"Resize reasons: " + " contentInsetsChanged=" + w.mContentInsetsChanged + " visibleInsetsChanged="+ w.mVisibleInsetsChanged+ " surfaceResized="+ w.mSurfaceResized+ " configChanged="+ configChanged);
     }
-    w.mLastFrame.set(w.mFrame);
-    w.mLastCompatFrame.set(w.mCompatFrame);
     w.mLastContentInsets.set(w.mContentInsets);
     w.mLastVisibleInsets.set(w.mVisibleInsets);
     if (mDisplayFrozen) {
@@ -581,8 +582,10 @@ if (!w.mAppFreezing && w.mLayoutSeq == mLayoutSeq) {
         w.mAppToken.allDrawn=false;
       }
     }
-    if (DEBUG_RESIZE || DEBUG_ORIENTATION)     Slog.v(TAG,"Resizing window " + w + " to "+ w.mCompatFrame);
-    mResizingWindows.add(w);
+    if (!mResizingWindows.contains(w)) {
+      if (DEBUG_RESIZE || DEBUG_ORIENTATION)       Slog.v(TAG,"Resizing window " + w + " to "+ w.mSurfaceW+ "x"+ w.mSurfaceH);
+      mResizingWindows.add(w);
+    }
   }
  else   if (w.mOrientationChanging) {
     if (!w.mDrawPending && !w.mCommitDrawPending) {
@@ -800,10 +803,10 @@ if (DEBUG_RESIZE || DEBUG_ORIENTATION) Slog.v(TAG,"Reporting new frame to " + wi
 int diff=0;
 boolean configChanged=win.mConfiguration != mCurConfiguration && (win.mConfiguration == null || (diff=mCurConfiguration.diff(win.mConfiguration)) != 0);
 if ((DEBUG_RESIZE || DEBUG_ORIENTATION || DEBUG_CONFIGURATION) && configChanged) {
-  Slog.i(TAG,"Sending new config to window " + win + ": "+ win.mCompatFrame.width()+ "x"+ win.mCompatFrame.height()+ " / "+ mCurConfiguration+ " / 0x"+ Integer.toHexString(diff));
+  Slog.i(TAG,"Sending new config to window " + win + ": "+ win.mSurfaceW+ "x"+ win.mSurfaceH+ " / "+ mCurConfiguration+ " / 0x"+ Integer.toHexString(diff));
 }
 win.mConfiguration=mCurConfiguration;
-win.mClient.resized(win.mCompatFrame.width(),win.mCompatFrame.height(),win.mLastContentInsets,win.mLastVisibleInsets,win.mDrawPending,configChanged ? win.mConfiguration : null);
+win.mClient.resized(win.mSurfaceW,win.mSurfaceH,win.mLastContentInsets,win.mLastVisibleInsets,win.mDrawPending,configChanged ? win.mConfiguration : null);
 win.mContentInsetsChanged=false;
 win.mVisibleInsetsChanged=false;
 win.mSurfaceResized=false;
