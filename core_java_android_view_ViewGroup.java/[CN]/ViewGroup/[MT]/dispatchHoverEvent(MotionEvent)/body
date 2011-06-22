@@ -2,59 +2,91 @@
   final int action=event.getAction();
   final boolean interceptHover=onInterceptHoverEvent(event);
   event.setAction(action);
-  View newHoveredChild=null;
+  MotionEvent eventNoHistory=event;
+  boolean handled=false;
+  HoverTarget firstOldHoverTarget=mFirstHoverTarget;
+  mFirstHoverTarget=null;
   if (!interceptHover && action != MotionEvent.ACTION_HOVER_EXIT) {
     final float x=event.getX();
     final float y=event.getY();
     final int childrenCount=mChildrenCount;
     if (childrenCount != 0) {
       final View[] children=mChildren;
+      HoverTarget lastHoverTarget=null;
       for (int i=childrenCount - 1; i >= 0; i--) {
         final View child=children[i];
-        if (canViewReceivePointerEvents(child) && isTransformedTouchPointInView(x,y,child,null)) {
-          newHoveredChild=child;
+        if (!canViewReceivePointerEvents(child) || !isTransformedTouchPointInView(x,y,child,null)) {
+          continue;
+        }
+        HoverTarget hoverTarget=firstOldHoverTarget;
+        final boolean wasHovered;
+        for (HoverTarget predecessor=null; ; ) {
+          if (hoverTarget == null) {
+            hoverTarget=HoverTarget.obtain(child);
+            wasHovered=false;
+            break;
+          }
+          if (hoverTarget.child == child) {
+            if (predecessor != null) {
+              predecessor.next=hoverTarget.next;
+            }
+ else {
+              firstOldHoverTarget=hoverTarget.next;
+            }
+            hoverTarget.next=null;
+            wasHovered=true;
+            break;
+          }
+          predecessor=hoverTarget;
+          hoverTarget=hoverTarget.next;
+        }
+        if (lastHoverTarget != null) {
+          lastHoverTarget.next=hoverTarget;
+        }
+ else {
+          lastHoverTarget=hoverTarget;
+          mFirstHoverTarget=hoverTarget;
+        }
+        if (action == MotionEvent.ACTION_HOVER_ENTER) {
+          if (!wasHovered) {
+            handled|=dispatchTransformedGenericPointerEvent(event,child);
+          }
+        }
+ else         if (action == MotionEvent.ACTION_HOVER_MOVE) {
+          if (!wasHovered) {
+            eventNoHistory=obtainMotionEventNoHistoryOrSelf(eventNoHistory);
+            eventNoHistory.setAction(MotionEvent.ACTION_HOVER_ENTER);
+            handled|=dispatchTransformedGenericPointerEvent(eventNoHistory,child);
+            eventNoHistory.setAction(action);
+            handled|=dispatchTransformedGenericPointerEvent(eventNoHistory,child);
+          }
+ else {
+            handled|=dispatchTransformedGenericPointerEvent(event,child);
+          }
+        }
+        if (handled) {
           break;
         }
       }
     }
   }
-  MotionEvent eventNoHistory=event;
-  boolean handled=false;
-  if (mHoveredChild == newHoveredChild) {
-    if (newHoveredChild != null) {
-      handled|=dispatchTransformedGenericPointerEvent(event,newHoveredChild);
+  while (firstOldHoverTarget != null) {
+    final View child=firstOldHoverTarget.child;
+    if (action == MotionEvent.ACTION_HOVER_EXIT) {
+      handled|=dispatchTransformedGenericPointerEvent(event,child);
     }
-  }
  else {
-    if (mHoveredChild != null) {
-      if (action == MotionEvent.ACTION_HOVER_EXIT) {
-        handled|=dispatchTransformedGenericPointerEvent(event,mHoveredChild);
+      if (action == MotionEvent.ACTION_HOVER_MOVE) {
+        dispatchTransformedGenericPointerEvent(event,child);
       }
- else {
-        if (action == MotionEvent.ACTION_HOVER_MOVE) {
-          dispatchTransformedGenericPointerEvent(event,mHoveredChild);
-        }
-        eventNoHistory=obtainMotionEventNoHistoryOrSelf(eventNoHistory);
-        eventNoHistory.setAction(MotionEvent.ACTION_HOVER_EXIT);
-        dispatchTransformedGenericPointerEvent(eventNoHistory,mHoveredChild);
-        eventNoHistory.setAction(action);
-      }
-      mHoveredChild=null;
+      eventNoHistory=obtainMotionEventNoHistoryOrSelf(eventNoHistory);
+      eventNoHistory.setAction(MotionEvent.ACTION_HOVER_EXIT);
+      dispatchTransformedGenericPointerEvent(eventNoHistory,child);
+      eventNoHistory.setAction(action);
     }
-    if (newHoveredChild != null) {
-      if (action == MotionEvent.ACTION_HOVER_ENTER) {
-        handled|=dispatchTransformedGenericPointerEvent(event,newHoveredChild);
-        mHoveredChild=newHoveredChild;
-      }
- else       if (action == MotionEvent.ACTION_HOVER_MOVE) {
-        eventNoHistory=obtainMotionEventNoHistoryOrSelf(eventNoHistory);
-        eventNoHistory.setAction(MotionEvent.ACTION_HOVER_ENTER);
-        handled|=dispatchTransformedGenericPointerEvent(eventNoHistory,newHoveredChild);
-        eventNoHistory.setAction(action);
-        handled|=dispatchTransformedGenericPointerEvent(eventNoHistory,newHoveredChild);
-        mHoveredChild=newHoveredChild;
-      }
-    }
+    final HoverTarget nextOldHoverTarget=firstOldHoverTarget.next;
+    firstOldHoverTarget.recycle();
+    firstOldHoverTarget=nextOldHoverTarget;
   }
   boolean newHoveredSelf=!handled;
   if (newHoveredSelf == mHoveredSelf) {
