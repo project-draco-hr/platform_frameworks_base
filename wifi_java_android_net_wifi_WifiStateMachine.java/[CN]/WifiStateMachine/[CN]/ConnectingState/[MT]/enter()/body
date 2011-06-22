@@ -1,10 +1,42 @@
 {
   if (DBG)   Log.d(TAG,getName() + "\n");
   EventLog.writeEvent(EVENTLOG_WIFI_STATE_CHANGED,getName());
-  if (!WifiConfigStore.isUsingStaticIp(mLastNetworkId)) {
-    mDhcpStateMachine=DhcpStateMachine.makeDhcpStateMachine(mContext,WifiStateMachine.this,mInterfaceName);
-    mDhcpStateMachine.registerForPreDhcpNotification();
-    mDhcpStateMachine.sendMessage(DhcpStateMachine.CMD_START_DHCP);
+  mUseStaticIp=WifiConfigStore.isUsingStaticIp(mLastNetworkId);
+  if (!mUseStaticIp) {
+    mDhcpThread=null;
+    mModifiedBluetoothCoexistenceMode=false;
+    mPowerMode=POWER_MODE_AUTO;
+    if (!mBluetoothConnectionActive) {
+      mModifiedBluetoothCoexistenceMode=true;
+      WifiNative.setBluetoothCoexistenceModeCommand(WifiNative.BLUETOOTH_COEXISTENCE_MODE_DISABLED);
+    }
+    mPowerMode=WifiNative.getPowerModeCommand();
+    if (mPowerMode < 0) {
+      mPowerMode=POWER_MODE_AUTO;
+    }
+    if (mPowerMode != POWER_MODE_ACTIVE) {
+      WifiNative.setPowerModeCommand(POWER_MODE_ACTIVE);
+    }
+    Log.d(TAG,"DHCP request started");
+    mDhcpThread=new Thread(new Runnable(){
+      public void run(){
+        DhcpInfoInternal dhcpInfoInternal=new DhcpInfoInternal();
+        if (NetworkUtils.runDhcp(mInterfaceName,dhcpInfoInternal)) {
+          Log.d(TAG,"DHCP request succeeded");
+synchronized (mDhcpInfoInternal) {
+            mDhcpInfoInternal=dhcpInfoInternal;
+          }
+          WifiConfigStore.setIpConfiguration(mLastNetworkId,dhcpInfoInternal);
+          sendMessage(CMD_IP_CONFIG_SUCCESS);
+        }
+ else {
+          Log.d(TAG,"DHCP request failed: " + NetworkUtils.getDhcpError());
+          sendMessage(CMD_IP_CONFIG_FAILURE);
+        }
+      }
+    }
+);
+    mDhcpThread.start();
   }
  else {
     DhcpInfoInternal dhcpInfoInternal=WifiConfigStore.getIpConfiguration(mLastNetworkId);
@@ -16,15 +48,18 @@
     try {
       netd.setInterfaceConfig(mInterfaceName,ifcg);
       Log.v(TAG,"Static IP configuration succeeded");
-      sendMessage(CMD_STATIC_IP_SUCCESS,dhcpInfoInternal);
+synchronized (mDhcpInfoInternal) {
+        mDhcpInfoInternal=dhcpInfoInternal;
+      }
+      sendMessage(CMD_IP_CONFIG_SUCCESS);
     }
  catch (    RemoteException re) {
       Log.v(TAG,"Static IP configuration failed: " + re);
-      sendMessage(CMD_STATIC_IP_FAILURE);
+      sendMessage(CMD_IP_CONFIG_FAILURE);
     }
 catch (    IllegalStateException e) {
       Log.v(TAG,"Static IP configuration failed: " + e);
-      sendMessage(CMD_STATIC_IP_FAILURE);
+      sendMessage(CMD_IP_CONFIG_FAILURE);
     }
   }
 }
