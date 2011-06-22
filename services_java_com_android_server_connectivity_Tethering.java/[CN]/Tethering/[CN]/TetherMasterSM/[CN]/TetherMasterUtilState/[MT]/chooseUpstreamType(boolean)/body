@@ -1,48 +1,43 @@
 {
-  String iface=findActiveUpstreamIface();
   IBinder b=ServiceManager.getService(Context.CONNECTIVITY_SERVICE);
   IConnectivityManager cm=IConnectivityManager.Stub.asInterface(b);
-  mMobileReserved=false;
-  if (DEBUG) {
-    Log.d(TAG,"chooseUpstreamType(" + tryCell + "),  dunRequired ="+ mDunRequired+ ", iface="+ iface);
-  }
-  if (iface != null) {
+  int upType=ConnectivityManager.TYPE_NONE;
+  String iface=null;
+  for (  Integer netType : mUpstreamIfaceTypes) {
+    NetworkInfo info=null;
     try {
-      if (mDunRequired) {
-        NetworkInfo info=cm.getNetworkInfo(ConnectivityManager.TYPE_MOBILE_DUN);
-        if (info.isConnected()) {
-          if (DEBUG)           Log.d(TAG,"setting dun ifacename =" + iface);
-          turnOnMobileConnection();
-        }
- else {
-          info=cm.getNetworkInfo(ConnectivityManager.TYPE_MOBILE);
-          if (info.isConnected()) {
-            iface=null;
-          }
-        }
-      }
- else {
-        if (DEBUG)         Log.d(TAG,"checking if hipri brought us this connection");
-        NetworkInfo info=cm.getNetworkInfo(ConnectivityManager.TYPE_MOBILE_HIPRI);
-        if (info.isConnected()) {
-          if (DEBUG)           Log.d(TAG,"yes - hipri in use");
-          turnOnMobileConnection();
-        }
-      }
+      info=cm.getNetworkInfo(netType.intValue());
     }
  catch (    RemoteException e) {
-      Log.e(TAG,"RemoteException calling ConnectivityManager",e);
-      iface=null;
+    }
+    if ((info != null) && info.isConnected()) {
+      upType=netType.intValue();
+      break;
     }
   }
-  if (iface == null) {
-    boolean success=false;
-    if (tryCell == TRY_TO_SETUP_MOBILE_CONNECTION) {
-      success=turnOnMobileConnection();
+  if (DEBUG) {
+    Log.d(TAG,"chooseUpstreamType(" + tryCell + "), preferredApn ="+ mPreferredUpstreamMobileApn+ ", got type="+ upType);
+  }
+  if (upType == ConnectivityManager.TYPE_MOBILE_DUN || upType == ConnectivityManager.TYPE_MOBILE_HIPRI) {
+    turnOnUpstreamMobileConnection(upType);
+  }
+  if (upType == ConnectivityManager.TYPE_NONE) {
+    boolean tryAgainLater=true;
+    if ((tryCell == TRY_TO_SETUP_MOBILE_CONNECTION) && (turnOnUpstreamMobileConnection(mPreferredUpstreamMobileApn) == true)) {
+      tryAgainLater=false;
     }
-    if (!success) {
+    if (tryAgainLater) {
       sendMessageDelayed(CMD_RETRY_UPSTREAM,UPSTREAM_SETTLE_TIME_MS);
     }
+  }
+ else {
+    LinkProperties linkProperties=null;
+    try {
+      linkProperties=cm.getLinkProperties(upType);
+    }
+ catch (    RemoteException e) {
+    }
+    if (linkProperties != null)     iface=linkProperties.getInterfaceName();
   }
   notifyTetheredOfNewUpstreamIface(iface);
 }
