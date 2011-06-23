@@ -2,18 +2,26 @@
   boolean isStatic=(access & Opcodes.ACC_STATIC) != 0;
   boolean isNative=(access & Opcodes.ACC_NATIVE) != 0;
   boolean useDelegate=(isNative && mDelegateMethods.contains(ALL_NATIVES)) || mDelegateMethods.contains(name);
+  if (!useDelegate) {
+    return super.visitMethod(access,name,desc,signature,exceptions);
+  }
   if (useDelegate) {
+    if (CONSTRUCTOR.equals(name) || CLASS_INIT.equals(name)) {
+      throw new UnsupportedOperationException(String.format("Delegate doesn't support overriding constructor %1$s:%2$s(%3$s)",mClassName,name,desc));
+    }
+  }
+  if (isNative) {
     access=access & ~Opcodes.ACC_NATIVE;
+    MethodVisitor mwDelegate=super.visitMethod(access,name,desc,signature,exceptions);
+    DelegateMethodAdapter2 a=new DelegateMethodAdapter2(mLog,null,mwDelegate,mClassName,name,desc,isStatic);
+    a.generateDelegateCode();
+    return mwDelegate;
   }
-  MethodVisitor mw=super.visitMethod(access,name,desc,signature,exceptions);
-  if (useDelegate) {
-    DelegateMethodAdapter a=new DelegateMethodAdapter(mLog,mw,mClassName,name,desc,isStatic);
-    if (isNative) {
-      a.generateCode();
-    }
- else {
-      return a;
-    }
-  }
-  return mw;
+  int accessDelegate=access;
+  access&=~(Opcodes.ACC_PROTECTED | Opcodes.ACC_PRIVATE);
+  access|=Opcodes.ACC_PUBLIC;
+  MethodVisitor mwOriginal=super.visitMethod(access,name + ORIGINAL_SUFFIX,desc,signature,exceptions);
+  MethodVisitor mwDelegate=super.visitMethod(accessDelegate,name,desc,signature,exceptions);
+  DelegateMethodAdapter2 a=new DelegateMethodAdapter2(mLog,mwOriginal,mwDelegate,mClassName,name,desc,isStatic);
+  return a;
 }
