@@ -1,26 +1,32 @@
 {
   if (connectToSupplicant()) {
-    mWifiStateMachine.notifySupplicantConnection();
+    mStateMachine.sendMessage(SUP_CONNECTION_EVENT);
   }
  else {
-    mWifiStateMachine.notifySupplicantLost();
+    mStateMachine.sendMessage(SUP_DISCONNECTION_EVENT);
     return;
   }
   for (; ; ) {
     String eventStr=WifiNative.waitForEvent();
-    if (false && eventStr.indexOf(scanResultsEvent) == -1) {
-      Log.v(TAG,"Event [" + eventStr + "]");
+    if (false && eventStr.indexOf(SCAN_RESULTS_STR) == -1) {
+      Log.d(TAG,"Event [" + eventStr + "]");
     }
-    if (!eventStr.startsWith(eventPrefix)) {
-      if (eventStr.startsWith(wpaEventPrefix) && 0 < eventStr.indexOf(passwordKeyMayBeIncorrectEvent)) {
-        mWifiStateMachine.notifyAuthenticationFailure();
+    if (!eventStr.startsWith(EVENT_PREFIX_STR)) {
+      if (eventStr.startsWith(WPA_EVENT_PREFIX_STR) && 0 < eventStr.indexOf(PASSWORD_MAY_BE_INCORRECT_STR)) {
+        mStateMachine.sendMessage(AUTHENTICATION_FAILURE_EVENT);
       }
- else       if (eventStr.startsWith(wpsOverlapEvent)) {
-        mWifiStateMachine.notifyWpsOverlap();
+ else       if (eventStr.startsWith(WPS_OVERLAP_STR)) {
+        mStateMachine.sendMessage(WPS_OVERLAP_EVENT);
+      }
+ else       if (eventStr.startsWith(P2P_EVENT_PREFIX_STR)) {
+        handleP2pEvents(eventStr);
+      }
+ else       if (eventStr.startsWith(HOST_AP_EVENT_PREFIX_STR)) {
+        handleHostApEvents(eventStr);
       }
       continue;
     }
-    String eventName=eventStr.substring(eventPrefixLen);
+    String eventName=eventStr.substring(EVENT_PREFIX_LEN_STR);
     int nameEnd=eventName.indexOf(' ');
     if (nameEnd != -1)     eventName=eventName.substring(0,nameEnd);
     if (eventName.length() == 0) {
@@ -28,14 +34,14 @@
       continue;
     }
     int event;
-    if (eventName.equals(connectedEvent))     event=CONNECTED;
- else     if (eventName.equals(disconnectedEvent))     event=DISCONNECTED;
- else     if (eventName.equals(stateChangeEvent))     event=STATE_CHANGE;
- else     if (eventName.equals(scanResultsEvent))     event=SCAN_RESULTS;
- else     if (eventName.equals(linkSpeedEvent))     event=LINK_SPEED;
- else     if (eventName.equals(terminatingEvent))     event=TERMINATING;
- else     if (eventName.equals(driverStateEvent))     event=DRIVER_STATE;
- else     if (eventName.equals(eapFailureEvent))     event=EAP_FAILURE;
+    if (eventName.equals(CONNECTED_STR))     event=CONNECTED;
+ else     if (eventName.equals(DISCONNECTED_STR))     event=DISCONNECTED;
+ else     if (eventName.equals(STATE_CHANGE_STR))     event=STATE_CHANGE;
+ else     if (eventName.equals(SCAN_RESULTS_STR))     event=SCAN_RESULTS;
+ else     if (eventName.equals(LINK_SPEED_STR))     event=LINK_SPEED;
+ else     if (eventName.equals(TERMINATING_STR))     event=TERMINATING;
+ else     if (eventName.equals(DRIVER_STATE_STR))     event=DRIVER_STATE;
+ else     if (eventName.equals(EAP_FAILURE_STR))     event=EAP_FAILURE;
  else     event=UNKNOWN;
     String eventData=eventStr;
     if (event == DRIVER_STATE || event == LINK_SPEED)     eventData=eventData.split(" ")[1];
@@ -58,13 +64,13 @@
       handleDriverEvent(eventData);
     }
  else     if (event == TERMINATING) {
-      if (eventData.startsWith(monitorSocketClosed)) {
+      if (eventData.startsWith(MONITOR_SOCKET_CLOSED_STR)) {
         if (false) {
           Log.d(TAG,"Monitor socket is closed, exiting thread");
         }
         break;
       }
-      if (eventData.startsWith(wpaRecvError)) {
+      if (eventData.startsWith(WPA_RECV_ERROR_STR)) {
         if (++mRecvErrors > MAX_RECV_ERRORS) {
           if (false) {
             Log.d(TAG,"too many recv errors, closing connection");
@@ -74,12 +80,12 @@
           continue;
         }
       }
-      mWifiStateMachine.notifySupplicantLost();
+      mStateMachine.sendMessage(SUP_DISCONNECTION_EVENT);
       break;
     }
  else     if (event == EAP_FAILURE) {
-      if (eventData.startsWith(eapAuthFailure)) {
-        mWifiStateMachine.notifyAuthenticationFailure();
+      if (eventData.startsWith(EAP_AUTH_FAILURE_STR)) {
+        mStateMachine.sendMessage(AUTHENTICATION_FAILURE_EVENT);
       }
     }
  else {
