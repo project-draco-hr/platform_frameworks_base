@@ -6,15 +6,30 @@
   if (DBG) {
     log("cleanUpConnection: tearDown=" + tearDown + " reason="+ apnContext.getReason());
   }
-  if (tearDown && cleanApnContextBeforeRestart(apnContext)) {
-    return;
-  }
   DataConnectionAc dcac=apnContext.getDataConnectionAc();
-  if (tearDown && (dcac != null)) {
-    if (DBG)     log("cleanUpConnection: tearing down");
-    Message msg=obtainMessage(EVENT_DISCONNECT_DONE,apnContext);
-    apnContext.getDataConnection().tearDown(apnContext.getReason(),msg);
-    apnContext.setState(State.DISCONNECTING);
+  if (tearDown) {
+    boolean isConnected=(apnContext.getState() != State.IDLE && apnContext.getState() != State.FAILED);
+    if (!isConnected) {
+      apnContext.setState(State.IDLE);
+      if (!apnContext.isReady()) {
+        apnContext.setDataConnection(null);
+        apnContext.setDataConnectionAc(null);
+      }
+    }
+ else {
+      if (dcac != null) {
+        if (apnContext.getState() != State.DISCONNECTING) {
+          if (DBG)           log("cleanUpConnection: tearing down");
+          Message msg=obtainMessage(EVENT_DISCONNECT_DONE,apnContext);
+          apnContext.getDataConnection().tearDown(apnContext.getReason(),msg);
+          apnContext.setState(State.DISCONNECTING);
+        }
+ else {
+          apnContext.setState(State.IDLE);
+          mPhone.notifyDataConnection(apnContext.getReason(),apnContext.getApnType());
+        }
+      }
+    }
   }
  else {
     if (dcac != null)     dcac.resetSync();
@@ -22,5 +37,11 @@
     mPhone.notifyDataConnection(apnContext.getReason(),apnContext.getApnType());
     apnContext.setDataConnection(null);
     apnContext.setDataConnectionAc(null);
+  }
+  if (dcac != null) {
+    Collection<ApnContext> apnList=dcac.getApnListSync();
+    if (apnList.isEmpty()) {
+      cancelReconnectAlarm(dcac);
+    }
   }
 }
