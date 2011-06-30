@@ -35,7 +35,7 @@
     mTime.forceRefresh();
   }
   final long currentTime=mTime.hasCache() ? mTime.currentTimeMillis() : System.currentTimeMillis();
-  mMeteredIfaces.clear();
+  final HashSet<String> newMeteredIfaces=Sets.newHashSet();
   for (  NetworkPolicy policy : rules.keySet()) {
     final String[] ifaces=rules.get(policy);
     final long start=computeLastCycleBoundary(currentTime,policy);
@@ -55,15 +55,22 @@
     }
     if (policy.limitBytes != NetworkPolicy.LIMIT_DISABLED) {
       final long quota=Math.max(0,policy.limitBytes - total);
-      if (LOGD) {
-        Slog.d(TAG,"Applying quota rules for ifaces=" + Arrays.toString(ifaces) + " LIMIT="+ policy.limitBytes+ "  TOTAL="+ total+ "  QUOTA="+ quota);
+      if (ifaces.length > 1) {
+        Slog.w(TAG,"shared quota unsupported; generating rule for each iface");
       }
-      setQuotaOnIfaceList(ifaces,quota);
       for (      String iface : ifaces) {
-        mMeteredIfaces.add(iface);
+        removeInterfaceQuota(iface);
+        setInterfaceQuota(iface,quota);
+        newMeteredIfaces.add(iface);
       }
     }
   }
+  for (  String iface : mMeteredIfaces) {
+    if (!newMeteredIfaces.contains(iface)) {
+      removeInterfaceQuota(iface);
+    }
+  }
+  mMeteredIfaces=newMeteredIfaces;
   final String[] meteredIfaces=mMeteredIfaces.toArray(new String[mMeteredIfaces.size()]);
   mHandler.obtainMessage(MSG_METERED_IFACES_CHANGED,meteredIfaces).sendToTarget();
 }
