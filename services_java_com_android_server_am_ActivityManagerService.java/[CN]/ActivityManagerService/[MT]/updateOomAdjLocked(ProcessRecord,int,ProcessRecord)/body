@@ -6,61 +6,59 @@
   boolean success=true;
   final boolean wasKeeping=app.keeping;
   int adj=computeOomAdjLocked(app,hiddenAdj,TOP_APP,false);
-  if ((app.pid != 0 && app.pid != MY_PID) || Process.supportsProcesses()) {
-    if (app.curRawAdj != app.setRawAdj) {
-      if (app.curRawAdj > FOREGROUND_APP_ADJ && app.setRawAdj <= FOREGROUND_APP_ADJ) {
-        scheduleAppGcLocked(app);
-      }
- else       if (app.curRawAdj >= HIDDEN_APP_MIN_ADJ && app.setRawAdj < HIDDEN_APP_MIN_ADJ) {
-        scheduleAppGcLocked(app);
-      }
-      if (wasKeeping && !app.keeping) {
-        BatteryStatsImpl stats=mBatteryStatsService.getActiveStatistics();
+  if (app.curRawAdj != app.setRawAdj) {
+    if (app.curRawAdj > FOREGROUND_APP_ADJ && app.setRawAdj <= FOREGROUND_APP_ADJ) {
+      scheduleAppGcLocked(app);
+    }
+ else     if (app.curRawAdj >= HIDDEN_APP_MIN_ADJ && app.setRawAdj < HIDDEN_APP_MIN_ADJ) {
+      scheduleAppGcLocked(app);
+    }
+    if (wasKeeping && !app.keeping) {
+      BatteryStatsImpl stats=mBatteryStatsService.getActiveStatistics();
 synchronized (stats) {
-          app.lastWakeTime=stats.getProcessWakeTime(app.info.uid,app.pid,SystemClock.elapsedRealtime());
+        app.lastWakeTime=stats.getProcessWakeTime(app.info.uid,app.pid,SystemClock.elapsedRealtime());
+      }
+      app.lastCpuTime=app.curCpuTime;
+    }
+    app.setRawAdj=app.curRawAdj;
+  }
+  if (adj != app.setAdj) {
+    if (Process.setOomAdj(app.pid,adj)) {
+      if (DEBUG_SWITCH || DEBUG_OOM_ADJ)       Slog.v(TAG,"Set app " + app.processName + " oom adj to "+ adj);
+      app.setAdj=adj;
+    }
+ else {
+      success=false;
+    }
+  }
+  if (app.setSchedGroup != app.curSchedGroup) {
+    app.setSchedGroup=app.curSchedGroup;
+    if (DEBUG_SWITCH || DEBUG_OOM_ADJ)     Slog.v(TAG,"Setting process group of " + app.processName + " to "+ app.curSchedGroup);
+    if (app.waitingToKill != null && app.setSchedGroup == Process.THREAD_GROUP_BG_NONINTERACTIVE) {
+      Slog.i(TAG,"Killing " + app.toShortString() + ": "+ app.waitingToKill);
+      EventLog.writeEvent(EventLogTags.AM_KILL,app.pid,app.processName,app.setAdj,app.waitingToKill);
+      Process.killProcessQuiet(app.pid);
+    }
+ else {
+      if (true) {
+        long oldId=Binder.clearCallingIdentity();
+        try {
+          Process.setProcessGroup(app.pid,app.curSchedGroup);
         }
-        app.lastCpuTime=app.curCpuTime;
-      }
-      app.setRawAdj=app.curRawAdj;
-    }
-    if (adj != app.setAdj) {
-      if (Process.setOomAdj(app.pid,adj)) {
-        if (DEBUG_SWITCH || DEBUG_OOM_ADJ)         Slog.v(TAG,"Set app " + app.processName + " oom adj to "+ adj);
-        app.setAdj=adj;
-      }
- else {
-        success=false;
-      }
-    }
-    if (app.setSchedGroup != app.curSchedGroup) {
-      app.setSchedGroup=app.curSchedGroup;
-      if (DEBUG_SWITCH || DEBUG_OOM_ADJ)       Slog.v(TAG,"Setting process group of " + app.processName + " to "+ app.curSchedGroup);
-      if (app.waitingToKill != null && app.setSchedGroup == Process.THREAD_GROUP_BG_NONINTERACTIVE) {
-        Slog.i(TAG,"Killing " + app.toShortString() + ": "+ app.waitingToKill);
-        EventLog.writeEvent(EventLogTags.AM_KILL,app.pid,app.processName,app.setAdj,app.waitingToKill);
-        Process.killProcessQuiet(app.pid);
-      }
- else {
-        if (true) {
-          long oldId=Binder.clearCallingIdentity();
-          try {
-            Process.setProcessGroup(app.pid,app.curSchedGroup);
-          }
- catch (          Exception e) {
-            Slog.w(TAG,"Failed setting process group of " + app.pid + " to "+ app.curSchedGroup);
-            e.printStackTrace();
-          }
+ catch (        Exception e) {
+          Slog.w(TAG,"Failed setting process group of " + app.pid + " to "+ app.curSchedGroup);
+          e.printStackTrace();
+        }
  finally {
-            Binder.restoreCallingIdentity(oldId);
-          }
+          Binder.restoreCallingIdentity(oldId);
         }
-        if (false) {
-          if (app.thread != null) {
-            try {
-              app.thread.setSchedulingGroup(app.curSchedGroup);
-            }
- catch (            RemoteException e) {
-            }
+      }
+      if (false) {
+        if (app.thread != null) {
+          try {
+            app.thread.setSchedulingGroup(app.curSchedGroup);
+          }
+ catch (          RemoteException e) {
           }
         }
       }
