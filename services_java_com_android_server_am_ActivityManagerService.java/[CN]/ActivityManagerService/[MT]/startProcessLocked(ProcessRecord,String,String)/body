@@ -45,16 +45,16 @@ synchronized (mPidsSelfLocked) {
     if ("1".equals(SystemProperties.get("debug.assert"))) {
       debugFlags|=Zygote.DEBUG_ENABLE_ASSERT;
     }
-    int pid=Process.start("android.app.ActivityThread",app.processName,uid,uid,gids,debugFlags,app.info.targetSdkVersion,null);
+    Process.ProcessStartResult startResult=Process.start("android.app.ActivityThread",app.processName,uid,uid,gids,debugFlags,app.info.targetSdkVersion,null);
     BatteryStatsImpl bs=app.batteryStats.getBatteryStats();
 synchronized (bs) {
       if (bs.isOnBattery()) {
         app.batteryStats.incStartsLocked();
       }
     }
-    EventLog.writeEvent(EventLogTags.AM_PROC_START,pid,uid,app.processName,hostingType,hostingNameStr != null ? hostingNameStr : "");
+    EventLog.writeEvent(EventLogTags.AM_PROC_START,startResult.pid,uid,app.processName,hostingType,hostingNameStr != null ? hostingNameStr : "");
     if (app.persistent) {
-      Watchdog.getInstance().processStarted(app.processName,pid);
+      Watchdog.getInstance().processStarted(app.processName,startResult.pid);
     }
     StringBuilder buf=mStringBuilder;
     buf.setLength(0);
@@ -67,7 +67,7 @@ synchronized (bs) {
       buf.append(hostingNameStr);
     }
     buf.append(": pid=");
-    buf.append(pid);
+    buf.append(startResult.pid);
     buf.append(" uid=");
     buf.append(uid);
     buf.append(" gids={");
@@ -79,20 +79,14 @@ synchronized (bs) {
     }
     buf.append("}");
     Slog.i(TAG,buf.toString());
-    if (pid > 0) {
-      app.pid=pid;
-      app.removed=false;
+    app.pid=startResult.pid;
+    app.usingWrapper=startResult.usingWrapper;
+    app.removed=false;
 synchronized (mPidsSelfLocked) {
-        this.mPidsSelfLocked.put(pid,app);
-        Message msg=mHandler.obtainMessage(PROC_START_TIMEOUT_MSG);
-        msg.obj=app;
-        mHandler.sendMessageDelayed(msg,PROC_START_TIMEOUT);
-      }
-    }
- else {
-      app.pid=0;
-      RuntimeException e=new RuntimeException("Failure starting process " + app.processName + ": returned pid="+ pid);
-      Slog.e(TAG,e.getMessage(),e);
+      this.mPidsSelfLocked.put(startResult.pid,app);
+      Message msg=mHandler.obtainMessage(PROC_START_TIMEOUT_MSG);
+      msg.obj=app;
+      mHandler.sendMessageDelayed(msg,startResult.usingWrapper ? PROC_START_TIMEOUT_WITH_WRAPPER : PROC_START_TIMEOUT);
     }
   }
  catch (  RuntimeException e) {
