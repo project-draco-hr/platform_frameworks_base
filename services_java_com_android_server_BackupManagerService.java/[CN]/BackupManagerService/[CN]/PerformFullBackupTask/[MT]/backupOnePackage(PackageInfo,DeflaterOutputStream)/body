@@ -1,0 +1,61 @@
+{
+  Slog.d(TAG,"Binding to full backup agent : " + pkg.packageName);
+  IBackupAgent agent=bindToAgentSynchronous(pkg.applicationInfo,IApplicationThread.BACKUP_MODE_FULL);
+  if (agent != null) {
+    ParcelFileDescriptor[] pipes=null;
+    try {
+      pipes=ParcelFileDescriptor.createPipe();
+      ApplicationInfo app=pkg.applicationInfo;
+      final boolean sendApk=mIncludeApks && ((app.flags & ApplicationInfo.FLAG_FORWARD_LOCK) == 0) && ((app.flags & ApplicationInfo.FLAG_SYSTEM) == 0 || (app.flags & ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0);
+      sendOnBackupPackage(pkg.packageName);
+      final int token=generateToken();
+      FullBackupRunner runner=new FullBackupRunner(pkg,agent,pipes[1],token,sendApk);
+      pipes[1].close();
+      pipes[1]=null;
+      Thread t=new Thread(runner);
+      t.start();
+      try {
+        FileInputStream raw=new FileInputStream(pipes[0].getFileDescriptor());
+        DataInputStream in=new DataInputStream(raw);
+        byte[] buffer=new byte[16 * 1024];
+        int chunkTotal;
+        while ((chunkTotal=in.readInt()) > 0) {
+          while (chunkTotal > 0) {
+            int toRead=(chunkTotal > buffer.length) ? buffer.length : chunkTotal;
+            int nRead=in.read(buffer,0,toRead);
+            out.write(buffer,0,nRead);
+            chunkTotal-=nRead;
+          }
+        }
+      }
+ catch (      IOException e) {
+        Slog.i(TAG,"Caught exception reading from agent",e);
+      }
+      if (!waitUntilOperationComplete(token)) {
+        Slog.e(TAG,"Full backup failed on package " + pkg.packageName);
+      }
+ else {
+        if (DEBUG)         Slog.d(TAG,"Full package backup success: " + pkg.packageName);
+      }
+    }
+ catch (    IOException e) {
+      Slog.e(TAG,"Error backing up " + pkg.packageName,e);
+    }
+ finally {
+      try {
+        if (pipes != null) {
+          if (pipes[0] != null)           pipes[0].close();
+          if (pipes[1] != null)           pipes[1].close();
+        }
+        out.flush();
+      }
+ catch (      IOException e) {
+        Slog.w(TAG,"Error bringing down backup stack");
+      }
+    }
+  }
+ else {
+    Slog.w(TAG,"Unable to bind to full agent for " + pkg.packageName);
+  }
+  tearDown(pkg);
+}
