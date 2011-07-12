@@ -1,11 +1,55 @@
 {
   mContext.enforceCallingOrSelfPermission(android.Manifest.permission.ACCESS_NETWORK_STATE,"NetworkManagementService");
-  final String[] ifaces=listInterfaces();
-  final NetworkStats stats=new NetworkStats(SystemClock.elapsedRealtime(),ifaces.length);
-  for (  String iface : ifaces) {
-    final long rx=getInterfaceCounter(iface,true);
-    final long tx=getInterfaceCounter(iface,false);
-    stats.addEntry(iface,UID_ALL,TAG_NONE,rx,tx);
+  final NetworkStats stats=new NetworkStats(SystemClock.elapsedRealtime(),6);
+  final NetworkStats.Entry entry=new NetworkStats.Entry();
+  final HashSet<String> activeIfaces=Sets.newHashSet();
+  final ArrayList<String> values=Lists.newArrayList();
+  BufferedReader reader=null;
+  try {
+    reader=new BufferedReader(new FileReader(mStatsIface));
+    reader.readLine();
+    reader.readLine();
+    String line;
+    while ((line=reader.readLine()) != null) {
+      splitLine(line,values);
+      try {
+        entry.iface=values.get(0);
+        entry.uid=UID_ALL;
+        entry.tag=TAG_NONE;
+        entry.rxBytes=Long.parseLong(values.get(1));
+        entry.rxPackets=Long.parseLong(values.get(2));
+        entry.txBytes=Long.parseLong(values.get(9));
+        entry.txPackets=Long.parseLong(values.get(10));
+        activeIfaces.add(entry.iface);
+        stats.addValues(entry);
+      }
+ catch (      NumberFormatException e) {
+        Slog.w(TAG,"problem parsing stats row '" + line + "': "+ e);
+      }
+    }
+  }
+ catch (  IOException e) {
+    Slog.w(TAG,"problem parsing stats: " + e);
+  }
+ finally {
+    IoUtils.closeQuietly(reader);
+  }
+  if (DBG)   Slog.d(TAG,"recorded active stats from " + activeIfaces);
+  if (mBandwidthControlEnabled) {
+    final HashSet<String> xtIfaces=Sets.newHashSet(fileListWithoutNull(mStatsXtIface));
+    xtIfaces.removeAll(activeIfaces);
+    for (    String iface : xtIfaces) {
+      final File ifacePath=new File(mStatsXtIface,iface);
+      entry.iface=iface;
+      entry.uid=UID_ALL;
+      entry.tag=TAG_NONE;
+      entry.rxBytes=readSingleLongFromFile(new File(ifacePath,"rx_bytes"));
+      entry.rxPackets=readSingleLongFromFile(new File(ifacePath,"rx_packets"));
+      entry.txBytes=readSingleLongFromFile(new File(ifacePath,"tx_bytes"));
+      entry.txPackets=readSingleLongFromFile(new File(ifacePath,"tx_packets"));
+      stats.addValues(entry);
+    }
+    if (DBG)     Slog.d(TAG,"recorded stale stats from " + xtIfaces);
   }
   return stats;
 }
