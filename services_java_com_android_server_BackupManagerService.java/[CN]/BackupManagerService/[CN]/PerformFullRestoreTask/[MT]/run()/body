@@ -8,7 +8,41 @@
     mBytes=0;
     byte[] buffer=new byte[32 * 1024];
     FileInputStream rawInStream=new FileInputStream(mInputFile.getFileDescriptor());
-    InflaterInputStream in=new InflaterInputStream(rawInStream);
+    boolean compressed=false;
+    boolean encrypted=false;
+    final InputStream in;
+    boolean okay=false;
+    final int headerLen=BACKUP_FILE_HEADER_MAGIC.length();
+    byte[] streamHeader=new byte[headerLen];
+    try {
+      int got;
+      if ((got=rawInStream.read(streamHeader,0,headerLen)) == headerLen) {
+        byte[] magicBytes=BACKUP_FILE_HEADER_MAGIC.getBytes("UTF-8");
+        if (Arrays.equals(magicBytes,streamHeader)) {
+          String s=readHeaderLine(rawInStream);
+          if (Integer.parseInt(s) == BACKUP_FILE_VERSION) {
+            s=readHeaderLine(rawInStream);
+            compressed=(Integer.parseInt(s) != 0);
+            s=readHeaderLine(rawInStream);
+            if (!s.startsWith("-")) {
+              encrypted=true;
+            }
+            okay=true;
+          }
+ else           Slog.e(TAG,"Wrong header version: " + s);
+        }
+ else         Slog.e(TAG,"Didn't read the right header magic");
+      }
+ else       Slog.e(TAG,"Only read " + got + " bytes of header");
+    }
+ catch (    NumberFormatException e) {
+      Slog.e(TAG,"Can't parse restore data header");
+    }
+    if (!okay) {
+      Slog.e(TAG,"Invalid restore data; aborting.");
+      return;
+    }
+    in=(compressed) ? new InflaterInputStream(rawInStream) : rawInStream;
     boolean didRestore;
     do {
       didRestore=restoreOneFile(in,buffer);
@@ -16,7 +50,10 @@
  while (didRestore);
     if (DEBUG)     Slog.v(TAG,"Done consuming input tarfile, total bytes=" + mBytes);
   }
-  finally {
+ catch (  IOException e) {
+    Slog.e(TAG,"Unable to read restore input");
+  }
+ finally {
     tearDownPipes();
     tearDownAgent(mTargetApp);
     try {
