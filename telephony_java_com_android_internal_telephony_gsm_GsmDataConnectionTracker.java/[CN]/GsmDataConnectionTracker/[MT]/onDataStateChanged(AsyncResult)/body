@@ -7,16 +7,19 @@
     return;
   }
   if (DBG)   log("onDataStateChanged(ar): DataCallState size=" + dataCallStates.size());
-  HashMap<DataCallState,DataConnectionAc> response;
-  response=new HashMap<DataCallState,DataConnectionAc>();
+  HashMap<DataCallState,DataConnectionAc> dataCallStateToDcac;
+  dataCallStateToDcac=new HashMap<DataCallState,DataConnectionAc>();
   for (  DataCallState dataCallState : dataCallStates) {
     DataConnectionAc dcac=findDataConnectionAcByCid(dataCallState.cid);
-    if (dcac != null)     response.put(dataCallState,dcac);
+    if (dcac != null)     dataCallStateToDcac.put(dataCallState,dcac);
   }
-  List<ApnContext> apnsToClear=findApnContextToClean(response.values());
+  List<ApnContext> apnsToCleanup=findApnContextToClean(dataCallStateToDcac.values());
   for (  DataCallState newState : dataCallStates) {
-    DataConnectionAc dcac=response.get(newState);
-    if (dcac == null)     continue;
+    DataConnectionAc dcac=dataCallStateToDcac.get(newState);
+    if (dcac == null) {
+      loge("onDataStateChanged(ar): No associated DataConnection ignore");
+      continue;
+    }
     Collection<ApnContext> apns=dcac.getApnListSync();
     ArrayList<ApnContext> connectedApns=new ArrayList<ApnContext>();
     for (    ApnContext apnContext : apns) {
@@ -24,48 +27,70 @@
         connectedApns.add(apnContext);
       }
     }
-    if (connectedApns.isEmpty()) {
-      continue;
+    if (connectedApns.size() == 0) {
+      if (DBG)       log("onDataStateChanged(ar): no connected apns");
     }
-    if (DBG)     log("onDataStateChanged(ar): Found ConnId=" + newState.cid + " newState="+ newState.toString());
-    if (newState.active != 0) {
-      boolean resetConnection;
-switch (dcac.updateLinkPropertiesDataCallStateSync(newState)) {
-case NONE:
-        if (DBG)         log("onDataStateChanged(ar): Found but no change, skip");
-      resetConnection=false;
-    break;
-case CHANGED:
-  for (  ApnContext apnContext : connectedApns) {
-    if (DBG)     log("onDataStateChanged(ar): Found and changed, notify (" + apnContext.toString() + ")");
-    mPhone.notifyDataConnection(Phone.REASON_LINK_PROPERTIES_CHANGED,apnContext.getApnType());
-  }
-if (SystemProperties.getBoolean("telephony.ignore-state-changes",true)) {
-  log("onDataStateChanged(ar): STOPSHIP don't reset, continue");
-  resetConnection=false;
-}
  else {
-  log("onDataStateChanged(ar): changed so resetting connection");
-  resetConnection=true;
-}
-break;
-case RESET:
-default :
-if (DBG) log("onDataStateChanged(ar): an error, reset connection");
-resetConnection=true;
-break;
-}
-if (resetConnection == false) continue;
-}
-if (DBG) log("onDataStateChanged(ar): reset connection.");
-apnsToClear.addAll(connectedApns);
-}
-if (!apnsToClear.isEmpty()) {
-int cid=getCellLocationId();
-EventLog.writeEvent(EventLogTags.PDP_NETWORK_DROP,cid,TelephonyManager.getDefault().getNetworkType());
-}
-for (ApnContext apnContext : apnsToClear) {
-cleanUpConnection(true,apnContext);
-}
-if (DBG) log("onDataStateChanged(ar): X");
+      if (DBG)       log("onDataStateChanged(ar): Found ConnId=" + newState.cid + " newState="+ newState.toString());
+      if (newState.active == 0) {
+        if (DBG) {
+          log("onDataStateChanged(ar): inactive, cleanup apns=" + connectedApns);
+        }
+        apnsToCleanup.addAll(connectedApns);
+      }
+ else {
+        UpdateLinkPropertyResult result=dcac.updateLinkPropertiesDataCallStateSync(newState);
+        if (result.oldLp.equals(result.newLp)) {
+          if (DBG)           log("onDataStateChanged(ar): no change");
+        }
+ else {
+          if (result.oldLp.isIdenticalInterfaceName(result.newLp)) {
+            if (!result.oldLp.isIdenticalDnses(result.newLp) || !result.oldLp.isIdenticalRoutes(result.newLp) || !result.oldLp.isIdenticalHttpProxy(result.newLp)|| !result.oldLp.isIdenticalAddresses(result.newLp)) {
+              CompareAddressesResult car=result.oldLp.compareAddresses(result.newLp);
+              boolean needToClean=false;
+              for (              LinkAddress added : car.added) {
+                for (                LinkAddress removed : car.removed) {
+                  if (NetworkUtils.addressTypeMatches(removed.getAddress(),added.getAddress())) {
+                    needToClean=true;
+                    break;
+                  }
+                }
+              }
+              if (needToClean) {
+                if (DBG) {
+                  log("onDataStateChanged(ar): addr change, cleanup apns=" + connectedApns);
+                }
+                apnsToCleanup.addAll(connectedApns);
+              }
+ else {
+                if (DBG)                 log("onDataStateChanged(ar): simple change");
+                for (                ApnContext apnContext : connectedApns) {
+                  mPhone.notifyDataConnection(Phone.REASON_LINK_PROPERTIES_CHANGED,apnContext.getApnType());
+                }
+              }
+            }
+ else {
+              if (DBG) {
+                log("onDataStateChanged(ar): no changes");
+              }
+            }
+          }
+ else {
+            if (DBG) {
+              log("onDataStateChanged(ar): interface change, cleanup apns=" + connectedApns);
+            }
+            apnsToCleanup.addAll(connectedApns);
+          }
+        }
+      }
+    }
+  }
+  if (apnsToCleanup.size() != 0) {
+    int cid=getCellLocationId();
+    EventLog.writeEvent(EventLogTags.PDP_NETWORK_DROP,cid,TelephonyManager.getDefault().getNetworkType());
+  }
+  for (  ApnContext apnContext : apnsToCleanup) {
+    cleanUpConnection(true,apnContext);
+  }
+  if (DBG)   log("onDataStateChanged(ar): X");
 }
