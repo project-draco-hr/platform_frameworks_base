@@ -11,10 +11,10 @@
         checkpoint(true);
       }
     }
-    SystemProperties.set("vpn.dns",NONE);
-    SystemProperties.set("vpn.via",NONE);
-    while (!NONE.equals(SystemProperties.get("vpn.dns")) || !NONE.equals(SystemProperties.get("vpn.via"))) {
-      checkpoint(true);
+    File state=new File("/data/misc/vpn/state");
+    state.delete();
+    if (state.exists()) {
+      throw new IllegalStateException("Cannot delete the state");
     }
     boolean restart=false;
     for (    String[] arguments : mArguments) {
@@ -51,20 +51,30 @@
       OutputStream out=socket.getOutputStream();
       for (      String argument : arguments) {
         byte[] bytes=argument.getBytes(Charsets.UTF_8);
-        if (bytes.length >= 0xFFFF) {
-          throw new IllegalArgumentException("argument is too large");
+        if (bytes.length > 0xFFFF) {
+          throw new IllegalArgumentException("Argument is too large");
         }
         out.write(bytes.length >> 8);
         out.write(bytes.length);
         out.write(bytes);
         checkpoint(false);
       }
-      out.write(0xFF);
-      out.write(0xFF);
       out.flush();
+      socket.shutdownOutput();
+      InputStream in=socket.getInputStream();
+      while (true) {
+        try {
+          if (in.read() == -1) {
+            break;
+          }
+        }
+ catch (        Exception e) {
+        }
+        checkpoint(true);
+      }
       socket.close();
     }
-    while (NONE.equals(SystemProperties.get("vpn.dns")) || NONE.equals(SystemProperties.get("vpn.via"))) {
+    while (!state.exists()) {
       for (int i=0; i < mDaemons.length; ++i) {
         String daemon=mDaemons[i];
         if (mArguments[i] != null && !"running".equals(SystemProperties.get("init.svc." + daemon))) {
@@ -73,13 +83,32 @@
       }
       checkpoint(true);
     }
-    mConfig.interfaze=SystemProperties.get("vpn.via");
+    byte[] buffer=new byte[(int)state.length()];
+    if (new FileInputStream(state).read(buffer) != buffer.length) {
+      throw new IllegalStateException("Cannot read the state");
+    }
+    String[] parameters=new String(buffer,Charsets.UTF_8).split("\n",-1);
+    if (parameters.length != 6) {
+      throw new IllegalStateException("Cannot parse the state");
+    }
+    mConfig.interfaze=parameters[0].trim();
+    mConfig.addresses=parameters[1].trim();
+    if (mConfig.routes == null || mConfig.routes.isEmpty()) {
+      mConfig.routes=parameters[2].trim();
+    }
     if (mConfig.dnsServers == null || mConfig.dnsServers.size() == 0) {
-      String dnsServers=SystemProperties.get("vpn.dns").trim();
+      String dnsServers=parameters[3].trim();
       if (!dnsServers.isEmpty()) {
         mConfig.dnsServers=Arrays.asList(dnsServers.split(" "));
       }
     }
+    if (mConfig.searchDomains == null || mConfig.searchDomains.size() == 0) {
+      String searchDomains=parameters[4].trim();
+      if (!searchDomains.isEmpty()) {
+        mConfig.searchDomains=Arrays.asList(searchDomains.split(" "));
+      }
+    }
+    jniSetRoutes(mConfig.interfaze,mConfig.routes);
 synchronized (Vpn.this) {
       checkpoint(false);
       if (jniCheck(mConfig.interfaze) == 0) {
