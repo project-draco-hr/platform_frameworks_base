@@ -1,5 +1,4 @@
 {
-  boolean didOomAdj=true;
   final ActivityRecord TOP_ACT=resumedAppLocked();
   final ProcessRecord TOP_APP=TOP_ACT != null ? TOP_ACT.app : null;
   if (false) {
@@ -15,32 +14,90 @@
   int numHidden=0;
   int i=mLruProcesses.size();
   int curHiddenAdj=HIDDEN_APP_MIN_ADJ;
+  int numBg=0;
   while (i > 0) {
     i--;
     ProcessRecord app=mLruProcesses.get(i);
-    if (updateOomAdjLocked(app,curHiddenAdj,TOP_APP)) {
-      if (curHiddenAdj < EMPTY_APP_ADJ && app.curAdj == curHiddenAdj) {
-        step++;
-        if (step >= factor) {
-          step=0;
-          curHiddenAdj++;
-        }
-      }
-      if (app.curAdj >= HIDDEN_APP_MIN_ADJ) {
-        if (!app.killedBackground) {
-          numHidden++;
-          if (numHidden > MAX_HIDDEN_APPS) {
-            Slog.i(TAG,"No longer want " + app.processName + " (pid "+ app.pid+ "): hidden #"+ numHidden);
-            EventLog.writeEvent(EventLogTags.AM_KILL,app.pid,app.processName,app.setAdj,"too many background");
-            app.killedBackground=true;
-            Process.killProcessQuiet(app.pid);
-          }
-        }
+    updateOomAdjLocked(app,curHiddenAdj,TOP_APP);
+    if (curHiddenAdj < EMPTY_APP_ADJ && app.curAdj == curHiddenAdj) {
+      step++;
+      if (step >= factor) {
+        step=0;
+        curHiddenAdj++;
       }
     }
+    if (!app.killedBackground) {
+      if (app.curAdj >= HIDDEN_APP_MIN_ADJ) {
+        numHidden++;
+        if (numHidden > mProcessLimit) {
+          Slog.i(TAG,"No longer want " + app.processName + " (pid "+ app.pid+ "): hidden #"+ numHidden);
+          EventLog.writeEvent(EventLogTags.AM_KILL,app.pid,app.processName,app.setAdj,"too many background");
+          app.killedBackground=true;
+          Process.killProcessQuiet(app.pid);
+        }
  else {
-      didOomAdj=false;
+          numBg++;
+        }
+      }
+ else       if (app.curAdj >= HOME_APP_ADJ) {
+        numBg++;
+      }
     }
   }
-  return ENFORCE_PROCESS_LIMIT || mProcessLimit > 0 ? false : didOomAdj;
+  if (numHidden <= (MAX_HIDDEN_APPS / 2)) {
+    final int N=mLruProcesses.size();
+    factor=numBg / 3;
+    step=0;
+    int curLevel=ComponentCallbacks.TRIM_MEMORY_COMPLETE;
+    for (i=0; i < N; i++) {
+      ProcessRecord app=mLruProcesses.get(i);
+      if (app.curAdj >= HIDDEN_APP_MIN_ADJ && !app.killedBackground) {
+        if (app.trimMemoryLevel < curLevel && app.thread != null) {
+          try {
+            app.thread.scheduleTrimMemory(curLevel);
+          }
+ catch (          RemoteException e) {
+          }
+          if (curLevel >= ComponentCallbacks.TRIM_MEMORY_COMPLETE) {
+            mMainStack.destroyActivitiesLocked(app,false);
+          }
+        }
+        app.trimMemoryLevel=curLevel;
+        step++;
+        if (step >= factor) {
+switch (curLevel) {
+case ComponentCallbacks.TRIM_MEMORY_COMPLETE:
+            curLevel=ComponentCallbacks.TRIM_MEMORY_MODERATE;
+          break;
+case ComponentCallbacks.TRIM_MEMORY_MODERATE:
+        curLevel=ComponentCallbacks.TRIM_MEMORY_BACKGROUND;
+      break;
+  }
+}
+}
+ else if (app.curAdj >= PERCEPTIBLE_APP_ADJ) {
+if (app.trimMemoryLevel < ComponentCallbacks.TRIM_MEMORY_INVISIBLE && app.thread != null) {
+  try {
+    app.thread.scheduleTrimMemory(ComponentCallbacks.TRIM_MEMORY_INVISIBLE);
+  }
+ catch (  RemoteException e) {
+  }
+}
+app.trimMemoryLevel=ComponentCallbacks.TRIM_MEMORY_INVISIBLE;
+}
+ else {
+app.trimMemoryLevel=0;
+}
+}
+}
+ else {
+final int N=mLruProcesses.size();
+for (i=0; i < N; i++) {
+ProcessRecord app=mLruProcesses.get(i);
+app.trimMemoryLevel=0;
+}
+}
+if (mAlwaysFinishActivities) {
+mMainStack.destroyActivitiesLocked(null,false);
+}
 }
