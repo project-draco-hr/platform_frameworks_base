@@ -1,0 +1,53 @@
+{
+  if (msg.what != MESSAGE_CHECK_STEP) {
+    return NOT_HANDLED;
+  }
+  if (msg.arg1 != mNetEventCounter) {
+    Slog.d(WWSM_TAG,"Check step out of sync, ignoring...");
+    return HANDLED;
+  }
+  long pingResponseTime=mDnsPinger.pingDns(mDnsPinger.getDns(),DNS_PING_TIMEOUT_MS);
+  dnsCheckTries++;
+  if (pingResponseTime >= 0)   dnsCheckSuccesses++;
+  if (DBG) {
+    if (pingResponseTime >= 0) {
+      dnsCheckLogStr+="|" + pingResponseTime;
+    }
+ else {
+      dnsCheckLogStr+="|x";
+    }
+  }
+  if (VDBG) {
+    Slog.v(WWSM_TAG,dnsCheckLogStr);
+  }
+  double pingResponseCutoff=MIN_DNS_RESPONSE_RATE * NUM_DNS_PINGS;
+  int remainingChecks=NUM_DNS_PINGS - dnsCheckTries;
+  if (dnsCheckSuccesses >= pingResponseCutoff) {
+    if (DBG) {
+      Slog.d(WWSM_TAG,dnsCheckLogStr + "|  SUCCESS");
+    }
+    if (!shouldCheckWalledGarden()) {
+      transitionTo(mOnlineWatchState);
+      return HANDLED;
+    }
+    mLastWalledGardenCheckTime=SystemClock.elapsedRealtime();
+    if (isWalledGardenConnection()) {
+      if (DBG)       Slog.d(WWSM_TAG,"Walled garden test complete - walled garden detected");
+      transitionTo(mWalledGardenState);
+    }
+ else {
+      if (DBG)       Slog.d(WWSM_TAG,"Walled garden test complete - online");
+      transitionTo(mOnlineWatchState);
+    }
+    return HANDLED;
+  }
+  if (remainingChecks + dnsCheckSuccesses < pingResponseCutoff) {
+    if (DBG) {
+      Slog.d(WWSM_TAG,dnsCheckLogStr + "|  FAILURE");
+    }
+    transitionTo(mDnsCheckFailureState);
+    return HANDLED;
+  }
+  sendCheckStepMessage(DNS_PING_INTERVAL_MS);
+  return HANDLED;
+}
