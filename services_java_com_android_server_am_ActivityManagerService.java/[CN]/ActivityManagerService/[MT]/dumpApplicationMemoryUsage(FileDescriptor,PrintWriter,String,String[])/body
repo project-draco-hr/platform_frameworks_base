@@ -14,6 +14,9 @@
     pw.println("Applications Memory Usage (kB):");
     pw.println("Uptime: " + uptime + " Realtime: "+ realtime);
   }
+  ArrayList<MemItem> procMems=new ArrayList<MemItem>();
+  long nativePss=0, dalvikPss=0, otherPss=0;
+  long[] miscPss=new long[Debug.MemoryInfo.NUM_OTHER_STATS];
   for (int i=procs.size() - 1; i >= 0; i--) {
     ProcessRecord r=procs.get(i);
     if (r.thread != null) {
@@ -21,19 +24,42 @@
         pw.println("\n** MEMINFO in pid " + r.pid + " ["+ r.processName+ "] **");
         pw.flush();
       }
+      Debug.MemoryInfo mi=null;
       try {
-        TransferPipe.goDump(r.thread.asBinder(),fd,args);
+        mi=r.thread.dumpMemInfo(fd,args);
       }
- catch (      IOException e) {
-        pw.println("Failure: " + e);
-        pw.flush();
-      }
-catch (      RemoteException e) {
+ catch (      RemoteException e) {
         if (!isCheckinRequest) {
           pw.println("Got RemoteException!");
           pw.flush();
         }
       }
+      if (!isCheckinRequest && mi != null) {
+        procMems.add(new MemItem(r.processName + " (pid " + r.pid+ ")",mi.getTotalPss()));
+        nativePss+=mi.nativePss;
+        dalvikPss+=mi.dalvikPss;
+        otherPss+=mi.otherPss;
+        for (int j=0; j < Debug.MemoryInfo.NUM_OTHER_STATS; j++) {
+          long mem=mi.getOtherPss(j);
+          miscPss[j]+=mem;
+          otherPss-=mem;
+        }
+      }
     }
+  }
+  if (!isCheckinRequest && procs.size() > 1) {
+    ArrayList<MemItem> catMems=new ArrayList<MemItem>();
+    catMems.add(new MemItem("Native",nativePss));
+    catMems.add(new MemItem("Dalvik",dalvikPss));
+    catMems.add(new MemItem("Unknown",otherPss));
+    for (int j=0; j < Debug.MemoryInfo.NUM_OTHER_STATS; j++) {
+      catMems.add(new MemItem(Debug.MemoryInfo.getOtherLabel(j),miscPss[j]));
+    }
+    pw.println();
+    pw.println("Total PSS by process:");
+    dumpMemItems(pw,"  ",procMems);
+    pw.println();
+    pw.println("Total PSS by category:");
+    dumpMemItems(pw,"  ",catMems);
   }
 }
