@@ -1,0 +1,97 @@
+{
+  if (DBG)   Slog.d(TAG,getName() + message.toString());
+switch (message.what) {
+case WifiMonitor.AP_STA_CONNECTED_EVENT:
+    String address=(String)message.obj;
+  mGroup.addClient(address);
+updateDeviceStatus(address,Status.CONNECTED);
+if (DBG) Slog.d(TAG,getName() + " ap sta connected");
+sendP2pPeersChangedBroadcast();
+break;
+case WifiMonitor.AP_STA_DISCONNECTED_EVENT:
+address=(String)message.obj;
+updateDeviceStatus(address,Status.AVAILABLE);
+if (mGroup.removeClient(address)) {
+if (DBG) Slog.d(TAG,"Removed client " + address);
+if (mGroup.isClientListEmpty()) {
+Slog.d(TAG,"Client list empty, killing p2p connection");
+sendMessage(WifiP2pManager.REMOVE_GROUP);
+}
+ else {
+sendP2pPeersChangedBroadcast();
+}
+}
+ else {
+if (DBG) Slog.d(TAG,"Failed to remove client " + address);
+for (WifiP2pDevice c : mGroup.getClientList()) {
+if (DBG) Slog.d(TAG,"client " + c.deviceAddress);
+}
+}
+if (DBG) Slog.e(TAG,getName() + " ap sta disconnected");
+break;
+case WifiP2pManager.CANCEL_CONNECT:
+case WifiP2pManager.REMOVE_GROUP:
+if (DBG) Slog.e(TAG,getName() + " remove group");
+WifiNative.p2pFlush();
+WifiNative.p2pGroupRemove(mGroup.getInterface());
+break;
+case WifiMonitor.P2P_GROUP_REMOVED_EVENT:
+if (DBG) Slog.e(TAG,getName() + " group removed");
+Collection<WifiP2pDevice> devices=mGroup.getClientList();
+boolean changed=false;
+for (WifiP2pDevice d : mPeers.getDeviceList()) {
+if (devices.contains(d) || mGroup.getOwner().equals(d)) {
+d.status=Status.AVAILABLE;
+changed=true;
+}
+}
+mGroup=null;
+if (changed) sendP2pPeersChangedBroadcast();
+transitionTo(mInactiveState);
+break;
+case WifiMonitor.P2P_DEVICE_LOST_EVENT:
+WifiP2pDevice device=(WifiP2pDevice)message.obj;
+if (device.equals(mGroup.getOwner())) {
+Slog.d(TAG,"Lost the group owner, killing p2p connection");
+sendMessage(WifiP2pManager.REMOVE_GROUP);
+}
+ else if (mGroup.removeClient(device) && mGroup.isClientListEmpty()) {
+Slog.d(TAG,"Client list empty, killing p2p connection");
+sendMessage(WifiP2pManager.REMOVE_GROUP);
+}
+return NOT_HANDLED;
+case WifiP2pManager.DISABLE_P2P:
+sendMessage(WifiP2pManager.REMOVE_GROUP);
+deferMessage(message);
+break;
+case WifiP2pManager.DISCOVER_PEERS:
+int timeout=message.arg1;
+WifiNative.p2pFind(timeout);
+break;
+case WifiP2pManager.CONNECT:
+WifiP2pConfig config=(WifiP2pConfig)message.obj;
+Slog.d(TAG,"Inviting device : " + config.deviceAddress);
+WifiNative.p2pInvite(mGroup,config.deviceAddress);
+updateDeviceStatus(config.deviceAddress,Status.INVITED);
+sendP2pPeersChangedBroadcast();
+break;
+case WifiMonitor.P2P_INVITATION_RESULT_EVENT:
+Slog.d(TAG,"===> INVITATION RESULT EVENT : " + message.obj);
+break;
+case WifiMonitor.P2P_PROV_DISC_PBC_REQ_EVENT:
+notifyP2pProvDiscPbcRequest((WifiP2pDevice)message.obj);
+break;
+case WifiMonitor.P2P_PROV_DISC_ENTER_PIN_EVENT:
+notifyP2pProvDiscPinRequest((WifiP2pDevice)message.obj);
+break;
+case WifiP2pManager.WPS_PBC:
+WifiNative.p2pWpsPbc();
+break;
+case WifiP2pManager.WPS_PIN:
+WifiNative.p2pWpsPin((String)message.obj);
+break;
+default :
+return NOT_HANDLED;
+}
+return HANDLED;
+}
