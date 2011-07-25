@@ -7,34 +7,46 @@
   for (  NetworkPolicy policy : mNetworkRules.keySet()) {
     final long start=computeLastCycleBoundary(currentTime,policy);
     final long end=currentTime;
-    final long total;
+    final long totalBytes;
     try {
       final NetworkStats stats=mNetworkStats.getSummaryForNetwork(policy.template,start,end);
       final NetworkStats.Entry entry=stats.getValues(0,null);
-      total=entry.rxBytes + entry.txBytes;
+      totalBytes=entry.rxBytes + entry.txBytes;
     }
  catch (    RemoteException e) {
       Slog.w(TAG,"problem reading summary for template " + policy.template);
       continue;
     }
-    if (policy.limitBytes != LIMIT_DISABLED && total >= policy.limitBytes) {
+    if (policy.limitBytes != LIMIT_DISABLED && totalBytes >= policy.limitBytes) {
       cancelNotification(policy,TYPE_WARNING);
-      enqueueNotification(policy,TYPE_LIMIT);
+      if (policy.lastSnooze >= start) {
+        cancelNotification(policy,TYPE_LIMIT);
+        enqueueNotification(policy,TYPE_LIMIT_SNOOZED,totalBytes);
+      }
+ else {
+        cancelNotification(policy,TYPE_LIMIT_SNOOZED);
+        enqueueNotification(policy,TYPE_LIMIT,totalBytes);
+        notifyOverLimitLocked(policy.template);
+      }
     }
  else {
       cancelNotification(policy,TYPE_LIMIT);
-      if (policy.warningBytes != WARNING_DISABLED && total >= policy.warningBytes) {
-        enqueueNotification(policy,TYPE_WARNING);
+      cancelNotification(policy,TYPE_LIMIT_SNOOZED);
+      notifyUnderLimitLocked(policy.template);
+      if (policy.warningBytes != WARNING_DISABLED && totalBytes >= policy.warningBytes) {
+        enqueueNotification(policy,TYPE_WARNING,totalBytes);
       }
  else {
         cancelNotification(policy,TYPE_WARNING);
       }
     }
   }
-  for (  NetworkPolicy policy : mNetworkPolicy) {
+  for (  NetworkPolicy policy : mNetworkPolicy.values()) {
     if (!mNetworkRules.containsKey(policy)) {
       cancelNotification(policy,TYPE_WARNING);
       cancelNotification(policy,TYPE_LIMIT);
+      cancelNotification(policy,TYPE_LIMIT_SNOOZED);
+      notifyUnderLimitLocked(policy.template);
     }
   }
 }

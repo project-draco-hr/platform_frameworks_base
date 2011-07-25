@@ -18,7 +18,7 @@
   }
   mNetworkRules.clear();
   final ArrayList<String> ifaceList=Lists.newArrayList();
-  for (  NetworkPolicy policy : mNetworkPolicy) {
+  for (  NetworkPolicy policy : mNetworkPolicy.values()) {
     ifaceList.clear();
     for (    NetworkIdentity ident : networks.keySet()) {
       if (policy.template.matches(ident)) {
@@ -54,15 +54,34 @@
     if (LOGD) {
       Slog.d(TAG,"applying policy " + policy.toString() + " to ifaces "+ Arrays.toString(ifaces));
     }
-    if (policy.limitBytes != NetworkPolicy.LIMIT_DISABLED) {
-      final long quota=Math.max(0,policy.limitBytes - total);
+    final boolean hasLimit=policy.limitBytes != LIMIT_DISABLED;
+    final boolean hasWarning=policy.warningBytes != WARNING_DISABLED;
+    if (hasLimit || hasWarning) {
+      final long quotaBytes;
+      if (hasLimit) {
+        quotaBytes=Math.max(0,policy.limitBytes - total);
+      }
+ else {
+        quotaBytes=Long.MAX_VALUE;
+      }
       if (ifaces.length > 1) {
         Slog.w(TAG,"shared quota unsupported; generating rule for each iface");
       }
       for (      String iface : ifaces) {
         removeInterfaceQuota(iface);
-        setInterfaceQuota(iface,quota);
-        newMeteredIfaces.add(iface);
+        if (quotaBytes > 0) {
+          setInterfaceQuota(iface,quotaBytes);
+          newMeteredIfaces.add(iface);
+        }
+      }
+    }
+    if (hasWarning) {
+      final long alertBytes=Math.max(0,policy.warningBytes - total);
+      for (      String iface : ifaces) {
+        removeInterfaceAlert(iface);
+        if (alertBytes > 0) {
+          setInterfaceAlert(iface,alertBytes);
+        }
       }
     }
   }
