@@ -26,16 +26,36 @@
     }
   }
   FileOutputStream ofstream=new FileOutputStream(mOutputFile.getFileDescriptor());
-  Deflater deflater=new Deflater(Deflater.BEST_COMPRESSION);
-  DeflaterOutputStream out=new DeflaterOutputStream(ofstream,deflater,true);
+  OutputStream out=null;
   PackageInfo pkg=null;
   try {
-    StringBuffer headerbuf=new StringBuffer(256);
+    boolean encrypting=(mUserPassword != null && mUserPassword.length() > 0);
+    boolean compressing=COMPRESS_FULL_BACKUPS;
+    OutputStream finalOutput=ofstream;
+    StringBuilder headerbuf=new StringBuilder(1024);
     headerbuf.append(BACKUP_FILE_HEADER_MAGIC);
-    headerbuf.append("1\n1\n-\n");
+    headerbuf.append(BACKUP_FILE_VERSION);
+    headerbuf.append(compressing ? "\n1\n" : "\n0\n");
     try {
+      if (encrypting) {
+        if (hasBackupPassword()) {
+          if (!passwordMatchesSaved(mUserPassword,PBKDF2_HASH_ROUNDS)) {
+            if (DEBUG)             Slog.w(TAG,"Backup password mismatch; aborting");
+            return;
+          }
+        }
+        finalOutput=emitAesBackupHeader(headerbuf,finalOutput);
+      }
+ else {
+        headerbuf.append("none\n");
+      }
       byte[] header=headerbuf.toString().getBytes("UTF-8");
       ofstream.write(header);
+      if (compressing) {
+        Deflater deflater=new Deflater(Deflater.BEST_COMPRESSION);
+        finalOutput=new DeflaterOutputStream(finalOutput,deflater,true);
+      }
+      out=finalOutput;
     }
  catch (    Exception e) {
       Slog.e(TAG,"Unable to emit archive header",e);
@@ -56,7 +76,7 @@
  finally {
     tearDown(pkg);
     try {
-      out.close();
+      if (out != null)       out.close();
       mOutputFile.close();
     }
  catch (    IOException e) {

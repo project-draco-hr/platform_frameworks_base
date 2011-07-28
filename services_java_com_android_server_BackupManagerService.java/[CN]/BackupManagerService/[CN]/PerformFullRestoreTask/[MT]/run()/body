@@ -4,45 +4,46 @@
   if (Environment.getExternalStorageState().equals(Environment.MEDIA_MOUNTED)) {
     mPackagePolicies.put("com.android.sharedstoragebackup",RestorePolicy.ACCEPT);
   }
+  FileInputStream rawInStream=null;
+  DataInputStream rawDataIn=null;
   try {
     mBytes=0;
     byte[] buffer=new byte[32 * 1024];
-    FileInputStream rawInStream=new FileInputStream(mInputFile.getFileDescriptor());
+    rawInStream=new FileInputStream(mInputFile.getFileDescriptor());
+    rawDataIn=new DataInputStream(rawInStream);
     boolean compressed=false;
-    boolean encrypted=false;
+    InputStream preCompressStream=rawInStream;
     final InputStream in;
     boolean okay=false;
     final int headerLen=BACKUP_FILE_HEADER_MAGIC.length();
     byte[] streamHeader=new byte[headerLen];
-    try {
-      int got;
-      if ((got=rawInStream.read(streamHeader,0,headerLen)) == headerLen) {
-        byte[] magicBytes=BACKUP_FILE_HEADER_MAGIC.getBytes("UTF-8");
-        if (Arrays.equals(magicBytes,streamHeader)) {
-          String s=readHeaderLine(rawInStream);
-          if (Integer.parseInt(s) == BACKUP_FILE_VERSION) {
-            s=readHeaderLine(rawInStream);
-            compressed=(Integer.parseInt(s) != 0);
-            s=readHeaderLine(rawInStream);
-            if (!s.startsWith("-")) {
-              encrypted=true;
-            }
+    rawDataIn.readFully(streamHeader);
+    byte[] magicBytes=BACKUP_FILE_HEADER_MAGIC.getBytes("UTF-8");
+    if (Arrays.equals(magicBytes,streamHeader)) {
+      String s=readHeaderLine(rawInStream);
+      if (Integer.parseInt(s) == BACKUP_FILE_VERSION) {
+        s=readHeaderLine(rawInStream);
+        compressed=(Integer.parseInt(s) != 0);
+        s=readHeaderLine(rawInStream);
+        if (s.equals("none")) {
+          okay=true;
+        }
+ else         if (mUserPassword != null && mUserPassword.length() > 0) {
+          preCompressStream=decodeAesHeaderAndInitialize(s,rawInStream);
+          if (preCompressStream != null) {
             okay=true;
           }
- else           Slog.e(TAG,"Wrong header version: " + s);
         }
- else         Slog.e(TAG,"Didn't read the right header magic");
+ else         Slog.w(TAG,"Archive is encrypted but no password given");
       }
- else       Slog.e(TAG,"Only read " + got + " bytes of header");
+ else       Slog.w(TAG,"Wrong header version: " + s);
     }
- catch (    NumberFormatException e) {
-      Slog.e(TAG,"Can't parse restore data header");
-    }
+ else     Slog.w(TAG,"Didn't read the right header magic");
     if (!okay) {
-      Slog.e(TAG,"Invalid restore data; aborting.");
+      Slog.w(TAG,"Invalid restore data; aborting.");
       return;
     }
-    in=(compressed) ? new InflaterInputStream(rawInStream) : rawInStream;
+    in=(compressed) ? new InflaterInputStream(preCompressStream) : preCompressStream;
     boolean didRestore;
     do {
       didRestore=restoreOneFile(in,buffer);
@@ -57,6 +58,8 @@
     tearDownPipes();
     tearDownAgent(mTargetApp);
     try {
+      if (rawDataIn != null)       rawDataIn.close();
+      if (rawInStream != null)       rawInStream.close();
       mInputFile.close();
     }
  catch (    IOException e) {
