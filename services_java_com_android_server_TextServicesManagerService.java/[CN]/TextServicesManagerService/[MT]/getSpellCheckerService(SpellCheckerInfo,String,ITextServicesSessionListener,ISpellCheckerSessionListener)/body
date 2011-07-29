@@ -11,10 +11,11 @@ synchronized (mSpellCheckerMap) {
     if (!mSpellCheckerMap.containsKey(sciId)) {
       return;
     }
+    final int uid=Binder.getCallingUid();
     if (mSpellCheckerBindGroups.containsKey(sciId)) {
       final SpellCheckerBindGroup bindGroup=mSpellCheckerBindGroups.get(sciId);
       if (bindGroup != null) {
-        final InternalDeathRecipient recipient=mSpellCheckerBindGroups.get(sciId).addListener(tsListener,locale,scListener);
+        final InternalDeathRecipient recipient=mSpellCheckerBindGroups.get(sciId).addListener(tsListener,locale,scListener,uid);
         if (recipient == null) {
           if (DBG) {
             Slog.w(TAG,"Didn't create a death recipient.");
@@ -27,12 +28,20 @@ synchronized (mSpellCheckerMap) {
         }
  else         if (bindGroup.mSpellChecker != null) {
           if (DBG) {
-            Slog.w(TAG,"Existing bind found. Return a spell checker session now.");
+            Slog.w(TAG,"Existing bind found. Return a spell checker session now. " + "Listeners count = " + bindGroup.mListeners.size());
           }
           try {
             final ISpellCheckerSession session=bindGroup.mSpellChecker.getISpellCheckerSession(recipient.mScLocale,recipient.mScListener);
-            tsListener.onServiceConnected(session);
-            return;
+            if (session != null) {
+              tsListener.onServiceConnected(session);
+              return;
+            }
+ else {
+              if (DBG) {
+                Slog.w(TAG,"Existing bind already expired. ");
+              }
+              bindGroup.removeAll();
+            }
           }
  catch (          RemoteException e) {
             Slog.e(TAG,"Exception in getting spell checker session: " + e);
@@ -43,7 +52,7 @@ synchronized (mSpellCheckerMap) {
     }
     final long ident=Binder.clearCallingIdentity();
     try {
-      startSpellCheckerServiceInnerLocked(info,locale,tsListener,scListener);
+      startSpellCheckerServiceInnerLocked(info,locale,tsListener,scListener,uid);
     }
   finally {
       Binder.restoreCallingIdentity(ident);
