@@ -1,5 +1,6 @@
 {
-  Log.i(TAG,"Processing command:" + command);
+  Log.e(TAG,"Processing command:" + command);
+  Message msg;
 switch (command) {
 case CONNECT_HFP_OUTGOING:
     if (mHeadsetService != null) {
@@ -10,12 +11,20 @@ case CONNECT_HFP_INCOMING:
 if (!mHeadsetServiceConnected) {
   deferProfileServiceMessage(command);
 }
- else if (mHeadsetState == BluetoothHeadset.STATE_CONNECTING) {
-  return mHeadsetService.acceptIncomingConnect(mDevice);
-}
- else if (mHeadsetState == BluetoothHeadset.STATE_DISCONNECTED) {
-  handleConnectionOfOtherProfiles(command);
-  return mHeadsetService.createIncomingConnect(mDevice);
+ else {
+  int access=getTrust();
+  if (access == BluetoothDevice.CONNECTION_ACCESS_YES) {
+    handleIncomingConnection(command,true);
+  }
+ else   if (access == BluetoothDevice.CONNECTION_ACCESS_NO && !readIncomingAllowedValue()) {
+    handleIncomingConnection(command,false);
+  }
+ else {
+    sendConnectionAccessIntent();
+    msg=obtainMessage(CONNECTION_ACCESS_REQUEST_EXPIRY);
+    sendMessageDelayed(msg,CONNECTION_ACCESS_REQUEST_EXPIRY_TIMEOUT);
+  }
+  return true;
 }
 break;
 case CONNECT_A2DP_OUTGOING:
@@ -24,7 +33,18 @@ return mA2dpService.connectSinkInternal(mDevice);
 }
 break;
 case CONNECT_A2DP_INCOMING:
-handleConnectionOfOtherProfiles(command);
+int access=getTrust();
+if (access == BluetoothDevice.CONNECTION_ACCESS_YES) {
+handleIncomingConnection(command,true);
+}
+ else if (access == BluetoothDevice.CONNECTION_ACCESS_NO && !readIncomingAllowedValue()) {
+handleIncomingConnection(command,false);
+}
+ else {
+sendConnectionAccessIntent();
+msg=obtainMessage(CONNECTION_ACCESS_REQUEST_EXPIRY);
+sendMessageDelayed(msg,CONNECTION_ACCESS_REQUEST_EXPIRY_TIMEOUT);
+}
 return true;
 case DISCONNECT_HFP_OUTGOING:
 if (!mHeadsetServiceConnected) {
@@ -61,6 +81,8 @@ return mPbapService.disconnect();
 }
 break;
 case UNPAIR:
+writeTimerValue(INIT_INCOMING_REJECT_TIMER);
+setTrust(CONNECTION_ACCESS_UNDEFINED);
 return mService.removeBondInternal(mDevice.getAddress());
 default :
 Log.e(TAG,"Error: Unknown Command");
