@@ -10,6 +10,15 @@
   if (Binder.getCallingUid() != app.uid) {
     return null;
   }
+  Intent intent=new Intent(VpnConfig.SERVICE_INTERFACE);
+  intent.setClassName(mPackage,config.user);
+  ResolveInfo info=pm.resolveService(intent,0);
+  if (info == null) {
+    throw new SecurityException("Cannot find " + config.user);
+  }
+  if (!BIND_VPN_SERVICE.equals(info.serviceInfo.permission)) {
+    throw new SecurityException(config.user + " does not require " + BIND_VPN_SERVICE);
+  }
   String label=app.loadLabel(pm).toString();
   Drawable icon=app.loadIcon(pm);
   Bitmap bitmap=null;
@@ -31,9 +40,17 @@
     if (config.routes != null) {
       jniSetRoutes(interfaze,config.routes);
     }
+    Connection connection=new Connection();
+    if (!mContext.bindService(intent,connection,Context.BIND_AUTO_CREATE)) {
+      throw new IllegalStateException("Cannot bind " + config.user);
+    }
+    if (mConnection != null) {
+      mContext.unbindService(mConnection);
+    }
     if (mInterface != null && !mInterface.equals(interfaze)) {
       jniReset(mInterface);
     }
+    mConnection=connection;
     mInterface=interfaze;
   }
  catch (  RuntimeException e) {
@@ -44,6 +61,7 @@
     }
     throw e;
   }
+  Log.i(TAG,"Established by " + config.user + " on "+ mInterface);
   config.user=mPackage;
   config.interfaze=mInterface;
   long identity=Binder.clearCallingIdentity();
