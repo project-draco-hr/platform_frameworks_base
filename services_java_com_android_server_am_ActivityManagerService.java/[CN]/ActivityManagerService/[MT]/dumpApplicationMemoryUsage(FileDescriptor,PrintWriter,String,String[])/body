@@ -1,11 +1,36 @@
 {
-  ArrayList<ProcessRecord> procs=collectProcesses(pw,args);
+  boolean dumpAll=false;
+  int opti=0;
+  while (opti < args.length) {
+    String opt=args[opti];
+    if (opt == null || opt.length() <= 0 || opt.charAt(0) != '-') {
+      break;
+    }
+    opti++;
+    if ("-a".equals(opt)) {
+      dumpAll=true;
+    }
+ else     if ("-h".equals(opt)) {
+      pw.println("meminfo dump options: [-a] [process]");
+      pw.println("  -a: include all available information for each process.");
+      pw.println("If [process] is specified it can be the name or ");
+      pw.println("pid of a specific process to dump.");
+      return;
+    }
+ else {
+      pw.println("Unknown argument: " + opt + "; use -h for help");
+    }
+  }
+  ArrayList<ProcessRecord> procs=collectProcesses(pw,opti,args);
   if (procs == null) {
     return;
   }
   final boolean isCheckinRequest=scanArgs(args,"--checkin");
   long uptime=SystemClock.uptimeMillis();
   long realtime=SystemClock.elapsedRealtime();
+  if (procs.size() == 1 || isCheckinRequest) {
+    dumpAll=true;
+  }
   if (isCheckinRequest) {
     pw.println(uptime + "," + realtime);
     pw.flush();
@@ -14,28 +39,42 @@
     pw.println("Applications Memory Usage (kB):");
     pw.println("Uptime: " + uptime + " Realtime: "+ realtime);
   }
+  String[] innerArgs=new String[args.length - opti];
+  System.arraycopy(args,opti,innerArgs,0,args.length - opti);
   ArrayList<MemItem> procMems=new ArrayList<MemItem>();
   long nativePss=0, dalvikPss=0, otherPss=0;
   long[] miscPss=new long[Debug.MemoryInfo.NUM_OTHER_STATS];
+  final int[] oomAdj=new int[]{SYSTEM_ADJ,CORE_SERVER_ADJ,FOREGROUND_APP_ADJ,VISIBLE_APP_ADJ,PERCEPTIBLE_APP_ADJ,HEAVY_WEIGHT_APP_ADJ,BACKUP_APP_ADJ,SECONDARY_SERVER_ADJ,HOME_APP_ADJ,EMPTY_APP_ADJ};
+  final String[] oomLabel=new String[]{"System","Persistent","Foreground","Visible","Perceptible","Heavy Weight","Backup","Services","Home","Background"};
+  long oomPss[]=new long[oomLabel.length];
+  long totalPss=0;
   for (int i=procs.size() - 1; i >= 0; i--) {
     ProcessRecord r=procs.get(i);
     if (r.thread != null) {
-      if (!isCheckinRequest) {
+      if (!isCheckinRequest && dumpAll) {
         pw.println("\n** MEMINFO in pid " + r.pid + " ["+ r.processName+ "] **");
         pw.flush();
       }
       Debug.MemoryInfo mi=null;
-      try {
-        mi=r.thread.dumpMemInfo(fd,args);
-      }
- catch (      RemoteException e) {
-        if (!isCheckinRequest) {
-          pw.println("Got RemoteException!");
-          pw.flush();
+      if (dumpAll) {
+        try {
+          mi=r.thread.dumpMemInfo(fd,isCheckinRequest,dumpAll,innerArgs);
+        }
+ catch (        RemoteException e) {
+          if (!isCheckinRequest) {
+            pw.println("Got RemoteException!");
+            pw.flush();
+          }
         }
       }
+ else {
+        mi=new Debug.MemoryInfo();
+        Debug.getMemoryInfo(r.pid,mi);
+      }
       if (!isCheckinRequest && mi != null) {
-        procMems.add(new MemItem(r.processName + " (pid " + r.pid+ ")",mi.getTotalPss()));
+        long myTotalPss=mi.getTotalPss();
+        totalPss+=myTotalPss;
+        procMems.add(new MemItem(r.processName + " (pid " + r.pid+ ")",myTotalPss));
         nativePss+=mi.nativePss;
         dalvikPss+=mi.dalvikPss;
         otherPss+=mi.otherPss;
@@ -43,6 +82,12 @@
           long mem=mi.getOtherPss(j);
           miscPss[j]+=mem;
           otherPss-=mem;
+        }
+        for (int oomIndex=0; oomIndex < oomPss.length; oomIndex++) {
+          if (r.setAdj <= oomAdj[oomIndex] || oomIndex == (oomPss.length - 1)) {
+            oomPss[oomIndex]+=myTotalPss;
+            break;
+          }
         }
       }
     }
@@ -55,11 +100,24 @@
     for (int j=0; j < Debug.MemoryInfo.NUM_OTHER_STATS; j++) {
       catMems.add(new MemItem(Debug.MemoryInfo.getOtherLabel(j),miscPss[j]));
     }
+    ArrayList<MemItem> oomMems=new ArrayList<MemItem>();
+    for (int j=0; j < oomPss.length; j++) {
+      if (oomPss[j] != 0) {
+        oomMems.add(new MemItem(oomLabel[j],oomPss[j]));
+      }
+    }
     pw.println();
     pw.println("Total PSS by process:");
-    dumpMemItems(pw,"  ",procMems);
+    dumpMemItems(pw,"  ",procMems,true);
+    pw.println();
+    pw.println("Total PSS by OOM adjustment:");
+    dumpMemItems(pw,"  ",oomMems,false);
     pw.println();
     pw.println("Total PSS by category:");
-    dumpMemItems(pw,"  ",catMems);
+    dumpMemItems(pw,"  ",catMems,true);
+    pw.println();
+    pw.print("Total PSS: ");
+    pw.print(totalPss);
+    pw.println(" Kb");
   }
 }
