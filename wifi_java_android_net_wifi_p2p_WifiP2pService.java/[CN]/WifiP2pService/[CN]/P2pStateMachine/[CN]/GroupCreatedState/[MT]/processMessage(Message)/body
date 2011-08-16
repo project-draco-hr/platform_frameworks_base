@@ -29,6 +29,15 @@ if (DBG) Slog.d(TAG,"client " + c.deviceAddress);
 }
 if (DBG) Slog.e(TAG,getName() + " ap sta disconnected");
 break;
+case DhcpStateMachine.CMD_POST_DHCP_ACTION:
+DhcpInfoInternal dhcpInfo=(DhcpInfoInternal)message.obj;
+if (DBG) Slog.d(TAG,"DhcpInfo: " + dhcpInfo);
+if (dhcpInfo != null) {
+mLinkProperties=dhcpInfo.makeLinkProperties();
+mLinkProperties.setInterfaceName(mGroup.getInterface());
+sendP2pConnectionChangedBroadcast();
+}
+break;
 case WifiP2pManager.CANCEL_CONNECT:
 case WifiP2pManager.REMOVE_GROUP:
 if (DBG) Slog.e(TAG,getName() + " remove group");
@@ -45,6 +54,15 @@ d.status=Status.AVAILABLE;
 changed=true;
 }
 }
+if (mGroup.isGroupOwner()) {
+stopDhcpServer();
+}
+ else {
+if (DBG) Slog.d(TAG,"stop DHCP client");
+mDhcpStateMachine.sendMessage(DhcpStateMachine.CMD_STOP_DHCP);
+mDhcpStateMachine.quit();
+mDhcpStateMachine=null;
+}
 mGroup=null;
 if (changed) sendP2pPeersChangedBroadcast();
 transitionTo(mInactiveState);
@@ -53,11 +71,13 @@ case WifiMonitor.P2P_DEVICE_LOST_EVENT:
 WifiP2pDevice device=(WifiP2pDevice)message.obj;
 if (device.equals(mGroup.getOwner())) {
 Slog.d(TAG,"Lost the group owner, killing p2p connection");
-sendMessage(WifiP2pManager.REMOVE_GROUP);
+WifiNative.p2pFlush();
+WifiNative.p2pGroupRemove(mGroup.getInterface());
 }
  else if (mGroup.removeClient(device) && mGroup.isClientListEmpty()) {
 Slog.d(TAG,"Client list empty, killing p2p connection");
-sendMessage(WifiP2pManager.REMOVE_GROUP);
+WifiNative.p2pFlush();
+WifiNative.p2pGroupRemove(mGroup.getInterface());
 }
 return NOT_HANDLED;
 case WifiP2pManager.DISABLE_P2P:
