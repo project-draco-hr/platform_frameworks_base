@@ -62,9 +62,39 @@
       }
     }
   }
-  mArgs=createInstallArgs(this);
+  final InstallArgs args=createInstallArgs(this);
   if (ret == PackageManager.INSTALL_SUCCEEDED) {
-    ret=mArgs.copyApk(mContainerService,true);
+    final Intent verification=new Intent(Intent.ACTION_PACKAGE_NEEDS_VERIFICATION,packageURI);
+    verification.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+    final List<ResolveInfo> receivers=queryIntentReceivers(verification,null,PackageManager.GET_DISABLED_COMPONENTS);
+    if (isVerificationEnabled() && receivers.size() > 0) {
+      if (DEBUG_INSTALL) {
+        Slog.d(TAG,"Found " + receivers.size() + " verifiers for intent "+ verification.toString());
+      }
+      final int verificationId=mPendingVerificationToken++;
+      verification.putExtra(PackageManager.EXTRA_VERIFICATION_ID,verificationId);
+      verification.putExtra(PackageManager.EXTRA_VERIFICATION_INSTALLER_PACKAGE,installerPackageName);
+      verification.putExtra(PackageManager.EXTRA_VERIFICATION_INSTALL_FLAGS,flags);
+      if (verificationURI != null) {
+        verification.putExtra(PackageManager.EXTRA_VERIFICATION_URI,verificationURI);
+      }
+      mPendingVerification.append(verificationId,args);
+      mContext.sendOrderedBroadcast(verification,android.Manifest.permission.PACKAGE_VERIFICATION_AGENT,new BroadcastReceiver(){
+        @Override public void onReceive(        Context context,        Intent intent){
+          final Message msg=mHandler.obtainMessage(CHECK_PENDING_VERIFICATION);
+          msg.arg1=verificationId;
+          mHandler.sendMessageDelayed(msg,getVerificationTimeout());
+        }
+      }
+,null,0,null,null);
+    }
+ else {
+      mArgs=args;
+      ret=args.copyApk(mContainerService,true);
+    }
+  }
+ else {
+    mArgs=args;
   }
   mRet=ret;
 }
