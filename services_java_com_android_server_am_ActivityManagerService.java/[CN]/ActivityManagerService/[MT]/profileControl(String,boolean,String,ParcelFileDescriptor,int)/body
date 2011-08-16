@@ -8,32 +8,51 @@ synchronized (this) {
         throw new IllegalArgumentException("null fd");
       }
       ProcessRecord proc=null;
-      try {
-        int pid=Integer.parseInt(process);
+      if (process != null) {
+        try {
+          int pid=Integer.parseInt(process);
 synchronized (mPidsSelfLocked) {
-          proc=mPidsSelfLocked.get(pid);
+            proc=mPidsSelfLocked.get(pid);
+          }
+        }
+ catch (        NumberFormatException e) {
+        }
+        if (proc == null) {
+          HashMap<String,SparseArray<ProcessRecord>> all=mProcessNames.getMap();
+          SparseArray<ProcessRecord> procs=all.get(process);
+          if (procs != null && procs.size() > 0) {
+            proc=procs.valueAt(0);
+          }
         }
       }
- catch (      NumberFormatException e) {
-      }
-      if (proc == null) {
-        HashMap<String,SparseArray<ProcessRecord>> all=mProcessNames.getMap();
-        SparseArray<ProcessRecord> procs=all.get(process);
-        if (procs != null && procs.size() > 0) {
-          proc=procs.valueAt(0);
-        }
-      }
-      if (proc == null || proc.thread == null) {
+      if (start && (proc == null || proc.thread == null)) {
         throw new IllegalArgumentException("Unknown process: " + process);
       }
-      boolean isDebuggable="1".equals(SystemProperties.get(SYSTEM_DEBUGGABLE,"0"));
-      if (!isDebuggable) {
-        if ((proc.info.flags & ApplicationInfo.FLAG_DEBUGGABLE) == 0) {
-          throw new SecurityException("Process not debuggable: " + proc);
+      if (start) {
+        stopProfilerLocked(null,null,0);
+        setProfileApp(proc.info,proc.processName,path,fd,false);
+        mProfileProc=proc;
+        mProfileType=profileType;
+        try {
+          fd=fd.dup();
+        }
+ catch (        IOException e) {
+          fd=null;
+        }
+        proc.thread.profilerControl(start,path,fd,profileType);
+        fd=null;
+        mProfileFd=null;
+      }
+ else {
+        stopProfilerLocked(proc,path,profileType);
+        if (fd != null) {
+          try {
+            fd.close();
+          }
+ catch (          IOException e) {
+          }
         }
       }
-      proc.thread.profilerControl(start,path,fd,profileType);
-      fd=null;
       return true;
     }
   }
