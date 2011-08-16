@@ -2,10 +2,10 @@
 switch (msg.what) {
 case INIT_COPY:
 {
-      if (DEBUG_SD_INSTALL)       Log.i(TAG,"init_copy");
+      if (DEBUG_INSTALL)       Slog.i(TAG,"init_copy");
       HandlerParams params=(HandlerParams)msg.obj;
       int idx=mPendingInstalls.size();
-      if (DEBUG_SD_INSTALL)       Log.i(TAG,"idx=" + idx);
+      if (DEBUG_INSTALL)       Slog.i(TAG,"idx=" + idx);
       if (!mBound) {
         if (!connectToService()) {
           Slog.e(TAG,"Failed to bind to media container service");
@@ -26,7 +26,7 @@ case INIT_COPY:
     }
 case MCS_BOUND:
 {
-    if (DEBUG_SD_INSTALL)     Log.i(TAG,"mcs_bound");
+    if (DEBUG_INSTALL)     Slog.i(TAG,"mcs_bound");
     if (msg.obj != null) {
       mContainerService=(IMediaContainerService)msg.obj;
     }
@@ -68,7 +68,7 @@ case MCS_BOUND:
   }
 case MCS_RECONNECT:
 {
-  if (DEBUG_SD_INSTALL)   Log.i(TAG,"mcs_reconnect");
+  if (DEBUG_INSTALL)   Slog.i(TAG,"mcs_reconnect");
   if (mPendingInstalls.size() > 0) {
     if (mBound) {
       disconnectService();
@@ -86,20 +86,21 @@ case MCS_RECONNECT:
 }
 case MCS_UNBIND:
 {
-if (DEBUG_SD_INSTALL) Log.i(TAG,"mcs_unbind");
-if (mPendingInstalls.size() == 0) {
+if (DEBUG_INSTALL) Slog.i(TAG,"mcs_unbind");
+if (mPendingInstalls.size() == 0 && mPendingVerification.size() == 0) {
   if (mBound) {
+    if (DEBUG_INSTALL)     Slog.i(TAG,"calling disconnectService()");
     disconnectService();
   }
 }
- else {
+ else if (mPendingInstalls.size() > 0) {
   mHandler.sendEmptyMessage(MCS_BOUND);
 }
 break;
 }
 case MCS_GIVE_UP:
 {
-if (DEBUG_SD_INSTALL) Log.i(TAG,"mcs_giveup too many retries");
+if (DEBUG_INSTALL) Slog.i(TAG,"mcs_giveup too many retries");
 mPendingInstalls.remove(0);
 break;
 }
@@ -245,5 +246,45 @@ mSettings.writeStoppedLPr();
 Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND);
 }
 break;
+case CHECK_PENDING_VERIFICATION:
+{
+final int verificationId=msg.arg1;
+final InstallArgs args=mPendingVerification.get(verificationId);
+if (args != null) {
+Slog.i(TAG,"Validation timed out for " + args.packageURI.toString());
+mPendingVerification.remove(verificationId);
+int ret=PackageManager.INSTALL_FAILED_VERIFICATION_TIMEOUT;
+processPendingInstall(args,ret);
+mHandler.sendEmptyMessage(MCS_UNBIND);
+}
+break;
+}
+case PACKAGE_VERIFIED:
+{
+final int verificationId=msg.arg1;
+final boolean verified=msg.arg2 == 1 ? true : false;
+final InstallArgs args=mPendingVerification.get(verificationId);
+if (args == null) {
+Slog.w(TAG,"Invalid validation token " + verificationId + " received");
+break;
+}
+mPendingVerification.remove(verificationId);
+int ret;
+if (verified) {
+ret=PackageManager.INSTALL_FAILED_INTERNAL_ERROR;
+try {
+ret=args.copyApk(mContainerService,true);
+}
+ catch (RemoteException e) {
+Slog.e(TAG,"Could not contact the ContainerService");
+}
+}
+ else {
+ret=PackageManager.INSTALL_FAILED_VERIFICATION_FAILURE;
+}
+processPendingInstall(args,ret);
+mHandler.sendEmptyMessage(MCS_UNBIND);
+break;
+}
 }
 }
