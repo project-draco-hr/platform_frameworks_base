@@ -1,58 +1,37 @@
 {
   if (LOGV)   Slog.v(TAG,"updateNotificationsLocked()");
-  if (mTime.getCacheAge() > TIME_CACHE_MAX_AGE) {
-    mTime.forceRefresh();
-  }
-  final long currentTime=mTime.hasCache() ? mTime.currentTimeMillis() : System.currentTimeMillis();
-  for (  NetworkPolicy policy : mNetworkRules.keySet()) {
+  final HashSet<String> beforeNotifs=Sets.newHashSet();
+  beforeNotifs.addAll(mActiveNotifs);
+  mActiveNotifs.clear();
+  final long currentTime=currentTimeMillis(true);
+  for (  NetworkPolicy policy : mNetworkPolicy.values()) {
+    if (!isTemplateRelevant(policy.template))     continue;
     final long start=computeLastCycleBoundary(currentTime,policy);
     final long end=currentTime;
-    final long totalBytes;
-    try {
-      final NetworkStats stats=mNetworkStats.getSummaryForNetwork(policy.template,start,end);
-      final NetworkStats.Entry entry=stats.getValues(0,null);
-      totalBytes=entry.rxBytes + entry.txBytes;
-    }
- catch (    RemoteException e) {
-      Slog.w(TAG,"problem reading summary for template " + policy.template);
-      continue;
-    }
+    final long totalBytes=getTotalBytes(policy.template,start,end);
+    if (totalBytes == UNKNOWN_BYTES)     continue;
     if (policy.limitBytes != LIMIT_DISABLED && totalBytes >= policy.limitBytes) {
-      cancelNotification(policy,TYPE_WARNING);
       if (policy.lastSnooze >= start) {
-        cancelNotification(policy,TYPE_LIMIT);
         enqueueNotification(policy,TYPE_LIMIT_SNOOZED,totalBytes);
       }
  else {
-        cancelNotification(policy,TYPE_LIMIT_SNOOZED);
         enqueueNotification(policy,TYPE_LIMIT,totalBytes);
         notifyOverLimitLocked(policy.template);
       }
     }
  else {
-      cancelNotification(policy,TYPE_LIMIT);
-      cancelNotification(policy,TYPE_LIMIT_SNOOZED);
       notifyUnderLimitLocked(policy.template);
       if (policy.warningBytes != WARNING_DISABLED && totalBytes >= policy.warningBytes) {
         enqueueNotification(policy,TYPE_WARNING,totalBytes);
       }
- else {
-        cancelNotification(policy,TYPE_WARNING);
-      }
-    }
-  }
-  for (  NetworkPolicy policy : mNetworkPolicy.values()) {
-    if (!mNetworkRules.containsKey(policy)) {
-      cancelNotification(policy,TYPE_WARNING);
-      cancelNotification(policy,TYPE_LIMIT);
-      cancelNotification(policy,TYPE_LIMIT_SNOOZED);
-      notifyUnderLimitLocked(policy.template);
     }
   }
   if (mRestrictBackground) {
     enqueueRestrictedNotification(TAG_ALLOW_BACKGROUND);
   }
- else {
-    cancelNotification(TAG_ALLOW_BACKGROUND);
+  for (  String tag : beforeNotifs) {
+    if (!mActiveNotifs.contains(tag)) {
+      cancelNotification(tag);
+    }
   }
 }
