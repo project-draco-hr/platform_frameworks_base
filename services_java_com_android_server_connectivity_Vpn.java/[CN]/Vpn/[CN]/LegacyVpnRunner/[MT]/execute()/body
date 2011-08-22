@@ -3,11 +3,8 @@
     checkpoint(false);
     mInfo.state=LegacyVpnInfo.STATE_INITIALIZING;
     for (    String daemon : mDaemons) {
-      SystemProperties.set("ctl.stop",daemon);
-    }
-    for (    String daemon : mDaemons) {
       String key="init.svc." + daemon;
-      while (!"stopped".equals(SystemProperties.get(key))) {
+      while (!"stopped".equals(SystemProperties.get(key,"stopped"))) {
         checkpoint(true);
       }
     }
@@ -36,22 +33,22 @@
       while (!"running".equals(SystemProperties.get(key))) {
         checkpoint(true);
       }
-      LocalSocket socket=new LocalSocket();
+      mSockets[i]=new LocalSocket();
       LocalSocketAddress address=new LocalSocketAddress(daemon,LocalSocketAddress.Namespace.RESERVED);
       while (true) {
         try {
-          socket.connect(address);
+          mSockets[i].connect(address);
           break;
         }
  catch (        Exception e) {
         }
         checkpoint(true);
       }
-      socket.setSoTimeout(500);
-      OutputStream out=socket.getOutputStream();
+      mSockets[i].setSoTimeout(500);
+      OutputStream out=mSockets[i].getOutputStream();
       for (      String argument : arguments) {
         byte[] bytes=argument.getBytes(Charsets.UTF_8);
-        if (bytes.length > 0xFFFF) {
+        if (bytes.length >= 0xFFFF) {
           throw new IllegalArgumentException("Argument is too large");
         }
         out.write(bytes.length >> 8);
@@ -59,9 +56,10 @@
         out.write(bytes);
         checkpoint(false);
       }
+      out.write(0xFF);
+      out.write(0xFF);
       out.flush();
-      socket.shutdownOutput();
-      InputStream in=socket.getInputStream();
+      InputStream in=mSockets[i].getInputStream();
       while (true) {
         try {
           if (in.read() == -1) {
@@ -72,7 +70,6 @@
         }
         checkpoint(true);
       }
-      socket.close();
     }
     while (!state.exists()) {
       for (int i=0; i < mDaemons.length; ++i) {
@@ -127,6 +124,11 @@ synchronized (Vpn.this) {
     exit();
   }
  finally {
+    if (mInfo.state == LegacyVpnInfo.STATE_INITIALIZING) {
+      for (      String daemon : mDaemons) {
+        SystemProperties.set("ctl.stop",daemon);
+      }
+    }
     if (mInfo.state == LegacyVpnInfo.STATE_INITIALIZING || mInfo.state == LegacyVpnInfo.STATE_CONNECTING) {
       mInfo.state=LegacyVpnInfo.STATE_FAILED;
     }
