@@ -26,7 +26,7 @@ synchronized (mMethodMap) {
     }
 );
     sortedImmis.putAll(immis);
-    final ArrayList<Pair<CharSequence,Pair<InputMethodInfo,Integer>>> imList=new ArrayList<Pair<CharSequence,Pair<InputMethodInfo,Integer>>>();
+    final ArrayList<ImeSubtypeListItem> imList=new ArrayList<ImeSubtypeListItem>();
     for (    InputMethodInfo imi : sortedImmis.keySet()) {
       if (imi == null)       continue;
       List<InputMethodSubtype> explicitlyOrImplicitlyEnabledSubtypeList=immis.get(imi);
@@ -35,7 +35,7 @@ synchronized (mMethodMap) {
         enabledSubtypeSet.add(String.valueOf(subtype.hashCode()));
       }
       ArrayList<InputMethodSubtype> subtypes=getSubtypes(imi);
-      final CharSequence label=imi.loadLabel(pm);
+      final CharSequence imeLabel=imi.loadLabel(pm);
       if (showSubtypes && enabledSubtypeSet.size() > 0) {
         final int subtypeCount=imi.getSubtypeCount();
         if (DEBUG) {
@@ -45,30 +45,24 @@ synchronized (mMethodMap) {
           final InputMethodSubtype subtype=imi.getSubtypeAt(j);
           final String subtypeHashCode=String.valueOf(subtype.hashCode());
           if (enabledSubtypeSet.contains(subtypeHashCode) && ((mInputShown && !isScreenLocked) || !subtype.isAuxiliary())) {
-            final CharSequence title;
-            final String mode=subtype.getMode();
-            title=TextUtils.concat(subtype.getDisplayName(context,imi.getPackageName(),imi.getServiceInfo().applicationInfo),(TextUtils.isEmpty(label) ? "" : " (" + label + ")"));
-            imList.add(new Pair<CharSequence,Pair<InputMethodInfo,Integer>>(title,new Pair<InputMethodInfo,Integer>(imi,j)));
+            final CharSequence subtypeLabel=subtype.getDisplayName(context,imi.getPackageName(),imi.getServiceInfo().applicationInfo);
+            imList.add(new ImeSubtypeListItem(imeLabel,subtypeLabel,imi,j));
             enabledSubtypeSet.remove(subtypeHashCode);
           }
         }
       }
  else {
-        imList.add(new Pair<CharSequence,Pair<InputMethodInfo,Integer>>(label,new Pair<InputMethodInfo,Integer>(imi,NOT_A_SUBTYPE_ID)));
+        imList.add(new ImeSubtypeListItem(imeLabel,null,imi,NOT_A_SUBTYPE_ID));
       }
     }
     final int N=imList.size();
-    mItems=new CharSequence[N];
-    for (int i=0; i < N; ++i) {
-      mItems[i]=imList.get(i).first;
-    }
     mIms=new InputMethodInfo[N];
     mSubtypeIds=new int[N];
     int checkedItem=0;
     for (int i=0; i < N; ++i) {
-      Pair<InputMethodInfo,Integer> value=imList.get(i).second;
-      mIms[i]=value.first;
-      mSubtypeIds[i]=value.second;
+      final ImeSubtypeListItem item=imList.get(i);
+      mIms[i]=item.mImi;
+      mSubtypeIds[i]=item.mSubtypeId;
       if (mIms[i].getId().equals(lastInputMethodId)) {
         int subtypeId=mSubtypeIds[i];
         if ((subtypeId == NOT_A_SUBTYPE_ID) || (lastInputMethodSubtypeId == NOT_A_SUBTYPE_ID && subtypeId == 0) || (subtypeId == lastInputMethodSubtypeId)) {
@@ -76,13 +70,7 @@ synchronized (mMethodMap) {
         }
       }
     }
-    AlertDialog.OnClickListener adocl=new AlertDialog.OnClickListener(){
-      @Override public void onClick(      DialogInterface dialog,      int which){
-        hideInputMethodMenu();
-      }
-    }
-;
-    TypedArray a=context.obtainStyledAttributes(null,com.android.internal.R.styleable.DialogPreference,com.android.internal.R.attr.alertDialogStyle,0);
+    final TypedArray a=context.obtainStyledAttributes(null,com.android.internal.R.styleable.DialogPreference,com.android.internal.R.attr.alertDialogStyle,0);
     mDialogBuilder=new AlertDialog.Builder(context).setTitle(com.android.internal.R.string.select_input_method).setOnCancelListener(new OnCancelListener(){
       @Override public void onCancel(      DialogInterface dialog){
         hideInputMethodMenu();
@@ -90,7 +78,8 @@ synchronized (mMethodMap) {
     }
 ).setIcon(a.getDrawable(com.android.internal.R.styleable.DialogPreference_dialogTitle));
     a.recycle();
-    mDialogBuilder.setSingleChoiceItems(mItems,checkedItem,new AlertDialog.OnClickListener(){
+    final ImeSubtypeListAdapter adapter=new ImeSubtypeListAdapter(context,com.android.internal.R.layout.simple_list_item_2_single_choice,imList,checkedItem);
+    mDialogBuilder.setSingleChoiceItems(adapter,checkedItem,new AlertDialog.OnClickListener(){
       @Override public void onClick(      DialogInterface dialog,      int which){
 synchronized (mMethodMap) {
           if (mIms == null || mIms.length <= which || mSubtypeIds == null || mSubtypeIds.length <= which) {
