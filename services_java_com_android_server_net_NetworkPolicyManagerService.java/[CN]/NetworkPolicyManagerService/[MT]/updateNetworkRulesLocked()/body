@@ -31,42 +31,33 @@
       mNetworkRules.put(policy,ifaces);
     }
   }
-  if (mTime.getCacheAge() > TIME_CACHE_MAX_AGE) {
-    mTime.forceRefresh();
-  }
-  final long currentTime=mTime.hasCache() ? mTime.currentTimeMillis() : System.currentTimeMillis();
   final HashSet<String> newMeteredIfaces=Sets.newHashSet();
+  final long currentTime=currentTimeMillis(true);
   for (  NetworkPolicy policy : mNetworkRules.keySet()) {
     final String[] ifaces=mNetworkRules.get(policy);
     final long start=computeLastCycleBoundary(currentTime,policy);
     final long end=currentTime;
-    final NetworkStats stats;
-    final long total;
-    try {
-      stats=mNetworkStats.getSummaryForNetwork(policy.template,start,end);
-      final NetworkStats.Entry entry=stats.getValues(0,null);
-      total=entry.rxBytes + entry.txBytes;
-    }
- catch (    RemoteException e) {
-      Slog.w(TAG,"problem reading summary for template " + policy.template);
-      continue;
-    }
+    final long totalBytes=getTotalBytes(policy.template,start,end);
+    if (totalBytes == UNKNOWN_BYTES)     continue;
     if (LOGD) {
       Slog.d(TAG,"applying policy " + policy.toString() + " to ifaces "+ Arrays.toString(ifaces));
     }
     final boolean hasLimit=policy.limitBytes != LIMIT_DISABLED;
-    final boolean hasWarning=policy.warningBytes != WARNING_DISABLED;
     if (hasLimit) {
-      final long quotaBytes=Math.max(0,policy.limitBytes - total);
+      final long quotaBytes;
+      if (policy.lastSnooze >= start) {
+        quotaBytes=Long.MAX_VALUE;
+      }
+ else {
+        quotaBytes=Math.max(1,policy.limitBytes - totalBytes);
+      }
       if (ifaces.length > 1) {
         Slog.w(TAG,"shared quota unsupported; generating rule for each iface");
       }
       for (      String iface : ifaces) {
         removeInterfaceQuota(iface);
-        if (quotaBytes > 0) {
-          setInterfaceQuota(iface,quotaBytes);
-          newMeteredIfaces.add(iface);
-        }
+        setInterfaceQuota(iface,quotaBytes);
+        newMeteredIfaces.add(iface);
       }
     }
   }
