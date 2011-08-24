@@ -23,7 +23,11 @@
   for (int i=0; i < childCount; i++) {
     final View child=getChildAt(i);
     if (child.getVisibility() == GONE)     continue;
+    final boolean isGeneratedItem=child instanceof ActionMenuItemView;
     visibleItemCount++;
+    if (isGeneratedItem) {
+      child.setPadding(mGeneratedItemPadding,0,mGeneratedItemPadding,0);
+    }
     final LayoutParams lp=(LayoutParams)child.getLayoutParams();
     lp.expanded=false;
     lp.extraPixels=0;
@@ -31,6 +35,7 @@
     lp.expandable=false;
     lp.leftMargin=0;
     lp.rightMargin=0;
+    lp.preventEdgeOffset=isGeneratedItem && ((ActionMenuItemView)child).hasText();
     final int cellsAvailable=lp.isOverflowButton ? 1 : cellsRemaining;
     final int cellsUsed=measureChildForCells(child,cellSize,cellsAvailable,heightMeasureSpec,heightPadding);
     maxCellsUsed=Math.max(maxCellsUsed,cellsUsed);
@@ -40,6 +45,7 @@
     maxChildHeight=Math.max(maxChildHeight,child.getMeasuredHeight());
     if (cellsUsed == 1)     smallestItemsAt|=(1 << i);
   }
+  final boolean centerSingleExpandedItem=hasOverflow && visibleItemCount == 2;
   boolean needsExpansion=false;
   while (expandableItemCount > 0 && cellsRemaining > 0) {
     int minCells=Integer.MAX_VALUE;
@@ -59,12 +65,19 @@
         minCellsItemCount++;
       }
     }
-    if (minCellsItemCount > cellsRemaining)     break;
     smallestItemsAt|=minCellsAt;
+    if (minCellsItemCount > cellsRemaining)     break;
+    minCells++;
     for (int i=0; i < childCount; i++) {
-      if ((minCellsAt & (1 << i)) == 0)       continue;
       final View child=getChildAt(i);
       final LayoutParams lp=(LayoutParams)child.getLayoutParams();
+      if ((minCellsAt & (1 << i)) == 0) {
+        if (lp.cellsUsed == minCells)         smallestItemsAt|=1 << i;
+        continue;
+      }
+      if (centerSingleExpandedItem && lp.preventEdgeOffset && cellsRemaining == 1) {
+        child.setPadding(mGeneratedItemPadding + cellSize,0,mGeneratedItemPadding,0);
+      }
       lp.cellsUsed++;
       lp.expanded=true;
       cellsRemaining--;
@@ -72,14 +85,16 @@
     needsExpansion=true;
   }
   final boolean singleItem=!hasOverflow && visibleItemCount == 1;
-  if (cellsRemaining > 0 && smallestItemsAt != 0 && (cellsRemaining < visibleItemCount - 1 || singleItem)) {
+  if (cellsRemaining > 0 && smallestItemsAt != 0 && (cellsRemaining < visibleItemCount - 1 || singleItem || maxCellsUsed > 1)) {
     float expandCount=Long.bitCount(smallestItemsAt);
     if (!singleItem) {
       if ((smallestItemsAt & 1) != 0) {
-        expandCount-=0.5f;
+        LayoutParams lp=(LayoutParams)getChildAt(0).getLayoutParams();
+        if (!lp.preventEdgeOffset)         expandCount-=0.5f;
       }
       if ((smallestItemsAt & (1 << (childCount - 1))) != 0) {
-        expandCount-=0.5f;
+        LayoutParams lp=((LayoutParams)getChildAt(childCount - 1).getLayoutParams());
+        if (!lp.preventEdgeOffset)         expandCount-=0.5f;
       }
     }
     final int extraPixels=expandCount > 0 ? (int)(cellsRemaining * cellSize / expandCount) : 0;
@@ -90,7 +105,7 @@
       if (child instanceof ActionMenuItemView) {
         lp.extraPixels=extraPixels;
         lp.expanded=true;
-        if (i == 0) {
+        if (i == 0 && !lp.preventEdgeOffset) {
           lp.leftMargin=-extraPixels / 2;
         }
         needsExpansion=true;
