@@ -1,12 +1,12 @@
 {
-  if (DBG)   Slog.d(TAG,getName() + message.toString());
+  if (DBG)   logd(getName() + message.toString());
 switch (message.what) {
 case WifiMonitor.AP_STA_CONNECTED_EVENT:
     String interfaceAddress=(String)message.obj;
   String deviceAddress=getDeviceAddress(interfaceAddress);
 mGroup.addClient(deviceAddress);
 updateDeviceStatus(deviceAddress,Status.CONNECTED);
-if (DBG) Slog.d(TAG,getName() + " ap sta connected");
+if (DBG) logd(getName() + " ap sta connected");
 sendP2pPeersChangedBroadcast();
 break;
 case WifiMonitor.AP_STA_DISCONNECTED_EVENT:
@@ -14,40 +14,39 @@ interfaceAddress=(String)message.obj;
 deviceAddress=getDeviceAddress(interfaceAddress);
 updateDeviceStatus(deviceAddress,Status.AVAILABLE);
 if (mGroup.removeClient(deviceAddress)) {
-if (DBG) Slog.d(TAG,"Removed client " + deviceAddress);
-if (mGroup.isClientListEmpty()) {
-Slog.d(TAG,"Client list empty, killing p2p connection");
-sendMessage(WifiP2pManager.REMOVE_GROUP);
-}
- else {
+if (DBG) logd("Removed client " + deviceAddress);
 sendP2pPeersChangedBroadcast();
 }
-}
  else {
-if (DBG) Slog.d(TAG,"Failed to remove client " + deviceAddress);
+if (DBG) logd("Failed to remove client " + deviceAddress);
 for (WifiP2pDevice c : mGroup.getClientList()) {
-if (DBG) Slog.d(TAG,"client " + c.deviceAddress);
+if (DBG) logd("client " + c.deviceAddress);
 }
 }
-if (DBG) Slog.e(TAG,getName() + " ap sta disconnected");
+if (DBG) loge(getName() + " ap sta disconnected");
 break;
 case DhcpStateMachine.CMD_POST_DHCP_ACTION:
 DhcpInfoInternal dhcpInfo=(DhcpInfoInternal)message.obj;
-if (DBG) Slog.d(TAG,"DhcpInfo: " + dhcpInfo);
-if (dhcpInfo != null) {
-mLinkProperties=dhcpInfo.makeLinkProperties();
-mLinkProperties.setInterfaceName(mGroup.getInterface());
+if (message.arg1 == DhcpStateMachine.DHCP_SUCCESS && dhcpInfo != null) {
+if (DBG) logd("DhcpInfo: " + dhcpInfo);
+setWifiP2pInfoOnGroupFormation(dhcpInfo.serverAddress);
 sendP2pConnectionChangedBroadcast();
 }
-break;
-case WifiP2pManager.CANCEL_CONNECT:
-case WifiP2pManager.REMOVE_GROUP:
-if (DBG) Slog.e(TAG,getName() + " remove group");
-WifiNative.p2pFlush();
+ else {
 WifiNative.p2pGroupRemove(mGroup.getInterface());
+}
+break;
+case WifiP2pManager.REMOVE_GROUP:
+if (DBG) loge(getName() + " remove group");
+if (WifiNative.p2pGroupRemove(mGroup.getInterface())) {
+replyToMessage(message,WifiP2pManager.REMOVE_GROUP_SUCCEEDED);
+}
+ else {
+replyToMessage(message,WifiP2pManager.REMOVE_GROUP_FAILED);
+}
 break;
 case WifiMonitor.P2P_GROUP_REMOVED_EVENT:
-if (DBG) Slog.e(TAG,getName() + " group removed");
+if (DBG) loge(getName() + " group removed");
 Collection<WifiP2pDevice> devices=mGroup.getClientList();
 boolean changed=false;
 for (WifiP2pDevice d : mPeers.getDeviceList()) {
@@ -60,7 +59,7 @@ if (mGroup.isGroupOwner()) {
 stopDhcpServer();
 }
  else {
-if (DBG) Slog.d(TAG,"stop DHCP client");
+if (DBG) logd("stop DHCP client");
 mDhcpStateMachine.sendMessage(DhcpStateMachine.CMD_STOP_DHCP);
 mDhcpStateMachine.quit();
 mDhcpStateMachine=null;
@@ -72,33 +71,31 @@ break;
 case WifiMonitor.P2P_DEVICE_LOST_EVENT:
 WifiP2pDevice device=(WifiP2pDevice)message.obj;
 if (device.equals(mGroup.getOwner())) {
-Slog.d(TAG,"Lost the group owner, killing p2p connection");
-WifiNative.p2pFlush();
+logd("Lost the group owner, killing p2p connection");
 WifiNative.p2pGroupRemove(mGroup.getInterface());
 }
- else if (mGroup.removeClient(device) && mGroup.isClientListEmpty()) {
-Slog.d(TAG,"Client list empty, killing p2p connection");
-WifiNative.p2pFlush();
-WifiNative.p2pGroupRemove(mGroup.getInterface());
+ else {
+mGroup.removeClient(device);
 }
 return NOT_HANDLED;
 case WifiP2pManager.DISABLE_P2P:
 sendMessage(WifiP2pManager.REMOVE_GROUP);
 deferMessage(message);
 break;
-case WifiP2pManager.DISCOVER_PEERS:
-int timeout=message.arg1;
-WifiNative.p2pFind(timeout);
-break;
 case WifiP2pManager.CONNECT:
 WifiP2pConfig config=(WifiP2pConfig)message.obj;
-Slog.d(TAG,"Inviting device : " + config.deviceAddress);
-WifiNative.p2pInvite(mGroup,config.deviceAddress);
+logd("Inviting device : " + config.deviceAddress);
+if (WifiNative.p2pInvite(mGroup,config.deviceAddress)) {
 updateDeviceStatus(config.deviceAddress,Status.INVITED);
 sendP2pPeersChangedBroadcast();
+replyToMessage(message,WifiP2pManager.CONNECT_SUCCEEDED);
+}
+ else {
+replyToMessage(message,WifiP2pManager.CONNECT_FAILED);
+}
 break;
 case WifiMonitor.P2P_INVITATION_RESULT_EVENT:
-Slog.d(TAG,"===> INVITATION RESULT EVENT : " + message.obj);
+logd("===> INVITATION RESULT EVENT : " + message.obj);
 break;
 case WifiMonitor.P2P_PROV_DISC_PBC_REQ_EVENT:
 notifyP2pProvDiscPbcRequest((WifiP2pDevice)message.obj);
