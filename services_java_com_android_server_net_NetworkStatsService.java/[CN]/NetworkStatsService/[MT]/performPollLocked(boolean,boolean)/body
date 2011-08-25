@@ -1,9 +1,11 @@
 {
   if (LOGV)   Slog.v(TAG,"performPollLocked()");
+  final long startRealtime=SystemClock.elapsedRealtime();
   if (mTime.getCacheAge() > mSettings.getTimeCacheMaxAge()) {
     mTime.forceRefresh();
   }
   final long currentTime=mTime.hasCache() ? mTime.currentTimeMillis() : System.currentTimeMillis();
+  final long persistThreshold=mSettings.getPersistThreshold();
   final NetworkStats networkSnapshot;
   final NetworkStats uidSnapshot;
   try {
@@ -19,23 +21,22 @@ catch (  RemoteException e) {
     return;
   }
   performNetworkPollLocked(networkSnapshot,currentTime);
+  final NetworkStats persistNetworkDelta=computeStatsDelta(mLastPersistNetworkSnapshot,networkSnapshot,true);
+  if (forcePersist || persistNetworkDelta.getTotalBytes() > persistThreshold) {
+    writeNetworkStatsLocked();
+    mLastPersistNetworkSnapshot=networkSnapshot;
+  }
   if (detailedPoll) {
     performUidPollLocked(uidSnapshot,currentTime);
-  }
-  final NetworkStats persistDelta=computeStatsDelta(mLastPersistNetworkSnapshot,networkSnapshot,true);
-  final long persistThreshold=mSettings.getPersistThreshold();
-  NetworkStats.Entry entry=null;
-  for (  String iface : persistDelta.getUniqueIfaces()) {
-    final int index=persistDelta.findIndex(iface,UID_ALL,SET_DEFAULT,TAG_NONE);
-    entry=persistDelta.getValues(index,entry);
-    if (forcePersist || entry.rxBytes > persistThreshold || entry.txBytes > persistThreshold) {
-      writeNetworkStatsLocked();
-      if (mUidStatsLoaded) {
-        writeUidStatsLocked();
-      }
+    final NetworkStats persistUidDelta=computeStatsDelta(mLastPersistUidSnapshot,uidSnapshot,true);
+    if (forcePersist || persistUidDelta.getTotalBytes() > persistThreshold) {
+      writeUidStatsLocked();
       mLastPersistNetworkSnapshot=networkSnapshot;
-      break;
     }
+  }
+  if (LOGV) {
+    final long duration=SystemClock.elapsedRealtime() - startRealtime;
+    Slog.v(TAG,"performPollLocked() took " + duration + "ms");
   }
   final Intent updatedIntent=new Intent(ACTION_NETWORK_STATS_UPDATED);
   updatedIntent.setFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY);
