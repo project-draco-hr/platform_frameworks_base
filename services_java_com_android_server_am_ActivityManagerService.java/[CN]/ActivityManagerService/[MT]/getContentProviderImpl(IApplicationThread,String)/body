@@ -10,7 +10,8 @@ synchronized (this) {
       }
     }
     cpr=mProvidersByName.get(name);
-    if (cpr != null) {
+    boolean providerRunning=cpr != null;
+    if (providerRunning) {
       cpi=cpr.info;
       String msg;
       if ((msg=checkContentProviderPermissionLocked(cpi,r)) != null) {
@@ -23,29 +24,34 @@ synchronized (this) {
         return cpr;
       }
       final long origId=Binder.clearCallingIdentity();
-      if (r != null) {
-        if (DEBUG_PROVIDER)         Slog.v(TAG,"Adding provider requested by " + r.processName + " from process "+ cpr.info.processName);
-        Integer cnt=r.conProviders.get(cpr);
-        if (cnt == null) {
-          r.conProviders.put(cpr,new Integer(1));
-        }
- else {
-          r.conProviders.put(cpr,new Integer(cnt.intValue() + 1));
-        }
-        cpr.clients.add(r);
+      final boolean countChanged=incProviderCount(r,cpr);
+      if (countChanged) {
         if (cpr.app != null && r.setAdj <= ProcessList.PERCEPTIBLE_APP_ADJ) {
           updateLruProcessLocked(cpr.app,false,true);
         }
       }
- else {
-        cpr.externals++;
-      }
       if (cpr.app != null) {
-        updateOomAdjLocked(cpr.app);
+        if (false) {
+          if (cpr.name.flattenToShortString().equals("com.android.providers.calendar/.CalendarProvider2")) {
+            Slog.v(TAG,"****************** KILLING " + cpr.name.flattenToShortString());
+            Process.killProcess(cpr.app.pid);
+          }
+        }
+        boolean success=updateOomAdjLocked(cpr.app);
+        if (DEBUG_PROVIDER)         Slog.i(TAG,"Adjust success: " + success);
+        if (!success) {
+          Slog.i(TAG,"Existing provider " + cpr.name.flattenToShortString() + " is crashing; detaching "+ r);
+          boolean lastRef=decProviderCount(r,cpr);
+          appDiedLocked(cpr.app,cpr.app.pid,cpr.app.thread);
+          if (!lastRef) {
+            return null;
+          }
+          providerRunning=false;
+        }
       }
       Binder.restoreCallingIdentity(origId);
     }
- else {
+    if (!providerRunning) {
       try {
         cpi=AppGlobals.getPackageManager().resolveContentProvider(name,STOCK_PM_FLAGS | PackageManager.GET_URI_PERMISSION_PATTERNS);
       }
@@ -117,20 +123,7 @@ catch (          IllegalArgumentException e) {
         mProvidersByClass.put(comp,cpr);
       }
       mProvidersByName.put(name,cpr);
-      if (r != null) {
-        if (DEBUG_PROVIDER)         Slog.v(TAG,"Adding provider requested by " + r.processName + " from process "+ cpr.info.processName);
-        Integer cnt=r.conProviders.get(cpr);
-        if (cnt == null) {
-          r.conProviders.put(cpr,new Integer(1));
-        }
- else {
-          r.conProviders.put(cpr,new Integer(cnt.intValue() + 1));
-        }
-        cpr.clients.add(r);
-      }
- else {
-        cpr.externals++;
-      }
+      incProviderCount(r,cpr);
     }
   }
 synchronized (cpr) {
