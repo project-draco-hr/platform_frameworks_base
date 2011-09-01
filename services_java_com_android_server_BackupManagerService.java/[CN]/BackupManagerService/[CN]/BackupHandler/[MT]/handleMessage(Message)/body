@@ -23,7 +23,9 @@ synchronized (mQueueLock) {
         }
       }
       if (queue.size() > 0) {
-        (new PerformBackupTask(transport,queue,oldJournal)).run();
+        PerformBackupTask pbt=new PerformBackupTask(transport,queue,oldJournal);
+        Message pbtMessage=obtainMessage(MSG_BACKUP_RESTORE_STEP,pbt);
+        sendMessage(pbtMessage);
       }
  else {
         Slog.v(TAG,"Backup requested but nothing pending");
@@ -31,18 +33,41 @@ synchronized (mQueueLock) {
       }
       break;
     }
-case MSG_RUN_FULL_BACKUP:
+case MSG_BACKUP_RESTORE_STEP:
 {
-    FullBackupParams params=(FullBackupParams)msg.obj;
-    (new PerformFullBackupTask(params.fd,params.observer,params.includeApks,params.includeShared,params.curPassword,params.encryptPassword,params.allApps,params.packages,params.latch)).run();
+    try {
+      BackupRestoreTask task=(BackupRestoreTask)msg.obj;
+      if (MORE_DEBUG)       Slog.v(TAG,"Got next step for " + task + ", executing");
+      task.execute();
+    }
+ catch (    ClassCastException e) {
+      Slog.e(TAG,"Invalid backup task in flight, obj=" + msg.obj);
+    }
     break;
   }
+case MSG_OP_COMPLETE:
+{
+  try {
+    BackupRestoreTask obj=(BackupRestoreTask)msg.obj;
+    obj.operationComplete();
+  }
+ catch (  ClassCastException e) {
+    Slog.e(TAG,"Invalid completion in flight, obj=" + msg.obj);
+  }
+  break;
+}
+case MSG_RUN_FULL_BACKUP:
+{
+FullBackupParams params=(FullBackupParams)msg.obj;
+(new PerformFullBackupTask(params.fd,params.observer,params.includeApks,params.includeShared,params.curPassword,params.encryptPassword,params.allApps,params.packages,params.latch)).run();
+break;
+}
 case MSG_RUN_RESTORE:
 {
-  RestoreParams params=(RestoreParams)msg.obj;
-  Slog.d(TAG,"MSG_RUN_RESTORE observer=" + params.observer);
-  (new PerformRestoreTask(params.transport,params.observer,params.token,params.pkgInfo,params.pmToken,params.needFullBackup,params.filterSet)).run();
-  break;
+RestoreParams params=(RestoreParams)msg.obj;
+Slog.d(TAG,"MSG_RUN_RESTORE observer=" + params.observer);
+(new PerformRestoreTask(params.transport,params.observer,params.token,params.pkgInfo,params.pmToken,params.needFullBackup,params.filterSet)).run();
+break;
 }
 case MSG_RUN_FULL_RESTORE:
 {
@@ -100,15 +125,7 @@ break;
 }
 case MSG_TIMEOUT:
 {
-synchronized (mCurrentOpLock) {
-final int token=msg.arg1;
-int state=mCurrentOperations.get(token,OP_TIMEOUT);
-if (state == OP_PENDING) {
-if (DEBUG) Slog.v(TAG,"TIMEOUT: token=" + token);
-mCurrentOperations.put(token,OP_TIMEOUT);
-}
-mCurrentOpLock.notifyAll();
-}
+handleTimeout(msg.arg1,msg.obj);
 break;
 }
 case MSG_RESTORE_TIMEOUT:
