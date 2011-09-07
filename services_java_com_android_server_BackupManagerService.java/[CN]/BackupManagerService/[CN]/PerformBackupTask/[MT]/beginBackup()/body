@@ -1,0 +1,42 @@
+{
+  mStatus=BackupConstants.TRANSPORT_OK;
+  if (mOriginalQueue.isEmpty()) {
+    Slog.w(TAG,"Backup begun with an empty queue - nothing to do.");
+    return;
+  }
+  mQueue=(ArrayList<BackupRequest>)mOriginalQueue.clone();
+  if (DEBUG)   Slog.v(TAG,"Beginning backup of " + mQueue.size() + " targets");
+  File pmState=new File(mStateDir,PACKAGE_MANAGER_SENTINEL);
+  try {
+    EventLog.writeEvent(EventLogTags.BACKUP_START,mTransport.transportDirName());
+    if (mStatus == BackupConstants.TRANSPORT_OK && pmState.length() <= 0) {
+      Slog.i(TAG,"Initializing (wiping) backup state and transport storage");
+      resetBackupState(mStateDir);
+      mStatus=mTransport.initializeDevice();
+      if (mStatus == BackupConstants.TRANSPORT_OK) {
+        EventLog.writeEvent(EventLogTags.BACKUP_INITIALIZE);
+      }
+ else {
+        EventLog.writeEvent(EventLogTags.BACKUP_TRANSPORT_FAILURE,"(initialize)");
+        Slog.e(TAG,"Transport error in initializeDevice()");
+      }
+    }
+    if (mStatus == BackupConstants.TRANSPORT_OK) {
+      PackageManagerBackupAgent pmAgent=new PackageManagerBackupAgent(mPackageManager,allAgentPackages());
+      mStatus=invokeAgentForBackup(PACKAGE_MANAGER_SENTINEL,IBackupAgent.Stub.asInterface(pmAgent.onBind()),mTransport);
+    }
+    if (mStatus == BackupConstants.TRANSPORT_NOT_INITIALIZED) {
+      EventLog.writeEvent(EventLogTags.BACKUP_RESET,mTransport.transportDirName());
+    }
+  }
+ catch (  Exception e) {
+    Slog.e(TAG,"Error in backup thread",e);
+    mStatus=BackupConstants.TRANSPORT_ERROR;
+  }
+ finally {
+    if (mStatus != BackupConstants.TRANSPORT_OK) {
+      resetBackupState(mStateDir);
+      executeNextState(BackupState.FINAL);
+    }
+  }
+}
