@@ -4,53 +4,51 @@
   String address=mBluetoothService.getAddressFromObjectPath(devicePath);
   if (address == null)   return;
   BluetoothDevice device=adapter.getRemoteDevice(address);
-  BluetoothHealthAppConfiguration config=findHealthApplication(device,channelPath);
+  BluetoothHealthAppConfiguration config;
   int state, prevState=BluetoothHealth.STATE_CHANNEL_DISCONNECTED;
   ParcelFileDescriptor fd;
   HealthChannel channel;
-  if (config != null) {
-    if (exists) {
-      fd=mBluetoothService.getChannelFdNative(channelPath);
-      if (fd == null) {
-        errorLog("Error obtaining fd for channel:" + channelPath);
-        return;
-      }
-      boolean mainChannel=getMainChannel(device,config) == null ? false : true;
-      if (!mainChannel) {
-        String mainChannelPath=mBluetoothService.getMainChannelNative(devicePath);
-        if (mainChannelPath == null) {
-          errorLog("Main Channel Path is null for devicePath:" + devicePath);
-          return;
-        }
-        if (mainChannelPath.equals(channelPath))         mainChannel=true;
-      }
-      channel=findConnectingChannel(device,config);
-      if (channel != null) {
-        channel.mChannelFd=fd;
-        channel.mMainChannel=mainChannel;
-        channel.mChannelPath=channelPath;
-        prevState=channel.mState;
-      }
- else {
-        channel=new HealthChannel(device,config,fd,mainChannel,channelPath);
-        mHealthChannels.add(channel);
-        prevState=BluetoothHealth.STATE_CHANNEL_DISCONNECTED;
-      }
-      state=BluetoothHealth.STATE_CHANNEL_CONNECTED;
+  config=findHealthApplication(device,channelPath);
+  if (exists) {
+    fd=mBluetoothService.getChannelFdNative(channelPath);
+    if (fd == null) {
+      errorLog("Error obtaining fd for channel:" + channelPath);
+      return;
     }
- else {
-      channel=findChannelByPath(device,config,channelPath);
-      if (channel == null) {
-        errorLog("Channel not found:" + config + ":"+ channelPath);
+    boolean mainChannel=getMainChannel(device,config) == null ? false : true;
+    if (!mainChannel) {
+      String mainChannelPath=mBluetoothService.getMainChannelNative(devicePath);
+      if (mainChannelPath == null) {
+        errorLog("Main Channel Path is null for devicePath:" + devicePath);
         return;
       }
-      fd=channel.mChannelFd;
-      mBluetoothService.releaseChannelFdNative(channel.mChannelPath);
-      mHealthChannels.remove(channel);
+      if (mainChannelPath.equals(channelPath))       mainChannel=true;
+    }
+    channel=findConnectingChannel(device,config);
+    if (channel != null) {
+      channel.mChannelFd=fd;
+      channel.mMainChannel=mainChannel;
+      channel.mChannelPath=channelPath;
       prevState=channel.mState;
-      state=BluetoothHealth.STATE_CHANNEL_DISCONNECTED;
     }
-    channel.mState=state;
-    callHealthChannelCallback(config,device,prevState,state,fd);
+ else {
+      channel=new HealthChannel(device,config,fd,mainChannel,channelPath);
+      mHealthChannels.add(channel);
+      prevState=BluetoothHealth.STATE_CHANNEL_DISCONNECTED;
+    }
+    state=BluetoothHealth.STATE_CHANNEL_CONNECTED;
   }
+ else {
+    channel=findChannelByPath(device,channelPath);
+    if (channel == null) {
+      errorLog("Channel not found:" + config + ":"+ channelPath);
+      return;
+    }
+    mHealthChannels.remove(channel);
+    channel.mChannelFd=null;
+    prevState=channel.mState;
+    state=BluetoothHealth.STATE_CHANNEL_DISCONNECTED;
+  }
+  channel.mState=state;
+  callHealthChannelCallback(config,device,prevState,state,channel.mChannelFd,channel.hashCode());
 }
