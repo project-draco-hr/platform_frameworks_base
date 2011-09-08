@@ -1,0 +1,51 @@
+{
+  if (LOGV)   Slog.v(TAG,"performPollLocked(flags=0x" + Integer.toHexString(flags) + ")");
+  final long startRealtime=SystemClock.elapsedRealtime();
+  final boolean pollNetwork=(flags & FLAG_POLL_NETWORK) != 0;
+  final boolean pollUid=(flags & FLAG_POLL_UID) != 0;
+  final boolean persistNetwork=(flags & FLAG_PERSIST_NETWORK) != 0;
+  final boolean persistUid=(flags & FLAG_PERSIST_UID) != 0;
+  final boolean forcePersist=(flags & FLAG_FORCE_PERSIST) != 0;
+  if (mTime.getCacheAge() > mSettings.getTimeCacheMaxAge()) {
+    mTime.forceRefresh();
+  }
+  final long currentTime=mTime.hasCache() ? mTime.currentTimeMillis() : System.currentTimeMillis();
+  final long threshold=mSettings.getPersistThreshold();
+  try {
+    if (pollNetwork) {
+      final NetworkStats networkSnapshot=mNetworkManager.getNetworkStatsSummary();
+      performNetworkPollLocked(networkSnapshot,currentTime);
+      final NetworkStats persistNetworkDelta=computeStatsDelta(mLastPersistNetworkSnapshot,networkSnapshot,true);
+      final boolean pastThreshold=persistNetworkDelta.getTotalBytes() > threshold;
+      if (forcePersist || (persistNetwork && pastThreshold)) {
+        writeNetworkStatsLocked();
+        mLastPersistNetworkSnapshot=networkSnapshot;
+      }
+    }
+    if (pollUid) {
+      final NetworkStats uidSnapshot=mNetworkManager.getNetworkStatsUidDetail(UID_ALL);
+      performUidPollLocked(uidSnapshot,currentTime);
+      final NetworkStats persistUidDelta=computeStatsDelta(mLastPersistUidSnapshot,uidSnapshot,true);
+      final boolean pastThreshold=persistUidDelta.getTotalBytes() > threshold;
+      if (forcePersist || (persistUid && pastThreshold)) {
+        writeUidStatsLocked();
+        mLastPersistUidSnapshot=uidSnapshot;
+      }
+    }
+  }
+ catch (  IllegalStateException e) {
+    Log.wtf(TAG,"problem reading network stats",e);
+  }
+catch (  RemoteException e) {
+  }
+  if (LOGV) {
+    final long duration=SystemClock.elapsedRealtime() - startRealtime;
+    Slog.v(TAG,"performPollLocked() took " + duration + "ms");
+  }
+  if (pollNetwork && pollUid) {
+    performSample();
+  }
+  final Intent updatedIntent=new Intent(ACTION_NETWORK_STATS_UPDATED);
+  updatedIntent.setFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY);
+  mContext.sendBroadcast(updatedIntent,READ_NETWORK_USAGE_HISTORY);
+}
