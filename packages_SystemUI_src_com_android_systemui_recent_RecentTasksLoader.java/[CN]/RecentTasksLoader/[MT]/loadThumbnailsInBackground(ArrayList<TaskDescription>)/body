@@ -1,0 +1,57 @@
+{
+  if (descriptions.size() > 0) {
+    if (DEBUG)     Log.v(TAG,"Showing " + descriptions.size() + " tasks");
+    loadThumbnail(descriptions.get(0));
+    if (descriptions.size() > 1) {
+      mThumbnailLoader=new AsyncTask<Void,Integer,Void>(){
+        @Override protected void onProgressUpdate(        Integer... values){
+          final TaskDescription td=descriptions.get(values[0]);
+          if (!isCancelled()) {
+            mRecentsPanel.onTaskThumbnailLoaded(td);
+          }
+          mHandler.post(new Runnable(){
+            @Override public void run(){
+synchronized (td) {
+                td.notifyAll();
+              }
+            }
+          }
+);
+        }
+        @Override protected Void doInBackground(        Void... params){
+          final int origPri=Process.getThreadPriority(Process.myTid());
+          Process.setThreadPriority(Process.THREAD_GROUP_BG_NONINTERACTIVE);
+          long nextTime=SystemClock.uptimeMillis();
+          for (int i=1; i < descriptions.size(); i++) {
+            TaskDescription td=descriptions.get(i);
+            loadThumbnail(td);
+            long now=SystemClock.uptimeMillis();
+            nextTime+=150;
+            if (nextTime > now) {
+              try {
+                Thread.sleep(nextTime - now);
+              }
+ catch (              InterruptedException e) {
+              }
+            }
+            if (isCancelled()) {
+              break;
+            }
+synchronized (td) {
+              publishProgress(i);
+              try {
+                td.wait(500);
+              }
+ catch (              InterruptedException e) {
+              }
+            }
+          }
+          Process.setThreadPriority(origPri);
+          return null;
+        }
+      }
+;
+      mThumbnailLoader.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+    }
+  }
+}
