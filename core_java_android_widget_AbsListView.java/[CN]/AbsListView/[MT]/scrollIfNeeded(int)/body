@@ -1,0 +1,126 @@
+{
+  final int rawDeltaY=y - mMotionY;
+  final int deltaY=rawDeltaY - mMotionCorrection;
+  int incrementalDeltaY=mLastY != Integer.MIN_VALUE ? y - mLastY : deltaY;
+  if (mTouchMode == TOUCH_MODE_SCROLL) {
+    if (PROFILE_SCROLLING) {
+      if (!mScrollProfilingStarted) {
+        Debug.startMethodTracing("AbsListViewScroll");
+        mScrollProfilingStarted=true;
+      }
+    }
+    if (mScrollStrictSpan == null) {
+      mScrollStrictSpan=StrictMode.enterCriticalSpan("AbsListView-scroll");
+    }
+    if (y != mLastY) {
+      if ((mGroupFlags & FLAG_DISALLOW_INTERCEPT) == 0 && Math.abs(rawDeltaY) > mTouchSlop) {
+        final ViewParent parent=getParent();
+        if (parent != null) {
+          parent.requestDisallowInterceptTouchEvent(true);
+        }
+      }
+      final int motionIndex;
+      if (mMotionPosition >= 0) {
+        motionIndex=mMotionPosition - mFirstPosition;
+      }
+ else {
+        motionIndex=getChildCount() / 2;
+      }
+      int motionViewPrevTop=0;
+      View motionView=this.getChildAt(motionIndex);
+      if (motionView != null) {
+        motionViewPrevTop=motionView.getTop();
+      }
+      boolean atEdge=false;
+      if (incrementalDeltaY != 0) {
+        atEdge=trackMotionScroll(deltaY,incrementalDeltaY);
+      }
+      motionView=this.getChildAt(motionIndex);
+      if (motionView != null) {
+        final int motionViewRealTop=motionView.getTop();
+        if (atEdge) {
+          int overscroll=-incrementalDeltaY - (motionViewRealTop - motionViewPrevTop);
+          overScrollBy(0,overscroll,0,mScrollY,0,0,0,mOverscrollDistance,true);
+          if (Math.abs(mOverscrollDistance) == Math.abs(mScrollY)) {
+            if (mVelocityTracker != null) {
+              mVelocityTracker.clear();
+            }
+          }
+          final int overscrollMode=getOverScrollMode();
+          if (overscrollMode == OVER_SCROLL_ALWAYS || (overscrollMode == OVER_SCROLL_IF_CONTENT_SCROLLS && !contentFits())) {
+            mDirection=0;
+            mTouchMode=TOUCH_MODE_OVERSCROLL;
+            if (rawDeltaY > 0) {
+              mEdgeGlowTop.onPull((float)overscroll / getHeight());
+              if (!mEdgeGlowBottom.isFinished()) {
+                mEdgeGlowBottom.onRelease();
+              }
+            }
+ else             if (rawDeltaY < 0) {
+              mEdgeGlowBottom.onPull((float)overscroll / getHeight());
+              if (!mEdgeGlowTop.isFinished()) {
+                mEdgeGlowTop.onRelease();
+              }
+            }
+          }
+        }
+        mMotionY=y;
+        invalidate();
+      }
+      mLastY=y;
+    }
+  }
+ else   if (mTouchMode == TOUCH_MODE_OVERSCROLL) {
+    if (y != mLastY) {
+      final int oldScroll=mScrollY;
+      final int newScroll=oldScroll - incrementalDeltaY;
+      int newDirection=y > mLastY ? 1 : -1;
+      if (mDirection == 0) {
+        mDirection=newDirection;
+      }
+      int overScrollDistance=-incrementalDeltaY;
+      if ((newScroll < 0 && oldScroll >= 0) || (newScroll > 0 && oldScroll <= 0)) {
+        overScrollDistance=-oldScroll;
+        incrementalDeltaY+=overScrollDistance;
+      }
+ else {
+        incrementalDeltaY=0;
+      }
+      if (overScrollDistance != 0) {
+        overScrollBy(0,overScrollDistance,0,mScrollY,0,0,0,mOverscrollDistance,true);
+        final int overscrollMode=getOverScrollMode();
+        if (overscrollMode == OVER_SCROLL_ALWAYS || (overscrollMode == OVER_SCROLL_IF_CONTENT_SCROLLS && !contentFits())) {
+          if (rawDeltaY > 0) {
+            mEdgeGlowTop.onPull((float)overScrollDistance / getHeight());
+            if (!mEdgeGlowBottom.isFinished()) {
+              mEdgeGlowBottom.onRelease();
+            }
+          }
+ else           if (rawDeltaY < 0) {
+            mEdgeGlowBottom.onPull((float)overScrollDistance / getHeight());
+            if (!mEdgeGlowTop.isFinished()) {
+              mEdgeGlowTop.onRelease();
+            }
+          }
+          invalidate();
+        }
+      }
+      if (incrementalDeltaY != 0) {
+        mScrollY=0;
+        invalidateParentIfNeeded();
+        if (incrementalDeltaY != 0) {
+          trackMotionScroll(incrementalDeltaY,incrementalDeltaY);
+        }
+        mTouchMode=TOUCH_MODE_SCROLL;
+        final int motionPosition=findClosestMotionRow(y);
+        mMotionCorrection=0;
+        View motionView=getChildAt(motionPosition - mFirstPosition);
+        mMotionViewOriginalTop=motionView != null ? motionView.getTop() : 0;
+        mMotionY=y;
+        mMotionPosition=motionPosition;
+      }
+      mLastY=y;
+      mDirection=newDirection;
+    }
+  }
+}
