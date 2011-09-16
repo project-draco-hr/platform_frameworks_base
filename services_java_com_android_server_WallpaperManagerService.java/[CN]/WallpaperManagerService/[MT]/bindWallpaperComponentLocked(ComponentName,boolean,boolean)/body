@@ -5,12 +5,12 @@
       if (mWallpaperComponent == null) {
         if (componentName == null) {
           if (DEBUG)           Slog.v(TAG,"bindWallpaperComponentLocked: still using default");
-          return;
+          return true;
         }
       }
  else       if (mWallpaperComponent.equals(componentName)) {
         if (DEBUG)         Slog.v(TAG,"same wallpaper");
-        return;
+        return true;
       }
     }
   }
@@ -28,7 +28,12 @@
     }
     ServiceInfo si=mContext.getPackageManager().getServiceInfo(componentName,PackageManager.GET_META_DATA | PackageManager.GET_PERMISSIONS);
     if (!android.Manifest.permission.BIND_WALLPAPER.equals(si.permission)) {
-      throw new SecurityException("Selected service does not require " + android.Manifest.permission.BIND_WALLPAPER + ": "+ componentName);
+      String msg="Selected service does not require " + android.Manifest.permission.BIND_WALLPAPER + ": "+ componentName;
+      if (fromUser) {
+        throw new SecurityException(msg);
+      }
+      Slog.w(TAG,msg);
+      return false;
     }
     WallpaperInfo wi=null;
     Intent intent=new Intent(WallpaperService.SERVICE_INTERFACE);
@@ -41,16 +46,29 @@
             wi=new WallpaperInfo(mContext,ris.get(i));
           }
  catch (          XmlPullParserException e) {
-            throw new IllegalArgumentException(e);
+            if (fromUser) {
+              throw new IllegalArgumentException(e);
+            }
+            Slog.w(TAG,e);
+            return false;
           }
 catch (          IOException e) {
-            throw new IllegalArgumentException(e);
+            if (fromUser) {
+              throw new IllegalArgumentException(e);
+            }
+            Slog.w(TAG,e);
+            return false;
           }
           break;
         }
       }
       if (wi == null) {
-        throw new SecurityException("Selected service is not a wallpaper: " + componentName);
+        String msg="Selected service is not a wallpaper: " + componentName;
+        if (fromUser) {
+          throw new SecurityException(msg);
+        }
+        Slog.w(TAG,msg);
+        return false;
       }
     }
     if (DEBUG)     Slog.v(TAG,"Binding to:" + componentName);
@@ -59,7 +77,12 @@ catch (          IOException e) {
     intent.putExtra(Intent.EXTRA_CLIENT_LABEL,com.android.internal.R.string.wallpaper_binding_label);
     intent.putExtra(Intent.EXTRA_CLIENT_INTENT,PendingIntent.getActivity(mContext,0,Intent.createChooser(new Intent(Intent.ACTION_SET_WALLPAPER),mContext.getText(com.android.internal.R.string.chooser_wallpaper)),0));
     if (!mContext.bindService(intent,newConn,Context.BIND_AUTO_CREATE)) {
-      throw new IllegalArgumentException("Unable to bind service: " + componentName);
+      String msg="Unable to bind service: " + componentName;
+      if (fromUser) {
+        throw new IllegalArgumentException(msg);
+      }
+      Slog.w(TAG,msg);
+      return false;
     }
     clearWallpaperComponentLocked();
     mWallpaperComponent=componentName;
@@ -73,6 +96,12 @@ catch (          IOException e) {
     }
   }
  catch (  PackageManager.NameNotFoundException e) {
-    throw new IllegalArgumentException("Unknown component " + componentName);
+    String msg="Unknown component " + componentName;
+    if (fromUser) {
+      throw new IllegalArgumentException(msg);
+    }
+    Slog.w(TAG,msg);
+    return false;
   }
+  return true;
 }
