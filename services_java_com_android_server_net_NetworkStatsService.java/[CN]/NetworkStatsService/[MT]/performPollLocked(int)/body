@@ -1,48 +1,33 @@
 {
   if (LOGV)   Slog.v(TAG,"performPollLocked(flags=0x" + Integer.toHexString(flags) + ")");
   final long startRealtime=SystemClock.elapsedRealtime();
-  boolean pollNetwork=(flags & FLAG_POLL_NETWORK) != 0;
-  boolean pollUid=(flags & FLAG_POLL_UID) != 0;
-  boolean pollTether=(flags & FLAG_POLL_TETHER) != 0;
-  final boolean forceCompletePoll=mSettings.getForceCompletePoll();
-  if (forceCompletePoll && (pollNetwork || pollUid || pollTether)) {
-    pollNetwork=true;
-    pollUid=true;
-    pollTether=true;
-  }
   final boolean persistNetwork=(flags & FLAG_PERSIST_NETWORK) != 0;
   final boolean persistUid=(flags & FLAG_PERSIST_UID) != 0;
-  final boolean forcePersist=(flags & FLAG_FORCE_PERSIST) != 0;
+  final boolean persistForce=(flags & FLAG_PERSIST_FORCE) != 0;
   if (mTime.getCacheAge() > mSettings.getTimeCacheMaxAge()) {
     mTime.forceRefresh();
   }
   final long currentTime=mTime.hasCache() ? mTime.currentTimeMillis() : System.currentTimeMillis();
   final long threshold=mSettings.getPersistThreshold();
   try {
-    if (pollNetwork) {
-      final NetworkStats networkSnapshot=mNetworkManager.getNetworkStatsSummary();
-      performNetworkPollLocked(networkSnapshot,currentTime);
-      final NetworkStats persistNetworkDelta=computeStatsDelta(mLastPersistNetworkSnapshot,networkSnapshot,true);
-      final boolean pastThreshold=persistNetworkDelta.getTotalBytes() > threshold;
-      if (forcePersist || (persistNetwork && pastThreshold)) {
-        writeNetworkStatsLocked();
-        mLastPersistNetworkSnapshot=networkSnapshot;
-      }
+    final NetworkStats networkSnapshot=mNetworkManager.getNetworkStatsSummary();
+    performNetworkPollLocked(networkSnapshot,currentTime);
+    final NetworkStats persistNetworkDelta=computeStatsDelta(mLastPersistNetworkSnapshot,networkSnapshot,true);
+    final boolean networkPastThreshold=persistNetworkDelta.getTotalBytes() > threshold;
+    if (persistForce || (persistNetwork && networkPastThreshold)) {
+      writeNetworkStatsLocked();
+      mLastPersistNetworkSnapshot=networkSnapshot;
     }
-    if (pollTether) {
-      final String[] ifacePairs=mConnManager.getTetheredIfacePairs();
-      final NetworkStats tetherSnapshot=mNetworkManager.getNetworkStatsTethering(ifacePairs);
-      performTetherPollLocked(tetherSnapshot,currentTime);
-    }
-    if (pollUid) {
-      final NetworkStats uidSnapshot=mNetworkManager.getNetworkStatsUidDetail(UID_ALL);
-      performUidPollLocked(uidSnapshot,currentTime);
-      final NetworkStats persistUidDelta=computeStatsDelta(mLastPersistUidSnapshot,uidSnapshot,true);
-      final boolean pastThreshold=persistUidDelta.getTotalBytes() > threshold;
-      if (forcePersist || (persistUid && pastThreshold)) {
-        writeUidStatsLocked();
-        mLastPersistUidSnapshot=uidSnapshot;
-      }
+    final String[] ifacePairs=mConnManager.getTetheredIfacePairs();
+    final NetworkStats tetherSnapshot=mNetworkManager.getNetworkStatsTethering(ifacePairs);
+    performTetherPollLocked(tetherSnapshot,currentTime);
+    final NetworkStats uidSnapshot=mNetworkManager.getNetworkStatsUidDetail(UID_ALL);
+    performUidPollLocked(uidSnapshot,currentTime);
+    final NetworkStats persistUidDelta=computeStatsDelta(mLastPersistUidSnapshot,uidSnapshot,true);
+    final boolean uidPastThreshold=persistUidDelta.getTotalBytes() > threshold;
+    if (persistForce || (persistUid && uidPastThreshold)) {
+      writeUidStatsLocked();
+      mLastPersistUidSnapshot=uidSnapshot;
     }
   }
  catch (  IllegalStateException e) {
@@ -54,9 +39,7 @@ catch (  RemoteException e) {
     final long duration=SystemClock.elapsedRealtime() - startRealtime;
     Slog.v(TAG,"performPollLocked() took " + duration + "ms");
   }
-  if (pollNetwork && pollUid) {
-    performSample();
-  }
+  performSample();
   final Intent updatedIntent=new Intent(ACTION_NETWORK_STATS_UPDATED);
   updatedIntent.setFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY);
   mContext.sendBroadcast(updatedIntent,READ_NETWORK_USAGE_HISTORY);
