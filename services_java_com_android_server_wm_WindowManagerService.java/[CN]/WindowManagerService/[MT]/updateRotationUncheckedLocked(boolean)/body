@@ -1,0 +1,72 @@
+{
+  if (mDeferredRotationPauseCount > 0) {
+    if (DEBUG_ORIENTATION)     Slog.v(TAG,"Deferring rotation, rotation is paused.");
+    return false;
+  }
+  if (mScreenRotationAnimation != null && mScreenRotationAnimation.isAnimating()) {
+    if (DEBUG_ORIENTATION)     Slog.v(TAG,"Deferring rotation, animation in progress.");
+    return false;
+  }
+  if (!mDisplayEnabled) {
+    if (DEBUG_ORIENTATION)     Slog.v(TAG,"Deferring rotation, display is not enabled.");
+    return false;
+  }
+  int rotation=mPolicy.rotationForOrientationLw(mForcedAppOrientation,mRotation);
+  boolean altOrientation=!mPolicy.rotationHasCompatibleMetricsLw(mForcedAppOrientation,rotation);
+  if (DEBUG_ORIENTATION) {
+    Slog.v(TAG,"Application requested orientation " + mForcedAppOrientation + ", got rotation "+ rotation+ " which has "+ (altOrientation ? "incompatible" : "compatible")+ " metrics");
+  }
+  if (mRotation == rotation && mAltOrientation == altOrientation) {
+    return false;
+  }
+  if (DEBUG_ORIENTATION) {
+    Slog.v(TAG,"Rotation changed to " + rotation + (altOrientation ? " (alt)" : "")+ " from "+ mRotation+ (mAltOrientation ? " (alt)" : "")+ ", forceApp="+ mForcedAppOrientation);
+  }
+  mRotation=rotation;
+  mAltOrientation=altOrientation;
+  mWindowsFreezingScreen=true;
+  mH.removeMessages(H.WINDOW_FREEZE_TIMEOUT);
+  mH.sendMessageDelayed(mH.obtainMessage(H.WINDOW_FREEZE_TIMEOUT),2000);
+  mWaitingForConfig=true;
+  mLayoutNeeded=true;
+  startFreezingDisplayLocked(inTransaction);
+  mInputManager.setDisplayOrientation(0,rotation);
+  if (CUSTOM_SCREEN_ROTATION && mScreenRotationAnimation != null && mScreenRotationAnimation.hasScreenshot()) {
+    Surface.freezeDisplay(0);
+    if (!inTransaction) {
+      if (SHOW_TRANSACTIONS)       Slog.i(TAG,">>> OPEN TRANSACTION setRotationUnchecked");
+      Surface.openTransaction();
+    }
+    try {
+      if (mScreenRotationAnimation != null) {
+        mScreenRotationAnimation.setRotation(rotation);
+      }
+    }
+  finally {
+      if (!inTransaction) {
+        Surface.closeTransaction();
+        if (SHOW_TRANSACTIONS)         Slog.i(TAG,"<<< CLOSE TRANSACTION setRotationUnchecked");
+      }
+    }
+    Surface.setOrientation(0,rotation);
+    Surface.unfreezeDisplay(0);
+  }
+ else {
+    Surface.setOrientation(0,rotation);
+  }
+  rebuildBlackFrame(inTransaction);
+  for (int i=mWindows.size() - 1; i >= 0; i--) {
+    WindowState w=mWindows.get(i);
+    if (w.mSurface != null) {
+      w.mOrientationChanging=true;
+    }
+  }
+  for (int i=mRotationWatchers.size() - 1; i >= 0; i--) {
+    try {
+      mRotationWatchers.get(i).onRotationChanged(rotation);
+    }
+ catch (    RemoteException e) {
+    }
+  }
+  return true;
+}
