@@ -16,7 +16,7 @@ synchronized (mLocks) {
  else {
       newState&=~BATTERY_LOW_BIT;
     }
-    if (newState == mPowerState) {
+    if (newState == mPowerState && mInitialized) {
       return;
     }
     if (!mBootCompleted && !mUseSoftwareAutoBrightness) {
@@ -32,10 +32,7 @@ synchronized (mLocks) {
       Slog.d(TAG,"  oldScreenOn=" + oldScreenOn + " newScreenOn="+ newScreenOn);
       Slog.d(TAG,"  oldBatteryLow=" + ((mPowerState & BATTERY_LOW_BIT) != 0) + " newBatteryLow="+ ((newState & BATTERY_LOW_BIT) != 0));
     }
-    if (mPowerState != newState) {
-      updateLightsLocked(newState,0);
-      mPowerState=(mPowerState & ~LIGHTS_MASK) | (newState & LIGHTS_MASK);
-    }
+    final boolean stateChanged=mPowerState != newState;
     if (oldScreenOn != newScreenOn) {
       if (newScreenOn) {
         if (mStillNeedSleepNotification) {
@@ -74,11 +71,17 @@ synchronized (mLocks) {
         mTouchCycles=0;
         EventLog.writeEvent(EventLogTags.POWER_SCREEN_STATE,1,reason,mTotalTouchDownTime,mTouchCycles);
         if (err == 0) {
-          mPowerState|=SCREEN_ON_BIT;
           sendNotificationLocked(true,-1);
+          if (stateChanged) {
+            updateLightsLocked(newState,0);
+          }
+          mPowerState|=SCREEN_ON_BIT;
         }
       }
  else {
+        if (stateChanged) {
+          updateLightsLocked(newState,0);
+        }
         mHandler.removeCallbacks(mAutoBrightnessTask);
         mLightSensorPendingDecrease=false;
         mLightSensorPendingIncrease=false;
@@ -104,6 +107,11 @@ synchronized (mLocks) {
         }
       }
     }
+ else     if (stateChanged) {
+      updateLightsLocked(newState,0);
+    }
+    mPowerState=(mPowerState & ~LIGHTS_MASK) | (newState & LIGHTS_MASK);
     updateNativePowerStateLocked();
+    mInitialized=true;
   }
 }
