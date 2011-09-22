@@ -1,45 +1,48 @@
 {
-  byte[][] values=new byte[sortedKeys.length * 2][];
-  if (!sortedCursor.moveToFirst()) {
+  final int settingsCount=settings.length;
+  byte[][] values=new byte[settingsCount * 2][];
+  if (!cursor.moveToFirst()) {
     Log.e(TAG,"Couldn't read from the cursor");
     return new byte[0];
   }
-  int keyIndex=0;
   int totalSize=0;
-  while (!sortedCursor.isAfterLast()) {
-    String name=sortedCursor.getString(COLUMN_NAME);
-    while (sortedKeys[keyIndex].compareTo(name.toString()) < 0) {
-      keyIndex++;
-      if (keyIndex == sortedKeys.length)       break;
-    }
-    if (keyIndex < sortedKeys.length && name.equals(sortedKeys[keyIndex])) {
-      String value=sortedCursor.getString(COLUMN_VALUE);
-      byte[] nameBytes=name.toString().getBytes();
-      totalSize+=4 + nameBytes.length;
-      values[keyIndex * 2]=nameBytes;
-      byte[] valueBytes;
-      if (TextUtils.isEmpty(value)) {
-        valueBytes=null;
-        totalSize+=4;
+  int backedUpSettingIndex=0;
+  Map<String,String> cachedEntries=new HashMap<String,String>();
+  for (int i=0; i < settingsCount; i++) {
+    String key=settings[i];
+    String value=cachedEntries.remove(key);
+    if (value == null) {
+      while (!cursor.isAfterLast()) {
+        String cursorKey=cursor.getString(COLUMN_NAME);
+        String cursorValue=cursor.getString(COLUMN_VALUE);
+        cursor.moveToNext();
+        if (key.equals(cursorKey)) {
+          value=cursorValue;
+          break;
+        }
+        cachedEntries.put(cursorKey,cursorValue);
       }
- else {
-        valueBytes=value.toString().getBytes();
-        totalSize+=4 + valueBytes.length;
-      }
-      values[keyIndex * 2 + 1]=valueBytes;
-      keyIndex++;
     }
-    if (keyIndex == sortedKeys.length || !sortedCursor.moveToNext()) {
-      break;
+    if (value == null) {
+      continue;
+    }
+    byte[] keyBytes=key.getBytes();
+    totalSize+=INTEGER_BYTE_COUNT + keyBytes.length;
+    values[backedUpSettingIndex * 2]=keyBytes;
+    byte[] valueBytes=value.getBytes();
+    totalSize+=INTEGER_BYTE_COUNT + valueBytes.length;
+    values[backedUpSettingIndex * 2 + 1]=valueBytes;
+    backedUpSettingIndex++;
+    if (DEBUG) {
+      Log.d(TAG,"Backed up setting: " + key + "="+ value);
     }
   }
   byte[] result=new byte[totalSize];
   int pos=0;
-  for (int i=0; i < sortedKeys.length * 2; i++) {
-    if (values[i] != null) {
-      pos=writeInt(result,pos,values[i].length);
-      pos=writeBytes(result,pos,values[i]);
-    }
+  final int keyValuePairCount=backedUpSettingIndex * 2;
+  for (int i=0; i < keyValuePairCount; i++) {
+    pos=writeInt(result,pos,values[i].length);
+    pos=writeBytes(result,pos,values[i]);
   }
   return result;
 }
