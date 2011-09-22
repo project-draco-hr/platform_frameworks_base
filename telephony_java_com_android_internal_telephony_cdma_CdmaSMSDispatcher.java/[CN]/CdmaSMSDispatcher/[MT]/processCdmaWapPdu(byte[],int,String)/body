@@ -1,17 +1,14 @@
 {
-  int segment;
-  int totalSegments;
   int index=0;
-  int msgType;
-  int sourcePort=0;
-  int destinationPort=0;
-  msgType=pdu[index++];
+  int msgType=pdu[index++];
   if (msgType != 0) {
     Log.w(TAG,"Received a WAP SMS which is not WDP. Discard.");
     return Intents.RESULT_SMS_HANDLED;
   }
-  totalSegments=pdu[index++];
-  segment=pdu[index++];
+  int totalSegments=pdu[index++];
+  int segment=pdu[index++];
+  int sourcePort=0;
+  int destinationPort=0;
   if (segment == 0) {
     sourcePort=(0xFF & pdu[index++]) << 8;
     sourcePort|=0xFF & pdu[index++];
@@ -23,68 +20,8 @@
       }
     }
   }
-  StringBuilder where=new StringBuilder("reference_number =");
-  where.append(referenceNumber);
-  where.append(" AND address = ?");
-  String[] whereArgs=new String[]{address};
-  Log.i(TAG,"Received WAP PDU. Type = " + msgType + ", originator = "+ address+ ", src-port = "+ sourcePort+ ", dst-port = "+ destinationPort+ ", ID = "+ referenceNumber+ ", segment# = "+ segment+ "/"+ totalSegments);
-  byte[][] pdus=null;
-  Cursor cursor=null;
-  try {
-    cursor=mResolver.query(mRawUri,RAW_PROJECTION,where.toString(),whereArgs,null);
-    int cursorCount=cursor.getCount();
-    if (cursorCount != totalSegments - 1) {
-      ContentValues values=new ContentValues();
-      values.put("date",(long)0);
-      values.put("pdu",HexDump.toHexString(pdu,index,pdu.length - index));
-      values.put("address",address);
-      values.put("reference_number",referenceNumber);
-      values.put("count",totalSegments);
-      values.put("sequence",segment);
-      values.put("destination_port",destinationPort);
-      mResolver.insert(mRawUri,values);
-      return Intents.RESULT_SMS_HANDLED;
-    }
-    int pduColumn=cursor.getColumnIndex("pdu");
-    int sequenceColumn=cursor.getColumnIndex("sequence");
-    pdus=new byte[totalSegments][];
-    for (int i=0; i < cursorCount; i++) {
-      cursor.moveToNext();
-      int cursorSequence=(int)cursor.getLong(sequenceColumn);
-      if (cursorSequence == 0) {
-        int destinationPortColumn=cursor.getColumnIndex("destination_port");
-        destinationPort=(int)cursor.getLong(destinationPortColumn);
-      }
-      pdus[cursorSequence]=HexDump.hexStringToByteArray(cursor.getString(pduColumn));
-    }
-    mResolver.delete(mRawUri,where.toString(),whereArgs);
-  }
- catch (  SQLException e) {
-    Log.e(TAG,"Can't access multipart SMS database",e);
-    return Intents.RESULT_SMS_GENERIC_ERROR;
-  }
- finally {
-    if (cursor != null)     cursor.close();
-  }
-  ByteArrayOutputStream output=new ByteArrayOutputStream();
-  for (int i=0; i < totalSegments; i++) {
-    if (i == segment) {
-      output.write(pdu,index,pdu.length - index);
-    }
- else {
-      output.write(pdus[i],0,pdus[i].length);
-    }
-  }
-  byte[] datagram=output.toByteArray();
-switch (destinationPort) {
-case SmsHeader.PORT_WAP_PUSH:
-    return mWapPush.dispatchWapPdu(datagram);
-default :
-{
-    pdus=new byte[1][];
-    pdus[0]=datagram;
-    dispatchPortAddressedPdus(pdus,destinationPort);
-    return Activity.RESULT_OK;
-  }
-}
+  Log.i(TAG,"Received WAP PDU. Type = " + msgType + ", originator = "+ address+ ", src-port = "+ sourcePort+ ", dst-port = "+ destinationPort+ ", ID = "+ referenceNumber+ ", segment# = "+ segment+ '/'+ totalSegments);
+  byte[] userData=new byte[pdu.length - index];
+  System.arraycopy(pdu,index,userData,0,pdu.length - index);
+  return processMessagePart(userData,address,referenceNumber,segment,totalSegments,0L,destinationPort,true);
 }
