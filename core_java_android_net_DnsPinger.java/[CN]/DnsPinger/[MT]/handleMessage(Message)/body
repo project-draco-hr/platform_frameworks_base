@@ -1,61 +1,65 @@
 {
 switch (msg.what) {
 case ACTION_PING_DNS:
-    try {
-      ActivePing newActivePing=new ActivePing();
-      InetAddress dnsAddress=(InetAddress)msg.obj;
-      newActivePing.internalId=msg.arg1;
-      newActivePing.timeout=msg.arg2;
-      newActivePing.socket=new DatagramSocket();
-      newActivePing.socket.setSoTimeout(SOCKET_TIMEOUT_MS);
-      try {
-        newActivePing.socket.setNetworkInterface(NetworkInterface.getByName(getCurrentLinkProperties().getInterfaceName()));
-      }
- catch (      Exception e) {
-        Slog.w(TAG,"sendDnsPing::Error binding to socket",e);
-      }
-      newActivePing.packetId=(short)sRandom.nextInt();
-      byte[] buf=mDnsQuery.clone();
-      buf[0]=(byte)(newActivePing.packetId >> 8);
-      buf[1]=(byte)newActivePing.packetId;
-      DatagramPacket packet=new DatagramPacket(buf,buf.length,dnsAddress,DNS_PORT);
-      if (V) {
-        Slog.v(TAG,"Sending a ping " + newActivePing.internalId + " to "+ dnsAddress.getHostAddress()+ " with packetId "+ newActivePing.packetId+ ".");
-      }
-      newActivePing.socket.send(packet);
-      mActivePings.add(newActivePing);
-      mEventCounter++;
-      sendMessageDelayed(obtainMessage(ACTION_LISTEN_FOR_RESPONSE,mEventCounter,0),RECEIVE_POLL_INTERVAL_MS);
-    }
- catch (    IOException e) {
-      sendResponse(msg.arg1,-9999,SOCKET_EXCEPTION);
-    }
-  break;
+    DnsArg dnsArg=(DnsArg)msg.obj;
+  if (dnsArg.seq != mCurrentToken.get()) {
+    break;
+  }
+try {
+  ActivePing newActivePing=new ActivePing();
+  InetAddress dnsAddress=dnsArg.dns;
+  newActivePing.internalId=msg.arg1;
+  newActivePing.timeout=msg.arg2;
+  newActivePing.socket=new DatagramSocket();
+  newActivePing.socket.setSoTimeout(SOCKET_TIMEOUT_MS);
+  try {
+    newActivePing.socket.setNetworkInterface(NetworkInterface.getByName(getCurrentLinkProperties().getInterfaceName()));
+  }
+ catch (  Exception e) {
+    Slog.w(TAG,"sendDnsPing::Error binding to socket",e);
+  }
+  newActivePing.packetId=(short)sRandom.nextInt();
+  byte[] buf=mDnsQuery.clone();
+  buf[0]=(byte)(newActivePing.packetId >> 8);
+  buf[1]=(byte)newActivePing.packetId;
+  DatagramPacket packet=new DatagramPacket(buf,buf.length,dnsAddress,DNS_PORT);
+  if (V) {
+    Slog.v(TAG,"Sending a ping " + newActivePing.internalId + " to "+ dnsAddress.getHostAddress()+ " with packetId "+ newActivePing.packetId+ ".");
+  }
+  newActivePing.socket.send(packet);
+  mActivePings.add(newActivePing);
+  mEventCounter++;
+  sendMessageDelayed(obtainMessage(ACTION_LISTEN_FOR_RESPONSE,mEventCounter,0),RECEIVE_POLL_INTERVAL_MS);
+}
+ catch (IOException e) {
+  sendResponse(msg.arg1,-9999,SOCKET_EXCEPTION);
+}
+break;
 case ACTION_LISTEN_FOR_RESPONSE:
 if (msg.arg1 != mEventCounter) {
-  break;
+break;
 }
 for (ActivePing curPing : mActivePings) {
 try {
-  byte[] responseBuf=new byte[2];
-  DatagramPacket replyPacket=new DatagramPacket(responseBuf,2);
-  curPing.socket.receive(replyPacket);
-  if (responseBuf[0] == (byte)(curPing.packetId >> 8) && responseBuf[1] == (byte)curPing.packetId) {
-    curPing.result=(int)(SystemClock.elapsedRealtime() - curPing.start);
-  }
+byte[] responseBuf=new byte[2];
+DatagramPacket replyPacket=new DatagramPacket(responseBuf,2);
+curPing.socket.receive(replyPacket);
+if (responseBuf[0] == (byte)(curPing.packetId >> 8) && responseBuf[1] == (byte)curPing.packetId) {
+curPing.result=(int)(SystemClock.elapsedRealtime() - curPing.start);
+}
  else {
-    if (V) {
-      Slog.v(TAG,"response ID didn't match, ignoring packet");
-    }
-  }
+if (V) {
+  Slog.v(TAG,"response ID didn't match, ignoring packet");
+}
+}
 }
  catch (SocketTimeoutException e) {
 }
 catch (Exception e) {
-  if (V) {
-    Slog.v(TAG,"DnsPinger.pingDns got socket exception: ",e);
-  }
-  curPing.result=SOCKET_EXCEPTION;
+if (V) {
+Slog.v(TAG,"DnsPinger.pingDns got socket exception: ",e);
+}
+curPing.result=SOCKET_EXCEPTION;
 }
 }
 Iterator<ActivePing> iter=mActivePings.iterator();
