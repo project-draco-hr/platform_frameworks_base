@@ -1,8 +1,9 @@
 {
   int ret=PackageManager.INSTALL_SUCCEEDED;
-  boolean fwdLocked=(flags & PackageManager.INSTALL_FORWARD_LOCK) != 0;
-  boolean onSd=(flags & PackageManager.INSTALL_EXTERNAL) != 0;
-  boolean onInt=(flags & PackageManager.INSTALL_INTERNAL) != 0;
+  final boolean fwdLocked=(flags & PackageManager.INSTALL_FORWARD_LOCK) != 0;
+  final boolean onSd=(flags & PackageManager.INSTALL_EXTERNAL) != 0;
+  final boolean onInt=(flags & PackageManager.INSTALL_INTERNAL) != 0;
+  PackageInfoLite pkgLite=null;
   if (onInt && onSd) {
     Slog.w(TAG,"Conflicting flags specified for installing on both internal and external");
     ret=PackageManager.INSTALL_FAILED_INVALID_INSTALL_LOCATION;
@@ -21,7 +22,6 @@
  else {
       lowThreshold=dsm.getMemoryLowThreshold();
     }
-    final PackageInfoLite pkgLite;
     try {
       mContext.grantUriPermission(DEFAULT_CONTAINER_PACKAGE,packageURI,Intent.FLAG_GRANT_READ_URI_PERMISSION);
       pkgLite=mContainerService.getMinimalPackageInfo(packageURI,flags,lowThreshold);
@@ -63,13 +63,15 @@
     }
   }
   final InstallArgs args=createInstallArgs(this);
+  mArgs=args;
   if (ret == PackageManager.INSTALL_SUCCEEDED) {
-    final Intent verification=new Intent(Intent.ACTION_PACKAGE_NEEDS_VERIFICATION,packageURI);
-    verification.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-    final List<ResolveInfo> receivers=queryIntentReceivers(verification,null,PackageManager.GET_DISABLED_COMPONENTS);
-    if (isVerificationEnabled() && receivers.size() > 0) {
-      if (DEBUG_INSTALL) {
-        Slog.d(TAG,"Found " + receivers.size() + " verifiers for intent "+ verification.toString());
+    final int requiredUid=mRequiredVerifierPackage == null ? -1 : getPackageUid(mRequiredVerifierPackage);
+    if (requiredUid != -1 && isVerificationEnabled()) {
+      final Intent verification=new Intent(Intent.ACTION_PACKAGE_NEEDS_VERIFICATION,packageURI);
+      verification.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+      final List<ResolveInfo> receivers=queryIntentReceivers(verification,null,PackageManager.GET_DISABLED_COMPONENTS);
+      if (DEBUG_VERIFY) {
+        Slog.d(TAG,"Found " + receivers.size() + " verifiers for intent "+ verification.toString()+ " with "+ pkgLite.verifiers.length+ " optional verifiers");
       }
       final int verificationId=mPendingVerificationToken++;
       verification.putExtra(PackageManager.EXTRA_VERIFICATION_ID,verificationId);
@@ -78,23 +80,41 @@
       if (verificationURI != null) {
         verification.putExtra(PackageManager.EXTRA_VERIFICATION_URI,verificationURI);
       }
-      mPendingVerification.append(verificationId,args);
-      mContext.sendOrderedBroadcast(verification,android.Manifest.permission.PACKAGE_VERIFICATION_AGENT,new BroadcastReceiver(){
-        @Override public void onReceive(        Context context,        Intent intent){
-          final Message msg=mHandler.obtainMessage(CHECK_PENDING_VERIFICATION);
-          msg.arg1=verificationId;
-          mHandler.sendMessageDelayed(msg,getVerificationTimeout());
+      final PackageVerificationState verificationState=new PackageVerificationState(requiredUid,args);
+      mPendingVerification.append(verificationId,verificationState);
+      final List<ComponentName> sufficientVerifiers=matchVerifiers(pkgLite,receivers,verificationState);
+      if (sufficientVerifiers != null) {
+        final int N=sufficientVerifiers.size();
+        if (N == 0) {
+          Slog.i(TAG,"Additional verifiers required, but none installed.");
+          ret=PackageManager.INSTALL_FAILED_VERIFICATION_FAILURE;
+        }
+ else {
+          for (int i=0; i < N; i++) {
+            final ComponentName verifierComponent=sufficientVerifiers.get(i);
+            final Intent sufficientIntent=new Intent(verification);
+            sufficientIntent.setComponent(verifierComponent);
+            mContext.sendBroadcast(sufficientIntent);
+          }
         }
       }
+      final ComponentName requiredVerifierComponent=matchComponentForVerifier(mRequiredVerifierPackage,receivers);
+      if (ret == PackageManager.INSTALL_SUCCEEDED && mRequiredVerifierPackage != null) {
+        verification.setComponent(requiredVerifierComponent);
+        mContext.sendOrderedBroadcast(verification,android.Manifest.permission.PACKAGE_VERIFICATION_AGENT,new BroadcastReceiver(){
+          @Override public void onReceive(          Context context,          Intent intent){
+            final Message msg=mHandler.obtainMessage(CHECK_PENDING_VERIFICATION);
+            msg.arg1=verificationId;
+            mHandler.sendMessageDelayed(msg,getVerificationTimeout());
+          }
+        }
 ,null,0,null,null);
+        mArgs=null;
+      }
     }
  else {
-      mArgs=args;
       ret=args.copyApk(mContainerService,true);
     }
-  }
- else {
-    mArgs=args;
   }
   mRet=ret;
 }
