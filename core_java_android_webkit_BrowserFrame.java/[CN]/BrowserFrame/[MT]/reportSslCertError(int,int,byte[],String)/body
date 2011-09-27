@@ -1,35 +1,34 @@
 {
-  final SslError ssl_error;
+  final SslError sslError;
   try {
-    X509Certificate cert=new X509CertImpl(cert_der);
+    X509Certificate cert=new X509CertImpl(certDER);
     SslCertificate sslCert=new SslCertificate(cert);
     if (JniUtil.useChromiumHttpStack()) {
-      ssl_error=SslError.SslErrorFromChromiumErrorCode(cert_error,sslCert,new URL(url).getHost());
+      sslError=SslError.SslErrorFromChromiumErrorCode(certError,sslCert,new URL(url).getHost());
     }
  else {
-      ssl_error=new SslError(cert_error,cert,url);
+      sslError=new SslError(certError,cert,url);
     }
   }
  catch (  IOException e) {
     Log.e(LOGTAG,"Can't get the certificate from WebKit, canceling");
-    nativeSslCertErrorCancel(handle,cert_error);
+    nativeSslCertErrorCancel(handle,certError);
+    return;
+  }
+  if (SslCertLookupTable.getInstance().isAllowed(sslError)) {
+    nativeSslCertErrorProceed(handle);
     return;
   }
   SslErrorHandler handler=new SslErrorHandler(){
     @Override public void proceed(){
-      SslCertLookupTable.getInstance().Allow(ssl_error);
+      SslCertLookupTable.getInstance().setIsAllowed(sslError,true);
       nativeSslCertErrorProceed(handle);
     }
     @Override public void cancel(){
-      SslCertLookupTable.getInstance().Deny(ssl_error);
-      nativeSslCertErrorCancel(handle,cert_error);
+      SslCertLookupTable.getInstance().setIsAllowed(sslError,false);
+      nativeSslCertErrorCancel(handle,certError);
     }
   }
 ;
-  if (SslCertLookupTable.getInstance().IsAllowed(ssl_error)) {
-    nativeSslCertErrorProceed(handle);
-  }
- else {
-    mCallbackProxy.onReceivedSslError(handler,ssl_error);
-  }
+  mCallbackProxy.onReceivedSslError(handler,sslError);
 }
