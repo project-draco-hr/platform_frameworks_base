@@ -9,17 +9,17 @@
   attributesArray.recycle();
   mShowInputControlsAnimimationDuration=getResources().getInteger(R.integer.config_longAnimTime);
   setWillNotDraw(false);
-  setDrawScrollWheel(false);
+  setSelectorWheelState(SELECTOR_WHEEL_STATE_NONE);
   LayoutInflater inflater=(LayoutInflater)getContext().getSystemService(Context.LAYOUT_INFLATER_SERVICE);
   inflater.inflate(R.layout.number_picker,this,true);
   OnClickListener onClickListener=new OnClickListener(){
     public void onClick(    View v){
       mInputText.clearFocus();
       if (v.getId() == R.id.increment) {
-        changeCurrent(mValue + 1);
+        changeCurrentByOne(true);
       }
  else {
-        changeCurrent(mValue - 1);
+        changeCurrentByOne(false);
       }
     }
   }
@@ -28,10 +28,10 @@
     public boolean onLongClick(    View v){
       mInputText.clearFocus();
       if (v.getId() == R.id.increment) {
-        postUpdateValueFromLongPress(UPDATE_STEP_INCREMENT);
+        postChangeCurrentByOneFromLongPress(true);
       }
  else {
-        postUpdateValueFromLongPress(UPDATE_STEP_DECREMENT);
+        postChangeCurrentByOneFromLongPress(false);
       }
       return true;
     }
@@ -46,11 +46,18 @@
   mInputText=(EditText)findViewById(R.id.numberpicker_input);
   mInputText.setOnFocusChangeListener(new OnFocusChangeListener(){
     public void onFocusChange(    View v,    boolean hasFocus){
+      InputMethodManager inputMethodManager=InputMethodManager.peekInstance();
       if (hasFocus) {
         mInputText.selectAll();
+        if (inputMethodManager != null) {
+          inputMethodManager.showSoftInput(mInputText,0);
+        }
       }
  else {
         mInputText.setSelection(0,0);
+        if (inputMethodManager != null) {
+          inputMethodManager.hideSoftInputFromWindow(getWindowToken(),0);
+        }
         validateInputTextView(v);
       }
     }
@@ -72,21 +79,19 @@
   ColorStateList colors=mInputText.getTextColors();
   int color=colors.getColorForState(ENABLED_STATE_SET,Color.WHITE);
   paint.setColor(color);
-  mSelectorPaint=paint;
-  final ValueAnimator fadeScroller=ObjectAnimator.ofInt(this,"selectorPaintAlpha",255,0);
-  final ObjectAnimator showIncrementButton=ObjectAnimator.ofFloat(mIncrementButton,"alpha",0,1);
-  final ObjectAnimator showDecrementButton=ObjectAnimator.ofFloat(mDecrementButton,"alpha",0,1);
+  mSelectorWheelPaint=paint;
+  mDimSelectorWheelAnimator=ObjectAnimator.ofInt(this,PROPERTY_SELECTOR_PAINT_ALPHA,SELECTOR_WHEEL_BRIGHT_ALPHA,SELECTOR_WHEEL_DIM_ALPHA);
+  final ObjectAnimator showIncrementButton=ObjectAnimator.ofFloat(mIncrementButton,PROPERTY_BUTTON_ALPHA,BUTTON_ALPHA_TRANSPARENT,BUTTON_ALPHA_OPAQUE);
+  final ObjectAnimator showDecrementButton=ObjectAnimator.ofFloat(mDecrementButton,PROPERTY_BUTTON_ALPHA,BUTTON_ALPHA_TRANSPARENT,BUTTON_ALPHA_OPAQUE);
   mShowInputControlsAnimator=new AnimatorSet();
-  mShowInputControlsAnimator.playTogether(fadeScroller,showIncrementButton,showDecrementButton);
+  mShowInputControlsAnimator.playTogether(mDimSelectorWheelAnimator,showIncrementButton,showDecrementButton);
   mShowInputControlsAnimator.addListener(new AnimatorListenerAdapter(){
     private boolean mCanceled=false;
     @Override public void onAnimationEnd(    Animator animation){
       if (!mCanceled) {
-        setDrawScrollWheel(false);
+        setSelectorWheelState(SELECTOR_WHEEL_STATE_SMALL);
       }
       mCanceled=false;
-      mSelectorPaint.setAlpha(255);
-      invalidate();
     }
     @Override public void onAnimationCancel(    Animator animation){
       if (mShowInputControlsAnimator.isRunning()) {
@@ -99,8 +104,13 @@
   mAdjustScroller=new Scroller(getContext(),new DecelerateInterpolator(2.5f));
   updateInputTextView();
   updateIncrementAndDecrementButtonsVisibilityState();
-  if (mFlingable && !isInEditMode()) {
-    setDrawScrollWheel(true);
-    hideInputControls();
+  if (mFlingable) {
+    if (isInEditMode()) {
+      setSelectorWheelState(SELECTOR_WHEEL_STATE_SMALL);
+    }
+ else {
+      setSelectorWheelState(SELECTOR_WHEEL_STATE_LARGE);
+      hideInputControls();
+    }
   }
 }
