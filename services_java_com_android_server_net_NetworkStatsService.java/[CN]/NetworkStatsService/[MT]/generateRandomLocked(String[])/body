@@ -1,0 +1,58 @@
+{
+  final long totalBytes=Long.parseLong(args[1]);
+  final long totalTime=Long.parseLong(args[2]);
+  final PackageManager pm=mContext.getPackageManager();
+  final ArrayList<Integer> specialUidList=Lists.newArrayList();
+  for (int i=3; i < args.length; i++) {
+    try {
+      specialUidList.add(pm.getApplicationInfo(args[i],0).uid);
+    }
+ catch (    NameNotFoundException e) {
+      throw new RuntimeException(e);
+    }
+  }
+  final HashSet<Integer> otherUidSet=Sets.newHashSet();
+  for (  ApplicationInfo info : pm.getInstalledApplications(0)) {
+    if (pm.checkPermission(android.Manifest.permission.INTERNET,info.packageName) == PackageManager.PERMISSION_GRANTED && !specialUidList.contains(info.uid)) {
+      otherUidSet.add(info.uid);
+    }
+  }
+  final ArrayList<Integer> otherUidList=new ArrayList<Integer>(otherUidSet);
+  final long end=System.currentTimeMillis();
+  final long start=end - totalTime;
+  mNetworkDevStats.clear();
+  mNetworkXtStats.clear();
+  mUidStats.clear();
+  final Random r=new Random();
+  for (  NetworkIdentitySet ident : mActiveIfaces.values()) {
+    final NetworkStatsHistory devHistory=findOrCreateNetworkDevStatsLocked(ident);
+    final NetworkStatsHistory xtHistory=findOrCreateNetworkXtStatsLocked(ident);
+    final ArrayList<Integer> uidList=new ArrayList<Integer>();
+    uidList.addAll(specialUidList);
+    if (uidList.size() == 0) {
+      Collections.shuffle(otherUidList);
+      uidList.addAll(otherUidList);
+    }
+    boolean first=true;
+    long remainingBytes=totalBytes;
+    for (    int uid : uidList) {
+      final NetworkStatsHistory defaultHistory=findOrCreateUidStatsLocked(ident,uid,SET_DEFAULT,TAG_NONE);
+      final NetworkStatsHistory foregroundHistory=findOrCreateUidStatsLocked(ident,uid,SET_FOREGROUND,TAG_NONE);
+      final long uidBytes=totalBytes / uidList.size();
+      final float fractionDefault=r.nextFloat();
+      final long defaultBytes=(long)(uidBytes * fractionDefault);
+      final long foregroundBytes=(long)(uidBytes * (1 - fractionDefault));
+      defaultHistory.generateRandom(start,end,defaultBytes);
+      foregroundHistory.generateRandom(start,end,foregroundBytes);
+      if (first) {
+        final long bumpTime=(start + end) / 2;
+        defaultHistory.recordData(bumpTime,bumpTime + DAY_IN_MILLIS,200 * MB_IN_BYTES,0);
+        first=false;
+      }
+      devHistory.recordEntireHistory(defaultHistory);
+      devHistory.recordEntireHistory(foregroundHistory);
+      xtHistory.recordEntireHistory(defaultHistory);
+      xtHistory.recordEntireHistory(foregroundHistory);
+    }
+  }
+}
