@@ -1,9 +1,9 @@
 {
   if (smsb == null) {
+    Log.e(TAG,"dispatchMessage: message is null");
     return Intents.RESULT_SMS_GENERIC_ERROR;
   }
   SmsMessage sms=(SmsMessage)smsb;
-  boolean handled=false;
   if (sms.isTypeZero()) {
     Log.d(TAG,"Received short message type 0, Don't display or store it. Send Ack");
     return Intents.RESULT_SMS_HANDLED;
@@ -12,15 +12,16 @@
     Log.d(TAG,"Received short message on device which doesn't support " + "SMS service. Ignored.");
     return Intents.RESULT_SMS_HANDLED;
   }
+  boolean handled=false;
   if (sms.isMWISetMessage()) {
-    mGsmPhone.updateMessageWaitingIndicator(true);
+    mPhone.setVoiceMessageWaiting(1,-1);
     handled=sms.isMwiDontStore();
     if (false) {
       Log.d(TAG,"Received voice mail indicator set SMS shouldStore=" + !handled);
     }
   }
  else   if (sms.isMWIClearMessage()) {
-    mGsmPhone.updateMessageWaitingIndicator(false);
+    mPhone.setVoiceMessageWaiting(1,0);
     handled=sms.isMwiDontStore();
     if (false) {
       Log.d(TAG,"Received voice mail indicator clear SMS shouldStore=" + !handled);
@@ -29,27 +30,8 @@
   if (handled) {
     return Intents.RESULT_SMS_HANDLED;
   }
-  if (!mStorageAvailable && (sms.getMessageClass() != MessageClass.CLASS_0)) {
+  if (!mStorageMonitor.isStorageAvailable() && sms.getMessageClass() != MessageClass.CLASS_0) {
     return Intents.RESULT_SMS_OUT_OF_MEMORY;
   }
-  SmsHeader smsHeader=sms.getUserDataHeader();
-  if ((smsHeader == null) || (smsHeader.concatRef == null)) {
-    byte[][] pdus=new byte[1][];
-    pdus[0]=sms.getPdu();
-    if (smsHeader != null && smsHeader.portAddrs != null) {
-      if (smsHeader.portAddrs.destPort == SmsHeader.PORT_WAP_PUSH) {
-        return mWapPush.dispatchWapPdu(sms.getUserData());
-      }
- else {
-        dispatchPortAddressedPdus(pdus,smsHeader.portAddrs.destPort);
-      }
-    }
- else {
-      dispatchPdus(pdus);
-    }
-    return Activity.RESULT_OK;
-  }
- else {
-    return processMessagePart(sms,smsHeader.concatRef,smsHeader.portAddrs);
-  }
+  return dispatchNormalMessage(smsb);
 }
