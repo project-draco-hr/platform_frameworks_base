@@ -4,61 +4,62 @@
   if (mimeType == null && intent.getData() != null && "content".equals(intent.getData().getScheme())) {
     mimeType=mAm.getProviderMimeType(intent.getData());
   }
-  if (mStopOption) {
-    String packageName;
-    if (intent.getComponent() != null) {
-      packageName=intent.getComponent().getPackageName();
+  do {
+    if (mStopOption) {
+      String packageName;
+      if (intent.getComponent() != null) {
+        packageName=intent.getComponent().getPackageName();
+      }
+ else {
+        IPackageManager pm=IPackageManager.Stub.asInterface(ServiceManager.getService("package"));
+        if (pm == null) {
+          System.err.println("Error: Package manager not running; aborting");
+          return;
+        }
+        List<ResolveInfo> activities=pm.queryIntentActivities(intent,mimeType,0);
+        if (activities == null || activities.size() <= 0) {
+          System.err.println("Error: Intent does not match any activities: " + intent);
+          return;
+        }
+ else         if (activities.size() > 1) {
+          System.err.println("Error: Intent matches multiple activities; can't stop: " + intent);
+          return;
+        }
+        packageName=activities.get(0).activityInfo.packageName;
+      }
+      System.out.println("Stopping: " + packageName);
+      mAm.forceStopPackage(packageName);
+      Thread.sleep(250);
+    }
+    System.out.println("Starting: " + intent);
+    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+    ParcelFileDescriptor fd=null;
+    if (mProfileFile != null) {
+      try {
+        fd=ParcelFileDescriptor.open(new File(mProfileFile),ParcelFileDescriptor.MODE_CREATE | ParcelFileDescriptor.MODE_TRUNCATE | ParcelFileDescriptor.MODE_READ_WRITE);
+      }
+ catch (      FileNotFoundException e) {
+        System.err.println("Error: Unable to open file: " + mProfileFile);
+        return;
+      }
+    }
+    IActivityManager.WaitResult result=null;
+    int res;
+    if (mWaitOption) {
+      result=mAm.startActivityAndWait(null,intent,mimeType,null,0,null,null,0,false,mDebugOption,mProfileFile,fd,mProfileAutoStop);
+      res=result.result;
     }
  else {
-      IPackageManager pm=IPackageManager.Stub.asInterface(ServiceManager.getService("package"));
-      if (pm == null) {
-        System.err.println("Error: Package manager not running; aborting");
-        return;
-      }
-      List<ResolveInfo> activities=pm.queryIntentActivities(intent,mimeType,0);
-      if (activities == null || activities.size() <= 0) {
-        System.err.println("Error: Intent does not match any activities: " + intent);
-        return;
-      }
- else       if (activities.size() > 1) {
-        System.err.println("Error: Intent matches multiple activities; can't stop: " + intent);
-        return;
-      }
-      packageName=activities.get(0).activityInfo.packageName;
+      res=mAm.startActivity(null,intent,mimeType,null,0,null,null,0,false,mDebugOption,mProfileFile,fd,mProfileAutoStop);
     }
-    System.out.println("Stopping: " + packageName);
-    mAm.forceStopPackage(packageName);
-    Thread.sleep(250);
-  }
-  System.out.println("Starting: " + intent);
-  intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-  ParcelFileDescriptor fd=null;
-  if (mProfileFile != null) {
-    try {
-      fd=ParcelFileDescriptor.open(new File(mProfileFile),ParcelFileDescriptor.MODE_CREATE | ParcelFileDescriptor.MODE_TRUNCATE | ParcelFileDescriptor.MODE_READ_WRITE);
-    }
- catch (    FileNotFoundException e) {
-      System.err.println("Error: Unable to open file: " + mProfileFile);
-      return;
-    }
-  }
-  IActivityManager.WaitResult result=null;
-  int res;
-  if (mWaitOption) {
-    result=mAm.startActivityAndWait(null,intent,mimeType,null,0,null,null,0,false,mDebugOption,mProfileFile,fd,mProfileAutoStop);
-    res=result.result;
-  }
- else {
-    res=mAm.startActivity(null,intent,mimeType,null,0,null,null,0,false,mDebugOption,mProfileFile,fd,mProfileAutoStop);
-  }
-  PrintStream out=mWaitOption ? System.out : System.err;
-  boolean launched=false;
+    PrintStream out=mWaitOption ? System.out : System.err;
+    boolean launched=false;
 switch (res) {
 case IActivityManager.START_SUCCESS:
-    launched=true;
-  break;
+      launched=true;
+    break;
 case IActivityManager.START_SWITCHES_CANCELED:
-launched=true;
+  launched=true;
 out.println("Warning: Activity not started because the " + " current activity is being kept for the user.");
 break;
 case IActivityManager.START_DELIVERED_TO_TOP:
@@ -107,4 +108,10 @@ System.out.println("TotalTime: " + result.totalTime);
 }
 System.out.println("Complete");
 }
+mRepeat--;
+if (mRepeat > 1) {
+mAm.unhandledBack();
+}
+}
+ while (mRepeat > 1);
 }
