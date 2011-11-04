@@ -1,30 +1,34 @@
 {
   if (getOverallState() == State.CONNECTED) {
-    int maxPdpReset=Settings.Secure.getInt(mResolver,Settings.Secure.PDP_WATCHDOG_MAX_PDP_RESET_FAIL_COUNT,DEFAULT_MAX_PDP_RESET_FAIL);
-    if (mPdpResetCount < maxPdpReset) {
-      mPdpResetCount++;
-      EventLog.writeEvent(EventLogTags.PDP_RADIO_RESET,mSentSinceLastRecv);
-      if (DBG)       log("doRecovery() cleanup all connections mPdpResetCount < max");
-      cleanUpAllConnections(true,Phone.REASON_PDP_RESET);
-    }
- else {
-      mPdpResetCount=0;
-switch (mRecoveryAction) {
-case REREGISTER:
-        EventLog.writeEvent(EventLogTags.PDP_REREGISTER_NETWORK,mSentSinceLastRecv);
-      if (DBG)       log("doRecovery() re-register getting preferred network type");
-    mPhone.getServiceStateTracker().reRegisterNetwork(null);
-  mRecoveryAction=RecoveryAction.RADIO_RESTART;
+    int recoveryAction=getRecoveryAction();
+switch (recoveryAction) {
+case RecoveryAction.GET_DATA_CALL_LIST:
+      EventLog.writeEvent(EventLogTags.DATA_STALL_RECOVERY_GET_DATA_CALL_LIST,mSentSinceLastRecv);
+    if (DBG)     log("doRecovery() get data call list");
+  mPhone.mCM.getDataCallList(obtainMessage(EVENT_DATA_STATE_CHANGED));
+putRecoveryAction(RecoveryAction.CLEANUP);
 break;
-case RADIO_RESTART:
-EventLog.writeEvent(EventLogTags.PDP_RADIO_RESET,mSentSinceLastRecv);
+case RecoveryAction.CLEANUP:
+EventLog.writeEvent(EventLogTags.DATA_STALL_RECOVERY_CLEANUP,mSentSinceLastRecv);
+if (DBG) log("doRecovery() cleanup all connections");
+cleanUpAllConnections(true,Phone.REASON_PDP_RESET);
+putRecoveryAction(RecoveryAction.REREGISTER);
+break;
+case RecoveryAction.REREGISTER:
+EventLog.writeEvent(EventLogTags.DATA_STALL_RECOVERY_REREGISTER,mSentSinceLastRecv);
+if (DBG) log("doRecovery() re-register");
+mPhone.getServiceStateTracker().reRegisterNetwork(null);
+putRecoveryAction(RecoveryAction.RADIO_RESTART);
+break;
+case RecoveryAction.RADIO_RESTART:
+EventLog.writeEvent(EventLogTags.DATA_STALL_RECOVERY_RESTART,mSentSinceLastRecv);
 if (DBG) log("restarting radio");
-mRecoveryAction=RecoveryAction.RADIO_RESET;
+putRecoveryAction(RecoveryAction.RADIO_RESET);
 restartRadio();
 break;
-case RADIO_RESET:
-EventLog.writeEvent(EventLogTags.PDP_RADIO_RESET,-1);
-if (DBG) log("restarting radio with reset indication");
+case RecoveryAction.RADIO_RESET:
+EventLog.writeEvent(EventLogTags.DATA_STALL_RECOVERY_RESTART_WITH_PROP,-1);
+if (DBG) log("restarting radio with gsm.radioreset to true");
 SystemProperties.set("gsm.radioreset","true");
 try {
 Thread.sleep(1000);
@@ -32,13 +36,10 @@ Thread.sleep(1000);
  catch (InterruptedException e) {
 }
 restartRadio();
+putRecoveryAction(RecoveryAction.GET_DATA_CALL_LIST);
 break;
 default :
-throw new RuntimeException("doRecovery: Invalid mRecoveryAction " + mRecoveryAction);
+throw new RuntimeException("doRecovery: Invalid recoveryAction=" + recoveryAction);
 }
-}
-}
- else {
-if (DBG) log("doRecovery(): ignore, we're not connected");
 }
 }
