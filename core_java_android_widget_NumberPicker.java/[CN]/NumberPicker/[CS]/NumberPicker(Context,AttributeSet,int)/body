@@ -1,11 +1,16 @@
 {
   super(context,attrs,defStyle);
   TypedArray attributesArray=context.obtainStyledAttributes(attrs,R.styleable.NumberPicker,defStyle,0);
+  final int layoutResId=attributesArray.getResourceId(R.styleable.NumberPicker_internalLayout,DEFAULT_LAYOUT_RESOURCE_ID);
+  mHasSelectorWheel=(layoutResId != DEFAULT_LAYOUT_RESOURCE_ID);
   mSolidColor=attributesArray.getColor(R.styleable.NumberPicker_solidColor,0);
-  mFlingable=attributesArray.getBoolean(R.styleable.NumberPicker_flingable,true);
   mSelectionDivider=attributesArray.getDrawable(R.styleable.NumberPicker_selectionDivider);
-  int defSelectionDividerHeight=(int)TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP,UNSCALED_DEFAULT_SELECTION_DIVIDER_HEIGHT,getResources().getDisplayMetrics());
+  final int defSelectionDividerHeight=(int)TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP,UNSCALED_DEFAULT_SELECTION_DIVIDER_HEIGHT,getResources().getDisplayMetrics());
   mSelectionDividerHeight=attributesArray.getDimensionPixelSize(R.styleable.NumberPicker_selectionDividerHeight,defSelectionDividerHeight);
+  final int defSelectionDividerDistance=(int)TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP,UNSCALED_DEFAULT_SELECTION_DIVIDERS_DISTANCE,getResources().getDisplayMetrics());
+  mSelectionDividersDistance=attributesArray.getDimensionPixelSize(R.styleable.NumberPicker_selectionDividersDistance,defSelectionDividerDistance);
+  final int defMinFlingDistance=(int)TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP,UNSCALED_DEFAULT_MIN_FLING_DISTANCE,getResources().getDisplayMetrics());
+  mMinFlingDistance=attributesArray.getDimensionPixelSize(R.styleable.NumberPicker_minFlingDistance,defMinFlingDistance);
   mMinHeight=attributesArray.getDimensionPixelSize(R.styleable.NumberPicker_internalMinHeight,SIZE_UNSPECIFIED);
   mMaxHeight=attributesArray.getDimensionPixelSize(R.styleable.NumberPicker_internalMaxHeight,SIZE_UNSPECIFIED);
   if (mMinHeight != SIZE_UNSPECIFIED && mMaxHeight != SIZE_UNSPECIFIED && mMinHeight > mMaxHeight) {
@@ -18,20 +23,18 @@
   }
   mComputeMaxWidth=(mMaxWidth == Integer.MAX_VALUE);
   attributesArray.recycle();
-  mShowInputControlsAnimimationDuration=getResources().getInteger(R.integer.config_longAnimTime);
-  setWillNotDraw(false);
-  setSelectorWheelState(SELECTOR_WHEEL_STATE_NONE);
+  setWillNotDraw(!mHasSelectorWheel);
   LayoutInflater inflater=(LayoutInflater)getContext().getSystemService(Context.LAYOUT_INFLATER_SERVICE);
-  inflater.inflate(R.layout.number_picker,this,true);
+  inflater.inflate(layoutResId,this,true);
   OnClickListener onClickListener=new OnClickListener(){
     public void onClick(    View v){
       hideSoftInput();
       mInputText.clearFocus();
       if (v.getId() == R.id.increment) {
-        changeCurrentByOne(true);
+        changeValueByOne(true);
       }
  else {
-        changeCurrentByOne(false);
+        changeValueByOne(false);
       }
     }
   }
@@ -41,21 +44,31 @@
       hideSoftInput();
       mInputText.clearFocus();
       if (v.getId() == R.id.increment) {
-        postChangeCurrentByOneFromLongPress(true);
+        postChangeCurrentByOneFromLongPress(true,0);
       }
  else {
-        postChangeCurrentByOneFromLongPress(false);
+        postChangeCurrentByOneFromLongPress(false,0);
       }
       return true;
     }
   }
 ;
-  mIncrementButton=(ImageButton)findViewById(R.id.increment);
-  mIncrementButton.setOnClickListener(onClickListener);
-  mIncrementButton.setOnLongClickListener(onLongClickListener);
-  mDecrementButton=(ImageButton)findViewById(R.id.decrement);
-  mDecrementButton.setOnClickListener(onClickListener);
-  mDecrementButton.setOnLongClickListener(onLongClickListener);
+  if (!mHasSelectorWheel) {
+    mIncrementButton=(ImageButton)findViewById(R.id.increment);
+    mIncrementButton.setOnClickListener(onClickListener);
+    mIncrementButton.setOnLongClickListener(onLongClickListener);
+  }
+ else {
+    mIncrementButton=null;
+  }
+  if (!mHasSelectorWheel) {
+    mDecrementButton=(ImageButton)findViewById(R.id.decrement);
+    mDecrementButton.setOnClickListener(onClickListener);
+    mDecrementButton.setOnLongClickListener(onLongClickListener);
+  }
+ else {
+    mDecrementButton=null;
+  }
   mInputText=(EditText)findViewById(R.id.numberpicker_input);
   mInputText.setOnFocusChangeListener(new OnFocusChangeListener(){
     public void onFocusChange(    View v,    boolean hasFocus){
@@ -72,7 +85,6 @@
   mInputText.setFilters(new InputFilter[]{new InputTextFilter()});
   mInputText.setRawInputType(InputType.TYPE_CLASS_NUMBER);
   mInputText.setImeOptions(EditorInfo.IME_ACTION_DONE);
-  mTouchSlop=ViewConfiguration.getTapTimeout();
   ViewConfiguration configuration=ViewConfiguration.get(context);
   mTouchSlop=configuration.getScaledTouchSlop();
   mMinimumFlingVelocity=configuration.getScaledMinimumFlingVelocity();
@@ -87,37 +99,7 @@
   int color=colors.getColorForState(ENABLED_STATE_SET,Color.WHITE);
   paint.setColor(color);
   mSelectorWheelPaint=paint;
-  mDimSelectorWheelAnimator=ObjectAnimator.ofInt(this,PROPERTY_SELECTOR_PAINT_ALPHA,SELECTOR_WHEEL_BRIGHT_ALPHA,SELECTOR_WHEEL_DIM_ALPHA);
-  final ObjectAnimator showIncrementButton=ObjectAnimator.ofFloat(mIncrementButton,PROPERTY_BUTTON_ALPHA,BUTTON_ALPHA_TRANSPARENT,BUTTON_ALPHA_OPAQUE);
-  final ObjectAnimator showDecrementButton=ObjectAnimator.ofFloat(mDecrementButton,PROPERTY_BUTTON_ALPHA,BUTTON_ALPHA_TRANSPARENT,BUTTON_ALPHA_OPAQUE);
-  mShowInputControlsAnimator=new AnimatorSet();
-  mShowInputControlsAnimator.playTogether(mDimSelectorWheelAnimator,showIncrementButton,showDecrementButton);
-  mShowInputControlsAnimator.addListener(new AnimatorListenerAdapter(){
-    private boolean mCanceled=false;
-    @Override public void onAnimationEnd(    Animator animation){
-      if (!mCanceled) {
-        setSelectorWheelState(SELECTOR_WHEEL_STATE_SMALL);
-      }
-      mCanceled=false;
-    }
-    @Override public void onAnimationCancel(    Animator animation){
-      if (mShowInputControlsAnimator.isRunning()) {
-        mCanceled=true;
-      }
-    }
-  }
-);
   mFlingScroller=new Scroller(getContext(),null,true);
   mAdjustScroller=new Scroller(getContext(),new DecelerateInterpolator(2.5f));
   updateInputTextView();
-  updateIncrementAndDecrementButtonsVisibilityState();
-  if (mFlingable) {
-    if (isInEditMode()) {
-      setSelectorWheelState(SELECTOR_WHEEL_STATE_SMALL);
-    }
- else {
-      setSelectorWheelState(SELECTOR_WHEEL_STATE_LARGE);
-      hideInputControls();
-    }
-  }
 }
