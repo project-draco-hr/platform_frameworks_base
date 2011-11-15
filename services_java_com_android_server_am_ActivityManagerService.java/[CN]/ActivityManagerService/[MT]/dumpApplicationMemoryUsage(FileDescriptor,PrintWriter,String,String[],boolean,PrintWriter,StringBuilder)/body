@@ -49,10 +49,8 @@
   ArrayList<MemItem> procMems=new ArrayList<MemItem>();
   long nativePss=0, dalvikPss=0, otherPss=0;
   long[] miscPss=new long[Debug.MemoryInfo.NUM_OTHER_STATS];
-  final int[] oomAdj=new int[]{ProcessList.SYSTEM_ADJ,ProcessList.PERSISTENT_PROC_ADJ,ProcessList.FOREGROUND_APP_ADJ,ProcessList.VISIBLE_APP_ADJ,ProcessList.PERCEPTIBLE_APP_ADJ,ProcessList.HEAVY_WEIGHT_APP_ADJ,ProcessList.BACKUP_APP_ADJ,ProcessList.SERVICE_ADJ,ProcessList.HOME_APP_ADJ,ProcessList.PREVIOUS_APP_ADJ,ProcessList.SERVICE_B_ADJ,ProcessList.HIDDEN_APP_MAX_ADJ};
-  final String[] oomLabel=new String[]{"System","Persistent","Foreground","Visible","Perceptible","Heavy Weight","Backup","A Services","Home","Previous","B Services","Background"};
-  long oomPss[]=new long[oomLabel.length];
-  ArrayList<MemItem>[] oomProcs=(ArrayList<MemItem>[])new ArrayList[oomLabel.length];
+  long oomPss[]=new long[DUMP_MEM_OOM_LABEL.length];
+  ArrayList<MemItem>[] oomProcs=(ArrayList<MemItem>[])new ArrayList[DUMP_MEM_OOM_LABEL.length];
   long totalPss=0;
   for (int i=procs.size() - 1; i >= 0; i--) {
     ProcessRecord r=procs.get(i);
@@ -80,7 +78,7 @@
       if (!isCheckinRequest && mi != null) {
         long myTotalPss=mi.getTotalPss();
         totalPss+=myTotalPss;
-        MemItem pssItem=new MemItem(r.processName + " (pid " + r.pid+ ")",myTotalPss);
+        MemItem pssItem=new MemItem(r.processName + " (pid " + r.pid+ ")",r.processName,myTotalPss,0);
         procMems.add(pssItem);
         nativePss+=mi.nativePss;
         dalvikPss+=mi.dalvikPss;
@@ -91,7 +89,7 @@
           otherPss-=mem;
         }
         for (int oomIndex=0; oomIndex < oomPss.length; oomIndex++) {
-          if (r.setAdj <= oomAdj[oomIndex] || oomIndex == (oomPss.length - 1)) {
+          if (r.setAdj <= DUMP_MEM_OOM_ADJ[oomIndex] || oomIndex == (oomPss.length - 1)) {
             oomPss[oomIndex]+=myTotalPss;
             if (oomProcs[oomIndex] == null) {
               oomProcs[oomIndex]=new ArrayList<MemItem>();
@@ -105,18 +103,39 @@
   }
   if (!isCheckinRequest && procs.size() > 1) {
     ArrayList<MemItem> catMems=new ArrayList<MemItem>();
-    catMems.add(new MemItem("Native",nativePss));
-    catMems.add(new MemItem("Dalvik",dalvikPss));
-    catMems.add(new MemItem("Unknown",otherPss));
+    catMems.add(new MemItem("Native","Native",nativePss,-1));
+    catMems.add(new MemItem("Dalvik","Dalvik",dalvikPss,-2));
+    catMems.add(new MemItem("Unknown","Unknown",otherPss,-3));
     for (int j=0; j < Debug.MemoryInfo.NUM_OTHER_STATS; j++) {
-      catMems.add(new MemItem(Debug.MemoryInfo.getOtherLabel(j),miscPss[j]));
+      String label=Debug.MemoryInfo.getOtherLabel(j);
+      catMems.add(new MemItem(label,label,miscPss[j],j));
     }
     ArrayList<MemItem> oomMems=new ArrayList<MemItem>();
     for (int j=0; j < oomPss.length; j++) {
       if (oomPss[j] != 0) {
-        MemItem item=new MemItem(oomLabel[j],oomPss[j]);
+        String label=DUMP_MEM_OOM_LABEL[j];
+        MemItem item=new MemItem(label,label,oomPss[j],DUMP_MEM_OOM_ADJ[j]);
         item.subitems=oomProcs[j];
         oomMems.add(item);
+      }
+    }
+    if (outTag != null) {
+      appendMemBucket(outTag,totalPss,"total");
+      for (int i=0; i < oomMems.size(); i++) {
+        MemItem miCat=oomMems.get(i);
+        if (miCat.subitems == null || miCat.subitems.size() < 1) {
+          continue;
+        }
+        if (miCat.id < ProcessList.SERVICE_ADJ || miCat.id == ProcessList.HOME_APP_ADJ || miCat.id == ProcessList.PREVIOUS_APP_ADJ) {
+          outTag.append(" / ");
+          for (int j=0; j < miCat.subitems.size(); j++) {
+            MemItem mi=miCat.subitems.get(j);
+            if (j > 0) {
+              outTag.append(" ");
+            }
+            appendMemBucket(outTag,mi.pss,mi.shortLabel);
+          }
+        }
       }
     }
     if (!brief && !oomOnly) {
@@ -136,6 +155,6 @@
     pw.println();
     pw.print("Total PSS: ");
     pw.print(totalPss);
-    pw.println(" Kb");
+    pw.println(" kB");
   }
 }
