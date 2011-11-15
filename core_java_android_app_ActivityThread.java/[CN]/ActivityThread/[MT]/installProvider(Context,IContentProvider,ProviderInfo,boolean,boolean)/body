@@ -45,19 +45,59 @@
     Slog.v(TAG,"Installing external provider " + info.authority + ": "+ info.name);
   }
 synchronized (mProviderMap) {
+    IBinder jBinder=provider.asBinder();
     String names[]=PATTERN_SEMICOLON.split(info.authority);
     for (int i=0; i < names.length; i++) {
-      ProviderClientRecord pr=new ProviderClientRecord(names[i],provider,localProvider);
-      try {
-        provider.asBinder().linkToDeath(pr,0);
-        mProviderMap.put(names[i],pr);
+      ProviderClientRecord pr=mProviderMap.get(names[i]);
+      if (pr != null) {
+        if (localLOGV) {
+          Slog.v(TAG,"installProvider: lost the race, " + "using existing named provider");
+        }
+        provider=pr.mProvider;
       }
- catch (      RemoteException e) {
-        return null;
+ else {
+        pr=new ProviderClientRecord(names[i],provider,localProvider);
+        if (localProvider == null) {
+          try {
+            jBinder.linkToDeath(pr,0);
+          }
+ catch (          RemoteException e) {
+            return null;
+          }
+        }
+        mProviderMap.put(names[i],pr);
       }
     }
     if (localProvider != null) {
-      mLocalProviders.put(provider.asBinder(),new ProviderClientRecord(null,provider,localProvider));
+      ProviderClientRecord pr=mLocalProviders.get(jBinder);
+      if (pr != null) {
+        if (localLOGV) {
+          Slog.v(TAG,"installProvider: lost the race, " + "using existing local provider");
+        }
+        provider=pr.mProvider;
+      }
+ else {
+        pr=new ProviderClientRecord(null,provider,localProvider);
+        mLocalProviders.put(jBinder,pr);
+      }
+    }
+    if (!noReleaseNeeded) {
+      ProviderRefCount prc=mProviderRefCountMap.get(jBinder);
+      if (prc != null) {
+        if (localLOGV) {
+          Slog.v(TAG,"installProvider: lost the race, incrementing ref count");
+        }
+        prc.count+=1;
+        if (prc.count == 1) {
+          if (localLOGV) {
+            Slog.v(TAG,"installProvider: " + "snatched provider from the jaws of death");
+          }
+          mH.removeMessages(H.REMOVE_PROVIDER,provider);
+        }
+      }
+ else {
+        mProviderRefCountMap.put(jBinder,new ProviderRefCount(1));
+      }
     }
   }
   return provider;
