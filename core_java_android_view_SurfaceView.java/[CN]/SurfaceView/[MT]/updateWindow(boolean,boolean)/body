@@ -17,9 +17,9 @@
   final boolean creating=mWindow == null;
   final boolean formatChanged=mFormat != mRequestedFormat;
   final boolean sizeChanged=mWidth != myWidth || mHeight != myHeight;
-  final boolean visibleChanged=mVisible != mRequestedVisible || mNewSurfaceNeeded;
+  final boolean visibleChanged=mVisible != mRequestedVisible;
   if (force || creating || formatChanged|| sizeChanged|| visibleChanged|| mLeft != mLocation[0] || mTop != mLocation[1] || mUpdateWindowNeeded || mReportDrawNeeded || redrawNeeded) {
-    if (localLOGV)     Log.i(TAG,"Changes: creating=" + creating + " format="+ formatChanged+ " size="+ sizeChanged+ " visible="+ visibleChanged+ " left="+ (mLeft != mLocation[0])+ " top="+ (mTop != mLocation[1]));
+    if (DEBUG)     Log.i(TAG,"Changes: creating=" + creating + " format="+ formatChanged+ " size="+ sizeChanged+ " visible="+ visibleChanged+ " left="+ (mLeft != mLocation[0])+ " top="+ (mTop != mLocation[1]));
     try {
       final boolean visible=mVisible=mRequestedVisible;
       mLeft=mLocation[0];
@@ -45,23 +45,21 @@
         mLayout.gravity=Gravity.LEFT | Gravity.TOP;
         mSession.addWithoutInputChannel(mWindow,mWindow.mSeq,mLayout,mVisible ? VISIBLE : GONE,mContentInsets);
       }
-      if (visibleChanged && (!visible || mNewSurfaceNeeded)) {
-        reportSurfaceDestroyed();
-      }
-      mNewSurfaceNeeded=false;
       boolean realSizeChanged;
       boolean reportDrawNeeded;
+      int relayoutResult;
       mSurfaceLock.lock();
       try {
         mUpdateWindowNeeded=false;
         reportDrawNeeded=mReportDrawNeeded;
         mReportDrawNeeded=false;
         mDrawingStopped=!visible;
-        final int relayoutResult=mSession.relayout(mWindow,mWindow.mSeq,mLayout,mWidth,mHeight,visible ? VISIBLE : GONE,false,mWinFrame,mContentInsets,mVisibleInsets,mConfiguration,mSurface);
-        if ((relayoutResult & WindowManagerImpl.RELAYOUT_FIRST_TIME) != 0) {
+        if (DEBUG)         Log.i(TAG,"Cur surface: " + mSurface);
+        relayoutResult=mSession.relayout(mWindow,mWindow.mSeq,mLayout,mWidth,mHeight,visible ? VISIBLE : GONE,WindowManagerImpl.RELAYOUT_DEFER_SURFACE_DESTROY,mWinFrame,mContentInsets,mVisibleInsets,mConfiguration,mNewSurface);
+        if ((relayoutResult & WindowManagerImpl.RELAYOUT_RES_FIRST_TIME) != 0) {
           mReportDrawNeeded=true;
         }
-        if (localLOGV)         Log.i(TAG,"New surface: " + mSurface + ", vis="+ visible+ ", frame="+ mWinFrame);
+        if (DEBUG)         Log.i(TAG,"New surface: " + mNewSurface + ", vis="+ visible+ ", frame="+ mWinFrame);
         mSurfaceFrame.left=0;
         mSurfaceFrame.top=0;
         if (mTranslator == null) {
@@ -84,25 +82,48 @@
       }
       try {
         redrawNeeded|=creating | reportDrawNeeded;
-        if (visible) {
-          mDestroyReportNeeded=true;
-          SurfaceHolder.Callback callbacks[];
-synchronized (mCallbacks) {
-            callbacks=new SurfaceHolder.Callback[mCallbacks.size()];
-            mCallbacks.toArray(callbacks);
+        SurfaceHolder.Callback callbacks[]=null;
+        final boolean surfaceChanged=(relayoutResult & WindowManagerImpl.RELAYOUT_RES_SURFACE_CHANGED) != 0;
+        if (mSurfaceCreated && (surfaceChanged || (!visible && visibleChanged))) {
+          mSurfaceCreated=false;
+          if (mSurface.isValid()) {
+            if (DEBUG)             Log.i(TAG,"visibleChanged -- surfaceDestroyed");
+            callbacks=getSurfaceCallbacks();
+            for (            SurfaceHolder.Callback c : callbacks) {
+              c.surfaceDestroyed(mSurfaceHolder);
+            }
           }
-          if (visibleChanged) {
+        }
+        Surface tmpSurface=mSurface;
+        mSurface=mNewSurface;
+        mNewSurface=tmpSurface;
+        mNewSurface.release();
+        if (visible) {
+          if (!mSurfaceCreated && (surfaceChanged || visibleChanged)) {
+            mSurfaceCreated=true;
             mIsCreating=true;
+            if (DEBUG)             Log.i(TAG,"visibleChanged -- surfaceCreated");
+            if (callbacks == null) {
+              callbacks=getSurfaceCallbacks();
+            }
             for (            SurfaceHolder.Callback c : callbacks) {
               c.surfaceCreated(mSurfaceHolder);
             }
           }
           if (creating || formatChanged || sizeChanged|| visibleChanged|| realSizeChanged) {
+            if (DEBUG)             Log.i(TAG,"surfaceChanged -- format=" + mFormat + " w="+ myWidth+ " h="+ myHeight);
+            if (callbacks == null) {
+              callbacks=getSurfaceCallbacks();
+            }
             for (            SurfaceHolder.Callback c : callbacks) {
               c.surfaceChanged(mSurfaceHolder,mFormat,myWidth,myHeight);
             }
           }
           if (redrawNeeded) {
+            if (DEBUG)             Log.i(TAG,"surfaceRedrawNeeded");
+            if (callbacks == null) {
+              callbacks=getSurfaceCallbacks();
+            }
             for (            SurfaceHolder.Callback c : callbacks) {
               if (c instanceof SurfaceHolder.Callback2) {
                 ((SurfaceHolder.Callback2)c).surfaceRedrawNeeded(mSurfaceHolder);
@@ -110,19 +131,18 @@ synchronized (mCallbacks) {
             }
           }
         }
- else {
-          mSurface.release();
-        }
       }
   finally {
         mIsCreating=false;
         if (redrawNeeded) {
+          if (DEBUG)           Log.i(TAG,"finishedDrawing");
           mSession.finishDrawing(mWindow);
         }
+        mSession.performDeferredDestroy(mWindow);
       }
     }
  catch (    RemoteException ex) {
     }
-    if (localLOGV)     Log.v(TAG,"Layout: x=" + mLayout.x + " y="+ mLayout.y+ " w="+ mLayout.width+ " h="+ mLayout.height+ ", frame="+ mSurfaceFrame);
+    if (DEBUG)     Log.v(TAG,"Layout: x=" + mLayout.x + " y="+ mLayout.y+ " w="+ mLayout.width+ " h="+ mLayout.height+ ", frame="+ mSurfaceFrame);
   }
 }
