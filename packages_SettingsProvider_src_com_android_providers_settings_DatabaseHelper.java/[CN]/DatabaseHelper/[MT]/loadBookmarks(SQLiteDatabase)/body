@@ -1,3 +1,73 @@
 {
-  loadBookmarks(db,0);
+  ContentValues values=new ContentValues();
+  PackageManager packageManager=mContext.getPackageManager();
+  try {
+    XmlResourceParser parser=mContext.getResources().getXml(R.xml.bookmarks);
+    XmlUtils.beginDocument(parser,"bookmarks");
+    final int depth=parser.getDepth();
+    int type;
+    while (((type=parser.next()) != XmlPullParser.END_TAG || parser.getDepth() > depth) && type != XmlPullParser.END_DOCUMENT) {
+      if (type != XmlPullParser.START_TAG) {
+        continue;
+      }
+      String name=parser.getName();
+      if (!"bookmark".equals(name)) {
+        break;
+      }
+      String pkg=parser.getAttributeValue(null,"package");
+      String cls=parser.getAttributeValue(null,"class");
+      String shortcutStr=parser.getAttributeValue(null,"shortcut");
+      String category=parser.getAttributeValue(null,"category");
+      int shortcutValue=shortcutStr.charAt(0);
+      if (TextUtils.isEmpty(shortcutStr)) {
+        Log.w(TAG,"Unable to get shortcut for: " + pkg + "/"+ cls);
+        continue;
+      }
+      final Intent intent;
+      final String title;
+      if (pkg != null && cls != null) {
+        ActivityInfo info=null;
+        ComponentName cn=new ComponentName(pkg,cls);
+        try {
+          info=packageManager.getActivityInfo(cn,0);
+        }
+ catch (        PackageManager.NameNotFoundException e) {
+          String[] packages=packageManager.canonicalToCurrentPackageNames(new String[]{pkg});
+          cn=new ComponentName(packages[0],cls);
+          try {
+            info=packageManager.getActivityInfo(cn,0);
+          }
+ catch (          PackageManager.NameNotFoundException e1) {
+            Log.w(TAG,"Unable to add bookmark: " + pkg + "/"+ cls,e);
+            continue;
+          }
+        }
+        intent=new Intent(Intent.ACTION_MAIN,null);
+        intent.addCategory(Intent.CATEGORY_LAUNCHER);
+        intent.setComponent(cn);
+        title=info.loadLabel(packageManager).toString();
+      }
+ else       if (category != null) {
+        intent=new Intent(Intent.ACTION_MAIN,null);
+        intent.addCategory(category);
+        title="";
+      }
+ else {
+        Log.w(TAG,"Unable to add bookmark for shortcut " + shortcutStr + ": missing package/class or category attributes");
+        continue;
+      }
+      intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+      values.put(Settings.Bookmarks.INTENT,intent.toUri(0));
+      values.put(Settings.Bookmarks.TITLE,title);
+      values.put(Settings.Bookmarks.SHORTCUT,shortcutValue);
+      db.delete("bookmarks","shortcut = ?",new String[]{Integer.toString(shortcutValue)});
+      db.insert("bookmarks",null,values);
+    }
+  }
+ catch (  XmlPullParserException e) {
+    Log.w(TAG,"Got execption parsing bookmarks.",e);
+  }
+catch (  IOException e) {
+    Log.w(TAG,"Got execption parsing bookmarks.",e);
+  }
 }
