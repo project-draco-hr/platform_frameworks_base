@@ -25,37 +25,7 @@ AudioSystem.setForceUse(AudioSystem.FOR_DOCK,config);
  else if (action.equals(BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED)) {
 int state=intent.getIntExtra(BluetoothProfile.EXTRA_STATE,BluetoothProfile.STATE_DISCONNECTED);
 BluetoothDevice btDevice=intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
-if (btDevice == null) {
-return;
-}
-String address=btDevice.getAddress();
-if (!BluetoothAdapter.checkBluetoothAddress(address)) {
-address="";
-}
-boolean isConnected=(mConnectedDevices.containsKey(AudioSystem.DEVICE_OUT_BLUETOOTH_A2DP) && mConnectedDevices.get(AudioSystem.DEVICE_OUT_BLUETOOTH_A2DP).equals(address));
-if (isConnected && state != BluetoothProfile.STATE_CONNECTED) {
-if (btDevice.isBluetoothDock()) {
-if (state == BluetoothProfile.STATE_DISCONNECTED) {
-makeA2dpDeviceUnavailableLater(address);
-}
-}
- else {
-makeA2dpDeviceUnavailableNow(address);
-}
-}
- else if (!isConnected && state == BluetoothProfile.STATE_CONNECTED) {
-if (btDevice.isBluetoothDock()) {
-cancelA2dpDeviceTimeout();
-mDockAddress=address;
-}
- else {
-if (hasScheduledA2dpDockTimeout()) {
-cancelA2dpDeviceTimeout();
-makeA2dpDeviceUnavailableNow(mDockAddress);
-}
-}
-makeA2dpDeviceAvailable(address);
-}
+handleA2dpConnectionStateChange(btDevice,state);
 }
  else if (action.equals(BluetoothHeadset.ACTION_CONNECTION_STATE_CHANGED)) {
 int state=intent.getIntExtra(BluetoothProfile.EXTRA_STATE,BluetoothProfile.STATE_DISCONNECTED);
@@ -81,6 +51,7 @@ break;
 if (!BluetoothAdapter.checkBluetoothAddress(address)) {
 address="";
 }
+synchronized (mConnectedDevices) {
 boolean isConnected=(mConnectedDevices.containsKey(device) && mConnectedDevices.get(device).equals(address));
 synchronized (mScoClients) {
 if (isConnected && state != BluetoothProfile.STATE_CONNECTED) {
@@ -96,9 +67,11 @@ mBluetoothHeadsetDevice=btDevice;
 }
 }
 }
+}
  else if (action.equals(Intent.ACTION_HEADSET_PLUG)) {
 int state=intent.getIntExtra("state",0);
 int microphone=intent.getIntExtra("microphone",0);
+synchronized (mConnectedDevices) {
 if (microphone != 0) {
 boolean isConnected=mConnectedDevices.containsKey(AudioSystem.DEVICE_OUT_WIRED_HEADSET);
 if (state == 0 && isConnected) {
@@ -122,9 +95,11 @@ mConnectedDevices.put(new Integer(AudioSystem.DEVICE_OUT_WIRED_HEADPHONE),"");
 }
 }
 }
+}
  else if (action.equals(Intent.ACTION_USB_ANLG_HEADSET_PLUG)) {
 int state=intent.getIntExtra("state",0);
 Log.v(TAG,"Broadcast Receiver: Got ACTION_USB_ANLG_HEADSET_PLUG, state = " + state);
+synchronized (mConnectedDevices) {
 boolean isConnected=mConnectedDevices.containsKey(AudioSystem.DEVICE_OUT_ANLG_DOCK_HEADSET);
 if (state == 0 && isConnected) {
 AudioSystem.setDeviceConnectionState(AudioSystem.DEVICE_OUT_ANLG_DOCK_HEADSET,AudioSystem.DEVICE_STATE_UNAVAILABLE,"");
@@ -135,9 +110,11 @@ AudioSystem.setDeviceConnectionState(AudioSystem.DEVICE_OUT_ANLG_DOCK_HEADSET,Au
 mConnectedDevices.put(new Integer(AudioSystem.DEVICE_OUT_ANLG_DOCK_HEADSET),"");
 }
 }
+}
  else if (action.equals(Intent.ACTION_HDMI_AUDIO_PLUG)) {
 int state=intent.getIntExtra("state",0);
 Log.v(TAG,"Broadcast Receiver: Got ACTION_HDMI_AUDIO_PLUG, state = " + state);
+synchronized (mConnectedDevices) {
 boolean isConnected=mConnectedDevices.containsKey(AudioSystem.DEVICE_OUT_AUX_DIGITAL);
 if (state == 0 && isConnected) {
 AudioSystem.setDeviceConnectionState(AudioSystem.DEVICE_OUT_AUX_DIGITAL,AudioSystem.DEVICE_STATE_UNAVAILABLE,"");
@@ -148,9 +125,11 @@ AudioSystem.setDeviceConnectionState(AudioSystem.DEVICE_OUT_AUX_DIGITAL,AudioSys
 mConnectedDevices.put(new Integer(AudioSystem.DEVICE_OUT_AUX_DIGITAL),"");
 }
 }
+}
  else if (action.equals(Intent.ACTION_USB_DGTL_HEADSET_PLUG)) {
 int state=intent.getIntExtra("state",0);
 Log.v(TAG,"Broadcast Receiver: Got ACTION_USB_DGTL_HEADSET_PLUG, state = " + state);
+synchronized (mConnectedDevices) {
 boolean isConnected=mConnectedDevices.containsKey(AudioSystem.DEVICE_OUT_DGTL_DOCK_HEADSET);
 if (state == 0 && isConnected) {
 AudioSystem.setDeviceConnectionState(AudioSystem.DEVICE_OUT_DGTL_DOCK_HEADSET,AudioSystem.DEVICE_STATE_UNAVAILABLE,"");
@@ -159,6 +138,7 @@ mConnectedDevices.remove(AudioSystem.DEVICE_OUT_DGTL_DOCK_HEADSET);
  else if (state == 1 && !isConnected) {
 AudioSystem.setDeviceConnectionState(AudioSystem.DEVICE_OUT_DGTL_DOCK_HEADSET,AudioSystem.DEVICE_STATE_AVAILABLE,"");
 mConnectedDevices.put(new Integer(AudioSystem.DEVICE_OUT_DGTL_DOCK_HEADSET),"");
+}
 }
 }
  else if (action.equals(BluetoothHeadset.ACTION_AUDIO_STATE_CHANGED)) {
@@ -207,6 +187,10 @@ getBluetoothHeadset();
 Intent newIntent=new Intent(AudioManager.ACTION_SCO_AUDIO_STATE_CHANGED);
 newIntent.putExtra(AudioManager.EXTRA_SCO_AUDIO_STATE,AudioManager.SCO_AUDIO_STATE_DISCONNECTED);
 mContext.sendStickyBroadcast(newIntent);
+BluetoothAdapter adapter=BluetoothAdapter.getDefaultAdapter();
+if (adapter != null) {
+adapter.getProfileProxy(mContext,mBluetoothProfileServiceListener,BluetoothProfile.A2DP);
+}
 }
  else if (action.equals(Intent.ACTION_PACKAGE_REMOVED)) {
 if (!intent.getBooleanExtra(Intent.EXTRA_REPLACING,false)) {
