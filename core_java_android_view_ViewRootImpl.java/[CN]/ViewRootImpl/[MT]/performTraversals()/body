@@ -1,16 +1,13 @@
 {
   final View host=mView;
-  processInputEvents();
   if (DBG) {
     System.out.println("======================================");
     System.out.println("performTraversals");
     host.debug();
   }
   if (host == null || !mAdded)   return;
-  mTraversalScheduled=false;
   mWillDrawSoon=true;
   boolean windowSizeMayChange=false;
-  boolean fullRedrawNeeded=mFullRedrawNeeded;
   boolean newSurface=false;
   boolean surfaceChanged=false;
   WindowManager.LayoutParams lp=mWindowAttributes;
@@ -30,7 +27,7 @@
   CompatibilityInfo compatibilityInfo=mCompatibilityInfo.get();
   if (compatibilityInfo.supportsScreen() == mLastInCompatMode) {
     params=lp;
-    fullRedrawNeeded=true;
+    mFullRedrawNeeded=true;
     mLayoutRequested=true;
     if (mLastInCompatMode) {
       params.flags&=~WindowManager.LayoutParams.FLAG_COMPATIBLE_WINDOW;
@@ -44,7 +41,7 @@
   mWindowAttributesChangesFlag=0;
   Rect frame=mWinFrame;
   if (mFirst) {
-    fullRedrawNeeded=true;
+    mFullRedrawNeeded=true;
     mLayoutRequested=true;
     if (lp.type == WindowManager.LayoutParams.TYPE_STATUS_BAR_PANEL) {
       Display disp=WindowManagerImpl.getDefault().getDefaultDisplay();
@@ -75,7 +72,7 @@
     desiredWindowHeight=frame.height();
     if (desiredWindowWidth != mWidth || desiredWindowHeight != mHeight) {
       if (DEBUG_ORIENTATION)       Log.v(TAG,"View " + host + " resized to: "+ frame);
-      fullRedrawNeeded=true;
+      mFullRedrawNeeded=true;
       mLayoutRequested=true;
       windowSizeMayChange=true;
     }
@@ -314,7 +311,7 @@
       if (!hadSurface) {
         if (mSurface.isValid()) {
           newSurface=true;
-          fullRedrawNeeded=true;
+          mFullRedrawNeeded=true;
           mPreviousTransparentRegion.setEmpty();
           if (mAttachInfo.mHardwareRenderer != null) {
             try {
@@ -348,7 +345,7 @@
         }
       }
  else       if (surfaceGenerationId != mSurface.getGenerationId() && mSurfaceHolder == null && mAttachInfo.mHardwareRenderer != null) {
-        fullRedrawNeeded=true;
+        mFullRedrawNeeded=true;
         try {
           mAttachInfo.mHardwareRenderer.updateSurface(mHolder);
         }
@@ -561,6 +558,9 @@
       }
     }
   }
+  if ((relayoutResult & WindowManagerImpl.RELAYOUT_RES_FIRST_TIME) != 0) {
+    mReportNextDraw=true;
+  }
   boolean cancelDraw=attachInfo.mTreeObserver.dispatchOnPreDraw() || viewVisibility != View.VISIBLE;
   if (!cancelDraw && !newSurface) {
     if (mPendingTransitions != null && mPendingTransitions.size() > 0) {
@@ -569,37 +569,7 @@
       }
       mPendingTransitions.clear();
     }
-    mFullRedrawNeeded=false;
-    final long drawStartTime;
-    if (ViewDebug.DEBUG_LATENCY) {
-      drawStartTime=System.nanoTime();
-    }
-    draw(fullRedrawNeeded);
-    if (ViewDebug.DEBUG_LATENCY) {
-      mLastDrawDurationNanos=System.nanoTime() - drawStartTime;
-    }
-    if ((relayoutResult & WindowManagerImpl.RELAYOUT_RES_FIRST_TIME) != 0 || mReportNextDraw) {
-      if (LOCAL_LOGV) {
-        Log.v(TAG,"FINISHED DRAWING: " + mWindowAttributes.getTitle());
-      }
-      mReportNextDraw=false;
-      if (mSurfaceHolder != null && mSurface.isValid()) {
-        mSurfaceHolderCallback.surfaceRedrawNeeded(mSurfaceHolder);
-        SurfaceHolder.Callback callbacks[]=mSurfaceHolder.getCallbacks();
-        if (callbacks != null) {
-          for (          SurfaceHolder.Callback c : callbacks) {
-            if (c instanceof SurfaceHolder.Callback2) {
-              ((SurfaceHolder.Callback2)c).surfaceRedrawNeeded(mSurfaceHolder);
-            }
-          }
-        }
-      }
-      try {
-        sWindowSession.finishDrawing(mWindow);
-      }
- catch (      RemoteException e) {
-      }
-    }
+    performDraw();
   }
  else {
     if (mPendingTransitions != null && mPendingTransitions.size() > 0) {
@@ -607,12 +577,6 @@
         mPendingTransitions.get(i).endChangingAnimations();
       }
       mPendingTransitions.clear();
-    }
-    if ((relayoutResult & WindowManagerImpl.RELAYOUT_RES_FIRST_TIME) != 0) {
-      mReportNextDraw=true;
-    }
-    if (fullRedrawNeeded) {
-      mFullRedrawNeeded=true;
     }
     if (viewVisibility == View.VISIBLE) {
       scheduleTraversals();
