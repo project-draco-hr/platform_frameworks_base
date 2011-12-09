@@ -3,7 +3,7 @@
   AdnRecord adn;
   byte data[];
   boolean isRecordLoadResponse=false;
-  if (!phone.mIsTheCurrentActivePhone) {
+  if (mDestroyed) {
     loge("Received message " + msg + "["+ msg.what+ "] "+ " while being destroyed. Ignoring.");
     return;
   }
@@ -45,9 +45,9 @@ loge("Corrupt IMSI!");
 }
 }
 if (mncLength != UNKNOWN && mncLength != UNINITIALIZED) {
-MccTable.updateMccMncConfiguration(phone,imsi.substring(0,3 + mncLength));
+MccTable.updateMccMncConfiguration(mContext,imsi.substring(0,3 + mncLength));
 }
-phone.mIccCard.broadcastIccStateChangedIntent(IccCard.INTENT_VALUE_ICC_IMSI,null);
+mParentCard.broadcastIccStateChangedIntent(IccCard.INTENT_VALUE_ICC_IMSI,null);
 break;
 case EVENT_GET_MBI_DONE:
 boolean isValidMbdn;
@@ -65,10 +65,10 @@ isValidMbdn=true;
 }
 recordsToLoad+=1;
 if (isValidMbdn) {
-new AdnRecordLoader(phone).loadFromEF(EF_MBDN,EF_EXT6,mailboxIndex,obtainMessage(EVENT_GET_MBDN_DONE));
+new AdnRecordLoader(mFh).loadFromEF(EF_MBDN,EF_EXT6,mailboxIndex,obtainMessage(EVENT_GET_MBDN_DONE));
 }
  else {
-new AdnRecordLoader(phone).loadFromEF(EF_MAILBOX_CPHS,EF_EXT1,1,obtainMessage(EVENT_GET_CPHS_MAILBOX_DONE));
+new AdnRecordLoader(mFh).loadFromEF(EF_MAILBOX_CPHS,EF_EXT1,1,obtainMessage(EVENT_GET_CPHS_MAILBOX_DONE));
 }
 break;
 case EVENT_GET_CPHS_MAILBOX_DONE:
@@ -81,7 +81,7 @@ if (ar.exception != null) {
 log("Invalid or missing EF" + ((msg.what == EVENT_GET_CPHS_MAILBOX_DONE) ? "[MAILBOX]" : "[MBDN]"));
 if (msg.what == EVENT_GET_MBDN_DONE) {
 recordsToLoad+=1;
-new AdnRecordLoader(phone).loadFromEF(EF_MAILBOX_CPHS,EF_EXT1,1,obtainMessage(EVENT_GET_CPHS_MAILBOX_DONE));
+new AdnRecordLoader(mFh).loadFromEF(EF_MAILBOX_CPHS,EF_EXT1,1,obtainMessage(EVENT_GET_CPHS_MAILBOX_DONE));
 }
 break;
 }
@@ -89,7 +89,7 @@ adn=(AdnRecord)ar.result;
 log("VM: " + adn + ((msg.what == EVENT_GET_CPHS_MAILBOX_DONE) ? " EF[MAILBOX]" : " EF[MBDN]"));
 if (adn.isEmpty() && msg.what == EVENT_GET_MBDN_DONE) {
 recordsToLoad+=1;
-new AdnRecordLoader(phone).loadFromEF(EF_MAILBOX_CPHS,EF_EXT1,1,obtainMessage(EVENT_GET_CPHS_MAILBOX_DONE));
+new AdnRecordLoader(mFh).loadFromEF(EF_MAILBOX_CPHS,EF_EXT1,1,obtainMessage(EVENT_GET_CPHS_MAILBOX_DONE));
 break;
 }
 voiceMailNum=adn.getNumber();
@@ -133,7 +133,7 @@ countVoiceMessages=data[1] & 0xff;
 if (voiceMailWaiting && countVoiceMessages == 0) {
 countVoiceMessages=-1;
 }
-phone.notifyMessageWaitingIndicator();
+mRecordsEventsRegistrants.notifyResult(EVENT_MWI);
 break;
 case EVENT_GET_VOICE_MAIL_INDICATOR_CPHS_DONE:
 isRecordLoadResponse=true;
@@ -151,7 +151,7 @@ countVoiceMessages=-1;
  else if (indicator == 0x5) {
 countVoiceMessages=0;
 }
-phone.notifyMessageWaitingIndicator();
+mRecordsEventsRegistrants.notifyResult(EVENT_MWI);
 }
 break;
 case EVENT_GET_ICCID_DONE:
@@ -213,7 +213,7 @@ log("MNC length not present in EF_AD");
 }
 }
 if (imsi != null && mncLength != UNKNOWN) {
-MccTable.updateMccMncConfiguration(phone,imsi.substring(0,3 + mncLength));
+MccTable.updateMccMncConfiguration(mContext,imsi.substring(0,3 + mncLength));
 }
 }
 break;
@@ -233,7 +233,7 @@ log("EF_CFF_CPHS: " + IccUtils.bytesToHexString(data));
 mEfCff=data;
 if (mEfCfis == null) {
 callForwardingEnabled=((data[0] & CFF_LINE1_MASK) == CFF_UNCONDITIONAL_ACTIVE);
-phone.notifyCallForwardingIndicator();
+mRecordsEventsRegistrants.notifyResult(EVENT_CFI);
 }
 break;
 case EVENT_GET_SPDI_DONE:
@@ -284,7 +284,7 @@ loge("Error on SMS_ON_SIM with exp " + ar.exception + " length "+ index.length);
 }
  else {
 log("READ EF_SMS RECORD index=" + index[0]);
-phone.getIccFileHandler().loadEFLinearFixed(EF_SMS,index[0],obtainMessage(EVENT_GET_SMS_DONE));
+mFh.loadEFLinearFixed(EF_SMS,index[0],obtainMessage(EVENT_GET_SMS_DONE));
 }
 break;
 case EVENT_GET_SMS_DONE:
@@ -332,7 +332,7 @@ AsyncResult.forMessage(((Message)ar.userObj)).exception=null;
 if (DBG) log("Callback with MBDN successful.");
 onCphsCompleted=null;
 }
-new AdnRecordLoader(phone).updateEF(adn,EF_MAILBOX_CPHS,EF_EXT1,1,null,obtainMessage(EVENT_SET_CPHS_MAILBOX_DONE,onCphsCompleted));
+new AdnRecordLoader(mFh).updateEF(adn,EF_MAILBOX_CPHS,EF_EXT1,1,null,obtainMessage(EVENT_SET_CPHS_MAILBOX_DONE,onCphsCompleted));
 }
  else {
 if (ar.userObj != null) {
@@ -375,7 +375,7 @@ break;
 log("EF_CFIS: " + IccUtils.bytesToHexString(data));
 mEfCfis=data;
 callForwardingEnabled=((data[1] & 0x01) != 0);
-phone.notifyCallForwardingIndicator();
+mRecordsEventsRegistrants.notifyResult(EVENT_CFI);
 break;
 case EVENT_GET_CSP_CPHS_DONE:
 isRecordLoadResponse=true;
