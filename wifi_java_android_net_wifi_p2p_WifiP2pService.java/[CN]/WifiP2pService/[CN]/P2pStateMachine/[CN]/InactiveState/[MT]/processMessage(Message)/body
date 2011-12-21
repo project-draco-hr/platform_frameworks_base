@@ -4,6 +4,8 @@ switch (message.what) {
 case WifiP2pManager.CONNECT:
     if (DBG)     logd(getName() + " sending connect");
   mSavedPeerConfig=(WifiP2pConfig)message.obj;
+String updatedPeerDetails=WifiNative.p2pPeer(mSavedPeerConfig.deviceAddress);
+mPeers.update(new WifiP2pDevice(updatedPeerDetails));
 mPersistGroup=false;
 int netId=configuredNetworkId(mSavedPeerConfig.deviceAddress);
 if (netId >= 0) {
@@ -11,13 +13,7 @@ WifiNative.p2pReinvoke(netId,mSavedPeerConfig.deviceAddress);
 }
  else {
 if (isGroupOwner(mSavedPeerConfig.deviceAddress)) {
-String pin=WifiNative.p2pConnect(mSavedPeerConfig,JOIN_GROUP);
-try {
-  Integer.parseInt(pin);
-  notifyInvitationSent(pin,mSavedPeerConfig.deviceAddress);
-}
- catch (NumberFormatException ignore) {
-}
+p2pConnectWithPinDisplay(mSavedPeerConfig,JOIN_GROUP);
 transitionTo(mGroupNegotiationState);
 }
  else {
@@ -34,6 +30,24 @@ transitionTo(mUserAuthorizingInvitationState);
 break;
 case WifiMonitor.P2P_INVITATION_RECEIVED_EVENT:
 WifiP2pGroup group=(WifiP2pGroup)message.obj;
+WifiP2pDevice owner=group.getOwner();
+if (owner == null) {
+if (DBG) loge("Ignored invitation from null owner");
+break;
+}
+mSavedPeerConfig=new WifiP2pConfig();
+mSavedPeerConfig.deviceAddress=group.getOwner().deviceAddress;
+if ((owner=getDeviceFromPeerList(owner.deviceAddress)) != null) {
+if (owner.wpsPbcSupported()) {
+mSavedPeerConfig.wps.setup=WpsInfo.PBC;
+}
+ else if (owner.wpsKeypadSupported()) {
+mSavedPeerConfig.wps.setup=WpsInfo.KEYPAD;
+}
+ else if (owner.wpsDisplaySupported()) {
+mSavedPeerConfig.wps.setup=WpsInfo.DISPLAY;
+}
+}
 transitionTo(mUserAuthorizingInvitationState);
 break;
 case WifiMonitor.P2P_PROV_DISC_PBC_REQ_EVENT:
