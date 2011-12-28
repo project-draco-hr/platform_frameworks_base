@@ -1,44 +1,36 @@
 {
-  if (info == null || info.isConnected() || !info.getTypeName().equals(mNetworkType)) {
+  if (info == null || info.isConnected() || info.getType() != mNetworkType) {
     ConnectivityManager cm=(ConnectivityManager)mContext.getSystemService(Context.CONNECTIVITY_SERVICE);
     info=cm.getActiveNetworkInfo();
   }
-  boolean connected=(info != null && info.isConnected() && (!mSipOnWifiOnly || info.getType() == ConnectivityManager.TYPE_WIFI));
-  String networkType=connected ? info.getTypeName() : "null";
-  if (connected == mConnected && networkType.equals(mNetworkType)) {
+  int networkType=(info != null && info.isConnected()) ? info.getType() : -1;
+  if (mSipOnWifiOnly && networkType != ConnectivityManager.TYPE_WIFI) {
+    networkType=-1;
+  }
+  if (mNetworkType == networkType) {
     return;
   }
   if (DEBUG) {
     Log.d(TAG,"onConnectivityChanged(): " + mNetworkType + " -> "+ networkType);
   }
   try {
-    if (mConnected) {
+    if (mNetworkType != -1) {
       mLocalIp=null;
       stopPortMappingMeasurement();
       for (      SipSessionGroupExt group : mSipGroups.values()) {
         group.onConnectivityChanged(false);
       }
     }
-    mConnected=connected;
     mNetworkType=networkType;
-    if (connected) {
+    if (mNetworkType != -1) {
       mLocalIp=determineLocalIp();
       mKeepAliveInterval=-1;
       mLastGoodKeepAliveInterval=DEFAULT_KEEPALIVE_INTERVAL;
       for (      SipSessionGroupExt group : mSipGroups.values()) {
         group.onConnectivityChanged(true);
       }
-      if (info.getType() == ConnectivityManager.TYPE_WIFI) {
-        mWifiLock.acquire();
-      }
- else {
-        mWifiLock.release();
-      }
     }
- else {
-      mWifiLock.acquire();
-      mMyWakeLock.reset();
-    }
+    updateWakeLocks();
   }
  catch (  SipException e) {
     Log.e(TAG,"onConnectivityChanged()",e);
