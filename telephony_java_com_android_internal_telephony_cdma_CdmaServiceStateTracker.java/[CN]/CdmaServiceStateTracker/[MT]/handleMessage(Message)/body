@@ -2,29 +2,31 @@
   AsyncResult ar;
   int[] ints;
   String[] strings;
+  if (!phone.mIsTheCurrentActivePhone) {
+    loge("Received message " + msg + "["+ msg.what+ "]"+ " while being destroyed. Ignoring.");
+    return;
+  }
 switch (msg.what) {
-case EVENT_RADIO_AVAILABLE:
-    if (DBG)     log("handleMessage: EVENT_RADIO_AVAILABLE");
+case EVENT_CDMA_SUBSCRIPTION_SOURCE_CHANGED:
+    handleCdmaSubscriptionSource(mCdmaSSM.getCdmaSubscriptionSource());
   break;
 case EVENT_RUIM_READY:
-isSubscriptionFromRuim=true;
 if (mNeedToRegForRuimLoaded) {
-phone.mIccRecords.registerForRecordsLoaded(this,EVENT_RUIM_RECORDS_LOADED,null);
-mNeedToRegForRuimLoaded=false;
+  phone.mIccRecords.registerForRecordsLoaded(this,EVENT_RUIM_RECORDS_LOADED,null);
+  mNeedToRegForRuimLoaded=false;
 }
-cm.getCDMASubscription(obtainMessage(EVENT_POLL_STATE_CDMA_SUBSCRIPTION));
-if (DBG) log("handleMessage: EVENT_RUIM_READY, Send Request getCDMASubscription.");
-pollState();
-queueNextSignalStrengthPoll();
+if (DBG) log("Receive EVENT_RUIM_READY and Send Request getCDMASubscription.");
+getSubscriptionInfoAndStartPollingThreads();
+phone.prepareEri();
 break;
 case EVENT_NV_READY:
-isSubscriptionFromRuim=false;
-if (DBG) log("handleMessage: EVENT_NV_READY, Send Request getCDMASubscription.");
-cm.getCDMASubscription(obtainMessage(EVENT_POLL_STATE_CDMA_SUBSCRIPTION));
-pollState();
-queueNextSignalStrengthPoll();
+getSubscriptionInfoAndStartPollingThreads();
 break;
 case EVENT_RADIO_STATE_CHANGED:
+if (cm.getRadioState() == RadioState.RADIO_ON) {
+handleCdmaSubscriptionSource(mCdmaSSM.getCdmaSubscriptionSource());
+queueNextSignalStrengthPoll();
+}
 setPowerStateToDesired();
 pollState();
 break;
@@ -32,7 +34,7 @@ case EVENT_NETWORK_STATE_CHANGED_CDMA:
 pollState();
 break;
 case EVENT_GET_SIGNAL_STRENGTH:
-if (!(cm.getRadioState().isOn()) || (cm.getRadioState().isGsm())) {
+if (!(cm.getRadioState().isOn())) {
 return;
 }
 ar=(AsyncResult)msg.obj;
@@ -141,6 +143,13 @@ if (otaStatus == Phone.CDMA_OTA_PROVISION_STATUS_COMMITTED || otaStatus == Phone
 if (DBG) log("EVENT_OTA_PROVISION_STATUS_CHANGE: Complete, Reload MDN");
 cm.getCDMASubscription(obtainMessage(EVENT_POLL_STATE_CDMA_SUBSCRIPTION));
 }
+}
+break;
+case EVENT_CDMA_PRL_VERSION_CHANGED:
+ar=(AsyncResult)msg.obj;
+if (ar.exception == null) {
+ints=(int[])ar.result;
+mPrlVersion=Integer.toString(ints[0]);
 }
 break;
 default :
