@@ -1,4 +1,6 @@
 {
+  DataConnection.FailCause cause=DataConnection.FailCause.UNKNOWN;
+  boolean handleError=false;
   ApnContext apnContext=null;
   if (ar.userObj instanceof ApnContext) {
     apnContext=(ApnContext)ar.userObj;
@@ -8,47 +10,60 @@
   }
   if (isDataSetupCompleteOk(ar)) {
     DataConnectionAc dcac=apnContext.getDataConnectionAc();
+    if (RADIO_TESTS) {
+      ContentResolver cr=mPhone.getContext().getContentResolver();
+      String radioTestProperty="radio.test.onDSC.null.dcac";
+      if (Settings.System.getInt(cr,radioTestProperty,0) == 1) {
+        log("onDataSetupComplete: " + radioTestProperty + " is true, set dcac to null and reset property to false");
+        dcac=null;
+        Settings.System.putInt(cr,radioTestProperty,0);
+        log("onDataSetupComplete: " + radioTestProperty + "="+ Settings.System.getInt(mPhone.getContext().getContentResolver(),radioTestProperty,-1));
+      }
+    }
     if (dcac == null) {
-      throw new RuntimeException("onDataSetupCompete: No dcac");
-    }
-    DataConnection dc=apnContext.getDataConnection();
-    if (DBG) {
-      String apnStr="<unknown>";
-      if (apnContext.getWaitingApns() != null && !apnContext.getWaitingApns().isEmpty()) {
-        apnStr=apnContext.getWaitingApns().get(0).apn;
-      }
-      log("onDataSetupComplete: success apn=" + apnStr);
-    }
-    ApnSetting apn=apnContext.getApnSetting();
-    if (apn.proxy != null && apn.proxy.length() != 0) {
-      try {
-        String port=apn.port;
-        if (TextUtils.isEmpty(port))         port="8080";
-        ProxyProperties proxy=new ProxyProperties(apn.proxy,Integer.parseInt(port),null);
-        dcac.setLinkPropertiesHttpProxySync(proxy);
-      }
- catch (      NumberFormatException e) {
-        loge("onDataSetupComplete: NumberFormatException making ProxyProperties (" + apn.port + "): "+ e);
-      }
-    }
-    if (TextUtils.equals(apnContext.getApnType(),Phone.APN_TYPE_DEFAULT)) {
-      SystemProperties.set("gsm.defaultpdpcontext.active","true");
-      if (canSetPreferApn && mPreferredApn == null) {
-        if (DBG)         log("onDataSetupComplete: PREFERED APN is null");
-        mPreferredApn=apnContext.getApnSetting();
-        if (mPreferredApn != null) {
-          setPreferredApn(mPreferredApn.id);
-        }
-      }
+      log("onDataSetupComplete: no connection to DC, handle as error");
+      cause=DataConnection.FailCause.CONNECTION_TO_DATACONNECTIONAC_BROKEN;
+      handleError=true;
     }
  else {
-      SystemProperties.set("gsm.defaultpdpcontext.active","false");
+      DataConnection dc=apnContext.getDataConnection();
+      if (DBG) {
+        String apnStr="<unknown>";
+        if (apnContext.getWaitingApns() != null && !apnContext.getWaitingApns().isEmpty()) {
+          apnStr=apnContext.getWaitingApns().get(0).apn;
+        }
+        log("onDataSetupComplete: success apn=" + apnStr);
+      }
+      ApnSetting apn=apnContext.getApnSetting();
+      if (apn.proxy != null && apn.proxy.length() != 0) {
+        try {
+          String port=apn.port;
+          if (TextUtils.isEmpty(port))           port="8080";
+          ProxyProperties proxy=new ProxyProperties(apn.proxy,Integer.parseInt(port),null);
+          dcac.setLinkPropertiesHttpProxySync(proxy);
+        }
+ catch (        NumberFormatException e) {
+          loge("onDataSetupComplete: NumberFormatException making ProxyProperties (" + apn.port + "): "+ e);
+        }
+      }
+      if (TextUtils.equals(apnContext.getApnType(),Phone.APN_TYPE_DEFAULT)) {
+        SystemProperties.set("gsm.defaultpdpcontext.active","true");
+        if (canSetPreferApn && mPreferredApn == null) {
+          if (DBG)           log("onDataSetupComplete: PREFERED APN is null");
+          mPreferredApn=apnContext.getApnSetting();
+          if (mPreferredApn != null) {
+            setPreferredApn(mPreferredApn.id);
+          }
+        }
+      }
+ else {
+        SystemProperties.set("gsm.defaultpdpcontext.active","false");
+      }
+      notifyDefaultData(apnContext);
     }
-    notifyDefaultData(apnContext);
   }
  else {
     String apnString;
-    DataConnection.FailCause cause;
     cause=(DataConnection.FailCause)(ar.result);
     if (DBG) {
       try {
@@ -68,6 +83,9 @@
     if (DBG) {
       log(String.format("onDataSetupComplete: WaitingApns.size=%d" + " WaitingApnsPermFailureCountDown=%d",apnContext.getWaitingApns().size(),apnContext.getWaitingApnsPermFailCount()));
     }
+    handleError=true;
+  }
+  if (handleError) {
     if (apnContext.getWaitingApns().isEmpty()) {
       if (apnContext.getWaitingApnsPermFailCount() == 0) {
         if (DBG) {
@@ -77,9 +95,6 @@
         mPhone.notifyDataConnection(Phone.REASON_APN_FAILED,apnContext.getApnType());
         apnContext.setDataConnection(null);
         apnContext.setDataConnectionAc(null);
-        if (DBG) {
-          log("onDataSetupComplete: permanent error apn=%s" + apnString);
-        }
       }
  else {
         if (DBG)         log("onDataSetupComplete: Not all permanent failures, retry");
