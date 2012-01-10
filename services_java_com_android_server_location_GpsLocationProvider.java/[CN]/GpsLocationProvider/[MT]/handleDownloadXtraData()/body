@@ -1,19 +1,28 @@
 {
-  if (!mNetworkAvailable) {
-    mDownloadXtraDataPending=true;
+  if (mDownloadXtraDataPending == STATE_DOWNLOADING) {
     return;
   }
-  mDownloadXtraDataPending=false;
-  GpsXtraDownloader xtraDownloader=new GpsXtraDownloader(mContext,mProperties);
-  byte[] data=xtraDownloader.downloadXtraData();
-  if (data != null) {
-    if (DEBUG) {
-      Log.d(TAG,"calling native_inject_xtra_data");
+  if (!mNetworkAvailable) {
+    mDownloadXtraDataPending=STATE_PENDING_NETWORK;
+    return;
+  }
+  mDownloadXtraDataPending=STATE_DOWNLOADING;
+  AsyncTask.THREAD_POOL_EXECUTOR.execute(new Runnable(){
+    @Override public void run(){
+      GpsXtraDownloader xtraDownloader=new GpsXtraDownloader(mContext,mProperties);
+      byte[] data=xtraDownloader.downloadXtraData();
+      if (data != null) {
+        if (DEBUG) {
+          Log.d(TAG,"calling native_inject_xtra_data");
+        }
+        native_inject_xtra_data(data,data.length);
+      }
+      mHandler.sendMessage(Message.obtain(mHandler,DOWNLOAD_XTRA_DATA_FINISHED));
+      if (data == null) {
+        mHandler.removeMessages(DOWNLOAD_XTRA_DATA);
+        mHandler.sendMessageDelayed(Message.obtain(mHandler,DOWNLOAD_XTRA_DATA),RETRY_INTERVAL);
+      }
     }
-    native_inject_xtra_data(data,data.length);
   }
- else {
-    mHandler.removeMessages(DOWNLOAD_XTRA_DATA);
-    mHandler.sendMessageDelayed(Message.obtain(mHandler,DOWNLOAD_XTRA_DATA),RETRY_INTERVAL);
-  }
+);
 }
