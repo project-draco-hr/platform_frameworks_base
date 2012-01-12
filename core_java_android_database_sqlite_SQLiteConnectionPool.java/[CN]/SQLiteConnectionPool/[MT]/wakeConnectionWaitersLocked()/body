@@ -1,0 +1,55 @@
+{
+  ConnectionWaiter predecessor=null;
+  ConnectionWaiter waiter=mConnectionWaiterQueue;
+  boolean primaryConnectionNotAvailable=false;
+  boolean nonPrimaryConnectionNotAvailable=false;
+  while (waiter != null) {
+    boolean unpark=false;
+    if (!mIsOpen) {
+      unpark=true;
+    }
+ else {
+      try {
+        SQLiteConnection connection=null;
+        if (!waiter.mWantPrimaryConnection && !nonPrimaryConnectionNotAvailable) {
+          connection=tryAcquireNonPrimaryConnectionLocked(waiter.mSql,waiter.mConnectionFlags);
+          if (connection == null) {
+            nonPrimaryConnectionNotAvailable=true;
+          }
+        }
+        if (connection == null && !primaryConnectionNotAvailable) {
+          connection=tryAcquirePrimaryConnectionLocked(waiter.mConnectionFlags);
+          if (connection == null) {
+            primaryConnectionNotAvailable=true;
+          }
+        }
+        if (connection != null) {
+          waiter.mAssignedConnection=connection;
+          unpark=true;
+        }
+ else         if (nonPrimaryConnectionNotAvailable && primaryConnectionNotAvailable) {
+          break;
+        }
+      }
+ catch (      RuntimeException ex) {
+        waiter.mException=ex;
+        unpark=true;
+      }
+    }
+    final ConnectionWaiter successor=waiter.mNext;
+    if (unpark) {
+      if (predecessor != null) {
+        predecessor.mNext=successor;
+      }
+ else {
+        mConnectionWaiterQueue=successor;
+      }
+      waiter.mNext=null;
+      LockSupport.unpark(waiter.mThread);
+    }
+ else {
+      predecessor=waiter;
+    }
+    waiter=successor;
+  }
+}
