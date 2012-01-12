@@ -5,19 +5,12 @@
   final boolean persistUid=(flags & FLAG_PERSIST_UID) != 0;
   final boolean persistForce=(flags & FLAG_PERSIST_FORCE) != 0;
   final long currentTime=mTime.hasCache() ? mTime.currentTimeMillis() : System.currentTimeMillis();
-  final long threshold=mSettings.getPersistThreshold();
-  final NetworkStats uidSnapshot;
-  final NetworkStats networkXtSnapshot;
-  final NetworkStats networkDevSnapshot;
   try {
-    final NetworkStats tetherSnapshot=getNetworkStatsTethering();
-    uidSnapshot=mNetworkManager.getNetworkStatsUidDetail(UID_ALL);
-    uidSnapshot.combineAllValues(tetherSnapshot);
-    performUidPollLocked(uidSnapshot,currentTime);
-    networkDevSnapshot=mNetworkManager.getNetworkStatsSummary();
-    performNetworkDevPollLocked(networkDevSnapshot,currentTime);
-    networkXtSnapshot=computeNetworkXtSnapshotFromUid(uidSnapshot);
-    performNetworkXtPollLocked(networkXtSnapshot,currentTime);
+    final NetworkStats uidSnapshot=getNetworkStatsUidDetail();
+    final NetworkStats devSnapshot=getNetworkStatsSummary();
+    mDevRecorder.recordSnapshotLocked(devSnapshot,mActiveIfaces,currentTime);
+    mUidRecorder.recordSnapshotLocked(uidSnapshot,mActiveIfaces,currentTime);
+    mUidTagRecorder.recordSnapshotLocked(uidSnapshot,mActiveIfaces,currentTime);
   }
  catch (  IllegalStateException e) {
     Log.wtf(TAG,"problem reading network stats",e);
@@ -26,26 +19,26 @@
 catch (  RemoteException e) {
     return;
   }
-  final long persistNetworkDevDelta=computeStatsDelta(mLastPersistNetworkDevSnapshot,networkDevSnapshot,true,"devp").getTotalBytes();
-  final long persistNetworkXtDelta=computeStatsDelta(mLastPersistNetworkXtSnapshot,networkXtSnapshot,true,"xtp").getTotalBytes();
-  final boolean networkOverThreshold=persistNetworkDevDelta > threshold || persistNetworkXtDelta > threshold;
-  if (persistForce || (persistNetwork && networkOverThreshold)) {
-    writeNetworkDevStatsLocked();
-    writeNetworkXtStatsLocked();
-    mLastPersistNetworkDevSnapshot=networkDevSnapshot;
-    mLastPersistNetworkXtSnapshot=networkXtSnapshot;
+  if (persistForce) {
+    mDevRecorder.forcePersistLocked(currentTime);
+    mUidRecorder.forcePersistLocked(currentTime);
+    mUidTagRecorder.forcePersistLocked(currentTime);
   }
-  final long persistUidDelta=computeStatsDelta(mLastPersistUidSnapshot,uidSnapshot,true,"uidp").getTotalBytes();
-  if (persistForce || (persistUid && persistUidDelta > threshold)) {
-    writeUidStatsLocked();
-    mLastPersistUidSnapshot=uidSnapshot;
+ else {
+    if (persistNetwork) {
+      mDevRecorder.maybePersistLocked(currentTime);
+    }
+    if (persistUid) {
+      mUidRecorder.maybePersistLocked(currentTime);
+      mUidTagRecorder.maybePersistLocked(currentTime);
+    }
   }
   if (LOGV) {
     final long duration=SystemClock.elapsedRealtime() - startRealtime;
     Slog.v(TAG,"performPollLocked() took " + duration + "ms");
   }
-  if (ENABLE_SAMPLE_AFTER_POLL) {
-    performSample();
+  if (mSettings.getSampleEnabled()) {
+    performSampleLocked();
   }
   final Intent updatedIntent=new Intent(ACTION_NETWORK_STATS_UPDATED);
   updatedIntent.setFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY);
