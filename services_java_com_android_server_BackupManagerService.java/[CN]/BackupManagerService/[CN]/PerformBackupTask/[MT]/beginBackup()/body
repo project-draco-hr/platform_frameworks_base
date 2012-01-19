@@ -1,18 +1,34 @@
 {
+  if (DEBUG_BACKUP_TRACE) {
+    clearBackupTrace();
+    StringBuilder b=new StringBuilder(256);
+    b.append("beginBackup: [");
+    for (    BackupRequest req : mOriginalQueue) {
+      b.append(' ');
+      b.append(req.packageName);
+    }
+    b.append(" ]");
+    addBackupTrace(b.toString());
+  }
   mStatus=BackupConstants.TRANSPORT_OK;
   if (mOriginalQueue.isEmpty()) {
     Slog.w(TAG,"Backup begun with an empty queue - nothing to do.");
+    addBackupTrace("queue empty at begin");
+    executeNextState(BackupState.FINAL);
     return;
   }
   mQueue=(ArrayList<BackupRequest>)mOriginalQueue.clone();
   if (DEBUG)   Slog.v(TAG,"Beginning backup of " + mQueue.size() + " targets");
   File pmState=new File(mStateDir,PACKAGE_MANAGER_SENTINEL);
   try {
-    EventLog.writeEvent(EventLogTags.BACKUP_START,mTransport.transportDirName());
+    final String transportName=mTransport.transportDirName();
+    EventLog.writeEvent(EventLogTags.BACKUP_START,transportName);
     if (mStatus == BackupConstants.TRANSPORT_OK && pmState.length() <= 0) {
       Slog.i(TAG,"Initializing (wiping) backup state and transport storage");
+      addBackupTrace("initializing transport " + transportName);
       resetBackupState(mStateDir);
       mStatus=mTransport.initializeDevice();
+      addBackupTrace("transport.initializeDevice() == " + mStatus);
       if (mStatus == BackupConstants.TRANSPORT_OK) {
         EventLog.writeEvent(EventLogTags.BACKUP_INITIALIZE);
       }
@@ -24,6 +40,7 @@
     if (mStatus == BackupConstants.TRANSPORT_OK) {
       PackageManagerBackupAgent pmAgent=new PackageManagerBackupAgent(mPackageManager,allAgentPackages());
       mStatus=invokeAgentForBackup(PACKAGE_MANAGER_SENTINEL,IBackupAgent.Stub.asInterface(pmAgent.onBind()),mTransport);
+      addBackupTrace("PMBA invoke: " + mStatus);
     }
     if (mStatus == BackupConstants.TRANSPORT_NOT_INITIALIZED) {
       EventLog.writeEvent(EventLogTags.BACKUP_RESET,mTransport.transportDirName());
@@ -31,9 +48,11 @@
   }
  catch (  Exception e) {
     Slog.e(TAG,"Error in backup thread",e);
+    addBackupTrace("Exception in backup thread: " + e);
     mStatus=BackupConstants.TRANSPORT_ERROR;
   }
  finally {
+    addBackupTrace("exiting prelim: " + mStatus);
     if (mStatus != BackupConstants.TRANSPORT_OK) {
       resetBackupState(mStateDir);
       executeNextState(BackupState.FINAL);
