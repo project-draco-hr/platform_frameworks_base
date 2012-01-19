@@ -1,19 +1,22 @@
 {
   mStatus=BackupConstants.TRANSPORT_OK;
+  addBackupTrace("invoke q=" + mQueue.size());
   if (mQueue.isEmpty()) {
-    Slog.e(TAG,"Running queue but it's empty!");
+    if (DEBUG)     Slog.i(TAG,"queue now empty");
     executeNextState(BackupState.FINAL);
     return;
   }
   BackupRequest request=mQueue.get(0);
   mQueue.remove(0);
   Slog.d(TAG,"starting agent for backup of " + request);
+  addBackupTrace("launch agent for " + request.packageName);
   try {
     mCurrentPackage=mPackageManager.getPackageInfo(request.packageName,PackageManager.GET_SIGNATURES);
     IBackupAgent agent=null;
     try {
       mWakelock.setWorkSource(new WorkSource(mCurrentPackage.applicationInfo.uid));
       agent=bindToAgentSynchronous(mCurrentPackage.applicationInfo,IApplicationThread.BACKUP_MODE_INCREMENTAL);
+      addBackupTrace("agent bound; a? = " + (agent != null));
       if (agent != null) {
         mStatus=invokeAgentForBackup(request.packageName,agent,mTransport);
       }
@@ -24,10 +27,13 @@
  catch (    SecurityException ex) {
       Slog.d(TAG,"error in bind/backup",ex);
       mStatus=BackupConstants.AGENT_ERROR;
+      addBackupTrace("agent SE");
     }
   }
  catch (  NameNotFoundException e) {
     Slog.d(TAG,"Package does not exist; skipping");
+    addBackupTrace("no such package");
+    mStatus=BackupConstants.AGENT_UNKNOWN;
   }
  finally {
     mWakelock.setWorkSource(null);
@@ -39,11 +45,17 @@
         mStatus=BackupConstants.TRANSPORT_OK;
         if (mQueue.isEmpty())         nextState=BackupState.FINAL;
       }
- else       if (mStatus != BackupConstants.TRANSPORT_OK) {
+ else       if (mStatus == BackupConstants.AGENT_UNKNOWN) {
+        mStatus=BackupConstants.TRANSPORT_OK;
+      }
+ else {
         revertAndEndBackup();
         nextState=BackupState.FINAL;
       }
       executeNextState(nextState);
+    }
+ else {
+      addBackupTrace("expecting completion/timeout callback");
     }
   }
 }
