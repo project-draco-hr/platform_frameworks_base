@@ -135,22 +135,13 @@ synchronized (bs) {
   if (DEBUG_BROADCAST)   Slog.v(TAG,"Enqueing broadcast: " + intent.getAction() + " replacePending="+ replacePending);
   int NR=registeredReceivers != null ? registeredReceivers.size() : 0;
   if (!ordered && NR > 0) {
-    BroadcastRecord r=new BroadcastRecord(intent,callerApp,callerPackage,callingPid,callingUid,requiredPermission,registeredReceivers,resultTo,resultCode,resultData,map,ordered,sticky,false);
-    if (DEBUG_BROADCAST)     Slog.v(TAG,"Enqueueing parallel broadcast " + r + ": prev had "+ mParallelBroadcasts.size());
-    boolean replaced=false;
-    if (replacePending) {
-      for (int i=mParallelBroadcasts.size() - 1; i >= 0; i--) {
-        if (intent.filterEquals(mParallelBroadcasts.get(i).intent)) {
-          if (DEBUG_BROADCAST)           Slog.v(TAG,"***** DROPPING PARALLEL: " + intent);
-          mParallelBroadcasts.set(i,r);
-          replaced=true;
-          break;
-        }
-      }
-    }
+    final BroadcastQueue queue=broadcastQueueForIntent(intent);
+    BroadcastRecord r=new BroadcastRecord(queue,intent,callerApp,callerPackage,callingPid,callingUid,requiredPermission,registeredReceivers,resultTo,resultCode,resultData,map,ordered,sticky,false);
+    if (DEBUG_BROADCAST)     Slog.v(TAG,"Enqueueing parallel broadcast " + r);
+    final boolean replaced=replacePending && queue.replaceParallelBroadcastLocked(r);
     if (!replaced) {
-      mParallelBroadcasts.add(r);
-      scheduleBroadcastsLocked();
+      queue.enqueueParallelBroadcastLocked(r);
+      queue.scheduleBroadcastsLocked();
     }
     registeredReceivers=null;
     NR=0;
@@ -217,26 +208,17 @@ synchronized (bs) {
     ir++;
   }
   if ((receivers != null && receivers.size() > 0) || resultTo != null) {
-    BroadcastRecord r=new BroadcastRecord(intent,callerApp,callerPackage,callingPid,callingUid,requiredPermission,receivers,resultTo,resultCode,resultData,map,ordered,sticky,false);
-    if (DEBUG_BROADCAST)     Slog.v(TAG,"Enqueueing ordered broadcast " + r + ": prev had "+ mOrderedBroadcasts.size());
+    BroadcastQueue queue=broadcastQueueForIntent(intent);
+    BroadcastRecord r=new BroadcastRecord(queue,intent,callerApp,callerPackage,callingPid,callingUid,requiredPermission,receivers,resultTo,resultCode,resultData,map,ordered,sticky,false);
+    if (DEBUG_BROADCAST)     Slog.v(TAG,"Enqueueing ordered broadcast " + r + ": prev had "+ queue.mOrderedBroadcasts.size());
     if (DEBUG_BROADCAST) {
       int seq=r.intent.getIntExtra("seq",-1);
       Slog.i(TAG,"Enqueueing broadcast " + r.intent.getAction() + " seq="+ seq);
     }
-    boolean replaced=false;
-    if (replacePending) {
-      for (int i=mOrderedBroadcasts.size() - 1; i > 0; i--) {
-        if (intent.filterEquals(mOrderedBroadcasts.get(i).intent)) {
-          if (DEBUG_BROADCAST)           Slog.v(TAG,"***** DROPPING ORDERED: " + intent);
-          mOrderedBroadcasts.set(i,r);
-          replaced=true;
-          break;
-        }
-      }
-    }
+    boolean replaced=replacePending && queue.replaceOrderedBroadcastLocked(r);
     if (!replaced) {
-      mOrderedBroadcasts.add(r);
-      scheduleBroadcastsLocked();
+      queue.enqueueOrderedBroadcastLocked(r);
+      queue.scheduleBroadcastsLocked();
     }
   }
   return BROADCAST_SUCCESS;
