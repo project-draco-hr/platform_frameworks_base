@@ -1,0 +1,83 @@
+{
+  if (DBG)   log(getName() + message.toString() + "\n");
+  boolean eventLoggingEnabled=true;
+switch (message.what) {
+case DhcpStateMachine.CMD_PRE_DHCP_ACTION:
+    handlePreDhcpSetup();
+  mDhcpStateMachine.sendMessage(DhcpStateMachine.CMD_PRE_DHCP_ACTION_COMPLETE);
+break;
+case DhcpStateMachine.CMD_POST_DHCP_ACTION:
+handlePostDhcpSetup();
+if (message.arg1 == DhcpStateMachine.DHCP_SUCCESS) {
+if (DBG) log("DHCP successful");
+handleSuccessfulIpConfiguration((DhcpInfoInternal)message.obj);
+transitionTo(mVerifyingLinkState);
+}
+ else if (message.arg1 == DhcpStateMachine.DHCP_FAILURE) {
+if (DBG) log("DHCP failed");
+handleFailedIpConfiguration();
+transitionTo(mDisconnectingState);
+}
+break;
+case CMD_DISCONNECT:
+mWifiNative.disconnect();
+transitionTo(mDisconnectingState);
+break;
+case CMD_SET_SCAN_MODE:
+if (message.arg1 == SCAN_ONLY_MODE) {
+sendMessage(CMD_DISCONNECT);
+deferMessage(message);
+}
+break;
+case CMD_START_SCAN:
+eventLoggingEnabled=false;
+mWifiNative.setScanResultHandling(SCAN_ONLY_MODE);
+return NOT_HANDLED;
+case CMD_CONNECT_NETWORK:
+int netId=message.arg1;
+if (mWifiInfo.getNetworkId() == netId) {
+break;
+}
+return NOT_HANDLED;
+case CMD_SAVE_NETWORK:
+WifiConfiguration config=(WifiConfiguration)message.obj;
+NetworkUpdateResult result=mWifiConfigStore.saveNetwork(config);
+if (mWifiInfo.getNetworkId() == result.getNetworkId()) {
+if (result.hasIpChanged()) {
+log("Reconfiguring IP on connection");
+transitionTo(mObtainingIpState);
+}
+if (result.hasProxyChanged()) {
+log("Reconfiguring proxy on connection");
+configureLinkProperties();
+sendLinkConfigurationChangedBroadcast();
+}
+}
+break;
+case WifiMonitor.NETWORK_CONNECTION_EVENT:
+break;
+case CMD_RSSI_POLL:
+eventLoggingEnabled=false;
+if (message.arg1 == mRssiPollToken) {
+fetchRssiAndLinkSpeedNative();
+sendMessageDelayed(obtainMessage(CMD_RSSI_POLL,mRssiPollToken,0),POLL_RSSI_INTERVAL_MSECS);
+}
+ else {
+}
+break;
+case CMD_ENABLE_RSSI_POLL:
+mEnableRssiPolling=(message.arg1 == 1);
+mRssiPollToken++;
+if (mEnableRssiPolling) {
+fetchRssiAndLinkSpeedNative();
+sendMessageDelayed(obtainMessage(CMD_RSSI_POLL,mRssiPollToken,0),POLL_RSSI_INTERVAL_MSECS);
+}
+break;
+default :
+return NOT_HANDLED;
+}
+if (eventLoggingEnabled) {
+EventLog.writeEvent(EVENTLOG_WIFI_EVENT_HANDLED,message.what);
+}
+return HANDLED;
+}
