@@ -1,0 +1,85 @@
+{
+  final boolean wantPrimaryConnection=(connectionFlags & CONNECTION_FLAG_PRIMARY_CONNECTION_AFFINITY) != 0;
+  final ConnectionWaiter waiter;
+synchronized (mLock) {
+    throwIfClosedLocked();
+    if (cancelationSignal != null) {
+      cancelationSignal.throwIfCanceled();
+    }
+    SQLiteConnection connection=null;
+    if (!wantPrimaryConnection) {
+      connection=tryAcquireNonPrimaryConnectionLocked(sql,connectionFlags);
+    }
+    if (connection == null) {
+      connection=tryAcquirePrimaryConnectionLocked(connectionFlags);
+    }
+    if (connection != null) {
+      return connection;
+    }
+    final int priority=getPriority(connectionFlags);
+    final long startTime=SystemClock.uptimeMillis();
+    waiter=obtainConnectionWaiterLocked(Thread.currentThread(),startTime,priority,wantPrimaryConnection,sql,connectionFlags);
+    ConnectionWaiter predecessor=null;
+    ConnectionWaiter successor=mConnectionWaiterQueue;
+    while (successor != null) {
+      if (priority > successor.mPriority) {
+        waiter.mNext=successor;
+        break;
+      }
+      predecessor=successor;
+      successor=successor.mNext;
+    }
+    if (predecessor != null) {
+      predecessor.mNext=waiter;
+    }
+ else {
+      mConnectionWaiterQueue=waiter;
+    }
+    if (cancelationSignal != null) {
+      final int nonce=waiter.mNonce;
+      cancelationSignal.setOnCancelListener(new CancelationSignal.OnCancelListener(){
+        @Override public void onCancel(){
+synchronized (mLock) {
+            cancelConnectionWaiterLocked(waiter,nonce);
+          }
+        }
+      }
+);
+    }
+  }
+  long busyTimeoutMillis=CONNECTION_POOL_BUSY_MILLIS;
+  long nextBusyTimeoutTime=waiter.mStartTime + busyTimeoutMillis;
+  for (; ; ) {
+    if (mConnectionLeaked.compareAndSet(true,false)) {
+synchronized (mLock) {
+        wakeConnectionWaitersLocked();
+      }
+    }
+    LockSupport.parkNanos(this,busyTimeoutMillis * 1000000L);
+    Thread.interrupted();
+synchronized (mLock) {
+      throwIfClosedLocked();
+      final SQLiteConnection connection=waiter.mAssignedConnection;
+      final RuntimeException ex=waiter.mException;
+      if (connection != null || ex != null) {
+        if (cancelationSignal != null) {
+          cancelationSignal.setOnCancelListener(null);
+        }
+        recycleConnectionWaiterLocked(waiter);
+        if (connection != null) {
+          return connection;
+        }
+        throw ex;
+      }
+      final long now=SystemClock.uptimeMillis();
+      if (now < nextBusyTimeoutTime) {
+        busyTimeoutMillis=now - nextBusyTimeoutTime;
+      }
+ else {
+        logConnectionPoolBusyLocked(now - waiter.mStartTime,connectionFlags);
+        busyTimeoutMillis=CONNECTION_POOL_BUSY_MILLIS;
+        nextBusyTimeoutTime=now + busyTimeoutMillis;
+      }
+    }
+  }
+}
