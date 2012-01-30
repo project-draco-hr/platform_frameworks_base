@@ -1,0 +1,114 @@
+{
+  Path highlight=null;
+  Paint highlightPaint=null;
+  int selStart=-1, selEnd=-1;
+  boolean drawCursor=false;
+  highlightPaint=mHighlightPaint;
+  if (mMovement != null && (isFocused() || isPressed())) {
+    selStart=getSelectionStart();
+    selEnd=getSelectionEnd();
+    if (selStart >= 0) {
+      if (mHighlightPath == null)       mHighlightPath=new Path();
+      if (selStart == selEnd) {
+        if (isCursorVisible() && (SystemClock.uptimeMillis() - mShowCursor) % (2 * BLINK) < BLINK) {
+          if (mHighlightPathBogus) {
+            mHighlightPath.reset();
+            mLayout.getCursorPath(selStart,mHighlightPath,mText);
+            updateCursorsPositions();
+            mHighlightPathBogus=false;
+          }
+          highlightPaint.setColor(mCurTextColor);
+          if (mCurrentAlpha != 255) {
+            highlightPaint.setAlpha((mCurrentAlpha * Color.alpha(mCurTextColor)) / 255);
+          }
+          highlightPaint.setStyle(Paint.Style.STROKE);
+          highlight=mHighlightPath;
+          drawCursor=mCursorCount > 0;
+        }
+      }
+ else       if (textCanBeSelected()) {
+        if (mHighlightPathBogus) {
+          mHighlightPath.reset();
+          mLayout.getSelectionPath(selStart,selEnd,mHighlightPath);
+          mHighlightPathBogus=false;
+        }
+        highlightPaint.setColor(mHighlightColor);
+        if (mCurrentAlpha != 255) {
+          highlightPaint.setAlpha((mCurrentAlpha * Color.alpha(mHighlightColor)) / 255);
+        }
+        highlightPaint.setStyle(Paint.Style.FILL);
+        highlight=mHighlightPath;
+      }
+    }
+  }
+  final InputMethodState ims=mInputMethodState;
+  if (ims != null && ims.mBatchEditNesting == 0) {
+    InputMethodManager imm=InputMethodManager.peekInstance();
+    if (imm != null) {
+      if (imm.isActive(TextView.this)) {
+        boolean reported=false;
+        if (ims.mContentChanged || ims.mSelectionModeChanged) {
+          reported=reportExtractedText();
+        }
+        if (!reported && highlight != null) {
+          int candStart=-1;
+          int candEnd=-1;
+          if (mText instanceof Spannable) {
+            Spannable sp=(Spannable)mText;
+            candStart=EditableInputConnection.getComposingSpanStart(sp);
+            candEnd=EditableInputConnection.getComposingSpanEnd(sp);
+          }
+          imm.updateSelection(TextView.this,selStart,selEnd,candStart,candEnd);
+        }
+      }
+      if (imm.isWatchingCursor(TextView.this) && highlight != null) {
+        highlight.computeBounds(ims.mTmpRectF,true);
+        ims.mTmpOffset[0]=ims.mTmpOffset[1]=0;
+        canvas.getMatrix().mapPoints(ims.mTmpOffset);
+        ims.mTmpRectF.offset(ims.mTmpOffset[0],ims.mTmpOffset[1]);
+        ims.mTmpRectF.offset(0,cursorOffsetVertical);
+        ims.mCursorRectInWindow.set((int)(ims.mTmpRectF.left + 0.5),(int)(ims.mTmpRectF.top + 0.5),(int)(ims.mTmpRectF.right + 0.5),(int)(ims.mTmpRectF.bottom + 0.5));
+        imm.updateCursor(TextView.this,ims.mCursorRectInWindow.left,ims.mCursorRectInWindow.top,ims.mCursorRectInWindow.right,ims.mCursorRectInWindow.bottom);
+      }
+    }
+  }
+  if (mCorrectionHighlighter != null) {
+    mCorrectionHighlighter.draw(canvas,cursorOffsetVertical);
+  }
+  if (drawCursor) {
+    drawCursor(canvas,cursorOffsetVertical);
+    highlight=null;
+  }
+  if (canHaveDisplayList() && canvas.isHardwareAccelerated()) {
+    final int width=mRight - mLeft;
+    final int height=mBottom - mTop;
+    if (mTextDisplayList == null || !mTextDisplayList.isValid() || !mTextDisplayListIsValid) {
+      if (mTextDisplayList == null) {
+        mTextDisplayList=getHardwareRenderer().createDisplayList("Text");
+      }
+      final HardwareCanvas hardwareCanvas=mTextDisplayList.start();
+      try {
+        hardwareCanvas.setViewport(width,height);
+        hardwareCanvas.onPreDraw(null);
+        hardwareCanvas.translate(-mScrollX,-mScrollY);
+        layout.draw(hardwareCanvas,highlight,highlightPaint,cursorOffsetVertical);
+        hardwareCanvas.translate(mScrollX,mScrollY);
+      }
+  finally {
+        hardwareCanvas.onPostDraw();
+        mTextDisplayList.end();
+        mTextDisplayListIsValid=true;
+      }
+    }
+    canvas.translate(mScrollX,mScrollY);
+    ((HardwareCanvas)canvas).drawDisplayList(mTextDisplayList,width,height,null,DisplayList.FLAG_CLIP_CHILDREN);
+    canvas.translate(-mScrollX,-mScrollY);
+  }
+ else {
+    layout.draw(canvas,highlight,highlightPaint,cursorOffsetVertical);
+  }
+  if (mMarquee != null && mMarquee.shouldDrawGhost()) {
+    canvas.translate((int)mMarquee.getGhostOffset(),0.0f);
+    layout.draw(canvas,highlight,highlightPaint,cursorOffsetVertical);
+  }
+}
