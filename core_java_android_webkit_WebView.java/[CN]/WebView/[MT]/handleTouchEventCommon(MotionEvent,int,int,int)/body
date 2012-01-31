@@ -68,12 +68,23 @@ case MotionEvent.ACTION_DOWN:
           EventLog.writeEvent(EventLogTags.BROWSER_DOUBLE_TAP_DURATION,(eventTime - mLastTouchUpTime),eventTime);
         }
         if (mSelectingText) {
-          mDrawSelectionPointer=false;
-          mSelectionStarted=nativeStartSelection(contentX,contentY);
+          mSelectionStarted=false;
+          int shiftedY=y - getTitleHeight() + mScrollY;
+          int shiftedX=x + mScrollX;
+          if (mSelectHandleLeft.getBounds().contains(shiftedX,shiftedY)) {
+            mSelectionStarted=true;
+            mSelectDraggingCursor=mSelectCursorBase;
+          }
+ else           if (mSelectHandleRight.getBounds().contains(shiftedX,shiftedY)) {
+            mSelectionStarted=true;
+            mSelectDraggingCursor=mSelectCursorExtent;
+          }
+          if (mSelectDraggingCursor != null) {
+            mSelectDraggingOffset.set(mSelectDraggingCursor.left - contentX,mSelectDraggingCursor.top - contentY);
+          }
           if (DebugFlags.WEB_VIEW) {
             Log.v(LOGTAG,"select=" + contentX + ","+ contentY);
           }
-          invalidate();
         }
       }
       if (!mSelectingText && (mTouchMode == TOUCH_INIT_MODE || mTouchMode == TOUCH_DOUBLE_TAP_MODE)) {
@@ -132,6 +143,23 @@ case MotionEvent.ACTION_MOVE:
         removeTouchHighlight();
       }
     }
+    if (mSelectingText && mSelectionStarted) {
+      if (DebugFlags.WEB_VIEW) {
+        Log.v(LOGTAG,"extend=" + contentX + ","+ contentY);
+      }
+      ViewParent parent=getParent();
+      if (parent != null) {
+        parent.requestDisallowInterceptTouchEvent(true);
+      }
+      if (deltaX != 0 || deltaY != 0) {
+        mSelectDraggingCursor.offsetTo(contentX + mSelectDraggingOffset.x,contentY + mSelectDraggingOffset.y);
+        updateWebkitSelection();
+        mLastTouchX=x;
+        mLastTouchY=y;
+        invalidate();
+      }
+      break;
+    }
     if (shouldForwardTouchEvent() && mConfirmMove && (firstMove || eventTime - mLastSentTouchTime > mCurrentTouchInterval)) {
       TouchEventData ted=new TouchEventData();
       ted.mAction=action;
@@ -164,26 +192,6 @@ case MotionEvent.ACTION_MOVE:
     }
  else {
       mVelocityTracker.addMovement(ev);
-    }
-    if (mSelectingText && mSelectionStarted) {
-      if (DebugFlags.WEB_VIEW) {
-        Log.v(LOGTAG,"extend=" + contentX + ","+ contentY);
-      }
-      ViewParent parent=getParent();
-      if (parent != null) {
-        parent.requestDisallowInterceptTouchEvent(true);
-      }
-      mAutoScrollX=x <= mMinAutoScrollX ? -SELECT_SCROLL : x >= mMaxAutoScrollX ? SELECT_SCROLL : 0;
-      mAutoScrollY=y <= mMinAutoScrollY ? -SELECT_SCROLL : y >= mMaxAutoScrollY ? SELECT_SCROLL : 0;
-      if ((mAutoScrollX != 0 || mAutoScrollY != 0) && !mSentAutoScrollMessage) {
-        mSentAutoScrollMessage=true;
-        mPrivateHandler.sendEmptyMessageDelayed(SCROLL_SELECT_TEXT,SELECT_SCROLL_INTERVAL);
-      }
-      if (deltaX != 0 || deltaY != 0) {
-        nativeExtendSelection(contentX,contentY);
-        invalidate();
-      }
-      break;
     }
     if (mTouchMode != TOUCH_DRAG_MODE && mTouchMode != TOUCH_DRAG_LAYER_MODE) {
       if (!mConfirmMove) {
@@ -349,7 +357,7 @@ break;
 }
  else {
 if (mSelectingText) {
-if (!nativeHitSelection(contentX,contentY)) {
+if (!mSelectionStarted) {
 selectionDone();
 }
 break;
