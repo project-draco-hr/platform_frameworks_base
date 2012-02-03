@@ -1,10 +1,13 @@
 {
   ServiceRecord r=null;
+  if (DEBUG_SERVICE)   Slog.v(TAG,"retrieveServiceLocked: " + service + " type="+ resolvedType+ " origCallingUid="+ callingUid);
   if (service.getComponent() != null) {
-    r=mServices.get(service.getComponent());
+    r=mServiceMap.getServiceByName(service.getComponent(),Binder.getOrigCallingUser());
   }
-  Intent.FilterComparison filter=new Intent.FilterComparison(service);
-  r=mServicesByIntent.get(filter);
+  if (r == null) {
+    Intent.FilterComparison filter=new Intent.FilterComparison(service);
+    r=mServiceMap.getServiceByIntent(filter,Binder.getOrigCallingUser());
+  }
   if (r == null) {
     try {
       ResolveInfo rInfo=AppGlobals.getPackageManager().resolveService(service,resolvedType,STOCK_PM_FLAGS);
@@ -13,10 +16,13 @@
         Slog.w(TAG,"Unable to start service " + service + ": not found");
         return null;
       }
+      if (Binder.getOrigCallingUser() > 0) {
+        sInfo.applicationInfo=getAppInfoForUser(sInfo.applicationInfo,Binder.getOrigCallingUser());
+      }
       ComponentName name=new ComponentName(sInfo.applicationInfo.packageName,sInfo.name);
-      r=mServices.get(name);
+      r=mServiceMap.getServiceByName(name,Binder.getOrigCallingUser());
       if (r == null) {
-        filter=new Intent.FilterComparison(service.cloneFilter());
+        Intent.FilterComparison filter=new Intent.FilterComparison(service.cloneFilter());
         ServiceRestarter res=new ServiceRestarter();
         BatteryStatsImpl.Uid.Pkg.Serv ss=null;
         BatteryStatsImpl stats=mBatteryStatsService.getActiveStatistics();
@@ -25,8 +31,8 @@ synchronized (stats) {
         }
         r=new ServiceRecord(this,ss,name,filter,sInfo,res);
         res.setService(r);
-        mServices.put(name,r);
-        mServicesByIntent.put(filter,r);
+        mServiceMap.putServiceByName(name,UserId.getUserId(r.appInfo.uid),r);
+        mServiceMap.putServiceByIntent(filter,UserId.getUserId(r.appInfo.uid),r);
         int N=mPendingServices.size();
         for (int i=0; i < N; i++) {
           ServiceRecord pr=mPendingServices.get(i);
