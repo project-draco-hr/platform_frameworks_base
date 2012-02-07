@@ -1,0 +1,122 @@
+{
+  int i;
+  final int N=mWindows.size();
+  for (i=N - 1; i >= 0; i--) {
+    WindowState w=mWindows.get(i);
+    final WindowManager.LayoutParams attrs=w.mAttrs;
+    if (w.mSurface != null) {
+      if (w.commitFinishDrawingLocked(currentTime)) {
+        if ((w.mAttrs.flags & WindowManager.LayoutParams.FLAG_SHOW_WALLPAPER) != 0) {
+          if (DEBUG_WALLPAPER)           Slog.v(TAG,"First draw done in potential wallpaper target " + w);
+          mInnerFields.mWallpaperMayChange=true;
+        }
+      }
+      final boolean wasAnimating=w.mAnimating;
+      int animDw=innerDw;
+      int animDh=innerDh;
+      if (w.shouldAnimateMove()) {
+        Animation a=AnimationUtils.loadAnimation(mContext,com.android.internal.R.anim.window_move_from_decor);
+        w.setAnimation(a);
+        animDw=w.mLastFrame.left - w.mFrame.left;
+        animDh=w.mLastFrame.top - w.mFrame.top;
+      }
+      final boolean nowAnimating=w.stepAnimationLocked(currentTime,animDw,animDh);
+      if (nowAnimating) {
+        if (w.mAnimation != null) {
+          if ((w.mAttrs.flags & FLAG_SHOW_WALLPAPER) != 0 && w.mAnimation.getDetachWallpaper()) {
+            mInnerFields.mDetachedWallpaper=w;
+          }
+          if (w.mAnimation.getBackgroundColor() != 0) {
+            if (mInnerFields.mWindowAnimationBackground == null || (w.mAnimLayer < mInnerFields.mWindowAnimationBackground.mAnimLayer)) {
+              mInnerFields.mWindowAnimationBackground=w;
+              mInnerFields.mWindowAnimationBackgroundColor=w.mAnimation.getBackgroundColor();
+            }
+          }
+        }
+        mInnerFields.mAnimating=true;
+      }
+      if (w.mAppToken != null && w.mAppToken.animation != null && w.mAppToken.animating) {
+        if ((w.mAttrs.flags & FLAG_SHOW_WALLPAPER) != 0 && w.mAppToken.animation.getDetachWallpaper()) {
+          mInnerFields.mDetachedWallpaper=w;
+        }
+        if (w.mAppToken.animation.getBackgroundColor() != 0) {
+          if (mInnerFields.mWindowAnimationBackground == null || (w.mAnimLayer < mInnerFields.mWindowAnimationBackground.mAnimLayer)) {
+            mInnerFields.mWindowAnimationBackground=w;
+            mInnerFields.mWindowAnimationBackgroundColor=w.mAppToken.animation.getBackgroundColor();
+          }
+        }
+      }
+      if (wasAnimating && !w.mAnimating && mWallpaperTarget == w) {
+        mInnerFields.mWallpaperMayChange=true;
+      }
+      if (mPolicy.doesForceHide(w,attrs)) {
+        if (!wasAnimating && nowAnimating) {
+          if (DEBUG_VISIBILITY)           Slog.v(TAG,"Animation started that could impact force hide: " + w);
+          mInnerFields.mWallpaperForceHidingChanged=true;
+          mFocusMayChange=true;
+        }
+ else         if (w.isReadyForDisplay() && w.mAnimation == null) {
+          mInnerFields.mForceHiding=true;
+        }
+      }
+ else       if (mPolicy.canBeForceHidden(w,attrs)) {
+        boolean changed;
+        if (mInnerFields.mForceHiding) {
+          changed=w.hideLw(false,false);
+          if (DEBUG_VISIBILITY && changed)           Slog.v(TAG,"Now policy hidden: " + w);
+        }
+ else {
+          changed=w.showLw(false,false);
+          if (DEBUG_VISIBILITY && changed)           Slog.v(TAG,"Now policy shown: " + w);
+          if (changed) {
+            if (mInnerFields.mWallpaperForceHidingChanged && w.isVisibleNow()) {
+              Animation a=mPolicy.createForceHideEnterAnimation();
+              if (a != null) {
+                w.setAnimation(a);
+              }
+            }
+            if (mCurrentFocus == null || mCurrentFocus.mLayer < w.mLayer) {
+              mFocusMayChange=true;
+            }
+          }
+        }
+        if (changed && (attrs.flags & WindowManager.LayoutParams.FLAG_SHOW_WALLPAPER) != 0) {
+          mInnerFields.mWallpaperMayChange=true;
+        }
+      }
+      mPolicy.animatingWindowLw(w,attrs);
+    }
+    final AppWindowToken atoken=w.mAppToken;
+    if (atoken != null && (!atoken.allDrawn || atoken.freezingScreen)) {
+      if (atoken.lastTransactionSequence != mTransactionSequence) {
+        atoken.lastTransactionSequence=mTransactionSequence;
+        atoken.numInterestingWindows=atoken.numDrawnWindows=0;
+        atoken.startingDisplayed=false;
+      }
+      if ((w.isOnScreen() || w.mAttrs.type == WindowManager.LayoutParams.TYPE_BASE_APPLICATION) && !w.mExiting && !w.mDestroying) {
+        if (DEBUG_VISIBILITY || DEBUG_ORIENTATION) {
+          Slog.v(TAG,"Eval win " + w + ": isDrawn="+ w.isDrawnLw()+ ", isAnimating="+ w.isAnimating());
+          if (!w.isDrawnLw()) {
+            Slog.v(TAG,"Not displayed: s=" + w.mSurface + " pv="+ w.mPolicyVisibility+ " dp="+ w.mDrawPending+ " cdp="+ w.mCommitDrawPending+ " ah="+ w.mAttachedHidden+ " th="+ atoken.hiddenRequested+ " a="+ w.mAnimating);
+          }
+        }
+        if (w != atoken.startingWindow) {
+          if (!atoken.freezingScreen || !w.mAppFreezing) {
+            atoken.numInterestingWindows++;
+            if (w.isDrawnLw()) {
+              atoken.numDrawnWindows++;
+              if (DEBUG_VISIBILITY || DEBUG_ORIENTATION)               Slog.v(TAG,"tokenMayBeDrawn: " + atoken + " freezingScreen="+ atoken.freezingScreen+ " mAppFreezing="+ w.mAppFreezing);
+              mInnerFields.mTokenMayBeDrawn=true;
+            }
+          }
+        }
+ else         if (w.isDrawnLw()) {
+          atoken.startingDisplayed=true;
+        }
+      }
+    }
+ else     if (w.mReadyToShow) {
+      w.performShowLocked();
+    }
+  }
+}
