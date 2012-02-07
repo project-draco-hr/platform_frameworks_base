@@ -2,9 +2,25 @@
   if (uri == null) {
     throw new MmsException("Uri may not be null.");
   }
-  Integer msgBox=MESSAGE_BOX_MAP.get(uri);
-  if (msgBox == null) {
+  long msgId=-1;
+  try {
+    msgId=ContentUris.parseId(uri);
+  }
+ catch (  NumberFormatException e) {
+  }
+  boolean existingUri=msgId != -1;
+  if (!existingUri && MESSAGE_BOX_MAP.get(uri) == null) {
     throw new MmsException("Bad destination, must be one of " + "content://mms/inbox, content://mms/sent, " + "content://mms/drafts, content://mms/outbox, "+ "content://mms/temp.");
+  }
+synchronized (PDU_CACHE_INSTANCE) {
+    if (PDU_CACHE_INSTANCE.isUpdating(uri)) {
+      try {
+        PDU_CACHE_INSTANCE.wait();
+      }
+ catch (      InterruptedException e) {
+        Log.e(TAG,"persist1: ",e);
+      }
+    }
   }
   PDU_CACHE_INSTANCE.purge(uri);
   PduHeaders header=pdu.getPduHeaders();
@@ -92,15 +108,24 @@ persistPart(part,dummyId);
 }
 }
 }
-Uri res=SqliteWrapper.insert(mContext,mContentResolver,uri,values);
+Uri res=null;
+if (existingUri) {
+res=uri;
+SqliteWrapper.update(mContext,mContentResolver,res,values,null,null);
+}
+ else {
+res=SqliteWrapper.insert(mContext,mContentResolver,uri,values);
 if (res == null) {
 throw new MmsException("persist() failed: return null.");
 }
-long msgId=ContentUris.parseId(res);
+msgId=ContentUris.parseId(res);
+}
 values=new ContentValues(1);
 values.put(Part.MSG_ID,msgId);
 SqliteWrapper.update(mContext,mContentResolver,Uri.parse("content://mms/" + dummyId + "/part"),values,null,null);
+if (!existingUri) {
 res=Uri.parse(uri + "/" + msgId);
+}
 for (int addrType : ADDRESS_FIELDS) {
 EncodedStringValue[] array=addressMap.get(addrType);
 if (array != null) {
