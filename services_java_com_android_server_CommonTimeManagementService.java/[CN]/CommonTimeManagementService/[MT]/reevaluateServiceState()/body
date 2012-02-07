@@ -1,0 +1,59 @@
+{
+  String bindIface=null;
+  byte bestScore=-1;
+  try {
+    String ifaceList[]=mNetMgr.listInterfaces();
+    if (null != ifaceList) {
+      for (      String iface : ifaceList) {
+        byte thisScore=-1;
+        for (        InterfaceScoreRule r : IFACE_SCORE_RULES) {
+          if (iface.contains(r.mPrefix)) {
+            thisScore=r.mScore;
+            break;
+          }
+        }
+        if (thisScore <= bestScore)         continue;
+        InterfaceConfiguration config=mNetMgr.getInterfaceConfig(iface);
+        if (null == config)         continue;
+        if (config.isActive()) {
+          bindIface=iface;
+          bestScore=thisScore;
+        }
+      }
+    }
+  }
+ catch (  RemoteException e) {
+    bindIface=null;
+  }
+  boolean doRebind=true;
+synchronized (mLock) {
+    if ((null != bindIface) && (null == mCurIface)) {
+      Log.e(TAG,String.format("Binding common time service to %s.",bindIface));
+      mCurIface=bindIface;
+    }
+ else     if ((null == bindIface) && (null != mCurIface)) {
+      Log.e(TAG,"Unbinding common time service.");
+      mCurIface=null;
+    }
+ else     if ((null != bindIface) && (null != mCurIface) && !bindIface.equals(mCurIface)) {
+      Log.e(TAG,String.format("Switching common time service binding from %s to %s.",mCurIface,bindIface));
+      mCurIface=bindIface;
+    }
+ else {
+      doRebind=false;
+    }
+  }
+  if (doRebind && (null != mCTConfig)) {
+    byte newPrio=(bestScore > 0) ? (byte)(bestScore * BASE_SERVER_PRIO) : BASE_SERVER_PRIO;
+    if (newPrio != mEffectivePrio) {
+      mEffectivePrio=newPrio;
+      mCTConfig.setMasterElectionPriority(mEffectivePrio);
+    }
+    int res=mCTConfig.setNetworkBinding(mCurIface);
+    if (res != CommonTimeConfig.SUCCESS)     scheduleTimeConfigReconnect();
+ else     if (NO_INTERFACE_TIMEOUT >= 0) {
+      mNoInterfaceHandler.removeCallbacks(mNoInterfaceRunnable);
+      if (null == mCurIface)       mNoInterfaceHandler.postDelayed(mNoInterfaceRunnable,NO_INTERFACE_TIMEOUT);
+    }
+  }
+}
