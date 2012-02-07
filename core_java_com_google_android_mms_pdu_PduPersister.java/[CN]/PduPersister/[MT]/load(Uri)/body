@@ -1,7 +1,19 @@
 {
-  PduCacheEntry cacheEntry=PDU_CACHE_INSTANCE.get(uri);
-  if (cacheEntry != null) {
-    return cacheEntry.getPdu();
+  PduCacheEntry cacheEntry;
+synchronized (PDU_CACHE_INSTANCE) {
+    if (PDU_CACHE_INSTANCE.isUpdating(uri)) {
+      try {
+        PDU_CACHE_INSTANCE.wait();
+      }
+ catch (      InterruptedException e) {
+        Log.e(TAG,"load: ",e);
+      }
+      cacheEntry=PDU_CACHE_INSTANCE.get(uri);
+      if (cacheEntry != null) {
+        return cacheEntry.getPdu();
+      }
+    }
+    PDU_CACHE_INSTANCE.setUpdating(uri,true);
   }
   Cursor c=SqliteWrapper.query(mContext,mContentResolver,uri,PDU_PROJECTION,null,null,null);
   PduHeaders headers=new PduHeaders();
@@ -98,7 +110,11 @@ throw new MmsException("Unsupported PDU type: " + Integer.toHexString(msgType));
 default :
 throw new MmsException("Unrecognized PDU type: " + Integer.toHexString(msgType));
 }
+synchronized (PDU_CACHE_INSTANCE) {
+assert(PDU_CACHE_INSTANCE.get(uri) == null);
 cacheEntry=new PduCacheEntry(pdu,msgBox,threadId);
 PDU_CACHE_INSTANCE.put(uri,cacheEntry);
+PDU_CACHE_INSTANCE.notifyAll();
 return pdu;
+}
 }
