@@ -5,13 +5,18 @@
     LocalSocketAddress address=new LocalSocketAddress(mSocket,LocalSocketAddress.Namespace.RESERVED);
     socket.connect(address);
     InputStream inputStream=socket.getInputStream();
-    mOutputStream=socket.getOutputStream();
+synchronized (mDaemonLock) {
+      mOutputStream=socket.getOutputStream();
+    }
     mCallbacks.onDaemonConnected();
     byte[] buffer=new byte[BUFFER_SIZE];
     int start=0;
     while (true) {
       int count=inputStream.read(buffer,start,BUFFER_SIZE - start);
-      if (count < 0)       break;
+      if (count < 0) {
+        loge("got " + count + " reading with start = "+ start);
+        break;
+      }
       count+=start;
       start=0;
       for (int i=0; i < count; i++) {
@@ -24,16 +29,11 @@
               mCallbackHandler.sendMessage(mCallbackHandler.obtainMessage(event.getCode(),event.getRawEvent()));
             }
  else {
-              try {
-                mResponseQueue.put(event);
-              }
- catch (              InterruptedException ex) {
-                Slog.e(TAG,"Failed to put response onto queue: " + ex);
-              }
+              mResponseQueue.add(event.getCmdNumber(),event);
             }
           }
  catch (          IllegalArgumentException e) {
-            Slog.w(TAG,"Problem parsing message: " + rawEvent,e);
+            log("Problem parsing message: " + rawEvent + " - "+ e);
           }
           start=i + 1;
         }
@@ -53,17 +53,18 @@
     }
   }
  catch (  IOException ex) {
-    Slog.e(TAG,"Communications error",ex);
+    loge("Communications error: " + ex);
     throw ex;
   }
  finally {
 synchronized (mDaemonLock) {
       if (mOutputStream != null) {
         try {
+          loge("closing stream for " + mSocket);
           mOutputStream.close();
         }
  catch (        IOException e) {
-          Slog.w(TAG,"Failed closing output stream",e);
+          loge("Failed closing output stream: " + e);
         }
         mOutputStream=null;
       }
@@ -74,7 +75,7 @@ synchronized (mDaemonLock) {
       }
     }
  catch (    IOException ex) {
-      Slog.w(TAG,"Failed closing socket",ex);
+      loge("Failed closing socket: " + ex);
     }
   }
 }
