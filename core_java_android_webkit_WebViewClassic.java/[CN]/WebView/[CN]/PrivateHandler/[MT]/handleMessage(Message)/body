@@ -1,0 +1,408 @@
+{
+  if (DebugFlags.WEB_VIEW && msg.what != INVAL_RECT_MSG_ID) {
+    if (msg.what >= FIRST_PRIVATE_MSG_ID && msg.what <= LAST_PRIVATE_MSG_ID) {
+      Log.v(LOGTAG,HandlerPrivateDebugString[msg.what - FIRST_PRIVATE_MSG_ID]);
+    }
+ else     if (msg.what >= FIRST_PACKAGE_MSG_ID && msg.what <= LAST_PACKAGE_MSG_ID) {
+      Log.v(LOGTAG,HandlerPackageDebugString[msg.what - FIRST_PACKAGE_MSG_ID]);
+    }
+ else {
+      Log.v(LOGTAG,Integer.toString(msg.what));
+    }
+  }
+  if (mWebViewCore == null) {
+    return;
+  }
+  if (mBlockWebkitViewMessages && msg.what != WEBCORE_INITIALIZED_MSG_ID) {
+    return;
+  }
+switch (msg.what) {
+case REMEMBER_PASSWORD:
+{
+      mDatabase.setUsernamePassword(msg.getData().getString("host"),msg.getData().getString("username"),msg.getData().getString("password"));
+      ((Message)msg.obj).sendToTarget();
+      break;
+    }
+case NEVER_REMEMBER_PASSWORD:
+{
+    mDatabase.setUsernamePassword(msg.getData().getString("host"),null,null);
+    ((Message)msg.obj).sendToTarget();
+    break;
+  }
+case PREVENT_DEFAULT_TIMEOUT:
+{
+  if ((msg.arg1 == MotionEvent.ACTION_DOWN && mPreventDefault == PREVENT_DEFAULT_MAYBE_YES) || (msg.arg1 == MotionEvent.ACTION_MOVE && mPreventDefault == PREVENT_DEFAULT_NO_FROM_TOUCH_DOWN)) {
+    cancelWebCoreTouchEvent(viewToContentX(mLastTouchX + mScrollX),viewToContentY(mLastTouchY + mScrollY),true);
+  }
+  break;
+}
+case SCROLL_SELECT_TEXT:
+{
+if (mAutoScrollX == 0 && mAutoScrollY == 0) {
+  mSentAutoScrollMessage=false;
+  break;
+}
+if (mCurrentScrollingLayerId == 0) {
+  pinScrollBy(mAutoScrollX,mAutoScrollY,true,0);
+}
+ else {
+  scrollLayerTo(mScrollingLayerRect.left + mAutoScrollX,mScrollingLayerRect.top + mAutoScrollY);
+}
+sendEmptyMessageDelayed(SCROLL_SELECT_TEXT,SELECT_SCROLL_INTERVAL);
+break;
+}
+case UPDATE_SELECTION:
+{
+if (mTouchMode == TOUCH_INIT_MODE || mTouchMode == TOUCH_SHORTPRESS_MODE || mTouchMode == TOUCH_SHORTPRESS_START_MODE) {
+updateSelection();
+}
+break;
+}
+case SWITCH_TO_SHORTPRESS:
+{
+if (mTouchMode == TOUCH_INIT_MODE) {
+if (!sDisableNavcache && mPreventDefault != PREVENT_DEFAULT_YES) {
+mTouchMode=TOUCH_SHORTPRESS_START_MODE;
+updateSelection();
+}
+ else {
+mTouchMode=TOUCH_SHORTPRESS_MODE;
+}
+}
+ else if (mTouchMode == TOUCH_DOUBLE_TAP_MODE) {
+mTouchMode=TOUCH_DONE_MODE;
+}
+break;
+}
+case SWITCH_TO_LONGPRESS:
+{
+if (sDisableNavcache) {
+removeTouchHighlight();
+}
+if (inFullScreenMode() || mDeferTouchProcess) {
+TouchEventData ted=new TouchEventData();
+ted.mAction=WebViewCore.ACTION_LONGPRESS;
+ted.mIds=new int[1];
+ted.mIds[0]=0;
+ted.mPoints=new Point[1];
+ted.mPoints[0]=new Point(viewToContentX(mLastTouchX + mScrollX),viewToContentY(mLastTouchY + mScrollY));
+ted.mPointsInView=new Point[1];
+ted.mPointsInView[0]=new Point(mLastTouchX,mLastTouchY);
+ted.mMetaState=0;
+ted.mReprocess=mDeferTouchProcess;
+ted.mNativeLayer=nativeScrollableLayer(ted.mPoints[0].x,ted.mPoints[0].y,ted.mNativeLayerRect,null);
+ted.mSequence=mTouchEventQueue.nextTouchSequence();
+mTouchEventQueue.preQueueTouchEventData(ted);
+mWebViewCore.sendMessage(EventHub.TOUCH_EVENT,ted);
+}
+ else if (mPreventDefault != PREVENT_DEFAULT_YES) {
+mTouchMode=TOUCH_DONE_MODE;
+performLongClick();
+}
+break;
+}
+case RELEASE_SINGLE_TAP:
+{
+doShortPress();
+break;
+}
+case SCROLL_TO_MSG_ID:
+{
+if (msg.arg2 == 1) {
+InputMethodManager imm=InputMethodManager.peekInstance();
+if (imm == null || !imm.isAcceptingText() || (!imm.isActive(WebView.this) && (!inEditingMode() || !imm.isActive(mWebTextView)))) {
+break;
+}
+}
+final Point p=(Point)msg.obj;
+if (msg.arg1 == 1) {
+spawnContentScrollTo(p.x,p.y);
+}
+ else {
+setContentScrollTo(p.x,p.y);
+}
+break;
+}
+case UPDATE_ZOOM_RANGE:
+{
+WebViewCore.ViewState viewState=(WebViewCore.ViewState)msg.obj;
+mZoomManager.updateZoomRange(viewState,getViewWidth(),viewState.mScrollX);
+break;
+}
+case UPDATE_ZOOM_DENSITY:
+{
+final float density=(Float)msg.obj;
+mZoomManager.updateDefaultZoomDensity(density);
+break;
+}
+case REPLACE_BASE_CONTENT:
+{
+nativeReplaceBaseContent(msg.arg1);
+break;
+}
+case NEW_PICTURE_MSG_ID:
+{
+final WebViewCore.DrawData draw=(WebViewCore.DrawData)msg.obj;
+setNewPicture(draw,true);
+break;
+}
+case WEBCORE_INITIALIZED_MSG_ID:
+String drawableDir=BrowserFrame.getRawResFilename(BrowserFrame.DRAWABLEDIR,mContext);
+WindowManager windowManager=(WindowManager)mContext.getSystemService(Context.WINDOW_SERVICE);
+Display display=windowManager.getDefaultDisplay();
+nativeCreate(msg.arg1,drawableDir,ActivityManager.isHighEndGfx(display));
+if (mDelaySetPicture != null) {
+setNewPicture(mDelaySetPicture,true);
+mDelaySetPicture=null;
+}
+if (mIsPaused) {
+nativeSetPauseDrawing(mNativeClass,true);
+}
+break;
+case UPDATE_TEXTFIELD_TEXT_MSG_ID:
+if (msg.arg2 == mTextGeneration) {
+String text=(String)msg.obj;
+if (null == text) {
+text="";
+}
+if (inEditingMode() && mWebTextView.isSameTextField(msg.arg1)) {
+mWebTextView.setTextAndKeepSelection(text);
+}
+ else if (mInputConnection != null && mFieldPointer == msg.arg1) {
+mInputConnection.setTextAndKeepSelection(text);
+}
+}
+break;
+case REQUEST_KEYBOARD_WITH_SELECTION_MSG_ID:
+displaySoftKeyboard(true);
+case UPDATE_TEXT_SELECTION_MSG_ID:
+updateTextSelectionFromMessage(msg.arg1,msg.arg2,(WebViewCore.TextSelectionData)msg.obj);
+break;
+case FORM_DID_BLUR:
+if (inEditingMode() && mWebTextView.isSameTextField(msg.arg1)) {
+hideSoftKeyboard();
+}
+break;
+case RETURN_LABEL:
+if (inEditingMode() && mWebTextView.isSameTextField(msg.arg1)) {
+mWebTextView.setHint((String)msg.obj);
+InputMethodManager imm=InputMethodManager.peekInstance();
+if (imm != null && imm.isActive(mWebTextView)) {
+imm.restartInput(mWebTextView);
+}
+}
+break;
+case UNHANDLED_NAV_KEY:
+navHandledKey(msg.arg1,1,false,0);
+break;
+case UPDATE_TEXT_ENTRY_MSG_ID:
+if (inEditingMode() && nativeCursorIsTextInput()) {
+updateWebTextViewPosition();
+}
+break;
+case CLEAR_TEXT_ENTRY:
+clearTextEntry();
+break;
+case INVAL_RECT_MSG_ID:
+{
+Rect r=(Rect)msg.obj;
+if (r == null) {
+invalidate();
+}
+ else {
+viewInvalidate(r.left,r.top,r.right,r.bottom);
+}
+break;
+}
+case REQUEST_FORM_DATA:
+AutoCompleteAdapter adapter=(AutoCompleteAdapter)msg.obj;
+if (mWebTextView.isSameTextField(msg.arg1)) {
+mWebTextView.setAdapterCustom(adapter);
+}
+break;
+case LONG_PRESS_CENTER:
+mGotCenterDown=false;
+mTrackballDown=false;
+performLongClick();
+break;
+case WEBCORE_NEED_TOUCH_EVENTS:
+mForwardTouchEvents=(msg.arg1 != 0);
+break;
+case PREVENT_TOUCH_ID:
+if (inFullScreenMode()) {
+break;
+}
+TouchEventData ted=(TouchEventData)msg.obj;
+if (mTouchEventQueue.enqueueTouchEvent(ted)) {
+removeMessages(PREVENT_DEFAULT_TIMEOUT);
+}
+break;
+case REQUEST_KEYBOARD:
+if (msg.arg1 == 0) {
+hideSoftKeyboard();
+}
+ else {
+displaySoftKeyboard(false);
+}
+break;
+case DRAG_HELD_MOTIONLESS:
+mHeldMotionless=MOTIONLESS_TRUE;
+invalidate();
+case AWAKEN_SCROLL_BARS:
+if (mTouchMode == TOUCH_DRAG_MODE && mHeldMotionless == MOTIONLESS_TRUE) {
+awakenScrollBars(ViewConfiguration.getScrollDefaultDelay(),false);
+mPrivateHandler.sendMessageDelayed(mPrivateHandler.obtainMessage(AWAKEN_SCROLL_BARS),ViewConfiguration.getScrollDefaultDelay());
+}
+break;
+case DO_MOTION_UP:
+doMotionUp(msg.arg1,msg.arg2);
+break;
+case SCREEN_ON:
+setKeepScreenOn(msg.arg1 == 1);
+break;
+case ENTER_FULLSCREEN_VIDEO:
+int layerId=msg.arg1;
+String url=(String)msg.obj;
+if (mHTML5VideoViewProxy != null) {
+mHTML5VideoViewProxy.enterFullScreenVideo(layerId,url);
+}
+break;
+case EXIT_FULLSCREEN_VIDEO:
+if (mHTML5VideoViewProxy != null) {
+mHTML5VideoViewProxy.exitFullScreenVideo();
+}
+break;
+case SHOW_FULLSCREEN:
+{
+View view=(View)msg.obj;
+int orientation=msg.arg1;
+int npp=msg.arg2;
+if (inFullScreenMode()) {
+Log.w(LOGTAG,"Should not have another full screen.");
+dismissFullScreenMode();
+}
+mFullScreenHolder=new PluginFullScreenHolder(WebView.this,orientation,npp);
+mFullScreenHolder.setContentView(view);
+mFullScreenHolder.show();
+invalidate();
+break;
+}
+case HIDE_FULLSCREEN:
+dismissFullScreenMode();
+break;
+case DOM_FOCUS_CHANGED:
+if (inEditingMode()) {
+nativeClearCursor();
+rebuildWebTextView();
+}
+break;
+case SHOW_RECT_MSG_ID:
+{
+WebViewCore.ShowRectData data=(WebViewCore.ShowRectData)msg.obj;
+int x=mScrollX;
+int left=contentToViewX(data.mLeft);
+int width=contentToViewDimension(data.mWidth);
+int maxWidth=contentToViewDimension(data.mContentWidth);
+int viewWidth=getViewWidth();
+if (width < viewWidth) {
+x+=left + width / 2 - mScrollX - viewWidth / 2;
+}
+ else {
+x+=(int)(left + data.mXPercentInDoc * width - mScrollX - data.mXPercentInView * viewWidth);
+}
+if (DebugFlags.WEB_VIEW) {
+Log.v(LOGTAG,"showRectMsg=(left=" + left + ",width="+ width+ ",maxWidth="+ maxWidth+ ",viewWidth="+ viewWidth+ ",x="+ x+ ",xPercentInDoc="+ data.mXPercentInDoc+ ",xPercentInView="+ data.mXPercentInView+ ")");
+}
+x=Math.max(0,(Math.min(maxWidth,x + viewWidth)) - viewWidth);
+int top=contentToViewY(data.mTop);
+int height=contentToViewDimension(data.mHeight);
+int maxHeight=contentToViewDimension(data.mContentHeight);
+int viewHeight=getViewHeight();
+int y=(int)(top + data.mYPercentInDoc * height - data.mYPercentInView * viewHeight);
+if (DebugFlags.WEB_VIEW) {
+Log.v(LOGTAG,"showRectMsg=(top=" + top + ",height="+ height+ ",maxHeight="+ maxHeight+ ",viewHeight="+ viewHeight+ ",y="+ y+ ",yPercentInDoc="+ data.mYPercentInDoc+ ",yPercentInView="+ data.mYPercentInView+ ")");
+}
+y=Math.max(0,(Math.min(maxHeight,y + viewHeight) - viewHeight));
+y=Math.max(0,y - getVisibleTitleHeightImpl());
+scrollTo(x,y);
+}
+break;
+case CENTER_FIT_RECT:
+centerFitRect((Rect)msg.obj);
+break;
+case SET_SCROLLBAR_MODES:
+mHorizontalScrollBarMode=msg.arg1;
+mVerticalScrollBarMode=msg.arg2;
+break;
+case SELECTION_STRING_CHANGED:
+if (mAccessibilityInjector != null) {
+String selectionString=(String)msg.obj;
+mAccessibilityInjector.onSelectionStringChange(selectionString);
+}
+break;
+case HIT_TEST_RESULT:
+WebKitHitTest hit=(WebKitHitTest)msg.obj;
+mFocusedNode=hit;
+setTouchHighlightRects(hit);
+setHitTestResult(hit);
+break;
+case SAVE_WEBARCHIVE_FINISHED:
+SaveWebArchiveMessage saveMessage=(SaveWebArchiveMessage)msg.obj;
+if (saveMessage.mCallback != null) {
+saveMessage.mCallback.onReceiveValue(saveMessage.mResultFile);
+}
+break;
+case SET_AUTOFILLABLE:
+mAutoFillData=(WebViewCore.AutoFillData)msg.obj;
+if (mWebTextView != null) {
+mWebTextView.setAutoFillable(mAutoFillData.getQueryId());
+rebuildWebTextView();
+}
+break;
+case AUTOFILL_COMPLETE:
+if (mWebTextView != null) {
+mWebTextView.setAdapterCustom(null);
+}
+break;
+case SELECT_AT:
+nativeSelectAt(msg.arg1,msg.arg2);
+break;
+case COPY_TO_CLIPBOARD:
+copyToClipboard((String)msg.obj);
+break;
+case INIT_EDIT_FIELD:
+if (mInputConnection != null) {
+TextFieldInitData initData=(TextFieldInitData)msg.obj;
+mTextGeneration=0;
+mFieldPointer=initData.mFieldPointer;
+mInputConnection.initEditorInfo(initData);
+mInputConnection.setTextAndKeepSelection(initData.mText);
+}
+break;
+case REPLACE_TEXT:
+{
+String text=(String)msg.obj;
+int start=msg.arg1;
+int end=msg.arg2;
+int cursorPosition=start + text.length();
+replaceTextfieldText(start,end,text,cursorPosition,cursorPosition);
+break;
+}
+case UPDATE_MATCH_COUNT:
+{
+if (mFindCallback != null) {
+mFindCallback.updateMatchCount(msg.arg1,msg.arg2,(String)msg.obj);
+}
+break;
+}
+case CLEAR_CARET_HANDLE:
+selectionDone();
+break;
+case KEY_PRESS:
+mWebViewCore.sendMessage(EventHub.KEY_PRESS,msg.arg1);
+break;
+default :
+super.handleMessage(msg);
+break;
+}
+}
