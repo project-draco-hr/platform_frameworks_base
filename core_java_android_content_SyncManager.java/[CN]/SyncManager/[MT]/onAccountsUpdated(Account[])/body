@@ -1,18 +1,33 @@
 {
   final boolean justBootedUp=mAccounts == INITIAL_ACCOUNTS_ARRAY;
-  mAccounts=accounts;
+  List<UserInfo> users=getAllUsers();
+  if (users == null)   return;
+  int count=0;
+  for (  UserInfo user : users) {
+    accounts=AccountManagerService.getSingleton().getAccounts(user.id);
+    count+=accounts.length;
+  }
+  AccountAndUser[] allAccounts=new AccountAndUser[count];
+  int index=0;
+  for (  UserInfo user : users) {
+    accounts=AccountManagerService.getSingleton().getAccounts(user.id);
+    for (    Account account : accounts) {
+      allAccounts[index++]=new AccountAndUser(account,user.id);
+    }
+    if (mBootCompleted) {
+      mSyncStorageEngine.doDatabaseCleanup(accounts,user.id);
+    }
+  }
+  mAccounts=allAccounts;
   for (  ActiveSyncContext currentSyncContext : mActiveSyncContexts) {
-    if (!ArrayUtils.contains(accounts,currentSyncContext.mSyncOperation.account)) {
+    if (!containsAccountAndUser(allAccounts,currentSyncContext.mSyncOperation.account,currentSyncContext.mSyncOperation.userId)) {
       Log.d(TAG,"canceling sync since the account has been removed");
       sendSyncFinishedOrCanceledMessage(currentSyncContext,null);
     }
   }
   sendCheckAlarmsMessage();
-  if (mBootCompleted) {
-    mSyncStorageEngine.doDatabaseCleanup(accounts);
-  }
-  if (accounts.length > 0) {
+  if (allAccounts.length > 0) {
     boolean onlyThoseWithUnkownSyncableState=justBootedUp;
-    scheduleSync(null,null,null,0,onlyThoseWithUnkownSyncableState);
+    scheduleSync(null,UserId.USER_ALL,null,null,0,onlyThoseWithUnkownSyncableState);
   }
 }
