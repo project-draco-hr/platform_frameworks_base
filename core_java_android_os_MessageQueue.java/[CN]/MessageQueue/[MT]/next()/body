@@ -8,28 +8,38 @@
     nativePollOnce(mPtr,nextPollTimeoutMillis);
 synchronized (this) {
       final long now=SystemClock.uptimeMillis();
-      final Message msg=mMessages;
-      if (msg != null) {
+      Message prevMsg=null;
+      Message msg=mMessages;
+      for (; ; ) {
+        if (msg == null) {
+          nextPollTimeoutMillis=-1;
+          break;
+        }
         final long when=msg.when;
-        if (now >= when) {
+        if (now < when) {
+          nextPollTimeoutMillis=(int)Math.min(when - now,Integer.MAX_VALUE);
+          break;
+        }
+        if (mBarrierNestCount == 0 || msg.isAsynchronous()) {
           mBlocked=false;
-          mMessages=msg.next;
+          if (prevMsg != null) {
+            prevMsg.next=msg.next;
+          }
+ else {
+            mMessages=msg.next;
+          }
           msg.next=null;
           if (false)           Log.v("MessageQueue","Returning message: " + msg);
           msg.markInUse();
           return msg;
         }
- else {
-          nextPollTimeoutMillis=(int)Math.min(when - now,Integer.MAX_VALUE);
-        }
+        prevMsg=msg;
+        msg=msg.next;
       }
- else {
-        nextPollTimeoutMillis=-1;
-      }
-      if (pendingIdleHandlerCount < 0) {
+      if (pendingIdleHandlerCount < 0 && msg == mMessages) {
         pendingIdleHandlerCount=mIdleHandlers.size();
       }
-      if (pendingIdleHandlerCount == 0) {
+      if (pendingIdleHandlerCount <= 0) {
         mBlocked=true;
         continue;
       }
