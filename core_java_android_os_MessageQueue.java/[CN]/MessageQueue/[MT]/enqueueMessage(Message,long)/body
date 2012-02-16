@@ -2,18 +2,15 @@
   if (msg.isInUse()) {
     throw new AndroidRuntimeException(msg + " This message is already in use.");
   }
-  if (msg.target == null && !mQuitAllowed) {
-    throw new RuntimeException("Main thread not allowed to quit");
+  if (msg.target == null) {
+    throw new AndroidRuntimeException("Message must have a target.");
   }
-  final boolean needWake;
+  boolean needWake;
 synchronized (this) {
     if (mQuiting) {
       RuntimeException e=new RuntimeException(msg.target + " sending message to a Handler on a dead thread");
       Log.w("MessageQueue",e.getMessage(),e);
       return false;
-    }
- else     if (msg.target == null) {
-      mQuiting=true;
     }
     msg.when=when;
     Message p=mMessages;
@@ -23,14 +20,20 @@ synchronized (this) {
       needWake=mBlocked;
     }
  else {
-      Message prev=null;
-      while (p != null && p.when <= when) {
+      needWake=mBlocked && p.target == null && msg.isAsynchronous();
+      Message prev;
+      for (; ; ) {
         prev=p;
         p=p.next;
+        if (p == null || when < p.when) {
+          break;
+        }
+        if (needWake && p.isAsynchronous()) {
+          needWake=false;
+        }
       }
-      msg.next=prev.next;
+      msg.next=p;
       prev.next=msg;
-      needWake=mBlocked && mBarrierNestCount != 0 && msg.isAsynchronous() && !mMessages.isAsynchronous();
     }
   }
   if (needWake) {
