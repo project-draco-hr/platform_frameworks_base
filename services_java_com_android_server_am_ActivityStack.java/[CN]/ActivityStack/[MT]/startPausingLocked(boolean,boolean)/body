@@ -1,4 +1,8 @@
 {
+  if (mPausingActivity != null) {
+    RuntimeException e=new RuntimeException();
+    Slog.e(TAG,"Trying to pause when pause is already pending for " + mPausingActivity,e);
+  }
   ActivityRecord prev=mResumedActivity;
   if (prev == null) {
     RuntimeException e=new RuntimeException();
@@ -6,23 +10,17 @@
     resumeTopActivityLocked(null);
     return;
   }
-  if (mPausingActivities.contains(prev)) {
-    RuntimeException e=new RuntimeException();
-    Slog.e(TAG,"Trying to pause when pause when already pausing " + prev,e);
-  }
   if (DEBUG_STATES)   Slog.v(TAG,"Moving to PAUSING: " + prev);
  else   if (DEBUG_PAUSE)   Slog.v(TAG,"Start pausing: " + prev);
   mResumedActivity=null;
-  mPausingActivities.add(prev);
+  mPausingActivity=prev;
   mLastPausedActivity=prev;
   prev.state=ActivityState.PAUSING;
   prev.task.touchActiveTime();
   prev.updateThumbnail(screenshotActivities(prev),null);
   mService.updateCpuStats();
-  ActivityRecord pausing;
   if (prev.app != null && prev.app.thread != null) {
     if (DEBUG_PAUSE)     Slog.v(TAG,"Enqueueing pending pause: " + prev);
-    pausing=prev;
     try {
       EventLog.writeEvent(EventLogTags.AM_PAUSE_ACTIVITY,System.identityHashCode(prev),prev.shortComponentName);
       prev.app.thread.schedulePauseActivity(prev.appToken,prev.finishing,userLeaving,prev.configChangeFlags);
@@ -32,15 +30,13 @@
     }
  catch (    Exception e) {
       Slog.w(TAG,"Exception thrown during pause",e);
-      mPausingActivities.remove(prev);
+      mPausingActivity=null;
       mLastPausedActivity=null;
-      pausing=null;
     }
   }
  else {
-    mPausingActivities.remove(prev);
+    mPausingActivity=null;
     mLastPausedActivity=null;
-    pausing=null;
   }
   if (!mService.mSleeping && !mService.mShuttingDown) {
     mLaunchingActivity.acquire();
@@ -49,17 +45,12 @@
       mHandler.sendMessageDelayed(msg,LAUNCH_TIMEOUT);
     }
   }
-  if (pausing != null) {
+  if (mPausingActivity != null) {
     if (!uiSleeping) {
-      pausing.pauseKeyDispatchingLocked();
-      mInputPausedActivities.add(prev);
+      prev.pauseKeyDispatchingLocked();
     }
  else {
       if (DEBUG_PAUSE)       Slog.v(TAG,"Key dispatch not paused for screen off");
-    }
-    if (pausing.configDestroy) {
-      if (DEBUG_PAUSE)       Slog.v(TAG,"Destroying at pause: " + prev);
-      destroyActivityLocked(pausing,true,false,"pause-config");
     }
     Message msg=mHandler.obtainMessage(PAUSE_TIMEOUT_MSG);
     msg.obj=prev;
@@ -68,8 +59,6 @@
   }
  else {
     if (DEBUG_PAUSE)     Slog.v(TAG,"Activity not running, resuming next.");
-  }
-  if (!mService.isSleeping()) {
-    resumeTopActivityLocked(pausing);
+    resumeTopActivityLocked(null);
   }
 }
