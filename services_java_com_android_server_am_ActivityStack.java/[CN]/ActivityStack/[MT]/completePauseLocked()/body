@@ -1,0 +1,62 @@
+{
+  ActivityRecord prev=mPausingActivity;
+  if (DEBUG_PAUSE)   Slog.v(TAG,"Complete pause: " + prev);
+  if (prev != null) {
+    if (prev.finishing) {
+      if (DEBUG_PAUSE)       Slog.v(TAG,"Executing finish of activity: " + prev);
+      prev=finishCurrentActivityLocked(prev,FINISH_AFTER_VISIBLE);
+    }
+ else     if (prev.app != null) {
+      if (DEBUG_PAUSE)       Slog.v(TAG,"Enqueueing pending stop: " + prev);
+      if (prev.waitingVisible) {
+        prev.waitingVisible=false;
+        mWaitingVisibleActivities.remove(prev);
+        if (DEBUG_SWITCH || DEBUG_PAUSE)         Slog.v(TAG,"Complete pause, no longer waiting: " + prev);
+      }
+      if (prev.configDestroy) {
+        if (DEBUG_PAUSE)         Slog.v(TAG,"Destroying after pause: " + prev);
+        destroyActivityLocked(prev,true,false,"pause-config");
+      }
+ else {
+        mStoppingActivities.add(prev);
+        if (mStoppingActivities.size() > 3) {
+          if (DEBUG_PAUSE)           Slog.v(TAG,"To many pending stops, forcing idle");
+          scheduleIdleLocked();
+        }
+ else {
+          checkReadyForSleepLocked();
+        }
+      }
+    }
+ else {
+      if (DEBUG_PAUSE)       Slog.v(TAG,"App died during pause, not stopping: " + prev);
+      prev=null;
+    }
+    mPausingActivity=null;
+  }
+  if (!mService.isSleeping()) {
+    resumeTopActivityLocked(prev);
+  }
+ else {
+    checkReadyForSleepLocked();
+  }
+  if (prev != null) {
+    prev.resumeKeyDispatchingLocked();
+  }
+  if (prev.app != null && prev.cpuTimeAtResume > 0 && mService.mBatteryStatsService.isOnBattery()) {
+    long diff=0;
+synchronized (mService.mProcessStatsThread) {
+      diff=mService.mProcessStats.getCpuTimeForPid(prev.app.pid) - prev.cpuTimeAtResume;
+    }
+    if (diff > 0) {
+      BatteryStatsImpl bsi=mService.mBatteryStatsService.getActiveStatistics();
+synchronized (bsi) {
+        BatteryStatsImpl.Uid.Proc ps=bsi.getProcessStatsLocked(prev.info.applicationInfo.uid,prev.info.packageName);
+        if (ps != null) {
+          ps.addForegroundTimeLocked(diff);
+        }
+      }
+    }
+  }
+  prev.cpuTimeAtResume=0;
+}
