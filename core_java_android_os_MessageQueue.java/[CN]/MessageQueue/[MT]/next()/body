@@ -7,20 +7,24 @@
     }
     nativePollOnce(mPtr,nextPollTimeoutMillis);
 synchronized (this) {
+      if (mQuiting) {
+        return null;
+      }
       final long now=SystemClock.uptimeMillis();
       Message prevMsg=null;
       Message msg=mMessages;
-      for (; ; ) {
-        if (msg == null) {
-          nextPollTimeoutMillis=-1;
-          break;
+      if (msg != null && msg.target == null) {
+        do {
+          prevMsg=msg;
+          msg=msg.next;
         }
-        final long when=msg.when;
-        if (now < when) {
-          nextPollTimeoutMillis=(int)Math.min(when - now,Integer.MAX_VALUE);
-          break;
+ while (msg != null && !msg.isAsynchronous());
+      }
+      if (msg != null) {
+        if (now < msg.when) {
+          nextPollTimeoutMillis=(int)Math.min(msg.when - now,Integer.MAX_VALUE);
         }
-        if (mBarrierNestCount == 0 || msg.isAsynchronous()) {
+ else {
           mBlocked=false;
           if (prevMsg != null) {
             prevMsg.next=msg.next;
@@ -33,10 +37,11 @@ synchronized (this) {
           msg.markInUse();
           return msg;
         }
-        prevMsg=msg;
-        msg=msg.next;
       }
-      if (pendingIdleHandlerCount < 0 && msg == mMessages) {
+ else {
+        nextPollTimeoutMillis=-1;
+      }
+      if (pendingIdleHandlerCount < 0 && (mMessages == null || now < mMessages.when)) {
         pendingIdleHandlerCount=mIdleHandlers.size();
       }
       if (pendingIdleHandlerCount <= 0) {
