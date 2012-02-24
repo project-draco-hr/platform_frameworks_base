@@ -5,23 +5,23 @@ synchronized (mH) {
     if (DEBUG)     Log.v(TAG,"Starting input: view=" + view);
     if (view == null) {
       if (DEBUG)       Log.v(TAG,"ABORT input: no served view!");
-      return;
+      return false;
     }
   }
   Handler vh=view.getHandler();
   if (vh == null) {
     if (DEBUG)     Log.v(TAG,"ABORT input: no handler for view!");
-    return;
+    return false;
   }
   if (vh.getLooper() != Looper.myLooper()) {
     if (DEBUG)     Log.v(TAG,"Starting input: reschedule to view thread");
     vh.post(new Runnable(){
       public void run(){
-        startInputInner();
+        startInputInner(null,0,0,0);
       }
     }
 );
-    return;
+    return false;
   }
   EditorInfo tba=new EditorInfo();
   tba.packageName=view.getContext().getPackageName();
@@ -31,9 +31,11 @@ synchronized (mH) {
 synchronized (mH) {
     if (mServedView != view || !mServedConnecting) {
       if (DEBUG)       Log.v(TAG,"Starting input: finished by someone else (view=" + mServedView + " conn="+ mServedConnecting+ ")");
-      return;
+      return false;
     }
-    final boolean initial=mCurrentTextBoxAttribute == null;
+    if (mCurrentTextBoxAttribute == null) {
+      controlFlags|=CONTROL_START_INITIAL;
+    }
     mCurrentTextBoxAttribute=tba;
     mServedConnecting=false;
     notifyInputConnectionFinished();
@@ -51,8 +53,14 @@ synchronized (mH) {
       servedContext=null;
     }
     try {
-      if (DEBUG)       Log.v(TAG,"START INPUT: " + view + " ic="+ ic+ " tba="+ tba+ " initial="+ initial);
-      InputBindResult res=mService.startInput(mClient,servedContext,tba,initial,true);
+      if (DEBUG)       Log.v(TAG,"START INPUT: " + view + " ic="+ ic+ " tba="+ tba+ " controlFlags=#"+ Integer.toHexString(controlFlags));
+      InputBindResult res;
+      if (windowGainingFocus != null) {
+        res=mService.windowGainedFocus(mClient,windowGainingFocus,controlFlags,softInputMode,windowFlags,tba,servedContext);
+      }
+ else {
+        res=mService.startInput(mClient,servedContext,tba,controlFlags);
+      }
       if (DEBUG)       Log.v(TAG,"Starting input: Bind result=" + res);
       if (res != null) {
         if (res.id != null) {
@@ -61,7 +69,7 @@ synchronized (mH) {
         }
  else         if (mCurMethod == null) {
           if (DEBUG)           Log.v(TAG,"ABORT input: no input method!");
-          return;
+          return true;
         }
       }
       if (mCurMethod != null && mCompletions != null) {
@@ -76,4 +84,5 @@ synchronized (mH) {
       Log.w(TAG,"IME died: " + mCurId,e);
     }
   }
+  return true;
 }
