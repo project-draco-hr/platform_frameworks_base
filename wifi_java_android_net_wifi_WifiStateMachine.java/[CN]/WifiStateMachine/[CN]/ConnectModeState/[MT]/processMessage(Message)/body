@@ -5,14 +5,11 @@ switch (message.what) {
 case WifiMonitor.AUTHENTICATION_FAILURE_EVENT:
     mSupplicantStateTracker.sendMessage(WifiMonitor.AUTHENTICATION_FAILURE_EVENT);
   break;
-case WifiMonitor.WPS_OVERLAP_EVENT:
-sendErrorBroadcast(WifiManager.WPS_OVERLAP_ERROR);
-break;
 case WifiMonitor.SUPPLICANT_STATE_CHANGE_EVENT:
 SupplicantState state=handleSupplicantStateChange(message);
 if (!SupplicantState.isDriverActive(state)) {
 if (mNetworkInfo.getState() != NetworkInfo.State.DISCONNECTED) {
-handleNetworkDisconnect();
+  handleNetworkDisconnect();
 }
 transitionTo(mDriverStoppedState);
 break;
@@ -32,7 +29,7 @@ break;
 case CMD_REASSOCIATE:
 mWifiNative.reassociate();
 break;
-case CMD_CONNECT_NETWORK:
+case WifiManager.CONNECT_NETWORK:
 int netId=message.arg1;
 WifiConfiguration config=(WifiConfiguration)message.obj;
 if (config != null) {
@@ -41,13 +38,42 @@ netId=mWifiConfigStore.selectNetwork(config);
  else {
 mWifiConfigStore.selectNetwork(netId);
 }
-mSupplicantStateTracker.sendMessage(CMD_CONNECT_NETWORK);
-mWifiNative.reconnect();
+mSupplicantStateTracker.sendMessage(WifiManager.CONNECT_NETWORK);
+if (mWifiNative.reconnect()) {
+replyToMessage(message,WifiManager.CONNECT_NETWORK_SUCCEEDED);
+}
+ else {
+loge("Failed to initiate connection");
+replyToMessage(message,WifiManager.CONNECT_NETWORK_FAILED,WifiManager.ERROR);
+}
 transitionTo(mDisconnectingState);
 break;
-case CMD_START_WPS:
-mWpsStateMachine.sendMessage(Message.obtain(message));
-transitionTo(mWaitForWpsCompletionState);
+case WifiManager.START_WPS:
+WpsInfo wpsInfo=(WpsInfo)message.obj;
+WpsResult result;
+switch (wpsInfo.setup) {
+case WpsInfo.PBC:
+result=mWifiConfigStore.startWpsPbc(wpsInfo);
+break;
+case WpsInfo.KEYPAD:
+result=mWifiConfigStore.startWpsWithPinFromAccessPoint(wpsInfo);
+break;
+case WpsInfo.DISPLAY:
+result=mWifiConfigStore.startWpsWithPinFromDevice(wpsInfo);
+break;
+default :
+result=new WpsResult(Status.FAILURE);
+Log.e(TAG,"Invalid setup for WPS");
+break;
+}
+if (result.status == Status.SUCCESS) {
+replyToMessage(message,WifiManager.START_WPS_SUCCEEDED,result);
+transitionTo(mWpsRunningState);
+}
+ else {
+Log.e(TAG,"Failed to start WPS with config " + wpsInfo.toString());
+replyToMessage(message,WifiManager.WPS_FAILED,WifiManager.ERROR);
+}
 break;
 case WifiMonitor.SCAN_RESULTS_EVENT:
 mWifiNative.setScanResultHandling(CONNECT_MODE);
