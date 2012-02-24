@@ -1,24 +1,32 @@
 {
+  InputBindResult res=null;
   long ident=Binder.clearCallingIdentity();
   try {
 synchronized (mMethodMap) {
-      if (DEBUG)       Slog.v(TAG,"windowGainedFocus: " + client.asBinder() + " viewHasFocus="+ viewHasFocus+ " isTextEditor="+ isTextEditor+ " softInputMode=#"+ Integer.toHexString(softInputMode)+ " first="+ first+ " flags=#"+ Integer.toHexString(windowFlags));
-      if (mCurClient == null || client == null || mCurClient.client.asBinder() != client.asBinder()) {
-        try {
-          if (!mIWindowManager.inputMethodClientHasFocus(client)) {
-            Slog.w(TAG,"Client not active, ignoring focus gain of: " + client);
-            return;
-          }
+      if (DEBUG)       Slog.v(TAG,"windowGainedFocus: " + client.asBinder() + " controlFlags=#"+ Integer.toHexString(controlFlags)+ " softInputMode=#"+ Integer.toHexString(softInputMode)+ " windowFlags=#"+ Integer.toHexString(windowFlags));
+      ClientState cs=mClients.get(client.asBinder());
+      if (cs == null) {
+        throw new IllegalArgumentException("unknown client " + client.asBinder());
+      }
+      try {
+        if (!mIWindowManager.inputMethodClientHasFocus(cs.client)) {
+          Slog.w(TAG,"Focus gain on non-focused client " + cs.client + " (uid="+ cs.uid+ " pid="+ cs.pid+ ")");
+          return null;
         }
- catch (        RemoteException e) {
-        }
+      }
+ catch (      RemoteException e) {
       }
       if (mCurFocusedWindow == windowToken) {
         Slog.w(TAG,"Window already focused, ignoring focus gain of: " + client);
-        return;
+        if (attribute != null) {
+          return startInputUncheckedLocked(cs,inputContext,attribute,controlFlags);
+        }
+        return null;
       }
       mCurFocusedWindow=windowToken;
       final boolean doAutoShow=(softInputMode & WindowManager.LayoutParams.SOFT_INPUT_MASK_ADJUST) == WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE || mRes.getConfiguration().isLayoutSizeAtLeast(Configuration.SCREENLAYOUT_SIZE_LARGE);
+      final boolean isTextEditor=(controlFlags & InputMethodManager.CONTROL_WINDOW_IS_TEXT_EDITOR) != 0;
+      boolean didStart=false;
 switch (softInputMode & WindowManager.LayoutParams.SOFT_INPUT_MASK_STATE) {
 case WindowManager.LayoutParams.SOFT_INPUT_STATE_UNSPECIFIED:
         if (!isTextEditor || !doAutoShow) {
@@ -29,6 +37,10 @@ case WindowManager.LayoutParams.SOFT_INPUT_STATE_UNSPECIFIED:
         }
  else         if (isTextEditor && doAutoShow && (softInputMode & WindowManager.LayoutParams.SOFT_INPUT_IS_FORWARD_NAVIGATION) != 0) {
           if (DEBUG)           Slog.v(TAG,"Unspecified window will show input");
+          if (attribute != null) {
+            res=startInputUncheckedLocked(cs,inputContext,attribute,controlFlags);
+            didStart=true;
+          }
           showCurrentInputLocked(InputMethodManager.SHOW_IMPLICIT,null);
         }
       break;
@@ -47,17 +59,29 @@ break;
 case WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE:
 if ((softInputMode & WindowManager.LayoutParams.SOFT_INPUT_IS_FORWARD_NAVIGATION) != 0) {
 if (DEBUG) Slog.v(TAG,"Window asks to show input going forward");
+if (attribute != null) {
+res=startInputUncheckedLocked(cs,inputContext,attribute,controlFlags);
+didStart=true;
+}
 showCurrentInputLocked(InputMethodManager.SHOW_IMPLICIT,null);
 }
 break;
 case WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE:
 if (DEBUG) Slog.v(TAG,"Window asks to always show input");
+if (attribute != null) {
+res=startInputUncheckedLocked(cs,inputContext,attribute,controlFlags);
+didStart=true;
+}
 showCurrentInputLocked(InputMethodManager.SHOW_IMPLICIT,null);
 break;
+}
+if (!didStart && attribute != null) {
+res=startInputUncheckedLocked(cs,inputContext,attribute,controlFlags);
 }
 }
 }
   finally {
 Binder.restoreCallingIdentity(ident);
 }
+return res;
 }
