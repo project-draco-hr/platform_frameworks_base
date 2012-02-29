@@ -19,52 +19,37 @@
     GsmCellLocation cellLocation=(GsmCellLocation)mPhone.getCellLocation();
     int lac=cellLocation.getLac();
     int cid=cellLocation.getCid();
-    SmsCbLocation location;
-switch (header.getGeographicalScope()) {
-case SmsCbMessage.GEOGRAPHICAL_SCOPE_LA_WIDE:
-      location=new SmsCbLocation(plmn,lac,-1);
-    break;
-case SmsCbMessage.GEOGRAPHICAL_SCOPE_CELL_WIDE:
-case SmsCbMessage.GEOGRAPHICAL_SCOPE_CELL_WIDE_IMMEDIATE:
-  location=new SmsCbLocation(plmn,lac,cid);
-break;
-case SmsCbMessage.GEOGRAPHICAL_SCOPE_PLMN_WIDE:
-default :
-location=new SmsCbLocation(plmn);
-break;
-}
-byte[][] pdus;
-int pageCount=header.getNumberOfPages();
-if (pageCount > 1) {
-SmsCbConcatInfo concatInfo=new SmsCbConcatInfo(header,location);
-pdus=mSmsCbPageMap.get(concatInfo);
-if (pdus == null) {
-pdus=new byte[pageCount][];
-mSmsCbPageMap.put(concatInfo,pdus);
-}
-pdus[header.getPageIndex() - 1]=receivedPdu;
-for (int i=0; i < pdus.length; i++) {
-if (pdus[i] == null) {
-return;
-}
-}
-mSmsCbPageMap.remove(concatInfo);
-}
+    byte[][] pdus;
+    if (header.nrOfPages > 1) {
+      SmsCbConcatInfo concatInfo=new SmsCbConcatInfo(header,plmn,lac,cid);
+      pdus=mSmsCbPageMap.get(concatInfo);
+      if (pdus == null) {
+        pdus=new byte[header.nrOfPages][];
+        mSmsCbPageMap.put(concatInfo,pdus);
+      }
+      pdus[header.pageIndex - 1]=receivedPdu;
+      for (int i=0; i < pdus.length; i++) {
+        if (pdus[i] == null) {
+          return;
+        }
+      }
+      mSmsCbPageMap.remove(concatInfo);
+    }
  else {
-pdus=new byte[1][];
-pdus[0]=receivedPdu;
-}
-SmsCbMessage message=GsmSmsCbMessage.createSmsCbMessage(header,location,pdus);
-dispatchBroadcastMessage(message);
-Iterator<SmsCbConcatInfo> iter=mSmsCbPageMap.keySet().iterator();
-while (iter.hasNext()) {
-SmsCbConcatInfo info=iter.next();
-if (!info.matchesLocation(plmn,lac,cid)) {
-iter.remove();
-}
-}
-}
- catch (RuntimeException e) {
-Log.e(TAG,"Error in decoding SMS CB pdu",e);
-}
+      pdus=new byte[1][];
+      pdus[0]=receivedPdu;
+    }
+    boolean isEmergencyMessage=SmsCbHeader.isEmergencyMessage(header.messageIdentifier);
+    dispatchBroadcastPdus(pdus,isEmergencyMessage);
+    Iterator<SmsCbConcatInfo> iter=mSmsCbPageMap.keySet().iterator();
+    while (iter.hasNext()) {
+      SmsCbConcatInfo info=iter.next();
+      if (!info.matchesLocation(plmn,lac,cid)) {
+        iter.remove();
+      }
+    }
+  }
+ catch (  RuntimeException e) {
+    Log.e(TAG,"Error in decoding SMS CB pdu",e);
+  }
 }
