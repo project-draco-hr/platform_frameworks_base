@@ -2,48 +2,49 @@
 switch (msg.what) {
 case EVENT_WATCHDOG_TOGGLED:
     if (!isWatchdogEnabled())     transitionTo(mWatchdogDisabledState);
-  return HANDLED;
+  break;
 case EVENT_NETWORK_STATE_CHANGE:
-Intent stateChangeIntent=(Intent)msg.obj;
-NetworkInfo networkInfo=(NetworkInfo)stateChangeIntent.getParcelableExtra(WifiManager.EXTRA_NETWORK_INFO);
-setDisabledNetworkNotificationVisible(false);
-setWalledGardenNotificationVisible(false);
-switch (networkInfo.getState()) {
-case CONNECTED:
-WifiInfo wifiInfo=(WifiInfo)stateChangeIntent.getParcelableExtra(WifiManager.EXTRA_WIFI_INFO);
-if (wifiInfo == null) {
-loge("Connected --> WifiInfo object null!");
-return HANDLED;
-}
-if (wifiInfo.getSSID() == null || wifiInfo.getBSSID() == null) {
-loge("Received wifiInfo object with null elts: " + wifiInfoToStr(wifiInfo));
-return HANDLED;
-}
-initConnection(wifiInfo);
-mConnectionInfo=wifiInfo;
-mNetEventCounter++;
+Intent intent=(Intent)msg.obj;
+NetworkInfo networkInfo=(NetworkInfo)intent.getParcelableExtra(WifiManager.EXTRA_NETWORK_INFO);
+switch (networkInfo.getDetailedState()) {
+case VERIFYING_POOR_LINK:
+mLinkProperties=(LinkProperties)intent.getParcelableExtra(WifiManager.EXTRA_LINK_PROPERTIES);
+mWifiInfo=(WifiInfo)intent.getParcelableExtra(WifiManager.EXTRA_WIFI_INFO);
 if (mPoorNetworkDetectionEnabled) {
-updateBssids();
-transitionTo(mDnsCheckingState);
+if (mWifiInfo == null) {
+log("Ignoring link verification, mWifiInfo is NULL");
+mWsmChannel.sendMessage(GOOD_LINK_DETECTED);
 }
  else {
-transitionTo(mDelayWalledGardenState);
+transitionTo(mVerifyingLinkState);
+}
+}
+ else {
+mWsmChannel.sendMessage(GOOD_LINK_DETECTED);
+}
+break;
+case CONNECTED:
+if (shouldCheckWalledGarden()) {
+transitionTo(mWalledGardenCheckState);
+}
+ else {
+transitionTo(mOnlineWatchState);
 }
 break;
 default :
-mNetEventCounter++;
 transitionTo(mNotConnectedState);
 break;
 }
-return HANDLED;
+break;
 case EVENT_WIFI_RADIO_STATE_CHANGE:
 if ((Integer)msg.obj == WifiManager.WIFI_STATE_DISABLING) {
 if (DBG) log("WifiStateDisabling -- Resetting WatchdogState");
-resetWatchdogState();
-mNetEventCounter++;
 transitionTo(mNotConnectedState);
 }
-return HANDLED;
-}
+break;
+default :
 return NOT_HANDLED;
+}
+setWalledGardenNotificationVisible(false);
+return HANDLED;
 }
