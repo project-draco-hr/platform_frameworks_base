@@ -14,7 +14,6 @@ mNetworkInfo.setIsAvailable(false);
 handleNetworkDisconnect();
 sendSupplicantConnectionChangedBroadcast(false);
 mSupplicantStateTracker.sendMessage(CMD_RESET_SUPPLICANT_STATE);
-mWpsStateMachine.sendMessage(CMD_RESET_WPS_STATE);
 transitionTo(mDriverLoadedState);
 sendMessageDelayed(CMD_START_SUPPLICANT,SUPPLICANT_RESTART_INTERVAL_MSECS);
 break;
@@ -26,19 +25,19 @@ mScanResultIsPending=false;
 break;
 case CMD_PING_SUPPLICANT:
 boolean ok=mWifiNative.ping();
-mReplyChannel.replyToMessage(message,message.what,ok ? SUCCESS : FAILURE);
+replyToMessage(message,message.what,ok ? SUCCESS : FAILURE);
 break;
 case CMD_ADD_OR_UPDATE_NETWORK:
 config=(WifiConfiguration)message.obj;
-mReplyChannel.replyToMessage(message,CMD_ADD_OR_UPDATE_NETWORK,mWifiConfigStore.addOrUpdateNetwork(config));
+replyToMessage(message,CMD_ADD_OR_UPDATE_NETWORK,mWifiConfigStore.addOrUpdateNetwork(config));
 break;
 case CMD_REMOVE_NETWORK:
 ok=mWifiConfigStore.removeNetwork(message.arg1);
-mReplyChannel.replyToMessage(message,message.what,ok ? SUCCESS : FAILURE);
+replyToMessage(message,message.what,ok ? SUCCESS : FAILURE);
 break;
 case CMD_ENABLE_NETWORK:
 ok=mWifiConfigStore.enableNetwork(message.arg1,message.arg2 == 1);
-mReplyChannel.replyToMessage(message,message.what,ok ? SUCCESS : FAILURE);
+replyToMessage(message,message.what,ok ? SUCCESS : FAILURE);
 break;
 case CMD_ENABLE_ALL_NETWORKS:
 long time=android.os.SystemClock.elapsedRealtime();
@@ -47,9 +46,13 @@ mWifiConfigStore.enableAllNetworks();
 mLastEnableAllNetworksTime=time;
 }
 break;
-case CMD_DISABLE_NETWORK:
-ok=mWifiConfigStore.disableNetwork(message.arg1,message.arg2);
-mReplyChannel.replyToMessage(message,message.what,ok ? SUCCESS : FAILURE);
+case WifiManager.DISABLE_NETWORK:
+if (mWifiConfigStore.disableNetwork(message.arg1,WifiConfiguration.DISABLED_UNKNOWN_REASON) == true) {
+replyToMessage(message,WifiManager.DISABLE_NETWORK_SUCCEEDED);
+}
+ else {
+replyToMessage(message,WifiManager.DISABLE_NETWORK_FAILED,WifiManager.ERROR);
+}
 break;
 case CMD_BLACKLIST_NETWORK:
 mWifiNative.addToBlacklist((String)message.obj);
@@ -59,7 +62,7 @@ mWifiNative.clearBlacklist();
 break;
 case CMD_SAVE_CONFIG:
 ok=mWifiConfigStore.saveConfig();
-mReplyChannel.replyToMessage(message,CMD_SAVE_CONFIG,ok ? SUCCESS : FAILURE);
+replyToMessage(message,CMD_SAVE_CONFIG,ok ? SUCCESS : FAILURE);
 IBackupManager ibm=IBackupManager.Stub.asInterface(ServiceManager.getService(Context.BACKUP_SERVICE));
 if (ibm != null) {
 try {
@@ -76,12 +79,25 @@ break;
 case CMD_SET_SCAN_MODE:
 mIsScanMode=(message.arg1 == SCAN_ONLY_MODE);
 break;
-case CMD_SAVE_NETWORK:
+case WifiManager.SAVE_NETWORK:
 config=(WifiConfiguration)message.obj;
-mWifiConfigStore.saveNetwork(config);
+NetworkUpdateResult result=mWifiConfigStore.saveNetwork(config);
+if (result.getNetworkId() != WifiConfiguration.INVALID_NETWORK_ID) {
+replyToMessage(message,WifiManager.SAVE_NETWORK_SUCCEEDED);
+}
+ else {
+loge("Failed to save network");
+replyToMessage(message,WifiManager.SAVE_NETWORK_FAILED,WifiManager.ERROR);
+}
 break;
-case CMD_FORGET_NETWORK:
-mWifiConfigStore.forgetNetwork(message.arg1);
+case WifiManager.FORGET_NETWORK:
+if (mWifiConfigStore.forgetNetwork(message.arg1)) {
+replyToMessage(message,WifiManager.FORGET_NETWORK_SUCCEEDED);
+}
+ else {
+loge("Failed to forget network");
+replyToMessage(message,WifiManager.FORGET_NETWORK_FAILED,WifiManager.ERROR);
+}
 break;
 default :
 return NOT_HANDLED;
