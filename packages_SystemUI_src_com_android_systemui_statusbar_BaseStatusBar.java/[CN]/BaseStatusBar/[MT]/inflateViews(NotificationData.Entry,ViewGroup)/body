@@ -1,23 +1,27 @@
 {
+  int minHeight=mContext.getResources().getDimensionPixelSize(R.dimen.notification_min_height);
+  int maxHeight=mContext.getResources().getDimensionPixelSize(R.dimen.notification_max_height);
   StatusBarNotification sbn=entry.notification;
-  final boolean big=(sbn.notification.bigContentView != null);
-  RemoteViews remoteViews=big ? sbn.notification.bigContentView : sbn.notification.contentView;
-  if (remoteViews == null) {
+  RemoteViews oneU=sbn.notification.contentView;
+  RemoteViews large=sbn.notification.bigContentView;
+  if (oneU == null) {
     return false;
   }
   LayoutInflater inflater=(LayoutInflater)mContext.getSystemService(Context.LAYOUT_INFLATER_SERVICE);
   View row=inflater.inflate(R.layout.status_bar_notification_row,parent,false);
   ViewGroup.LayoutParams lp=row.getLayoutParams();
-  if (big) {
+  if (sbn.notification.bigContentView != null) {
     lp.height=ViewGroup.LayoutParams.WRAP_CONTENT;
   }
  else {
-    lp.height=mContext.getResources().getDimensionPixelSize(R.dimen.notification_height);
+    lp.height=minHeight;
   }
   row.setLayoutParams(lp);
+  workAroundBadLayerDrawableOpacity(row);
   View vetoButton=updateNotificationVetoButton(row,sbn);
   vetoButton.setContentDescription(mContext.getString(R.string.accessibility_remove_notification));
   ViewGroup content=(ViewGroup)row.findViewById(R.id.content);
+  ViewGroup adaptive=(ViewGroup)row.findViewById(R.id.adaptive);
   content.setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
   PendingIntent contentIntent=sbn.notification.contentIntent;
   if (contentIntent != null) {
@@ -27,26 +31,42 @@
  else {
     content.setOnClickListener(null);
   }
-  View expanded=null;
+  View expandedOneU=null;
+  View expandedLarge=null;
   Exception exception=null;
   try {
-    expanded=remoteViews.apply(mContext,content);
+    expandedOneU=oneU.apply(mContext,adaptive);
+    if (large != null) {
+      expandedLarge=large.apply(mContext,adaptive);
+    }
   }
  catch (  RuntimeException e) {
     exception=e;
   }
-  if (expanded == null) {
+  if (expandedOneU == null && expandedLarge == null) {
     final String ident=sbn.pkg + "/0x" + Integer.toHexString(sbn.id);
     Slog.e(TAG,"couldn't inflate view for notification " + ident,exception);
     return false;
   }
  else {
-    content.addView(expanded);
+    if (expandedOneU != null) {
+      SizeAdaptiveLayout.LayoutParams params=new SizeAdaptiveLayout.LayoutParams(expandedOneU.getLayoutParams());
+      params.minHeight=minHeight;
+      params.maxHeight=minHeight;
+      adaptive.addView(expandedOneU,params);
+    }
+    if (expandedLarge != null) {
+      SizeAdaptiveLayout.LayoutParams params=new SizeAdaptiveLayout.LayoutParams(expandedLarge.getLayoutParams());
+      params.minHeight=minHeight + 1;
+      params.maxHeight=SizeAdaptiveLayout.LayoutParams.UNBOUNDED;
+      adaptive.addView(expandedLarge,params);
+    }
     row.setDrawingCacheEnabled(true);
   }
   applyLegacyRowBackground(sbn,content);
   entry.row=row;
   entry.content=content;
-  entry.expanded=expanded;
+  entry.expanded=expandedOneU;
+  entry.expandedLarge=expandedOneU;
   return true;
 }
