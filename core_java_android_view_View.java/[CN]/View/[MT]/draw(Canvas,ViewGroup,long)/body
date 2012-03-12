@@ -1,10 +1,11 @@
 {
+  boolean useDisplayListProperties=USE_DISPLAY_LIST_PROPERTIES && mAttachInfo != null && mAttachInfo.mHardwareAccelerated;
   boolean more=false;
   final boolean childHasIdentityMatrix=hasIdentityMatrix();
   final int flags=parent.mGroupFlags;
-  if ((flags & parent.FLAG_CLEAR_TRANSFORMATION) == parent.FLAG_CLEAR_TRANSFORMATION) {
+  if ((flags & ViewGroup.FLAG_CLEAR_TRANSFORMATION) == ViewGroup.FLAG_CLEAR_TRANSFORMATION) {
     parent.mChildTransformation.clear();
-    parent.mGroupFlags&=~parent.FLAG_CLEAR_TRANSFORMATION;
+    parent.mGroupFlags&=~ViewGroup.FLAG_CLEAR_TRANSFORMATION;
   }
   Transformation transformToApply=null;
   boolean concatMatrix=false;
@@ -12,7 +13,7 @@
   boolean caching;
   int layerType=parent.mDrawLayers ? getLayerType() : LAYER_TYPE_NONE;
   final boolean hardwareAccelerated=canvas.isHardwareAccelerated();
-  if ((flags & parent.FLAG_CHILDREN_DRAWN_WITH_CACHE) == parent.FLAG_CHILDREN_DRAWN_WITH_CACHE || (flags & parent.FLAG_ALWAYS_DRAWN_WITH_CACHE) == parent.FLAG_ALWAYS_DRAWN_WITH_CACHE) {
+  if ((flags & ViewGroup.FLAG_CHILDREN_DRAWN_WITH_CACHE) != 0 || (flags & ViewGroup.FLAG_ALWAYS_DRAWN_WITH_CACHE) != 0) {
     caching=true;
     if (mAttachInfo != null)     scalingRequired=mAttachInfo.mScalingRequired;
   }
@@ -25,7 +26,7 @@
     concatMatrix=a.willChangeTransformationMatrix();
     transformToApply=parent.mChildTransformation;
   }
- else   if ((flags & parent.FLAG_SUPPORT_STATIC_TRANSFORMATIONS) == parent.FLAG_SUPPORT_STATIC_TRANSFORMATIONS) {
+ else   if ((flags & ViewGroup.FLAG_SUPPORT_STATIC_TRANSFORMATIONS) != 0) {
     final boolean hasTransform=parent.getChildStaticTransformation(this,parent.mChildTransformation);
     if (hasTransform) {
       final int transformType=parent.mChildTransformation.getTransformationType();
@@ -62,26 +63,40 @@ case LAYER_TYPE_SOFTWARE:
         buildDrawingCache(true);
       cache=getDrawingCache(true);
     break;
+case LAYER_TYPE_HARDWARE:
+  if (useDisplayListProperties) {
+    hasDisplayList=canHaveDisplayList();
+  }
+break;
 case LAYER_TYPE_NONE:
-  hasDisplayList=canHaveDisplayList();
+hasDisplayList=canHaveDisplayList();
 break;
 }
 }
 }
+useDisplayListProperties&=hasDisplayList;
 final boolean hasNoCache=cache == null || hasDisplayList;
 final boolean offsetForScroll=cache == null && !hasDisplayList && layerType != LAYER_TYPE_HARDWARE;
-final int restoreTo=canvas.save();
+int restoreTo=-1;
+if (!useDisplayListProperties) {
+restoreTo=canvas.save();
+}
 if (offsetForScroll) {
 canvas.translate(mLeft - sx,mTop - sy);
 }
  else {
+if (!useDisplayListProperties) {
 canvas.translate(mLeft,mTop);
+}
 if (scalingRequired) {
+if (useDisplayListProperties) {
+restoreTo=canvas.save();
+}
 final float scale=1.0f / mAttachInfo.mApplicationScale;
 canvas.scale(scale,scale);
 }
 }
-float alpha=getAlpha();
+float alpha=useDisplayListProperties ? 1 : getAlpha();
 if (transformToApply != null || alpha < 1.0f || !hasIdentityMatrix()) {
 if (transformToApply != null || !childHasIdentityMatrix) {
 int transX=0;
@@ -92,36 +107,40 @@ transY=-sy;
 }
 if (transformToApply != null) {
 if (concatMatrix) {
+if (!hasDisplayList) {
 canvas.translate(-transX,-transY);
 canvas.concat(transformToApply.getMatrix());
 canvas.translate(transX,transY);
-parent.mGroupFlags|=parent.FLAG_CLEAR_TRANSFORMATION;
+}
+parent.mGroupFlags|=ViewGroup.FLAG_CLEAR_TRANSFORMATION;
 }
 float transformAlpha=transformToApply.getAlpha();
 if (transformAlpha < 1.0f) {
 alpha*=transformToApply.getAlpha();
-parent.mGroupFlags|=parent.FLAG_CLEAR_TRANSFORMATION;
+parent.mGroupFlags|=ViewGroup.FLAG_CLEAR_TRANSFORMATION;
 }
 }
-if (!childHasIdentityMatrix) {
+if (!childHasIdentityMatrix && !useDisplayListProperties) {
 canvas.translate(-transX,-transY);
 canvas.concat(getMatrix());
 canvas.translate(transX,transY);
 }
 }
 if (alpha < 1.0f) {
-parent.mGroupFlags|=parent.FLAG_CLEAR_TRANSFORMATION;
+parent.mGroupFlags|=ViewGroup.FLAG_CLEAR_TRANSFORMATION;
 if (hasNoCache) {
 final int multipliedAlpha=(int)(255 * alpha);
 if (!onSetAlpha(multipliedAlpha)) {
 int layerFlags=Canvas.HAS_ALPHA_LAYER_SAVE_FLAG;
-if ((flags & parent.FLAG_CLIP_CHILDREN) == parent.FLAG_CLIP_CHILDREN || layerType != LAYER_TYPE_NONE) {
-  layerFlags|=Canvas.CLIP_TO_LAYER_SAVE_FLAG;
+if ((flags & ViewGroup.FLAG_CLIP_CHILDREN) != 0 || layerType != LAYER_TYPE_NONE) {
+layerFlags|=Canvas.CLIP_TO_LAYER_SAVE_FLAG;
 }
 if (layerType == LAYER_TYPE_NONE) {
-  final int scrollX=hasDisplayList ? 0 : sx;
-  final int scrollY=hasDisplayList ? 0 : sy;
-  canvas.saveLayerAlpha(scrollX,scrollY,scrollX + mRight - mLeft,scrollY + mBottom - mTop,multipliedAlpha,layerFlags);
+if (!useDisplayListProperties) {
+final int scrollX=hasDisplayList ? 0 : sx;
+final int scrollY=hasDisplayList ? 0 : sy;
+canvas.saveLayerAlpha(scrollX,scrollY,scrollX + mRight - mLeft,scrollY + mBottom - mTop,multipliedAlpha,layerFlags);
+}
 }
 }
  else {
@@ -134,7 +153,7 @@ mPrivateFlags|=ALPHA_SET;
 onSetAlpha(255);
 mPrivateFlags&=~ALPHA_SET;
 }
-if ((flags & parent.FLAG_CLIP_CHILDREN) == parent.FLAG_CLIP_CHILDREN) {
+if ((flags & ViewGroup.FLAG_CLIP_CHILDREN) == ViewGroup.FLAG_CLIP_CHILDREN && !useDisplayListProperties) {
 if (offsetForScroll) {
 canvas.clipRect(sx,sy,sx + (mRight - mLeft),sy + (mBottom - mTop));
 }
@@ -156,7 +175,7 @@ hasDisplayList=false;
 }
 if (hasNoCache) {
 boolean layerRendered=false;
-if (layerType == LAYER_TYPE_HARDWARE) {
+if (layerType == LAYER_TYPE_HARDWARE && !useDisplayListProperties) {
 final HardwareLayer layer=getHardwareLayer();
 if (layer != null && layer.isValid()) {
 mLayerPaint.setAlpha((int)(alpha * 255));
@@ -173,7 +192,7 @@ if (!layerRendered) {
 if (!hasDisplayList) {
 if ((mPrivateFlags & SKIP_DRAW) == SKIP_DRAW) {
 if (ViewDebug.TRACE_HIERARCHY) {
-  ViewDebug.trace(parent,ViewDebug.HierarchyTraceType.DRAW);
+ViewDebug.trace(parent,ViewDebug.HierarchyTraceType.DRAW);
 }
 mPrivateFlags&=~DIRTY_MASK;
 dispatchDraw(canvas);
@@ -200,11 +219,11 @@ parent.mCachePaint=cachePaint;
 }
 if (alpha < 1.0f) {
 cachePaint.setAlpha((int)(alpha * 255));
-parent.mGroupFlags|=parent.FLAG_ALPHA_LOWER_THAN_ONE;
+parent.mGroupFlags|=ViewGroup.FLAG_ALPHA_LOWER_THAN_ONE;
 }
- else if ((flags & parent.FLAG_ALPHA_LOWER_THAN_ONE) == parent.FLAG_ALPHA_LOWER_THAN_ONE) {
+ else if ((flags & ViewGroup.FLAG_ALPHA_LOWER_THAN_ONE) != 0) {
 cachePaint.setAlpha(255);
-parent.mGroupFlags&=~parent.FLAG_ALPHA_LOWER_THAN_ONE;
+parent.mGroupFlags&=~ViewGroup.FLAG_ALPHA_LOWER_THAN_ONE;
 }
 }
  else {
@@ -213,7 +232,9 @@ cachePaint.setAlpha((int)(alpha * 255));
 }
 canvas.drawBitmap(cache,0.0f,0.0f,cachePaint);
 }
+if (restoreTo >= 0) {
 canvas.restoreToCount(restoreTo);
+}
 if (a != null && !more) {
 if (!hardwareAccelerated && !a.getFillAfter()) {
 onSetAlpha(255);
