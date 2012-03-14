@@ -44,7 +44,6 @@
   try {
     mInnerFields.mWallpaperForceHidingChanged=false;
     int repeats=0;
-    int changes=0;
     do {
       repeats++;
       if (repeats > 6) {
@@ -52,20 +51,20 @@
         mLayoutNeeded=false;
         break;
       }
-      if ((changes & WindowManagerPolicy.FINISH_LAYOUT_REDO_WALLPAPER) != 0) {
+      if ((mPendingLayoutChanges & WindowManagerPolicy.FINISH_LAYOUT_REDO_WALLPAPER) != 0) {
         if ((adjustWallpaperWindowsLocked() & ADJUST_WALLPAPER_LAYERS_CHANGED) != 0) {
           assignLayersLocked();
           mLayoutNeeded=true;
         }
       }
-      if ((changes & WindowManagerPolicy.FINISH_LAYOUT_REDO_CONFIG) != 0) {
+      if ((mPendingLayoutChanges & WindowManagerPolicy.FINISH_LAYOUT_REDO_CONFIG) != 0) {
         if (DEBUG_LAYOUT)         Slog.v(TAG,"Computing new config from layout");
         if (updateOrientationFromAppTokensLocked(true)) {
           mLayoutNeeded=true;
           mH.sendEmptyMessage(H.SEND_NEW_CONFIGURATION);
         }
       }
-      if ((changes & WindowManagerPolicy.FINISH_LAYOUT_REDO_LAYOUT) != 0) {
+      if ((mPendingLayoutChanges & WindowManagerPolicy.FINISH_LAYOUT_REDO_LAYOUT) != 0) {
         mLayoutNeeded=true;
       }
       if (repeats < 4) {
@@ -74,38 +73,19 @@
  else {
         Slog.w(TAG,"Layout repeat skipped after too many iterations");
       }
-      ++mTransactionSequence;
-      if (DEBUG_APP_TRANSITIONS)       Slog.v(TAG,"*** ANIM STEP: seq=" + mTransactionSequence + " mAnimating="+ mInnerFields.mAnimating);
-      mInnerFields.mTokenMayBeDrawn=false;
-      mInnerFields.mWallpaperMayChange=false;
-      mInnerFields.mForceHiding=false;
-      mInnerFields.mDetachedWallpaper=null;
-      mInnerFields.mWindowAnimationBackground=null;
-      mInnerFields.mWindowAnimationBackgroundColor=0;
-      mStepAnimators.clear();
-      changes=updateWindowsAndWallpaperLocked(currentTime,dw,dh,innerDw,innerDh);
-      if (mInnerFields.mTokenMayBeDrawn) {
-        changes|=testTokenMayBeDrawnLocked();
+      mPendingLayoutChanges=0;
+      mPolicy.beginAnimationLw(dw,dh);
+      for (i=mWindows.size() - 1; i >= 0; i--) {
+        WindowState w=mWindows.get(i);
+        if (w.mSurface != null) {
+          mPolicy.animatingWindowLw(w,w.mAttrs);
+        }
       }
-      if (mAppTransitionReady) {
-        changes|=handleAppTransitionReadyLocked();
-      }
-      mInnerFields.mAdjResult=0;
-      if (!mInnerFields.mAnimating && mAppTransitionRunning) {
-        changes|=handleAnimatingStoppedAndTransitionLocked();
-      }
-      if (mInnerFields.mWallpaperForceHidingChanged && changes == 0 && !mAppTransitionReady) {
-        changes|=animateAwayWallpaperLocked();
-      }
-      changes|=testWallpaperAndBackgroundLocked();
-      if (mLayoutNeeded) {
-        changes|=PhoneWindowManager.FINISH_LAYOUT_REDO_LAYOUT;
-      }
-      if (DEBUG_APP_TRANSITIONS)       Slog.v(TAG,"*** ANIM STEP: changes=0x" + Integer.toHexString(changes));
+      mPendingLayoutChanges|=mPolicy.finishAnimationLw();
     }
- while (changes != 0);
+ while (mPendingLayoutChanges != 0);
+    mPendingLayoutChanges=performAnimationsLocked(currentTime,dw,dh,innerDw,innerDh);
     updateWindowsAppsAndRotationAnimationsLocked(currentTime,innerDw,innerDh);
-    stepAnimations();
     final boolean someoneLosingFocus=mLosingFocus.size() != 0;
     mInnerFields.mObscured=false;
     mInnerFields.mBlurring=false;
@@ -256,6 +236,9 @@
   }
   if (wallpaperDestroyed) {
     needRelayout=adjustWallpaperWindowsLocked() != 0;
+  }
+  if ((mPendingLayoutChanges & (WindowManagerPolicy.FINISH_LAYOUT_REDO_WALLPAPER | ADJUST_WALLPAPER_LAYERS_CHANGED | WindowManagerPolicy.FINISH_LAYOUT_REDO_CONFIG| WindowManagerPolicy.FINISH_LAYOUT_REDO_LAYOUT)) != 0) {
+    needRelayout=true;
   }
   if (needRelayout) {
     requestTraversalLocked();
