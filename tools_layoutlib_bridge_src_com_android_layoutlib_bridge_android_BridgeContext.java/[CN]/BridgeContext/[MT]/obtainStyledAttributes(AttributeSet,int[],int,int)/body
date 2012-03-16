@@ -21,10 +21,8 @@
     Bridge.getLog().error(LayoutLog.TAG_BROKEN,"Parser is not a BridgeXmlBlockParser!",null);
     return null;
   }
-  AtomicBoolean frameworkAttributes=new AtomicBoolean();
-  AtomicReference<String> attrName=new AtomicReference<String>();
-  TreeMap<Integer,String> styleNameMap=searchAttrs(attrs,frameworkAttributes,attrName);
-  BridgeTypedArray ta=((BridgeResources)mSystemResources).newTypeArray(attrs.length,isPlatformFile,frameworkAttributes.get(),attrName.get());
+  List<Pair<String,Boolean>> attributeList=searchAttrs(attrs);
+  BridgeTypedArray ta=((BridgeResources)mSystemResources).newTypeArray(attrs.length,isPlatformFile);
   String customStyle=null;
   if (set != null) {
     customStyle=set.getAttributeValue(null,"style");
@@ -39,11 +37,15 @@
   }
   StyleResourceValue defStyleValues=null;
   if (defStyleAttr != 0) {
-    String defStyleName=searchAttr(defStyleAttr);
+    Pair<String,Boolean> defStyleAttribute=searchAttr(defStyleAttr);
     if (defaultPropMap != null) {
+      String defStyleName=defStyleAttribute.getFirst();
+      if (defStyleAttribute.getSecond()) {
+        defStyleName="android:" + defStyleName;
+      }
       defaultPropMap.put("style",defStyleName);
     }
-    ResourceValue item=mRenderResources.findItemInTheme(defStyleName);
+    ResourceValue item=mRenderResources.findItemInTheme(defStyleAttribute.getFirst(),defStyleAttribute.getSecond());
     if (item != null) {
       item=mRenderResources.findResValue(item.getValue(),false);
       if (item instanceof StyleResourceValue) {
@@ -51,17 +53,19 @@
       }
     }
  else {
-      Bridge.getLog().error(LayoutLog.TAG_RESOURCES_RESOLVE_THEME_ATTR,String.format("Failed to find style '%s' in current theme",defStyleName),null);
+      Bridge.getLog().error(LayoutLog.TAG_RESOURCES_RESOLVE_THEME_ATTR,String.format("Failed to find style '%s' in current theme",defStyleAttribute.getFirst()),null);
     }
   }
  else   if (defStyleRes != 0) {
+    boolean isFrameworkRes=true;
     Pair<ResourceType,String> value=Bridge.resolveResourceId(defStyleRes);
     if (value == null) {
       value=mProjectCallback.resolveResourceId(defStyleRes);
+      isFrameworkRes=false;
     }
     if (value != null) {
       if (value.getFirst() == ResourceType.STYLE) {
-        ResourceValue item=mRenderResources.findItemInTheme(value.getSecond());
+        ResourceValue item=mRenderResources.findItemInTheme(value.getSecond(),isFrameworkRes);
         if (item != null) {
           if (item instanceof StyleResourceValue) {
             if (defaultPropMap != null) {
@@ -82,43 +86,43 @@
       Bridge.getLog().error(null,String.format("Failed to find style with id 0x%x in current theme",defStyleRes),null);
     }
   }
-  String namespace=BridgeConstants.NS_RESOURCES;
-  boolean useFrameworkNS=frameworkAttributes.get();
-  if (useFrameworkNS == false) {
-    namespace=mProjectCallback.getNamespace();
-  }
-  if (styleNameMap != null) {
-    for (    Entry<Integer,String> styleAttribute : styleNameMap.entrySet()) {
-      int index=styleAttribute.getKey().intValue();
-      String name=styleAttribute.getValue();
+  String appNamespace=mProjectCallback.getNamespace();
+  if (attributeList != null) {
+    for (int index=0; index < attributeList.size(); index++) {
+      Pair<String,Boolean> attribute=attributeList.get(index);
+      if (attribute == null) {
+        continue;
+      }
+      String attrName=attribute.getFirst();
+      boolean frameworkAttr=attribute.getSecond().booleanValue();
       String value=null;
       if (set != null) {
-        value=set.getAttributeValue(namespace,name);
-        if (useFrameworkNS == false && value == null) {
-          value=set.getAttributeValue(BridgeConstants.NS_APP_RES_AUTO,name);
+        value=set.getAttributeValue(frameworkAttr ? BridgeConstants.NS_RESOURCES : appNamespace,attrName);
+        if (frameworkAttr == false && value == null) {
+          value=set.getAttributeValue(BridgeConstants.NS_APP_RES_AUTO,attrName);
         }
       }
       if (value == null) {
         ResourceValue resValue=null;
         if (customStyleValues != null) {
-          resValue=mRenderResources.findItemInStyle(customStyleValues,name);
+          resValue=mRenderResources.findItemInStyle(customStyleValues,attrName,frameworkAttr);
         }
         if (resValue == null && defStyleValues != null) {
-          resValue=mRenderResources.findItemInStyle(defStyleValues,name);
+          resValue=mRenderResources.findItemInStyle(defStyleValues,attrName,frameworkAttr);
         }
         if (resValue == null) {
-          resValue=mRenderResources.findItemInTheme(name);
+          resValue=mRenderResources.findItemInTheme(attrName,frameworkAttr);
         }
         if (resValue != null) {
           if (defaultPropMap != null) {
-            defaultPropMap.put(name,resValue.getValue());
+            defaultPropMap.put(attrName,resValue.getValue());
           }
           resValue=mRenderResources.resolveResValue(resValue);
         }
-        ta.bridgeSetValue(index,name,resValue);
+        ta.bridgeSetValue(index,attrName,frameworkAttr,resValue);
       }
  else {
-        ta.bridgeSetValue(index,name,mRenderResources.resolveValue(null,name,value,isPlatformFile));
+        ta.bridgeSetValue(index,attrName,frameworkAttr,mRenderResources.resolveValue(null,attrName,value,isPlatformFile));
       }
     }
   }
