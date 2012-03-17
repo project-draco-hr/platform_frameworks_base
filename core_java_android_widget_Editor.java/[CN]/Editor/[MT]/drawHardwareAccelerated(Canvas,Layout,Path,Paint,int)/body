@@ -1,0 +1,63 @@
+{
+  final int width=mTextView.getWidth();
+  final int height=mTextView.getHeight();
+  final long lineRange=layout.getLineRangeForDraw(canvas);
+  int firstLine=TextUtils.unpackRangeStartFromLong(lineRange);
+  int lastLine=TextUtils.unpackRangeEndFromLong(lineRange);
+  if (lastLine < 0)   return;
+  layout.drawBackground(canvas,highlight,highlightPaint,cursorOffsetVertical,firstLine,lastLine);
+  if (layout instanceof DynamicLayout) {
+    if (mTextDisplayLists == null) {
+      mTextDisplayLists=new DisplayList[ArrayUtils.idealObjectArraySize(0)];
+    }
+    DynamicLayout dynamicLayout=(DynamicLayout)layout;
+    int[] blockEnds=dynamicLayout.getBlockEnds();
+    int[] blockIndices=dynamicLayout.getBlockIndices();
+    final int numberOfBlocks=dynamicLayout.getNumberOfBlocks();
+    final int mScrollX=mTextView.getScrollX();
+    final int mScrollY=mTextView.getScrollY();
+    canvas.translate(mScrollX,mScrollY);
+    int endOfPreviousBlock=-1;
+    int searchStartIndex=0;
+    for (int i=0; i < numberOfBlocks; i++) {
+      int blockEnd=blockEnds[i];
+      int blockIndex=blockIndices[i];
+      final boolean blockIsInvalid=blockIndex == DynamicLayout.INVALID_BLOCK_INDEX;
+      if (blockIsInvalid) {
+        blockIndex=getAvailableDisplayListIndex(blockIndices,numberOfBlocks,searchStartIndex);
+        blockIndices[i]=blockIndex;
+        searchStartIndex=blockIndex + 1;
+      }
+      DisplayList blockDisplayList=mTextDisplayLists[blockIndex];
+      if (blockDisplayList == null) {
+        blockDisplayList=mTextDisplayLists[blockIndex]=mTextView.getHardwareRenderer().createDisplayList("Text " + blockIndex);
+      }
+ else {
+        if (blockIsInvalid)         blockDisplayList.invalidate();
+      }
+      if (!blockDisplayList.isValid()) {
+        final HardwareCanvas hardwareCanvas=blockDisplayList.start();
+        try {
+          hardwareCanvas.setViewport(width,height);
+          hardwareCanvas.onPreDraw(null);
+          hardwareCanvas.translate(-mScrollX,-mScrollY);
+          layout.drawText(hardwareCanvas,endOfPreviousBlock + 1,blockEnd);
+          hardwareCanvas.translate(mScrollX,mScrollY);
+        }
+  finally {
+          hardwareCanvas.onPostDraw();
+          blockDisplayList.end();
+          if (View.USE_DISPLAY_LIST_PROPERTIES) {
+            blockDisplayList.setLeftTopRightBottom(0,0,width,height);
+          }
+        }
+      }
+      ((HardwareCanvas)canvas).drawDisplayList(blockDisplayList,width,height,null,DisplayList.FLAG_CLIP_CHILDREN);
+      endOfPreviousBlock=blockEnd;
+    }
+    canvas.translate(-mScrollX,-mScrollY);
+  }
+ else {
+    layout.drawText(canvas,firstLine,lastLine);
+  }
+}
