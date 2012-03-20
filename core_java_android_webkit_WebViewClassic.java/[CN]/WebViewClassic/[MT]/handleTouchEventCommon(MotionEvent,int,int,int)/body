@@ -137,7 +137,6 @@ case MotionEvent.ACTION_DOWN:
       startTouch(x,y,eventTime);
       if (mIsEditingText) {
         mTouchInEditText=mEditTextBounds.contains(contentX,contentY);
-        mGestureDetector.onTouchEvent(ev);
       }
       break;
     }
@@ -169,14 +168,6 @@ case MotionEvent.ACTION_MOVE:
         mLastTouchY=y;
         invalidate();
       }
-      break;
-    }
- else     if (mConfirmMove && mTouchInEditText) {
-      ViewParent parent=mWebView.getParent();
-      if (parent != null) {
-        parent.requestDisallowInterceptTouchEvent(true);
-      }
-      mGestureDetector.onTouchEvent(ev);
       break;
     }
     if (shouldForwardTouchEvent() && mConfirmMove && (firstMove || eventTime - mLastSentTouchTime > mCurrentTouchInterval)) {
@@ -213,7 +204,7 @@ case MotionEvent.ACTION_MOVE:
  else {
       mVelocityTracker.addMovement(ev);
     }
-    if (mTouchMode != TOUCH_DRAG_MODE && mTouchMode != TOUCH_DRAG_LAYER_MODE) {
+    if (mTouchMode != TOUCH_DRAG_MODE && mTouchMode != TOUCH_DRAG_LAYER_MODE && mTouchMode != TOUCH_DRAG_TEXT_MODE) {
       if (!mConfirmMove) {
         break;
       }
@@ -282,8 +273,6 @@ case MotionEvent.ACTION_MOVE:
           deltaX=0;
         }
       }
-      mLastTouchX=x;
-      mLastTouchY=y;
       if (deltaX * deltaX + deltaY * deltaY > mTouchSlopSquare) {
         mHeldMotionless=MOTIONLESS_FALSE;
         nativeSetIsScrolling(true);
@@ -294,9 +283,21 @@ case MotionEvent.ACTION_MOVE:
         keepScrollBarsVisible=true;
       }
       mLastTouchTime=eventTime;
+      boolean allDrag=doDrag(deltaX,deltaY);
+      if (allDrag) {
+        mLastTouchX=x;
+        mLastTouchY=y;
+      }
+ else {
+        int contentDeltaX=(int)Math.floor(deltaX * mZoomManager.getInvScale());
+        int roundedDeltaX=contentToViewDimension(contentDeltaX);
+        int contentDeltaY=(int)Math.floor(deltaY * mZoomManager.getInvScale());
+        int roundedDeltaY=contentToViewDimension(contentDeltaY);
+        mLastTouchX-=roundedDeltaX;
+        mLastTouchY-=roundedDeltaY;
+      }
     }
-    doDrag(deltaX,deltaY);
-    if (keepScrollBarsVisible && mTouchMode != TOUCH_DRAG_LAYER_MODE) {
+    if (keepScrollBarsVisible && mTouchMode != TOUCH_DRAG_LAYER_MODE && mTouchMode != TOUCH_DRAG_TEXT_MODE) {
       if (mHeldMotionless != MOTIONLESS_TRUE) {
         mHeldMotionless=MOTIONLESS_TRUE;
         invalidate();
@@ -312,11 +313,6 @@ case MotionEvent.ACTION_MOVE:
   }
 case MotionEvent.ACTION_UP:
 {
-  mGestureDetector.onTouchEvent(ev);
-  if (mTouchInEditText && mConfirmMove) {
-    stopTouch();
-    break;
-  }
   if (!mConfirmMove && mIsEditingText && mSelectionStarted&& mIsCaretSelection) {
     showPasteWindow();
     stopTouch();
@@ -401,6 +397,7 @@ break;
 }
 case TOUCH_DRAG_MODE:
 case TOUCH_DRAG_LAYER_MODE:
+case TOUCH_DRAG_TEXT_MODE:
 mPrivateHandler.removeMessages(DRAG_HELD_MOTIONLESS);
 mPrivateHandler.removeMessages(AWAKEN_SCROLL_BARS);
 if (eventTime - mLastTouchTime <= MIN_FLING_TIME) {
