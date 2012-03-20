@@ -1,6 +1,11 @@
 {
-  PointerTracker pointerTracker=mPointerTracker;
-  final int activePointerCount=pointerTracker.getActivePointerCount();
+  ReceivedPointerTracker receivedTracker=mReceivedPointerTracker;
+  InjectedPointerTracker injectedTracker=mInjectedPointerTracker;
+  final int activePointerCount=receivedTracker.getActivePointerCount();
+  if (mVelocityTracker == null) {
+    mVelocityTracker=VelocityTracker.obtain();
+  }
+  mVelocityTracker.addMovement(event);
 switch (event.getActionMasked()) {
 case MotionEvent.ACTION_DOWN:
 case MotionEvent.ACTION_POINTER_DOWN:
@@ -14,9 +19,9 @@ case 1:
 {
         mSendHoverDelayed.remove();
         mPerformLongPressDelayed.remove();
-        final int pointerId=pointerTracker.getPrimaryActivePointerId();
+        final int pointerId=receivedTracker.getPrimaryActivePointerId();
         final int pointerIdBits=(1 << pointerId);
-        final int lastAction=pointerTracker.getLastInjectedHoverAction();
+        final int lastAction=injectedTracker.getLastInjectedHoverAction();
         if (lastAction == MotionEvent.ACTION_HOVER_EXIT) {
           mSendHoverDelayed.post(event,MotionEvent.ACTION_HOVER_ENTER,pointerIdBits,policyFlags,DELAY_SEND_HOVER_ENTER);
         }
@@ -30,7 +35,7 @@ case 1:
           mLastTouchExploreEvent=null;
           break;
         }
-        final long pointerDownTime=pointerTracker.getReceivedPointerDownTime(pointerId);
+        final long pointerDownTime=receivedTracker.getReceivedPointerDownTime(pointerId);
         final long lastExploreTime=mLastTouchExploreEvent.getEventTime();
         final long deltaTimeExplore=pointerDownTime - lastExploreTime;
         if (deltaTimeExplore <= ACTIVATION_TIME_SLOP) {
@@ -48,7 +53,7 @@ break;
 break;
 case MotionEvent.ACTION_MOVE:
 {
-final int pointerId=pointerTracker.getPrimaryActivePointerId();
+final int pointerId=receivedTracker.getPrimaryActivePointerId();
 final int pointerIndex=event.findPointerIndex(pointerId);
 final int pointerIdBits=(1 << pointerId);
 switch (activePointerCount) {
@@ -59,15 +64,24 @@ break;
 case 1:
 {
 if (!mTouchExploreGestureInProgress) {
-final float deltaX=pointerTracker.getReceivedPointerDownX(pointerId) - event.getX(pointerIndex);
-final float deltaY=pointerTracker.getReceivedPointerDownY(pointerId) - event.getY(pointerIndex);
+final float deltaX=receivedTracker.getReceivedPointerDownX(pointerId) - event.getX(pointerIndex);
+final float deltaY=receivedTracker.getReceivedPointerDownY(pointerId) - event.getY(pointerIndex);
 final double moveDelta=Math.hypot(deltaX,deltaY);
 if (moveDelta > mTouchExplorationTapSlop) {
+mVelocityTracker.computeCurrentVelocity(1000);
+final float maxAbsVelocity=Math.max(Math.abs(mVelocityTracker.getXVelocity(pointerId)),Math.abs(mVelocityTracker.getYVelocity(pointerId)));
+if (maxAbsVelocity > 1000) {
+clear(event,policyFlags);
+mCurrentState=STATE_GESTURE_DETECTING;
+event.setAction(MotionEvent.ACTION_DOWN);
+handleMotionEventGestureDetecting(event,policyFlags);
+return;
+}
 mTouchExploreGestureInProgress=true;
 sendAccessibilityEvent(TYPE_TOUCH_EXPLORATION_GESTURE_START);
 mSendHoverDelayed.forceSendAndRemove();
 mPerformLongPressDelayed.remove();
-final int lastAction=mPointerTracker.getLastInjectedHoverAction();
+final int lastAction=injectedTracker.getLastInjectedHoverAction();
 if (lastAction == MotionEvent.ACTION_HOVER_EXIT) {
 sendMotionEvent(event,MotionEvent.ACTION_HOVER_ENTER,pointerIdBits,policyFlags);
 }
@@ -136,12 +150,12 @@ break;
 case MotionEvent.ACTION_UP:
 case MotionEvent.ACTION_POINTER_UP:
 {
-final int pointerId=pointerTracker.getLastReceivedUpPointerId();
+final int pointerId=receivedTracker.getLastReceivedUpPointerId();
 final int pointerIdBits=(1 << pointerId);
 switch (activePointerCount) {
 case 0:
 {
-if (!pointerTracker.wasLastReceivedUpPointerActive()) {
+if (!receivedTracker.wasLastReceivedUpPointerActive()) {
 break;
 }
 mPerformLongPressDelayed.remove();
@@ -154,7 +168,7 @@ sendAccessibilityEvent(TYPE_TOUCH_EXPLORATION_GESTURE_END);
 break;
 }
 if (mLastTouchExploreEvent != null) {
-final long eventTime=pointerTracker.getLastReceivedUpPointerDownTime();
+final long eventTime=receivedTracker.getLastReceivedUpPointerDownTime();
 final long exploreTime=mLastTouchExploreEvent.getEventTime();
 final long deltaTime=eventTime - exploreTime;
 if (deltaTime > ACTIVATION_TIME_SLOP) {
@@ -186,16 +200,24 @@ mLastTouchExploreEvent=MotionEvent.obtain(event);
 }
 break;
 }
+if (mVelocityTracker != null) {
+mVelocityTracker.clear();
+mVelocityTracker=null;
+}
 }
 break;
 case MotionEvent.ACTION_CANCEL:
 {
 mSendHoverDelayed.remove();
 mPerformLongPressDelayed.remove();
-final int pointerId=pointerTracker.getPrimaryActivePointerId();
+final int pointerId=receivedTracker.getPrimaryActivePointerId();
 final int pointerIdBits=(1 << pointerId);
 ensureHoverExitSent(event,pointerIdBits,policyFlags);
 clear();
+if (mVelocityTracker != null) {
+mVelocityTracker.clear();
+mVelocityTracker=null;
+}
 }
 break;
 }
