@@ -1,5 +1,6 @@
 {
-  long eventTime=ev.getEventTime();
+  ScaleGestureDetector detector=mZoomManager.getMultiTouchGestureDetector();
+  long eventTime=event.getEventTime();
   x=Math.min(x,getViewWidth() - 1);
   y=Math.min(y,getViewHeightWithTitle() - 1);
   int deltaX=mLastTouchX - x;
@@ -9,7 +10,6 @@
 switch (action) {
 case MotionEvent.ACTION_DOWN:
 {
-      mPreventDefault=PREVENT_DEFAULT_NO;
       mConfirmMove=false;
       mInitialHitTestResult=null;
       if (!mEditTextScroller.isFinished()) {
@@ -28,14 +28,11 @@ case MotionEvent.ACTION_DOWN:
           mTouchMode=TOUCH_DOUBLE_TAP_MODE;
         }
  else {
-          doShortPress();
           mTouchMode=TOUCH_INIT_MODE;
-          mDeferTouchProcess=!mBlockWebkitViewMessages && (!inFullScreenMode() && mForwardTouchEvents) ? hitFocusedPlugin(contentX,contentY) : false;
         }
       }
  else {
         mTouchMode=TOUCH_INIT_MODE;
-        mDeferTouchProcess=!mBlockWebkitViewMessages && (!inFullScreenMode() && mForwardTouchEvents) ? hitFocusedPlugin(contentX,contentY) : false;
         TouchHighlightData data=new TouchHighlightData();
         data.mX=contentX;
         data.mY=contentY;
@@ -46,19 +43,6 @@ case MotionEvent.ACTION_DOWN:
         if (!mBlockWebkitViewMessages) {
           mTouchHighlightRequested=System.currentTimeMillis();
           mWebViewCore.sendMessageAtFrontOfQueue(EventHub.HIT_TEST,data);
-        }
-        if (DEBUG_TOUCH_HIGHLIGHT) {
-          if (getSettings().getNavDump()) {
-            mTouchHighlightX=x + getScrollX();
-            mTouchHighlightY=y + getScrollY();
-            mPrivateHandler.postDelayed(new Runnable(){
-              @Override public void run(){
-                mTouchHighlightX=mTouchHighlightY=0;
-                invalidate();
-              }
-            }
-,TOUCH_HIGHLIGHT_ELAPSE_TIME);
-          }
         }
         if (mLogEvent && eventTime - mLastTouchUpTime < 1000) {
           EventLog.writeEvent(EventLogTags.BROWSER_DOUBLE_TAP_DURATION,(eventTime - mLastTouchUpTime),eventTime);
@@ -99,40 +83,6 @@ case MotionEvent.ACTION_DOWN:
       if (!mSelectingText && (mTouchMode == TOUCH_INIT_MODE || mTouchMode == TOUCH_DOUBLE_TAP_MODE)) {
         mPrivateHandler.sendEmptyMessageDelayed(SWITCH_TO_SHORTPRESS,TAP_TIMEOUT);
         mPrivateHandler.sendEmptyMessageDelayed(SWITCH_TO_LONGPRESS,LONG_PRESS_TIMEOUT);
-        if (inFullScreenMode() || mDeferTouchProcess) {
-          mPreventDefault=PREVENT_DEFAULT_YES;
-        }
- else         if (!mBlockWebkitViewMessages && mForwardTouchEvents) {
-          mPreventDefault=PREVENT_DEFAULT_MAYBE_YES;
-        }
- else {
-          mPreventDefault=PREVENT_DEFAULT_NO;
-        }
-        if (shouldForwardTouchEvent()) {
-          TouchEventData ted=new TouchEventData();
-          ted.mAction=action;
-          ted.mIds=new int[1];
-          ted.mIds[0]=ev.getPointerId(0);
-          ted.mPoints=new Point[1];
-          ted.mPoints[0]=new Point(contentX,contentY);
-          ted.mPointsInView=new Point[1];
-          ted.mPointsInView[0]=new Point(x,y);
-          ted.mMetaState=ev.getMetaState();
-          ted.mReprocess=mDeferTouchProcess;
-          ted.mNativeLayer=nativeScrollableLayer(contentX,contentY,ted.mNativeLayerRect,null);
-          ted.mSequence=mTouchEventQueue.nextTouchSequence();
-          mTouchEventQueue.preQueueTouchEventData(ted);
-          mWebViewCore.sendMessage(EventHub.TOUCH_EVENT,ted);
-          if (mDeferTouchProcess) {
-            mLastTouchX=x;
-            mLastTouchY=y;
-            break;
-          }
-          if (!inFullScreenMode()) {
-            mPrivateHandler.removeMessages(PREVENT_DEFAULT_TIMEOUT);
-            mPrivateHandler.sendMessageDelayed(mPrivateHandler.obtainMessage(PREVENT_DEFAULT_TIMEOUT,action,0),TAP_TIMEOUT);
-          }
-        }
       }
       startTouch(x,y,eventTime);
       if (mIsEditingText) {
@@ -142,12 +92,10 @@ case MotionEvent.ACTION_DOWN:
     }
 case MotionEvent.ACTION_MOVE:
 {
-    boolean firstMove=false;
     if (!mConfirmMove && (deltaX * deltaX + deltaY * deltaY) >= mTouchSlopSquare) {
       mPrivateHandler.removeMessages(SWITCH_TO_SHORTPRESS);
       mPrivateHandler.removeMessages(SWITCH_TO_LONGPRESS);
       mConfirmMove=true;
-      firstMove=true;
       if (mTouchMode == TOUCH_DOUBLE_TAP_MODE) {
         mTouchMode=TOUCH_INIT_MODE;
       }
@@ -170,49 +118,19 @@ case MotionEvent.ACTION_MOVE:
       }
       break;
     }
-    if (shouldForwardTouchEvent() && mConfirmMove && (firstMove || eventTime - mLastSentTouchTime > mCurrentTouchInterval)) {
-      TouchEventData ted=new TouchEventData();
-      ted.mAction=action;
-      ted.mIds=new int[1];
-      ted.mIds[0]=ev.getPointerId(0);
-      ted.mPoints=new Point[1];
-      ted.mPoints[0]=new Point(contentX,contentY);
-      ted.mPointsInView=new Point[1];
-      ted.mPointsInView[0]=new Point(x,y);
-      ted.mMetaState=ev.getMetaState();
-      ted.mReprocess=mDeferTouchProcess;
-      ted.mNativeLayer=mCurrentScrollingLayerId;
-      ted.mNativeLayerRect.set(mScrollingLayerRect);
-      ted.mMotionEvent=MotionEvent.obtain(ev);
-      ted.mSequence=mTouchEventQueue.nextTouchSequence();
-      mTouchEventQueue.preQueueTouchEventData(ted);
-      mWebViewCore.sendMessage(EventHub.TOUCH_EVENT,ted);
-      mLastSentTouchTime=eventTime;
-      if (mDeferTouchProcess) {
-        break;
-      }
-      if (firstMove && !inFullScreenMode()) {
-        mPrivateHandler.sendMessageDelayed(mPrivateHandler.obtainMessage(PREVENT_DEFAULT_TIMEOUT,action,0),TAP_TIMEOUT);
-      }
-    }
-    if (mTouchMode == TOUCH_DONE_MODE || mPreventDefault == PREVENT_DEFAULT_YES) {
+    if (mTouchMode == TOUCH_DONE_MODE) {
       break;
     }
     if (mVelocityTracker == null) {
-      Log.e(LOGTAG,"Got null mVelocityTracker when " + "mPreventDefault = " + mPreventDefault + " mDeferTouchProcess = "+ mDeferTouchProcess+ " mTouchMode = "+ mTouchMode);
+      Log.e(LOGTAG,"Got null mVelocityTracker when " + " mTouchMode = " + mTouchMode);
     }
  else {
-      mVelocityTracker.addMovement(ev);
+      mVelocityTracker.addMovement(event);
     }
     if (mTouchMode != TOUCH_DRAG_MODE && mTouchMode != TOUCH_DRAG_LAYER_MODE && mTouchMode != TOUCH_DRAG_TEXT_MODE) {
       if (!mConfirmMove) {
         break;
       }
-      if (mPreventDefault == PREVENT_DEFAULT_MAYBE_YES || mPreventDefault == PREVENT_DEFAULT_NO_FROM_TOUCH_DOWN) {
-        mLastTouchTime=eventTime;
-        break;
-      }
-      final ScaleGestureDetector detector=mZoomManager.getMultiTouchGestureDetector();
       mAverageAngle=calculateDragAngle(deltaX,deltaY);
       if (detector == null || !detector.isInProgress()) {
         if (mAverageAngle < HSLOPE_TO_START_SNAP) {
@@ -234,10 +152,9 @@ case MotionEvent.ACTION_MOVE:
       startScrollingLayer(x,y);
       startDrag();
     }
-    boolean done=false;
     boolean keepScrollBarsVisible=false;
     if (deltaX == 0 && deltaY == 0) {
-      keepScrollBarsVisible=done=true;
+      keepScrollBarsVisible=true;
     }
  else {
       mAverageAngle+=(calculateDragAngle(deltaX,deltaY) - mAverageAngle) / MMA_WEIGHT_N;
@@ -304,7 +221,7 @@ case MotionEvent.ACTION_MOVE:
       }
       mWebViewPrivate.awakenScrollBars(ViewConfiguration.getScrollDefaultDelay(),false);
       mPrivateHandler.sendMessageDelayed(mPrivateHandler.obtainMessage(AWAKEN_SCROLL_BARS),ViewConfiguration.getScrollDefaultDelay());
-      return !done;
+      return;
     }
  else {
       mPrivateHandler.removeMessages(AWAKEN_SCROLL_BARS);
@@ -318,23 +235,6 @@ case MotionEvent.ACTION_UP:
     stopTouch();
     break;
   }
-  if (shouldForwardTouchEvent()) {
-    TouchEventData ted=new TouchEventData();
-    ted.mIds=new int[1];
-    ted.mIds[0]=ev.getPointerId(0);
-    ted.mAction=action;
-    ted.mPoints=new Point[1];
-    ted.mPoints[0]=new Point(contentX,contentY);
-    ted.mPointsInView=new Point[1];
-    ted.mPointsInView[0]=new Point(x,y);
-    ted.mMetaState=ev.getMetaState();
-    ted.mReprocess=mDeferTouchProcess;
-    ted.mNativeLayer=mCurrentScrollingLayerId;
-    ted.mNativeLayerRect.set(mScrollingLayerRect);
-    ted.mSequence=mTouchEventQueue.nextTouchSequence();
-    mTouchEventQueue.preQueueTouchEventData(ted);
-    mWebViewCore.sendMessage(EventHub.TOUCH_EVENT,ted);
-  }
   mLastTouchUpTime=eventTime;
   if (mSentAutoScrollMessage) {
     mAutoScrollX=mAutoScrollY=0;
@@ -343,44 +243,14 @@ switch (mTouchMode) {
 case TOUCH_DOUBLE_TAP_MODE:
     mPrivateHandler.removeMessages(SWITCH_TO_SHORTPRESS);
   mPrivateHandler.removeMessages(SWITCH_TO_LONGPRESS);
-if (inFullScreenMode() || mDeferTouchProcess) {
-  TouchEventData ted=new TouchEventData();
-  ted.mIds=new int[1];
-  ted.mIds[0]=ev.getPointerId(0);
-  ted.mAction=WebViewCore.ACTION_DOUBLETAP;
-  ted.mPoints=new Point[1];
-  ted.mPoints[0]=new Point(contentX,contentY);
-  ted.mPointsInView=new Point[1];
-  ted.mPointsInView[0]=new Point(x,y);
-  ted.mMetaState=ev.getMetaState();
-  ted.mReprocess=mDeferTouchProcess;
-  ted.mNativeLayer=nativeScrollableLayer(contentX,contentY,ted.mNativeLayerRect,null);
-  ted.mSequence=mTouchEventQueue.nextTouchSequence();
-  mTouchEventQueue.preQueueTouchEventData(ted);
-  mWebViewCore.sendMessage(EventHub.TOUCH_EVENT,ted);
-}
- else if (mPreventDefault != PREVENT_DEFAULT_YES) {
-  mZoomManager.handleDoubleTap(mLastTouchX,mLastTouchY);
-  mTouchMode=TOUCH_DONE_MODE;
-}
+mTouchMode=TOUCH_DONE_MODE;
 break;
 case TOUCH_INIT_MODE:
 case TOUCH_SHORTPRESS_START_MODE:
 case TOUCH_SHORTPRESS_MODE:
 mPrivateHandler.removeMessages(SWITCH_TO_SHORTPRESS);
 mPrivateHandler.removeMessages(SWITCH_TO_LONGPRESS);
-if (mConfirmMove) {
-Log.w(LOGTAG,"Miss a drag as we are waiting for" + " WebCore's response for touch down.");
-if (mPreventDefault != PREVENT_DEFAULT_YES && (computeMaxScrollX() > 0 || computeMaxScrollY() > 0)) {
-WebViewCore.reducePriority();
-WebViewCore.pauseUpdatePicture(mWebViewCore);
-}
- else {
-invalidate();
-break;
-}
-}
- else {
+if (!mConfirmMove) {
 if (mSelectingText) {
 if (!mSelectionStarted) {
 selectionDone();
@@ -389,9 +259,6 @@ break;
 }
 if (mTouchMode == TOUCH_INIT_MODE && (canZoomIn() || canZoomOut())) {
 mPrivateHandler.sendEmptyMessageDelayed(RELEASE_SINGLE_TAP,ViewConfiguration.getDoubleTapTimeout());
-}
- else {
-doShortPress();
 }
 break;
 }
@@ -402,10 +269,10 @@ mPrivateHandler.removeMessages(DRAG_HELD_MOTIONLESS);
 mPrivateHandler.removeMessages(AWAKEN_SCROLL_BARS);
 if (eventTime - mLastTouchTime <= MIN_FLING_TIME) {
 if (mVelocityTracker == null) {
-Log.e(LOGTAG,"Got null mVelocityTracker when " + "mPreventDefault = " + mPreventDefault + " mDeferTouchProcess = "+ mDeferTouchProcess);
+Log.e(LOGTAG,"Got null mVelocityTracker");
 }
  else {
-mVelocityTracker.addMovement(ev);
+mVelocityTracker.addMovement(event);
 }
 mHeldMotionless=MOTIONLESS_IGNORE;
 doFling();
@@ -435,10 +302,8 @@ if (mTouchMode == TOUCH_DRAG_MODE) {
 mScroller.springBack(getScrollX(),getScrollY(),0,computeMaxScrollX(),0,computeMaxScrollY());
 invalidate();
 }
-cancelWebCoreTouchEvent(contentX,contentY,false);
 cancelTouch();
 break;
 }
 }
-return true;
 }
