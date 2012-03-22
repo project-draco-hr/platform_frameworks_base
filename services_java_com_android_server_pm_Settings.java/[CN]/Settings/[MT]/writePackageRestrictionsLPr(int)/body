@@ -1,0 +1,81 @@
+{
+  File userPackagesStateFile=getUserPackagesStateFile(userId);
+  File backupFile=getUserPackagesStateBackupFile(userId);
+  new File(userPackagesStateFile.getParent()).mkdirs();
+  if (userPackagesStateFile.exists()) {
+    if (!backupFile.exists()) {
+      if (!userPackagesStateFile.renameTo(backupFile)) {
+        Log.wtf(PackageManagerService.TAG,"Unable to backup user packages state file, " + "current changes will be lost at reboot");
+        return;
+      }
+    }
+ else {
+      userPackagesStateFile.delete();
+      Slog.w(PackageManagerService.TAG,"Preserving older stopped packages backup");
+    }
+  }
+  try {
+    final FileOutputStream fstr=new FileOutputStream(userPackagesStateFile);
+    final BufferedOutputStream str=new BufferedOutputStream(fstr);
+    final XmlSerializer serializer=new FastXmlSerializer();
+    serializer.setOutput(str,"utf-8");
+    serializer.startDocument(null,true);
+    serializer.setFeature("http://xmlpull.org/v1/doc/features.html#indent-output",true);
+    serializer.startTag(null,TAG_PACKAGE_RESTRICTIONS);
+    for (    final PackageSetting pkg : mPackages.values()) {
+      if (pkg.getStopped(userId) || pkg.getNotLaunched(userId) || pkg.getEnabled(userId) != COMPONENT_ENABLED_STATE_DEFAULT || pkg.getEnabledComponents(userId).size() > 0 || pkg.getDisabledComponents(userId).size() > 0) {
+        serializer.startTag(null,TAG_PACKAGE);
+        serializer.attribute(null,ATTR_NAME,pkg.name);
+        boolean stopped=pkg.getStopped(userId);
+        boolean notLaunched=pkg.getNotLaunched(userId);
+        int enabled=pkg.getEnabled(userId);
+        HashSet<String> enabledComponents=pkg.getEnabledComponents(userId);
+        HashSet<String> disabledComponents=pkg.getDisabledComponents(userId);
+        if (stopped) {
+          serializer.attribute(null,ATTR_STOPPED,"true");
+        }
+        if (notLaunched) {
+          serializer.attribute(null,ATTR_NOT_LAUNCHED,"true");
+        }
+        if (enabled != COMPONENT_ENABLED_STATE_DEFAULT) {
+          serializer.attribute(null,ATTR_ENABLED,Integer.toString(enabled));
+        }
+        if (enabledComponents.size() > 0) {
+          serializer.startTag(null,TAG_ENABLED_COMPONENTS);
+          for (          final String name : enabledComponents) {
+            serializer.startTag(null,TAG_ITEM);
+            serializer.attribute(null,ATTR_NAME,name);
+            serializer.endTag(null,TAG_ITEM);
+          }
+          serializer.endTag(null,TAG_ENABLED_COMPONENTS);
+        }
+        if (disabledComponents.size() > 0) {
+          serializer.startTag(null,TAG_DISABLED_COMPONENTS);
+          for (          final String name : disabledComponents) {
+            serializer.startTag(null,TAG_ITEM);
+            serializer.attribute(null,ATTR_NAME,name);
+            serializer.endTag(null,TAG_ITEM);
+          }
+          serializer.endTag(null,TAG_DISABLED_COMPONENTS);
+        }
+        serializer.endTag(null,TAG_PACKAGE);
+      }
+    }
+    serializer.endTag(null,TAG_PACKAGE_RESTRICTIONS);
+    serializer.endDocument();
+    str.flush();
+    FileUtils.sync(fstr);
+    str.close();
+    backupFile.delete();
+    FileUtils.setPermissions(userPackagesStateFile.toString(),FileUtils.S_IRUSR | FileUtils.S_IWUSR | FileUtils.S_IRGRP| FileUtils.S_IWGRP,-1,-1);
+    return;
+  }
+ catch (  java.io.IOException e) {
+    Log.wtf(PackageManagerService.TAG,"Unable to write package manager user packages state, " + " current changes will be lost at reboot",e);
+  }
+  if (userPackagesStateFile.exists()) {
+    if (!userPackagesStateFile.delete()) {
+      Log.i(PackageManagerService.TAG,"Failed to clean up mangled file: " + mStoppedPackagesFilename);
+    }
+  }
+}
