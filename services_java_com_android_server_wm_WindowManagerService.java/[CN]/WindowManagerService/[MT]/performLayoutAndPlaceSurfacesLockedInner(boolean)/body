@@ -24,7 +24,7 @@
   mInnerFields.mScreenBrightness=-1;
   mInnerFields.mButtonBrightness=-1;
   boolean focusDisplayed=false;
-  mInnerFields.mAnimating=false;
+  mAnimator.mAnimating=false;
   boolean createWatermark=false;
   if (mFxSession == null) {
     mFxSession=new SurfaceSession();
@@ -111,7 +111,27 @@
  finally {
     Surface.closeTransaction();
   }
-  animateAndUpdateSurfaces(currentTime,dw,dh,innerDw,innerDh,recoveringMemory);
+  if (mAppTransitionReady) {
+    mPendingLayoutChanges|=handleAppTransitionReadyLocked();
+  }
+  mInnerFields.mAdjResult=0;
+  if (!mAnimator.mAnimating && mAppTransitionRunning) {
+    mPendingLayoutChanges|=handleAnimatingStoppedAndTransitionLocked();
+  }
+  if (mInnerFields.mWallpaperForceHidingChanged && mPendingLayoutChanges == 0 && !mAppTransitionReady) {
+    mPendingLayoutChanges|=animateAwayWallpaperLocked();
+  }
+  mPendingLayoutChanges|=testWallpaperAndBackgroundLocked();
+  if (mLayoutNeeded) {
+    mPendingLayoutChanges|=PhoneWindowManager.FINISH_LAYOUT_REDO_LAYOUT;
+  }
+  final int N=mWindows.size();
+  for (i=N - 1; i >= 0; i--) {
+    WindowState w=mWindows.get(i);
+    updateResizingWindows(w);
+  }
+  mAnimator.animate();
+  mPendingLayoutChanges|=mAnimator.mPendingLayoutChanges;
   if (SHOW_LIGHT_TRANSACTIONS)   Slog.i(TAG,"<<< CLOSE TRANSACTION performLayoutAndPlaceSurfaces");
   if (mWatermark != null) {
     mWatermark.drawIfNeeded();
@@ -188,7 +208,7 @@
     }
   }
   boolean needRelayout=false;
-  if (!mInnerFields.mAnimating && mAppTransitionRunning) {
+  if (!mAnimator.mAnimating && mAppTransitionRunning) {
     mAppTransitionRunning=false;
     needRelayout=true;
     rebuildAppWindowListLocked();
@@ -207,7 +227,7 @@
   if (needRelayout) {
     requestTraversalLocked();
   }
- else   if (mInnerFields.mAnimating) {
+ else   if (mAnimator.mAnimating) {
     scheduleAnimationLocked();
   }
   mInputMonitor.updateInputWindowsLw(true);
