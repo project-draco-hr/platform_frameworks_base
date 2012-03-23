@@ -108,10 +108,13 @@ if (DEBUG_APP_TRANSITIONS) Slog.v(TAG,"New transit into wallpaper: " + transit);
 if (!mPolicy.allowAppAnimationsLw()) {
 animLp=null;
 }
+AppWindowToken topOpeningApp=null;
+int topOpeningLayer=0;
 NN=mOpeningApps.size();
 for (i=0; i < NN; i++) {
 AppWindowToken wtoken=mOpeningApps.get(i);
 if (DEBUG_APP_TRANSITIONS) Slog.v(TAG,"Now opening app" + wtoken);
+wtoken.clearThumbnail();
 wtoken.reportedVisible=false;
 wtoken.inPendingTransaction=false;
 wtoken.animation=null;
@@ -119,11 +122,25 @@ setTokenVisibilityLocked(wtoken,animLp,true,transit,false);
 wtoken.updateReportedVisibilityLocked();
 wtoken.waitingToShow=false;
 mAnimator.mAnimating|=wtoken.showAllWindowsLocked();
+if (animLp != null) {
+int layer=-1;
+for (int j=0; j < wtoken.windows.size(); j++) {
+  WindowState win=wtoken.windows.get(j);
+  if (win.mAnimLayer > layer) {
+    layer=win.mAnimLayer;
+  }
+}
+if (topOpeningApp == null || layer > topOpeningLayer) {
+  topOpeningApp=wtoken;
+  topOpeningLayer=layer;
+}
+}
 }
 NN=mClosingApps.size();
 for (i=0; i < NN; i++) {
 AppWindowToken wtoken=mClosingApps.get(i);
 if (DEBUG_APP_TRANSITIONS) Slog.v(TAG,"Now closing app" + wtoken);
+wtoken.clearThumbnail();
 wtoken.inPendingTransaction=false;
 wtoken.animation=null;
 setTokenVisibilityLocked(wtoken,animLp,false,transit,false);
@@ -131,7 +148,40 @@ wtoken.updateReportedVisibilityLocked();
 wtoken.waitingToHide=false;
 wtoken.allDrawn=true;
 }
+if (mNextAppTransitionThumbnail != null && topOpeningApp != null && topOpeningApp.animation != null) {
+Rect dirty=new Rect(0,0,mNextAppTransitionThumbnail.getWidth(),mNextAppTransitionThumbnail.getHeight());
+try {
+Surface surface=new Surface(mFxSession,Process.myPid(),"thumbnail anim",0,dirty.width(),dirty.height(),PixelFormat.TRANSLUCENT,Surface.HIDDEN);
+topOpeningApp.thumbnail=surface;
+if (SHOW_TRANSACTIONS) Slog.i(TAG,"  THUMBNAIL " + surface + ": CREATE");
+Surface drawSurface=new Surface();
+drawSurface.copyFrom(surface);
+Canvas c=drawSurface.lockCanvas(dirty);
+c.drawBitmap(mNextAppTransitionThumbnail,0,0,null);
+drawSurface.unlockCanvasAndPost(c);
+drawSurface.release();
+topOpeningApp.thumbnailLayer=topOpeningLayer;
+Animation anim=createThumbnailAnimationLocked(transit,true,true);
+topOpeningApp.thumbnailAnimation=anim;
+anim.restrictDuration(MAX_ANIMATION_DURATION);
+anim.scaleCurrentDuration(mTransitionAnimationScale);
+topOpeningApp.thumbnailX=mNextAppTransitionStartX;
+topOpeningApp.thumbnailY=mNextAppTransitionStartY;
+}
+ catch (Surface.OutOfResourcesException e) {
+Slog.e(TAG,"Can't allocate thumbnail surface w=" + dirty.width() + " h="+ dirty.height(),e);
+topOpeningApp.clearThumbnail();
+}
+}
 mNextAppTransitionPackage=null;
+mNextAppTransitionThumbnail=null;
+if (mNextAppTransitionCallback != null) {
+try {
+mNextAppTransitionCallback.sendResult(null);
+}
+ catch (RemoteException e) {
+}
+}
 mOpeningApps.clear();
 mClosingApps.clear();
 changes|=PhoneWindowManager.FINISH_LAYOUT_REDO_LAYOUT | WindowManagerPolicy.FINISH_LAYOUT_REDO_CONFIG;
