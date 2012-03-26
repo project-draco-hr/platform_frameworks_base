@@ -13,8 +13,6 @@
   WindowManager.LayoutParams lp=mWindowAttributes;
   int desiredWindowWidth;
   int desiredWindowHeight;
-  int childWidthMeasureSpec;
-  int childHeightMeasureSpec;
   final View.AttachInfo attachInfo=mAttachInfo;
   final int viewVisibility=getHostVisibility();
   boolean viewVisibilityChanged=mViewVisibility != viewVisibility || mNewSurfaceNeeded;
@@ -60,12 +58,12 @@
     attachInfo.mHasWindowFocus=false;
     attachInfo.mWindowVisibility=viewVisibility;
     attachInfo.mRecomputeGlobalAttributes=false;
-    attachInfo.mKeepScreenOn=false;
-    attachInfo.mSystemUiVisibility=0;
     viewVisibilityChanged=false;
     mLastConfiguration.setTo(host.getResources().getConfiguration());
+    mLastSystemUiVisibility=mAttachInfo.mSystemUiVisibility;
     host.dispatchAttachedToWindow(attachInfo,0);
-    host.fitSystemWindows(mAttachInfo.mContentInsets);
+    mFitSystemWindowsInsets.set(mAttachInfo.mContentInsets);
+    host.fitSystemWindows(mFitSystemWindowsInsets);
   }
  else {
     desiredWindowWidth=frame.width();
@@ -88,7 +86,8 @@
     }
   }
   boolean insetsChanged=false;
-  if (mLayoutRequested && !mStopped) {
+  boolean layoutRequested=mLayoutRequested && !mStopped;
+  if (layoutRequested) {
     getRunQueue().executeActions(attachInfo.mHandler);
     final Resources res=mView.getContext().getResources();
     if (mFirst) {
@@ -119,63 +118,10 @@
         }
       }
     }
-    if (DEBUG_ORIENTATION || DEBUG_LAYOUT)     Log.v(TAG,"Measuring " + host + " in display "+ desiredWindowWidth+ "x"+ desiredWindowHeight+ "...");
-    boolean goodMeasure=false;
-    if (lp.width == ViewGroup.LayoutParams.WRAP_CONTENT) {
-      final DisplayMetrics packageMetrics=res.getDisplayMetrics();
-      res.getValue(com.android.internal.R.dimen.config_prefDialogWidth,mTmpValue,true);
-      int baseSize=0;
-      if (mTmpValue.type == TypedValue.TYPE_DIMENSION) {
-        baseSize=(int)mTmpValue.getDimension(packageMetrics);
-      }
-      if (DEBUG_DIALOG)       Log.v(TAG,"Window " + mView + ": baseSize="+ baseSize);
-      if (baseSize != 0 && desiredWindowWidth > baseSize) {
-        childWidthMeasureSpec=getRootMeasureSpec(baseSize,lp.width);
-        childHeightMeasureSpec=getRootMeasureSpec(desiredWindowHeight,lp.height);
-        host.measure(childWidthMeasureSpec,childHeightMeasureSpec);
-        if (DEBUG_DIALOG)         Log.v(TAG,"Window " + mView + ": measured ("+ host.getMeasuredWidth()+ ","+ host.getMeasuredHeight()+ ")");
-        if ((host.getMeasuredWidthAndState() & View.MEASURED_STATE_TOO_SMALL) == 0) {
-          goodMeasure=true;
-        }
- else {
-          baseSize=(baseSize + desiredWindowWidth) / 2;
-          if (DEBUG_DIALOG)           Log.v(TAG,"Window " + mView + ": next baseSize="+ baseSize);
-          childWidthMeasureSpec=getRootMeasureSpec(baseSize,lp.width);
-          host.measure(childWidthMeasureSpec,childHeightMeasureSpec);
-          if (DEBUG_DIALOG)           Log.v(TAG,"Window " + mView + ": measured ("+ host.getMeasuredWidth()+ ","+ host.getMeasuredHeight()+ ")");
-          if ((host.getMeasuredWidthAndState() & View.MEASURED_STATE_TOO_SMALL) == 0) {
-            if (DEBUG_DIALOG)             Log.v(TAG,"Good!");
-            goodMeasure=true;
-          }
-        }
-      }
-    }
-    if (!goodMeasure) {
-      childWidthMeasureSpec=getRootMeasureSpec(desiredWindowWidth,lp.width);
-      childHeightMeasureSpec=getRootMeasureSpec(desiredWindowHeight,lp.height);
-      host.measure(childWidthMeasureSpec,childHeightMeasureSpec);
-      if (mWidth != host.getMeasuredWidth() || mHeight != host.getMeasuredHeight()) {
-        windowSizeMayChange=true;
-      }
-    }
-    if (DBG) {
-      System.out.println("======================================");
-      System.out.println("performTraversals -- after measure");
-      host.debug();
-    }
+    windowSizeMayChange|=measureHierarchy(host,lp,res,desiredWindowWidth,desiredWindowHeight);
   }
-  if (attachInfo.mRecomputeGlobalAttributes && host.mAttachInfo != null) {
-    attachInfo.mRecomputeGlobalAttributes=false;
-    boolean oldScreenOn=attachInfo.mKeepScreenOn;
-    int oldVis=attachInfo.mSystemUiVisibility;
-    boolean oldHasSystemUiListeners=attachInfo.mHasSystemUiListeners;
-    attachInfo.mKeepScreenOn=false;
-    attachInfo.mSystemUiVisibility=0;
-    attachInfo.mHasSystemUiListeners=false;
-    host.dispatchCollectViewAttributes(0);
-    if (attachInfo.mKeepScreenOn != oldScreenOn || attachInfo.mSystemUiVisibility != oldVis || attachInfo.mHasSystemUiListeners != oldHasSystemUiListeners) {
-      params=lp;
-    }
+  if (collectViewAttributes()) {
+    params=lp;
   }
   if (attachInfo.mForceReportNewAttributes) {
     attachInfo.mForceReportNewAttributes=false;
@@ -205,7 +151,18 @@
       params.format=PixelFormat.TRANSLUCENT;
     }
   }
-  boolean windowShouldResize=mLayoutRequested && windowSizeMayChange && ((mWidth != host.getMeasuredWidth() || mHeight != host.getMeasuredHeight()) || (lp.width == ViewGroup.LayoutParams.WRAP_CONTENT && frame.width() < desiredWindowWidth && frame.width() != mWidth) || (lp.height == ViewGroup.LayoutParams.WRAP_CONTENT && frame.height() < desiredWindowHeight && frame.height() != mHeight));
+  if (mFitSystemWindowsRequested) {
+    mFitSystemWindowsRequested=false;
+    mFitSystemWindowsInsets.set(mAttachInfo.mContentInsets);
+    host.fitSystemWindows(mFitSystemWindowsInsets);
+    if (mLayoutRequested) {
+      windowSizeMayChange|=measureHierarchy(host,lp,mView.getContext().getResources(),desiredWindowWidth,desiredWindowHeight);
+    }
+  }
+  if (layoutRequested) {
+    mLayoutRequested=false;
+  }
+  boolean windowShouldResize=layoutRequested && windowSizeMayChange && ((mWidth != host.getMeasuredWidth() || mHeight != host.getMeasuredHeight()) || (lp.width == ViewGroup.LayoutParams.WRAP_CONTENT && frame.width() < desiredWindowWidth && frame.width() != mWidth) || (lp.height == ViewGroup.LayoutParams.WRAP_CONTENT && frame.height() < desiredWindowHeight && frame.height() != mHeight));
   final boolean computesInternalInsets=attachInfo.mTreeObserver.hasComputeInternalInsetsListeners();
   boolean insetsPending=false;
   int relayoutResult=0;
@@ -222,23 +179,11 @@
     boolean visibleInsetsChanged;
     boolean hadSurface=mSurface.isValid();
     try {
-      int fl=0;
-      if (params != null) {
-        fl=params.flags;
-        if (attachInfo.mKeepScreenOn) {
-          params.flags|=WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON;
-        }
-        params.subtreeSystemUiVisibility=attachInfo.mSystemUiVisibility;
-        params.hasSystemUiListeners=attachInfo.mHasSystemUiListeners;
-      }
       if (DEBUG_LAYOUT) {
         Log.i(TAG,"host=w:" + host.getMeasuredWidth() + ", h:"+ host.getMeasuredHeight()+ ", params="+ params);
       }
       final int surfaceGenerationId=mSurface.getGenerationId();
       relayoutResult=relayoutWindow(params,viewVisibility,insetsPending);
-      if (params != null) {
-        params.flags=fl;
-      }
       if (DEBUG_LAYOUT)       Log.v(TAG,"relayout: frame=" + frame.toShortString() + " content="+ mPendingContentInsets.toShortString()+ " visible="+ mPendingVisibleInsets.toShortString()+ " surface="+ mSurface);
       if (mPendingConfiguration.seq != 0) {
         if (DEBUG_CONFIGURATION)         Log.v(TAG,"Visible with new config: " + mPendingConfiguration);
@@ -248,7 +193,7 @@
       contentInsetsChanged=!mPendingContentInsets.equals(mAttachInfo.mContentInsets);
       visibleInsetsChanged=!mPendingVisibleInsets.equals(mAttachInfo.mVisibleInsets);
       if (contentInsetsChanged) {
-        if (mWidth > 0 && mHeight > 0 && mSurface != null && mSurface.isValid() && !mAttachInfo.mTurnOffWindowResizeAnim && mAttachInfo.mHardwareRenderer != null && mAttachInfo.mHardwareRenderer.isEnabled() && mAttachInfo.mHardwareRenderer.validate() && lp != null && !PixelFormat.formatHasAlpha(lp.format)) {
+        if (mWidth > 0 && mHeight > 0 && lp != null && ((lp.systemUiVisibility | lp.subtreeSystemUiVisibility) & View.SYSTEM_UI_LAYOUT_FLAGS) == 0 && mSurface != null && mSurface.isValid() && !mAttachInfo.mTurnOffWindowResizeAnim && mAttachInfo.mHardwareRenderer != null && mAttachInfo.mHardwareRenderer.isEnabled() && mAttachInfo.mHardwareRenderer.validate() && lp != null && !PixelFormat.formatHasAlpha(lp.format)) {
           disposeResizeBuffer();
           boolean completed=false;
           HardwareCanvas hwRendererCanvas=mAttachInfo.mHardwareRenderer.getCanvas();
@@ -301,8 +246,13 @@
           }
         }
         mAttachInfo.mContentInsets.set(mPendingContentInsets);
-        host.fitSystemWindows(mAttachInfo.mContentInsets);
         if (DEBUG_LAYOUT)         Log.v(TAG,"Content insets changing to: " + mAttachInfo.mContentInsets);
+      }
+      if (contentInsetsChanged || mLastSystemUiVisibility != mAttachInfo.mSystemUiVisibility || mFitSystemWindowsRequested) {
+        mLastSystemUiVisibility=mAttachInfo.mSystemUiVisibility;
+        mFitSystemWindowsRequested=false;
+        mFitSystemWindowsInsets.set(mAttachInfo.mContentInsets);
+        host.fitSystemWindows(mFitSystemWindowsInsets);
       }
       if (visibleInsetsChanged) {
         mAttachInfo.mVisibleInsets.set(mPendingVisibleInsets);
@@ -430,8 +380,8 @@
     if (!mStopped) {
       boolean focusChangedDueToTouchMode=ensureTouchModeLocally((relayoutResult & WindowManagerImpl.RELAYOUT_RES_IN_TOUCH_MODE) != 0);
       if (focusChangedDueToTouchMode || mWidth != host.getMeasuredWidth() || mHeight != host.getMeasuredHeight() || contentInsetsChanged) {
-        childWidthMeasureSpec=getRootMeasureSpec(mWidth,lp.width);
-        childHeightMeasureSpec=getRootMeasureSpec(mHeight,lp.height);
+        int childWidthMeasureSpec=getRootMeasureSpec(mWidth,lp.width);
+        int childHeightMeasureSpec=getRootMeasureSpec(mHeight,lp.height);
         if (DEBUG_LAYOUT)         Log.v(TAG,"Ooops, something changed!  mWidth=" + mWidth + " measuredWidth="+ host.getMeasuredWidth()+ " mHeight="+ mHeight+ " measuredHeight="+ host.getMeasuredHeight()+ " coveredInsetsChanged="+ contentInsetsChanged);
         host.measure(childWidthMeasureSpec,childHeightMeasureSpec);
         int width=host.getMeasuredWidth();
@@ -451,11 +401,11 @@
           if (DEBUG_LAYOUT)           Log.v(TAG,"And hey let's measure once more: width=" + width + " height="+ height);
           host.measure(childWidthMeasureSpec,childHeightMeasureSpec);
         }
-        mLayoutRequested=true;
+        layoutRequested=true;
       }
     }
   }
-  final boolean didLayout=mLayoutRequested && !mStopped;
+  final boolean didLayout=layoutRequested && !mStopped;
   boolean triggerGlobalLayoutListener=didLayout || attachInfo.mRecomputeGlobalAttributes;
   if (didLayout) {
     mLayoutRequested=false;
