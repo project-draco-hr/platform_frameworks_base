@@ -127,8 +127,26 @@
     mPendingLayoutChanges|=animateAwayWallpaperLocked();
     if (DEBUG_LAYOUT_REPEATS)     debugLayoutRepeats("after animateAwayWallpaperLocked");
   }
-  mPendingLayoutChanges|=testWallpaperAndBackgroundLocked();
-  if (DEBUG_LAYOUT_REPEATS)   debugLayoutRepeats("after testWallpaperAndBackgroundLocked");
+  if (mInnerFields.mWallpaperMayChange) {
+    if (WindowManagerService.DEBUG_WALLPAPER)     Slog.v(TAG,"Wallpaper may change!  Adjusting");
+    mInnerFields.mAdjResult|=adjustWallpaperWindowsLocked();
+  }
+  if ((mInnerFields.mAdjResult & ADJUST_WALLPAPER_LAYERS_CHANGED) != 0) {
+    if (DEBUG_WALLPAPER)     Slog.v(TAG,"Wallpaper layer changed: assigning layers + relayout");
+    mPendingLayoutChanges|=PhoneWindowManager.FINISH_LAYOUT_REDO_LAYOUT;
+    assignLayersLocked();
+  }
+ else   if ((mInnerFields.mAdjResult & ADJUST_WALLPAPER_VISIBILITY_CHANGED) != 0) {
+    if (DEBUG_WALLPAPER)     Slog.v(TAG,"Wallpaper visibility changed: relayout");
+    mPendingLayoutChanges|=PhoneWindowManager.FINISH_LAYOUT_REDO_LAYOUT;
+  }
+  if (mFocusMayChange) {
+    mFocusMayChange=false;
+    if (updateFocusedWindowLocked(UPDATE_FOCUS_PLACING_SURFACES,false)) {
+      mPendingLayoutChanges|=PhoneWindowManager.FINISH_LAYOUT_REDO_ANIM;
+      mInnerFields.mAdjResult=0;
+    }
+  }
   if (mLayoutNeeded) {
     mPendingLayoutChanges|=PhoneWindowManager.FINISH_LAYOUT_REDO_LAYOUT;
     if (DEBUG_LAYOUT_REPEATS)     debugLayoutRepeats("mLayoutNeeded");
@@ -137,6 +155,28 @@
   for (i=N - 1; i >= 0; i--) {
     WindowState w=mWindows.get(i);
     updateResizingWindows(w);
+    if (w.mSurface != null) {
+      if (w.commitFinishDrawingLocked(currentTime)) {
+        if ((w.mAttrs.flags & WindowManager.LayoutParams.FLAG_SHOW_WALLPAPER) != 0) {
+          if (WindowManagerService.DEBUG_WALLPAPER)           Slog.v(TAG,"First draw done in potential wallpaper target " + w);
+          mInnerFields.mWallpaperMayChange=true;
+          mPendingLayoutChanges|=WindowManagerPolicy.FINISH_LAYOUT_REDO_WALLPAPER;
+          if (WindowManagerService.DEBUG_LAYOUT_REPEATS) {
+            debugLayoutRepeats("updateWindowsAndWallpaperLocked 1");
+          }
+        }
+      }
+      if (w.shouldAnimateMove()) {
+        Animation a=AnimationUtils.loadAnimation(mContext,com.android.internal.R.anim.window_move_from_decor);
+        w.mWinAnimator.setAnimation(a);
+        w.mAnimDw=w.mLastFrame.left - w.mFrame.left;
+        w.mAnimDh=w.mLastFrame.top - w.mFrame.top;
+      }
+ else {
+        w.mAnimDw=innerDw;
+        w.mAnimDh=innerDh;
+      }
+    }
   }
   mAnimator.animate();
   mPendingLayoutChanges|=mAnimator.mPendingLayoutChanges;
