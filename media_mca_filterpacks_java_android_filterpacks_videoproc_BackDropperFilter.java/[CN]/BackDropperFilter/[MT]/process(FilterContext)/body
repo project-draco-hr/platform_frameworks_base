@@ -1,0 +1,110 @@
+{
+  Frame video=pullInput("video");
+  Frame background=pullInput("background");
+  allocateFrames(video.getFormat(),context);
+  if (mStartLearning) {
+    if (mLogVerbose)     Log.v(TAG,"Starting learning");
+    mBgUpdateMeanProgram.setHostValue("bg_adapt_rate",mAdaptRateLearning);
+    mBgUpdateMeanProgram.setHostValue("fg_adapt_rate",mAdaptRateLearning);
+    mBgUpdateVarianceProgram.setHostValue("bg_adapt_rate",mAdaptRateLearning);
+    mBgUpdateVarianceProgram.setHostValue("fg_adapt_rate",mAdaptRateLearning);
+    mFrameCount=0;
+    mStartLearning=false;
+  }
+  int inputIndex=mPingPong ? 0 : 1;
+  int outputIndex=mPingPong ? 1 : 0;
+  mPingPong=!mPingPong;
+  updateBgScaling(video,background,mBackgroundFitModeChanged);
+  mBackgroundFitModeChanged=false;
+  copyShaderProgram.process(video,mVideoInput);
+  copyShaderProgram.process(background,mBgInput);
+  mVideoInput.generateMipMap();
+  mVideoInput.setTextureParameter(GLES20.GL_TEXTURE_MIN_FILTER,GLES20.GL_LINEAR_MIPMAP_NEAREST);
+  mBgInput.generateMipMap();
+  mBgInput.setTextureParameter(GLES20.GL_TEXTURE_MIN_FILTER,GLES20.GL_LINEAR_MIPMAP_NEAREST);
+  Frame[] distInputs={mVideoInput,mBgMean[inputIndex],mBgVariance[inputIndex]};
+  mBgDistProgram.process(distInputs,mDistance);
+  mDistance.generateMipMap();
+  mDistance.setTextureParameter(GLES20.GL_TEXTURE_MIN_FILTER,GLES20.GL_LINEAR_MIPMAP_NEAREST);
+  mBgMaskProgram.process(mDistance,mMask);
+  mMask.generateMipMap();
+  mMask.setTextureParameter(GLES20.GL_TEXTURE_MIN_FILTER,GLES20.GL_LINEAR_MIPMAP_NEAREST);
+  Frame[] autoWBInputs={mVideoInput,mBgInput};
+  mAutomaticWhiteBalanceProgram.process(autoWBInputs,mAutoWB);
+  if (mFrameCount <= mLearningDuration) {
+    pushOutput("video",video);
+    if (mFrameCount == mLearningDuration - mLearningVerifyDuration) {
+      copyShaderProgram.process(mMask,mMaskVerify[outputIndex]);
+      mBgUpdateMeanProgram.setHostValue("bg_adapt_rate",mAdaptRateBg);
+      mBgUpdateMeanProgram.setHostValue("fg_adapt_rate",mAdaptRateFg);
+      mBgUpdateVarianceProgram.setHostValue("bg_adapt_rate",mAdaptRateBg);
+      mBgUpdateVarianceProgram.setHostValue("fg_adapt_rate",mAdaptRateFg);
+    }
+ else     if (mFrameCount > mLearningDuration - mLearningVerifyDuration) {
+      Frame[] maskVerifyInputs={mMaskVerify[inputIndex],mMask};
+      mMaskVerifyProgram.process(maskVerifyInputs,mMaskVerify[outputIndex]);
+      mMaskVerify[outputIndex].generateMipMap();
+      mMaskVerify[outputIndex].setTextureParameter(GLES20.GL_TEXTURE_MIN_FILTER,GLES20.GL_LINEAR_MIPMAP_NEAREST);
+    }
+    if (mFrameCount == mLearningDuration) {
+      copyShaderProgram.process(mMaskVerify[outputIndex],mMaskAverage);
+      ByteBuffer mMaskAverageByteBuffer=mMaskAverage.getData();
+      byte[] mask_average=mMaskAverageByteBuffer.array();
+      int bi=(int)(mask_average[3] & 0xFF);
+      if (mLogVerbose)       Log.v(TAG,String.format("Mask_average is %d",bi));
+      if (bi >= DEFAULT_LEARNING_DONE_THRESHOLD) {
+        mStartLearning=true;
+      }
+ else {
+        if (mLogVerbose)         Log.v(TAG,"Learning done");
+        if (mLearningDoneListener != null) {
+          mLearningDoneListener.onLearningDone(this);
+        }
+      }
+    }
+  }
+ else {
+    Frame output=context.getFrameManager().newFrame(video.getFormat());
+    Frame[] subtractInputs={video,background,mMask,mAutoWB};
+    mBgSubtractProgram.process(subtractInputs,output);
+    pushOutput("video",output);
+    output.release();
+  }
+  if (mFrameCount < mLearningDuration - mLearningVerifyDuration || mAdaptRateBg > 0.0 || mAdaptRateFg > 0.0) {
+    Frame[] meanUpdateInputs={mVideoInput,mBgMean[inputIndex],mMask};
+    mBgUpdateMeanProgram.process(meanUpdateInputs,mBgMean[outputIndex]);
+    mBgMean[outputIndex].generateMipMap();
+    mBgMean[outputIndex].setTextureParameter(GLES20.GL_TEXTURE_MIN_FILTER,GLES20.GL_LINEAR_MIPMAP_NEAREST);
+    Frame[] varianceUpdateInputs={mVideoInput,mBgMean[inputIndex],mBgVariance[inputIndex],mMask};
+    mBgUpdateVarianceProgram.process(varianceUpdateInputs,mBgVariance[outputIndex]);
+    mBgVariance[outputIndex].generateMipMap();
+    mBgVariance[outputIndex].setTextureParameter(GLES20.GL_TEXTURE_MIN_FILTER,GLES20.GL_LINEAR_MIPMAP_NEAREST);
+  }
+  if (mProvideDebugOutputs) {
+    Frame dbg1=context.getFrameManager().newFrame(video.getFormat());
+    mCopyOutProgram.process(video,dbg1);
+    pushOutput("debug1",dbg1);
+    dbg1.release();
+    Frame dbg2=context.getFrameManager().newFrame(mMemoryFormat);
+    mCopyOutProgram.process(mMask,dbg2);
+    pushOutput("debug2",dbg2);
+    dbg2.release();
+  }
+  mFrameCount++;
+  if (mLogVerbose) {
+    if (mFrameCount % 30 == 0) {
+      if (startTime == -1) {
+        context.getGLEnvironment().activate();
+        GLES20.glFinish();
+        startTime=SystemClock.elapsedRealtime();
+      }
+ else {
+        context.getGLEnvironment().activate();
+        GLES20.glFinish();
+        long endTime=SystemClock.elapsedRealtime();
+        Log.v(TAG,"Avg. frame duration: " + String.format("%.2f",(endTime - startTime) / 30.) + " ms. Avg. fps: "+ String.format("%.2f",1000. / ((endTime - startTime) / 30.)));
+        startTime=endTime;
+      }
+    }
+  }
+}
