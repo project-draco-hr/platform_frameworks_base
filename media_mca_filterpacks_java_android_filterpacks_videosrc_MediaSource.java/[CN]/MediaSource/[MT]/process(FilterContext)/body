@@ -1,0 +1,95 @@
+{
+  if (mLogVerbose)   Log.v(TAG,"Processing new frame");
+  if (mMediaPlayer == null) {
+    throw new NullPointerException("Unexpected null media player!");
+  }
+  if (mCompleted) {
+    closeOutputPort("video");
+    return;
+  }
+  if (!mPlaying) {
+    int waitCount=0;
+    if (mLogVerbose)     Log.v(TAG,"Waiting for preparation to complete");
+    while (!mGotSize || !mPrepared) {
+      try {
+        this.wait(PREP_TIMEOUT);
+      }
+ catch (      InterruptedException e) {
+      }
+      if (mCompleted) {
+        closeOutputPort("video");
+        return;
+      }
+      waitCount++;
+      if (waitCount == PREP_TIMEOUT_REPEAT) {
+        mMediaPlayer.release();
+        throw new RuntimeException("MediaPlayer timed out while preparing!");
+      }
+    }
+    if (mLogVerbose)     Log.v(TAG,"Starting playback");
+    mMediaPlayer.start();
+  }
+  if (!mPaused || !mPlaying) {
+    if (mWaitForNewFrame) {
+      if (mLogVerbose)       Log.v(TAG,"Waiting for new frame");
+      int waitCount=0;
+      while (!mNewFrameAvailable) {
+        if (waitCount == NEWFRAME_TIMEOUT_REPEAT) {
+          if (mCompleted) {
+            closeOutputPort("video");
+            return;
+          }
+ else {
+            throw new RuntimeException("Timeout waiting for new frame!");
+          }
+        }
+        try {
+          this.wait(NEWFRAME_TIMEOUT);
+        }
+ catch (        InterruptedException e) {
+          if (mLogVerbose)           Log.v(TAG,"interrupted");
+        }
+        waitCount++;
+      }
+      mNewFrameAvailable=false;
+      if (mLogVerbose)       Log.v(TAG,"Got new frame");
+    }
+    mSurfaceTexture.updateTexImage();
+    mOrientationUpdated=true;
+  }
+  if (mOrientationUpdated) {
+    float[] surfaceTransform=new float[16];
+    mSurfaceTexture.getTransformMatrix(surfaceTransform);
+    float[] sourceCoords=new float[16];
+switch (mOrientation) {
+default :
+case 0:
+      Matrix.multiplyMM(sourceCoords,0,surfaceTransform,0,mSourceCoords_0,0);
+    break;
+case 90:
+  Matrix.multiplyMM(sourceCoords,0,surfaceTransform,0,mSourceCoords_90,0);
+break;
+case 180:
+Matrix.multiplyMM(sourceCoords,0,surfaceTransform,0,mSourceCoords_180,0);
+break;
+case 270:
+Matrix.multiplyMM(sourceCoords,0,surfaceTransform,0,mSourceCoords_270,0);
+break;
+}
+if (mLogVerbose) {
+Log.v(TAG,"OrientationHint = " + mOrientation);
+String temp=String.format("SetSourceRegion: %.2f, %.2f, %.2f, %.2f, %.2f, %.2f, %.2f, %.2f",sourceCoords[4],sourceCoords[5],sourceCoords[0],sourceCoords[1],sourceCoords[12],sourceCoords[13],sourceCoords[8],sourceCoords[9]);
+Log.v(TAG,temp);
+}
+mFrameExtractor.setSourceRegion(sourceCoords[4],sourceCoords[5],sourceCoords[0],sourceCoords[1],sourceCoords[12],sourceCoords[13],sourceCoords[8],sourceCoords[9]);
+mOrientationUpdated=false;
+}
+Frame output=context.getFrameManager().newFrame(mOutputFormat);
+mFrameExtractor.process(mMediaFrame,output);
+long timestamp=mSurfaceTexture.getTimestamp();
+if (mLogVerbose) Log.v(TAG,"Timestamp: " + (timestamp / 1000000000.0) + " s");
+output.setTimestamp(timestamp);
+pushOutput("video",output);
+output.release();
+mPlaying=true;
+}
