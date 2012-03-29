@@ -74,6 +74,7 @@ synchronized (sGLThreadManager) {
               stopEglSurfaceLocked();
             }
             mWaitingForSurface=true;
+            mSurfaceIsBad=false;
             sGLThreadManager.notifyAll();
           }
           if (mHasSurface && mWaitingForSurface) {
@@ -134,7 +135,7 @@ synchronized (sGLThreadManager) {
             }
           }
           if (LOG_THREADS) {
-            Log.i("GLThread","waiting tid=" + getId() + " mHaveEglContext: "+ mHaveEglContext+ " mHaveEglSurface: "+ mHaveEglSurface+ " mPaused: "+ mPaused+ " mHasSurface: "+ mHasSurface+ " mWaitingForSurface: "+ mWaitingForSurface+ " mWidth: "+ mWidth+ " mHeight: "+ mHeight+ " mRequestRender: "+ mRequestRender+ " mRenderMode: "+ mRenderMode);
+            Log.i("GLThread","waiting tid=" + getId() + " mHaveEglContext: "+ mHaveEglContext+ " mHaveEglSurface: "+ mHaveEglSurface+ " mPaused: "+ mPaused+ " mHasSurface: "+ mHasSurface+ " mSurfaceIsBad: "+ mSurfaceIsBad+ " mWaitingForSurface: "+ mWaitingForSurface+ " mWidth: "+ mWidth+ " mHeight: "+ mHeight+ " mRequestRender: "+ mRequestRender+ " mRenderMode: "+ mRenderMode);
           }
           sGLThreadManager.wait();
         }
@@ -187,21 +188,30 @@ synchronized (sGLThreadManager) {
           view.mRenderer.onDrawFrame(gl);
         }
       }
-      if (!mEglHelper.swap()) {
-        if (LOG_SURFACE) {
-          Log.i("GLThread","egl context lost tid=" + getId());
-        }
-        lostEglContext=true;
+      int swapError=mEglHelper.swap();
+switch (swapError) {
+case EGL10.EGL_SUCCESS:
+        break;
+case EGL11.EGL_CONTEXT_LOST:
+      if (LOG_SURFACE) {
+        Log.i("GLThread","egl context lost tid=" + getId());
       }
-      if (wantRenderNotification) {
-        doRenderNotification=true;
-      }
-    }
-  }
+    lostEglContext=true;
+  break;
+default :
+Log.w("GLThread","eglSwapBuffers error: " + swapError + ". Assume surfaceview surface is being destroyed. tid="+ getId());
+mSurfaceIsBad=true;
+break;
+}
+if (wantRenderNotification) {
+doRenderNotification=true;
+}
+}
+}
   finally {
 synchronized (sGLThreadManager) {
-      stopEglSurfaceLocked();
-      stopEglContextLocked();
-    }
-  }
+stopEglSurfaceLocked();
+stopEglContextLocked();
+}
+}
 }
