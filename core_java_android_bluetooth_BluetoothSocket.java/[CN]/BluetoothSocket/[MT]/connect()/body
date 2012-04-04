@@ -1,14 +1,27 @@
 {
-  mLock.readLock().lock();
+  if (mDevice == null)   throw new IOException("Connect is called on null device");
   try {
     if (mSocketState == SocketState.CLOSED)     throw new IOException("socket closed");
-    if (mSdp != null) {
-      mPort=mSdp.doSdp();
+    mPfd=sBluetoothProxy.connectSocket(mDevice,mType,mUuid,mPort,getSecurityFlags());
+synchronized (this) {
+      Log.d(TAG,"connect(), SocketState: " + mSocketState + ", mPfd: "+ mPfd);
+      if (mSocketState == SocketState.CLOSED)       throw new IOException("socket closed");
+      if (mPfd == null)       throw new IOException("bt socket connect failed");
+      FileDescriptor fd=mPfd.getFileDescriptor();
+      mSocket=new LocalSocket(fd);
+      mSocketIS=mSocket.getInputStream();
+      mSocketOS=mSocket.getOutputStream();
     }
-    connectNative();
-    mSocketState=SocketState.CONNECTED;
+    int channel=readInt(mSocketIS);
+    if (channel <= 0)     throw new IOException("bt socket connect failed");
+    mPort=channel;
+    waitSocketSignal(mSocketIS);
+synchronized (this) {
+      if (mSocketState == SocketState.CLOSED)       throw new IOException("bt socket closed");
+      mSocketState=SocketState.CONNECTED;
+    }
   }
-  finally {
-    mLock.readLock().unlock();
+ catch (  RemoteException e) {
+    Log.e(TAG,Log.getStackTraceString(new Throwable()));
   }
 }
