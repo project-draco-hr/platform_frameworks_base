@@ -16,9 +16,10 @@ synchronized (sFirstDrawHandlers) {
     }
   }
   scrollToRectOrFocus(null,false);
-  if (mAttachInfo.mViewScrollChanged) {
-    mAttachInfo.mViewScrollChanged=false;
-    mAttachInfo.mTreeObserver.dispatchOnScrollChanged();
+  final AttachInfo attachInfo=mAttachInfo;
+  if (attachInfo.mViewScrollChanged) {
+    attachInfo.mViewScrollChanged=false;
+    attachInfo.mTreeObserver.dispatchOnScrollChanged();
   }
   int yoff;
   boolean animating=mScroller != null && mScroller.computeScrollOffset();
@@ -32,8 +33,8 @@ synchronized (sFirstDrawHandlers) {
     mCurScrollY=yoff;
     fullRedrawNeeded=true;
   }
-  final float appScale=mAttachInfo.mApplicationScale;
-  final boolean scalingRequired=mAttachInfo.mScalingRequired;
+  final float appScale=attachInfo.mApplicationScale;
+  final boolean scalingRequired=attachInfo.mScalingRequired;
   int resizeAlpha=0;
   if (mResizeBuffer != null) {
     long deltaTime=SystemClock.uptimeMillis() - mResizeBufferStartTime;
@@ -59,14 +60,15 @@ synchronized (sFirstDrawHandlers) {
     return;
   }
   if (fullRedrawNeeded) {
-    mAttachInfo.mIgnoreDirtyState=true;
+    attachInfo.mIgnoreDirtyState=true;
     dirty.set(0,0,(int)(mWidth * appScale + 0.5f),(int)(mHeight * appScale + 0.5f));
   }
   if (DEBUG_ORIENTATION || DEBUG_DRAW) {
     Log.v(TAG,"Draw " + mView + "/"+ mWindowAttributes.getTitle()+ ": dirty={"+ dirty.left+ ","+ dirty.top+ ","+ dirty.right+ ","+ dirty.bottom+ "} surface="+ surface+ " surface.isValid()="+ surface.isValid()+ ", appScale:"+ appScale+ ", width="+ mWidth+ ", height="+ mHeight);
   }
+  attachInfo.mTreeObserver.dispatchOnDraw();
   if (!dirty.isEmpty() || mIsAnimating) {
-    if (mAttachInfo.mHardwareRenderer != null && mAttachInfo.mHardwareRenderer.isEnabled()) {
+    if (attachInfo.mHardwareRenderer != null && attachInfo.mHardwareRenderer.isEnabled()) {
       mIsAnimating=false;
       mHardwareYOffset=yoff;
       mResizeAlpha=resizeAlpha;
@@ -74,111 +76,12 @@ synchronized (sFirstDrawHandlers) {
       mCurrentDirty.union(mPreviousDirty);
       mPreviousDirty.set(dirty);
       dirty.setEmpty();
-      if (mAttachInfo.mHardwareRenderer.draw(mView,mAttachInfo,this,animating ? null : mCurrentDirty)) {
+      if (attachInfo.mHardwareRenderer.draw(mView,attachInfo,this,animating ? null : mCurrentDirty)) {
         mPreviousDirty.set(0,0,mWidth,mHeight);
       }
     }
- else {
-      Canvas canvas;
-      try {
-        int left=dirty.left;
-        int top=dirty.top;
-        int right=dirty.right;
-        int bottom=dirty.bottom;
-        final long lockCanvasStartTime;
-        if (ViewDebug.DEBUG_LATENCY) {
-          lockCanvasStartTime=System.nanoTime();
-        }
-        canvas=mSurface.lockCanvas(dirty);
-        if (ViewDebug.DEBUG_LATENCY) {
-          long now=System.nanoTime();
-          Log.d(ViewDebug.DEBUG_LATENCY_TAG,"- lockCanvas() took " + ((now - lockCanvasStartTime) * 0.000001f) + "ms");
-        }
-        if (left != dirty.left || top != dirty.top || right != dirty.right || bottom != dirty.bottom) {
-          mAttachInfo.mIgnoreDirtyState=true;
-        }
-        canvas.setDensity(mDensity);
-      }
- catch (      Surface.OutOfResourcesException e) {
-        Log.e(TAG,"OutOfResourcesException locking surface",e);
-        try {
-          if (!sWindowSession.outOfMemory(mWindow)) {
-            Slog.w(TAG,"No processes killed for memory; killing self");
-            Process.killProcess(Process.myPid());
-          }
-        }
- catch (        RemoteException ex) {
-        }
-        mLayoutRequested=true;
-        return;
-      }
-catch (      IllegalArgumentException e) {
-        Log.e(TAG,"IllegalArgumentException locking surface",e);
-        mLayoutRequested=true;
-        return;
-      }
-      try {
-        if (DEBUG_ORIENTATION || DEBUG_DRAW) {
-          Log.v(TAG,"Surface " + surface + " drawing to bitmap w="+ canvas.getWidth()+ ", h="+ canvas.getHeight());
-        }
-        long startTime=0L;
-        if (ViewDebug.DEBUG_PROFILE_DRAWING) {
-          startTime=SystemClock.elapsedRealtime();
-        }
-        if (!canvas.isOpaque() || yoff != 0) {
-          canvas.drawColor(0,PorterDuff.Mode.CLEAR);
-        }
-        dirty.setEmpty();
-        mIsAnimating=false;
-        mAttachInfo.mDrawingTime=SystemClock.uptimeMillis();
-        mView.mPrivateFlags|=View.DRAWN;
-        if (DEBUG_DRAW) {
-          Context cxt=mView.getContext();
-          Log.i(TAG,"Drawing: package:" + cxt.getPackageName() + ", metrics="+ cxt.getResources().getDisplayMetrics()+ ", compatibilityInfo="+ cxt.getResources().getCompatibilityInfo());
-        }
-        try {
-          canvas.translate(0,-yoff);
-          if (mTranslator != null) {
-            mTranslator.translateCanvas(canvas);
-          }
-          canvas.setScreenDensity(scalingRequired ? DisplayMetrics.DENSITY_DEVICE : 0);
-          mAttachInfo.mSetIgnoreDirtyState=false;
-          final long drawStartTime;
-          if (ViewDebug.DEBUG_LATENCY) {
-            drawStartTime=System.nanoTime();
-          }
-          mView.draw(canvas);
-          if (ViewDebug.DEBUG_LATENCY) {
-            long now=System.nanoTime();
-            Log.d(ViewDebug.DEBUG_LATENCY_TAG,"- draw() took " + ((now - drawStartTime) * 0.000001f) + "ms");
-          }
-        }
-  finally {
-          if (!mAttachInfo.mSetIgnoreDirtyState) {
-            mAttachInfo.mIgnoreDirtyState=false;
-          }
-        }
-        if (false && ViewDebug.consistencyCheckEnabled) {
-          mView.dispatchConsistencyCheck(ViewDebug.CONSISTENCY_DRAWING);
-        }
-        if (ViewDebug.DEBUG_PROFILE_DRAWING) {
-          EventLog.writeEvent(60000,SystemClock.elapsedRealtime() - startTime);
-        }
-      }
-  finally {
-        final long unlockCanvasAndPostStartTime;
-        if (ViewDebug.DEBUG_LATENCY) {
-          unlockCanvasAndPostStartTime=System.nanoTime();
-        }
-        surface.unlockCanvasAndPost(canvas);
-        if (ViewDebug.DEBUG_LATENCY) {
-          long now=System.nanoTime();
-          Log.d(ViewDebug.DEBUG_LATENCY_TAG,"- unlockCanvasAndPost() took " + ((now - unlockCanvasAndPostStartTime) * 0.000001f) + "ms");
-        }
-        if (LOCAL_LOGV) {
-          Log.v(TAG,"Surface " + surface + " unlockCanvasAndPost");
-        }
-      }
+ else     if (!drawSoftware(surface,attachInfo,yoff,scalingRequired,dirty)) {
+      return;
     }
   }
   if (animating) {
