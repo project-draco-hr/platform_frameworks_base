@@ -1,7 +1,7 @@
 {
   if (mAdjSeq == app.adjSeq) {
     if (!recursed && app.hidden) {
-      app.curAdj=app.curRawAdj=hiddenAdj;
+      app.curAdj=app.curRawAdj=app.nonStoppingAdj=hiddenAdj;
     }
     return app.curRawAdj;
   }
@@ -19,7 +19,7 @@
   if (app.maxAdj <= ProcessList.FOREGROUND_APP_ADJ) {
     app.adjType="fixed";
     app.adjSeq=mAdjSeq;
-    app.curRawAdj=app.maxAdj;
+    app.curRawAdj=app.nonStoppingAdj=app.maxAdj;
     app.foregroundActivities=false;
     app.keeping=true;
     app.curSchedGroup=Process.THREAD_GROUP_DEFAULT;
@@ -79,6 +79,7 @@
     app.empty=true;
     app.adjType="bg-empty";
   }
+  boolean hasStoppingActivities=false;
   if (!app.foregroundActivities && activitiesSize > 0) {
     for (int j=0; j < activitiesSize; j++) {
       final ActivityRecord r=app.activities.get(j);
@@ -92,13 +93,18 @@
         app.foregroundActivities=true;
         break;
       }
- else       if (r.state == ActivityState.PAUSING || r.state == ActivityState.PAUSED || r.state == ActivityState.STOPPING) {
+ else       if (r.state == ActivityState.PAUSING || r.state == ActivityState.PAUSED) {
         if (adj > ProcessList.PERCEPTIBLE_APP_ADJ) {
           adj=ProcessList.PERCEPTIBLE_APP_ADJ;
-          app.adjType="stopping";
+          app.adjType="pausing";
         }
         app.hidden=false;
         app.foregroundActivities=true;
+      }
+ else       if (r.state == ActivityState.STOPPING) {
+        app.hidden=false;
+        app.foregroundActivities=true;
+        hasStoppingActivities=true;
       }
     }
   }
@@ -137,7 +143,7 @@
   }
   if (false)   Slog.i(TAG,"OOM " + app + ": initial adj="+ adj+ " reason="+ app.adjType);
   app.adjSeq=mAdjSeq;
-  app.curRawAdj=adj;
+  app.curRawAdj=app.nonStoppingAdj=adj;
   if (mBackupTarget != null && app == mBackupTarget.app) {
     if (adj > ProcessList.BACKUP_APP_ADJ) {
       if (DEBUG_BACKUP)       Slog.v(TAG,"oom BACKUP_APP_ADJ for " + app);
@@ -335,6 +341,25 @@
       }
     }
   }
+  if (adj == ProcessList.SERVICE_ADJ) {
+    if (doingAll) {
+      app.serviceb=mNewNumServiceProcs > (mNumServiceProcs / 3);
+      mNewNumServiceProcs++;
+    }
+    if (app.serviceb) {
+      adj=ProcessList.SERVICE_B_ADJ;
+    }
+  }
+ else {
+    app.serviceb=false;
+  }
+  app.nonStoppingAdj=adj;
+  if (hasStoppingActivities) {
+    if (adj > ProcessList.PERCEPTIBLE_APP_ADJ) {
+      adj=ProcessList.PERCEPTIBLE_APP_ADJ;
+      app.adjType="stopping";
+    }
+  }
   app.curRawAdj=adj;
   if (adj > app.maxAdj) {
     adj=app.maxAdj;
@@ -360,18 +385,6 @@
  else     if (adj < ProcessList.HIDDEN_APP_MAX_ADJ) {
       adj++;
     }
-  }
-  if (adj == ProcessList.SERVICE_ADJ) {
-    if (doingAll) {
-      app.serviceb=mNewNumServiceProcs > (mNumServiceProcs / 3);
-      mNewNumServiceProcs++;
-    }
-    if (app.serviceb) {
-      adj=ProcessList.SERVICE_B_ADJ;
-    }
-  }
- else {
-    app.serviceb=false;
   }
   app.curAdj=adj;
   app.curSchedGroup=schedGroup;
