@@ -1,11 +1,17 @@
 {
+  ClientInfo clientInfo;
+  DnsSdServiceInfo servInfo;
 switch (msg.what) {
 case AsyncChannel.CMD_CHANNEL_HALF_CONNECTED:
     if (msg.arg1 == AsyncChannel.STATUS_SUCCESSFUL) {
       AsyncChannel c=(AsyncChannel)msg.obj;
       if (DBG)       Slog.d(TAG,"New client listening to asynchronous messages");
       c.sendMessage(AsyncChannel.CMD_CHANNEL_FULLY_CONNECTED);
-      mClients.add(c);
+      ClientInfo cInfo=new ClientInfo(c,msg.replyTo);
+      if (mClients.size() == 0) {
+        startMDnsDaemon();
+      }
+      mClients.put(msg.replyTo,cInfo);
     }
  else {
       Slog.e(TAG,"Client connection failure, error=" + msg.arg1);
@@ -18,7 +24,10 @@ if (msg.arg1 == AsyncChannel.STATUS_SEND_UNSUCCESSFUL) {
  else {
   if (DBG)   Slog.d(TAG,"Client connection lost with reason: " + msg.arg1);
 }
-mClients.remove((AsyncChannel)msg.obj);
+mClients.remove(msg.replyTo);
+if (mClients.size() == 0) {
+stopMDnsDaemon();
+}
 break;
 case AsyncChannel.CMD_CHANNEL_FULL_CONNECTION:
 AsyncChannel ac=new AsyncChannel();
@@ -26,21 +35,85 @@ ac.connect(mContext,this,msg.replyTo);
 break;
 case NsdManager.DISCOVER_SERVICES:
 if (DBG) Slog.d(TAG,"Discover services");
-DnsSdServiceInfo s=(DnsSdServiceInfo)msg.obj;
-discoverServices(1,s.getServiceType());
+servInfo=(DnsSdServiceInfo)msg.obj;
+clientInfo=mClients.get(msg.replyTo);
+if (clientInfo.mDiscoveryId != INVALID_ID) {
+if (DBG) Slog.d(TAG,"discovery in progress");
+mReplyChannel.replyToMessage(msg,NsdManager.DISCOVER_SERVICES_FAILED,NsdManager.ALREADY_ACTIVE);
+break;
+}
+clientInfo.mDiscoveryId=getUniqueId();
+if (discoverServices(clientInfo.mDiscoveryId,servInfo.getServiceType())) {
 mReplyChannel.replyToMessage(msg,NsdManager.DISCOVER_SERVICES_STARTED);
+}
+ else {
+mReplyChannel.replyToMessage(msg,NsdManager.DISCOVER_SERVICES_FAILED,NsdManager.ERROR);
+clientInfo.mDiscoveryId=INVALID_ID;
+}
 break;
 case NsdManager.STOP_DISCOVERY:
 if (DBG) Slog.d(TAG,"Stop service discovery");
-mReplyChannel.replyToMessage(msg,NsdManager.STOP_DISCOVERY_FAILED);
+clientInfo=mClients.get(msg.replyTo);
+if (clientInfo.mDiscoveryId == INVALID_ID) {
+if (DBG) Slog.d(TAG,"discovery already stopped");
+mReplyChannel.replyToMessage(msg,NsdManager.STOP_DISCOVERY_FAILED,NsdManager.ALREADY_ACTIVE);
+break;
+}
+if (stopServiceDiscovery(clientInfo.mDiscoveryId)) {
+clientInfo.mDiscoveryId=INVALID_ID;
+mReplyChannel.replyToMessage(msg,NsdManager.STOP_DISCOVERY_SUCCEEDED);
+}
+ else {
+mReplyChannel.replyToMessage(msg,NsdManager.STOP_DISCOVERY_FAILED,NsdManager.ERROR);
+}
 break;
 case NsdManager.REGISTER_SERVICE:
 if (DBG) Slog.d(TAG,"Register service");
-mReplyChannel.replyToMessage(msg,NsdManager.REGISTER_SERVICE_FAILED);
+clientInfo=mClients.get(msg.replyTo);
+if (clientInfo.mRegisteredIds.size() >= ClientInfo.MAX_REG) {
+if (DBG) Slog.d(TAG,"register service exceeds limit");
+mReplyChannel.replyToMessage(msg,NsdManager.REGISTER_SERVICE_FAILED,NsdManager.MAX_REGS_REACHED);
+}
+int id=getUniqueId();
+if (registerService(id,(DnsSdServiceInfo)msg.obj)) {
+clientInfo.mRegisteredIds.add(id);
+}
+ else {
+mReplyChannel.replyToMessage(msg,NsdManager.REGISTER_SERVICE_FAILED,NsdManager.ERROR);
+}
 break;
 case NsdManager.UPDATE_SERVICE:
 if (DBG) Slog.d(TAG,"Update service");
 mReplyChannel.replyToMessage(msg,NsdManager.UPDATE_SERVICE_FAILED);
+break;
+case NsdManager.RESOLVE_SERVICE:
+if (DBG) Slog.d(TAG,"Resolve service");
+servInfo=(DnsSdServiceInfo)msg.obj;
+clientInfo=mClients.get(msg.replyTo);
+if (clientInfo.mResolveId != INVALID_ID) {
+stopResolveService(clientInfo.mResolveId);
+}
+clientInfo.mResolveId=getUniqueId();
+if (!resolveService(clientInfo.mResolveId,servInfo)) {
+mReplyChannel.replyToMessage(msg,NsdManager.RESOLVE_SERVICE_FAILED,NsdManager.ERROR);
+clientInfo.mResolveId=INVALID_ID;
+}
+break;
+case NsdManager.STOP_RESOLVE:
+if (DBG) Slog.d(TAG,"Stop resolve");
+clientInfo=mClients.get(msg.replyTo);
+if (clientInfo.mResolveId == INVALID_ID) {
+if (DBG) Slog.d(TAG,"resolve already stopped");
+mReplyChannel.replyToMessage(msg,NsdManager.STOP_RESOLVE_FAILED,NsdManager.ALREADY_ACTIVE);
+break;
+}
+if (stopResolveService(clientInfo.mResolveId)) {
+clientInfo.mResolveId=INVALID_ID;
+mReplyChannel.replyToMessage(msg,NsdManager.STOP_RESOLVE_SUCCEEDED);
+}
+ else {
+mReplyChannel.replyToMessage(msg,NsdManager.STOP_RESOLVE_FAILED,NsdManager.ERROR);
+}
 break;
 default :
 Slog.d(TAG,"NsdServicehandler.handleMessage ignoring msg=" + msg);
