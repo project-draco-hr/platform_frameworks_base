@@ -6,6 +6,7 @@
   }
   AccountAndUser[] accounts=mAccounts;
   final long nowAbsolute=System.currentTimeMillis();
+  final long shiftedNowAbsolute=(0 < nowAbsolute - mSyncRandomOffsetMillis) ? (nowAbsolute - mSyncRandomOffsetMillis) : 0;
   ArrayList<SyncStorageEngine.AuthorityInfo> infos=mSyncStorageEngine.getAuthorities();
   for (  SyncStorageEngine.AuthorityInfo info : infos) {
     if (!containsAccountAndUser(accounts,info.account,info.userId)) {
@@ -20,10 +21,10 @@
     SyncStatusInfo status=mSyncStorageEngine.getOrCreateSyncStatus(info);
     for (int i=0, N=info.periodicSyncs.size(); i < N; i++) {
       final Bundle extras=info.periodicSyncs.get(i).first;
-      final Long periodInSeconds=info.periodicSyncs.get(i).second;
+      final Long periodInMillis=info.periodicSyncs.get(i).second * 1000;
       final long lastPollTimeAbsolute=status.getPeriodicSyncTime(i);
-      final long nextPollTimeAbsolute=lastPollTimeAbsolute > nowAbsolute ? nowAbsolute : lastPollTimeAbsolute + periodInSeconds * 1000;
-      if (nextPollTimeAbsolute <= nowAbsolute) {
+      long remainingMillis=periodInMillis - (shiftedNowAbsolute % periodInMillis);
+      if (remainingMillis == periodInMillis || lastPollTimeAbsolute > nowAbsolute || (nowAbsolute - lastPollTimeAbsolute >= periodInMillis)) {
         final Pair<Long,Long> backoff=mSyncStorageEngine.getBackoff(info.account,info.userId,info.authority);
         final RegisteredServicesCache.ServiceInfo<SyncAdapterType> syncAdapterInfo=mSyncAdapters.getServiceInfo(SyncAdapterType.newKey(info.authority,info.account.type));
         if (syncAdapterInfo == null) {
@@ -32,10 +33,9 @@
         scheduleSyncOperation(new SyncOperation(info.account,info.userId,SyncStorageEngine.SOURCE_PERIODIC,info.authority,extras,0,backoff != null ? backoff.first : 0,mSyncStorageEngine.getDelayUntilTime(info.account,info.userId,info.authority),syncAdapterInfo.type.allowParallelSyncs()));
         status.setPeriodicSyncTime(i,nowAbsolute);
       }
- else {
-        if (nextPollTimeAbsolute < earliestFuturePollTime) {
-          earliestFuturePollTime=nextPollTimeAbsolute;
-        }
+      final long nextPollTimeAbsolute=nowAbsolute + remainingMillis;
+      if (nextPollTimeAbsolute < earliestFuturePollTime) {
+        earliestFuturePollTime=nextPollTimeAbsolute;
       }
     }
   }
