@@ -1,0 +1,59 @@
+{
+  List<WifiP2pServiceResponse> respList=new ArrayList<WifiP2pServiceResponse>();
+  String[] args=supplicantEvent.split(" ");
+  if (args.length != 4) {
+    return null;
+  }
+  WifiP2pDevice dev=new WifiP2pDevice();
+  String srcAddr=args[1];
+  dev.deviceAddress=srcAddr;
+  byte[] bin=hexStr2Bin(args[3]);
+  if (bin == null) {
+    return null;
+  }
+  DataInputStream dis=new DataInputStream(new ByteArrayInputStream(bin));
+  try {
+    while (dis.available() > 0) {
+      int length=((dis.readByte() & 0xff) + ((dis.readByte() & 0xff) << 8)) - 3;
+      int type=dis.readUnsignedByte();
+      byte transId=dis.readByte();
+      int status=dis.readUnsignedByte();
+      if (length < 0) {
+        return null;
+      }
+      if (length == 0) {
+        if (status == Status.SUCCESS) {
+          respList.add(new WifiP2pServiceResponse(type,status,transId,dev,null));
+        }
+        continue;
+      }
+      if (length > MAX_BUF_SIZE) {
+        dis.skip(length);
+        continue;
+      }
+      byte[] data=new byte[length];
+      dis.readFully(data);
+      WifiP2pServiceResponse resp;
+      if (type == WifiP2pServiceInfo.SERVICE_TYPE_BONJOUR) {
+        resp=WifiP2pBonjourServiceResponse.newInstance(status,transId,dev,data);
+      }
+ else       if (type == WifiP2pServiceInfo.SERVICE_TYPE_UPNP) {
+        resp=WifiP2pUpnpServiceResponse.newInstance(status,transId,dev,data);
+      }
+ else {
+        resp=new WifiP2pServiceResponse(type,status,transId,dev,data);
+      }
+      if (resp != null && resp.getStatus() == Status.SUCCESS) {
+        respList.add(resp);
+      }
+    }
+    return respList;
+  }
+ catch (  IOException e) {
+    e.printStackTrace();
+  }
+  if (respList.size() > 0) {
+    return respList;
+  }
+  return null;
+}
