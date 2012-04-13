@@ -22,18 +22,9 @@
   mInnerFields.mHoldScreen=null;
   mInnerFields.mScreenBrightness=-1;
   mInnerFields.mButtonBrightness=-1;
-  boolean focusDisplayed=false;
   mAnimator.mAnimating=false;
-  boolean createWatermark=false;
-  if (mFxSession == null) {
-    mFxSession=new SurfaceSession();
-    createWatermark=true;
-  }
   if (SHOW_LIGHT_TRANSACTIONS)   Slog.i(TAG,">>> OPEN TRANSACTION performLayoutAndPlaceSurfaces");
   Surface.openTransaction();
-  if (createWatermark) {
-    createWatermark();
-  }
   if (mWatermark != null) {
     mWatermark.positionSurface(dw,dh);
   }
@@ -89,6 +80,7 @@
     mInnerFields.mObscured=false;
     mInnerFields.mDimming=false;
     mInnerFields.mSyswin=false;
+    boolean focusDisplayed=false;
     final int N=mWindows.size();
     for (i=N - 1; i >= 0; i--) {
       WindowState w=mWindows.get(i);
@@ -103,6 +95,9 @@
       if (obscuredChanged && mWallpaperTarget == w) {
         updateWallpaperVisibilityLocked();
       }
+    }
+    if (focusDisplayed) {
+      mH.sendEmptyMessage(H.REPORT_LOSING_FOCUS);
     }
     if (!mInnerFields.mDimming && mAnimator.isDimming()) {
       mAnimator.stopDimming();
@@ -181,12 +176,18 @@
       }
     }
   }
-  mAnimator.animate();
-  mPendingLayoutChanges|=mAnimator.mPendingLayoutChanges;
-  if (DEBUG_LAYOUT_REPEATS)   debugLayoutRepeats("after animate()",mPendingLayoutChanges);
-  if (SHOW_LIGHT_TRANSACTIONS)   Slog.i(TAG,"<<< CLOSE TRANSACTION performLayoutAndPlaceSurfaces");
-  if (mWatermark != null) {
-    mWatermark.drawIfNeeded();
+synchronized (mAnimator) {
+    final ArrayList<WindowStateAnimator> winAnimators=mAnimator.mWinAnimators;
+    winAnimators.clear();
+    for (i=0; i < N; i++) {
+      final WindowStateAnimator winAnimator=mWindows.get(i).mWinAnimator;
+      if (winAnimator.mSurface != null) {
+        winAnimators.add(winAnimator);
+      }
+    }
+    mAnimator.animate();
+    mPendingLayoutChanges|=mAnimator.mPendingLayoutChanges;
+    if (DEBUG_LAYOUT_REPEATS)     debugLayoutRepeats("after animate()",mPendingLayoutChanges);
   }
   if (DEBUG_ORIENTATION && mDisplayFrozen)   Slog.v(TAG,"With display frozen, orientationChangeComplete=" + mInnerFields.mOrientationChangeComplete);
   if (mInnerFields.mOrientationChangeComplete) {
@@ -263,9 +264,6 @@
     rebuildAppWindowListLocked();
     assignLayersLocked();
     mToBottomApps.clear();
-  }
-  if (focusDisplayed) {
-    mH.sendEmptyMessage(H.REPORT_LOSING_FOCUS);
   }
   if (wallpaperDestroyed) {
     mLayoutNeeded|=adjustWallpaperWindowsLocked() != 0;
