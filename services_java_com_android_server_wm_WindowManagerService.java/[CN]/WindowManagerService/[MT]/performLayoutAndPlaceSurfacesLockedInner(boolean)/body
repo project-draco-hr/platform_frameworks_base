@@ -97,6 +97,32 @@
       if (obscuredChanged && mWallpaperTarget == w) {
         updateWallpaperVisibilityLocked();
       }
+      final WindowStateAnimator winAnimator=w.mWinAnimator;
+      if (w.mHasSurface && w.shouldAnimateMove()) {
+        Animation a=AnimationUtils.loadAnimation(mContext,com.android.internal.R.anim.window_move_from_decor);
+        winAnimator.setAnimation(a);
+        winAnimator.mAnimDw=w.mLastFrame.left - w.mFrame.left;
+        winAnimator.mAnimDh=w.mLastFrame.top - w.mFrame.top;
+      }
+ else {
+        winAnimator.mAnimDw=innerDw;
+        winAnimator.mAnimDh=innerDh;
+      }
+      w.mContentChanged=false;
+      if (w.mHasSurface) {
+        if (winAnimator.commitFinishDrawingLocked(currentTime)) {
+          if ((w.mAttrs.flags & WindowManager.LayoutParams.FLAG_SHOW_WALLPAPER) != 0) {
+            if (WindowManagerService.DEBUG_WALLPAPER)             Slog.v(TAG,"First draw done in potential wallpaper target " + w);
+            mInnerFields.mWallpaperMayChange=true;
+            mPendingLayoutChanges|=WindowManagerPolicy.FINISH_LAYOUT_REDO_WALLPAPER;
+            if (WindowManagerService.DEBUG_LAYOUT_REPEATS) {
+              debugLayoutRepeats("updateWindowsAndWallpaperLocked 1",mPendingLayoutChanges);
+            }
+          }
+        }
+        winAnimator.setSurfaceBoundaries(recoveringMemory);
+      }
+      updateResizingWindows(w);
     }
     if (focusDisplayed) {
       mH.sendEmptyMessage(H.REPORT_LOSING_FOCUS);
@@ -149,43 +175,6 @@
     mPendingLayoutChanges|=PhoneWindowManager.FINISH_LAYOUT_REDO_LAYOUT;
     if (DEBUG_LAYOUT_REPEATS)     debugLayoutRepeats("mLayoutNeeded",mPendingLayoutChanges);
   }
-  final int N=mWindows.size();
-  for (i=N - 1; i >= 0; i--) {
-    final WindowState w=mWindows.get(i);
-    final WindowStateAnimator winAnimator=w.mWinAnimator;
-    if (w.mHasSurface && w.shouldAnimateMove()) {
-      Animation a=AnimationUtils.loadAnimation(mContext,com.android.internal.R.anim.window_move_from_decor);
-      winAnimator.setAnimation(a);
-      winAnimator.mAnimDw=w.mLastFrame.left - w.mFrame.left;
-      winAnimator.mAnimDh=w.mLastFrame.top - w.mFrame.top;
-    }
- else {
-      winAnimator.mAnimDw=innerDw;
-      winAnimator.mAnimDh=innerDh;
-    }
-    w.mContentChanged=false;
-    updateResizingWindows(w);
-    if (w.mHasSurface) {
-      if (winAnimator.commitFinishDrawingLocked(currentTime)) {
-        if ((w.mAttrs.flags & WindowManager.LayoutParams.FLAG_SHOW_WALLPAPER) != 0) {
-          if (WindowManagerService.DEBUG_WALLPAPER)           Slog.v(TAG,"First draw done in potential wallpaper target " + w);
-          mInnerFields.mWallpaperMayChange=true;
-          mPendingLayoutChanges|=WindowManagerPolicy.FINISH_LAYOUT_REDO_WALLPAPER;
-          if (WindowManagerService.DEBUG_LAYOUT_REPEATS) {
-            debugLayoutRepeats("updateWindowsAndWallpaperLocked 1",mPendingLayoutChanges);
-          }
-        }
-      }
-    }
-  }
-  if (DEBUG_ORIENTATION && mDisplayFrozen)   Slog.v(TAG,"With display frozen, orientationChangeComplete=" + mInnerFields.mOrientationChangeComplete);
-  if (mInnerFields.mOrientationChangeComplete) {
-    if (mWindowsFreezingScreen) {
-      mWindowsFreezingScreen=false;
-      mH.removeMessages(H.WINDOW_FREEZE_TIMEOUT);
-    }
-    stopFreezingDisplayLocked();
-  }
   if (!mResizingWindows.isEmpty()) {
     for (i=mResizingWindows.size() - 1; i >= 0; i--) {
       WindowState win=mResizingWindows.get(i);
@@ -209,6 +198,14 @@
       }
     }
     mResizingWindows.clear();
+  }
+  if (DEBUG_ORIENTATION && mDisplayFrozen)   Slog.v(TAG,"With display frozen, orientationChangeComplete=" + mInnerFields.mOrientationChangeComplete);
+  if (mInnerFields.mOrientationChangeComplete) {
+    if (mWindowsFreezingScreen) {
+      mWindowsFreezingScreen=false;
+      mH.removeMessages(H.WINDOW_FREEZE_TIMEOUT);
+    }
+    stopFreezingDisplayLocked();
   }
   boolean wallpaperDestroyed=false;
   i=mDestroySurface.size();
