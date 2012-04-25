@@ -1,0 +1,96 @@
+{
+  if (isExternal) {
+    String status=Environment.getExternalStorageState();
+    if (!status.equals(Environment.MEDIA_MOUNTED)) {
+      Slog.w(TAG,"Make sure sdcard is mounted.");
+      return null;
+    }
+  }
+  String codePath=packageURI.getPath();
+  File codeFile=new File(codePath);
+  final int sizeMb;
+  try {
+    sizeMb=calculateContainerSize(codeFile,isForwardLocked);
+  }
+ catch (  IOException e) {
+    Slog.w(TAG,"Problem when trying to copy " + codeFile.getPath());
+    return null;
+  }
+  final String newCachePath=PackageHelper.createSdDir(sizeMb,newCid,key,Process.myUid(),isExternal);
+  if (newCachePath == null) {
+    Slog.e(TAG,"Failed to create container " + newCid);
+    return null;
+  }
+  if (localLOGV) {
+    Slog.i(TAG,"Created container for " + newCid + " at path : "+ newCachePath);
+  }
+  final File resFile=new File(newCachePath,resFileName);
+  if (FileUtils.copyFile(new File(codePath),resFile)) {
+    if (localLOGV) {
+      Slog.i(TAG,"Copied " + codePath + " to "+ resFile);
+    }
+  }
+ else {
+    Slog.e(TAG,"Failed to copy " + codePath + " to "+ resFile);
+    PackageHelper.destroySdDir(newCid);
+    return null;
+  }
+  if (isForwardLocked) {
+    File publicZipFile=new File(newCachePath,publicResFileName);
+    try {
+      PackageHelper.extractPublicFiles(resFile.getAbsolutePath(),publicZipFile);
+      if (localLOGV) {
+        Slog.i(TAG,"Copied resources to " + publicZipFile);
+      }
+    }
+ catch (    IOException e) {
+      Slog.e(TAG,"Could not chown public APK " + publicZipFile.getAbsolutePath() + ": "+ e.getMessage());
+      PackageHelper.destroySdDir(newCid);
+      return null;
+    }
+    try {
+      Libcore.os.chmod(resFile.getAbsolutePath(),0640);
+      Libcore.os.chmod(publicZipFile.getAbsolutePath(),0644);
+    }
+ catch (    ErrnoException e) {
+      Slog.e(TAG,"Could not chown APK or resource file: " + e.getMessage());
+      PackageHelper.destroySdDir(newCid);
+      return null;
+    }
+  }
+  final File sharedLibraryDir=new File(newCachePath,LIB_DIR_NAME);
+  if (sharedLibraryDir.mkdir()) {
+    int ret=NativeLibraryHelper.copyNativeBinariesIfNeededLI(codeFile,sharedLibraryDir);
+    if (ret != PackageManager.INSTALL_SUCCEEDED) {
+      Slog.e(TAG,"Could not copy native libraries to " + sharedLibraryDir.getPath());
+      PackageHelper.destroySdDir(newCid);
+      return null;
+    }
+  }
+ else {
+    Slog.e(TAG,"Could not create native lib directory: " + sharedLibraryDir.getPath());
+    PackageHelper.destroySdDir(newCid);
+    return null;
+  }
+  if (!PackageHelper.finalizeSdDir(newCid)) {
+    Slog.e(TAG,"Failed to finalize " + newCid + " at path "+ newCachePath);
+    PackageHelper.destroySdDir(newCid);
+    return null;
+  }
+  if (localLOGV) {
+    Slog.i(TAG,"Finalized container " + newCid);
+  }
+  if (PackageHelper.isContainerMounted(newCid)) {
+    if (localLOGV) {
+      Slog.i(TAG,"Unmounting " + newCid + " at path "+ newCachePath);
+    }
+    Runtime.getRuntime().gc();
+    PackageHelper.unMountSdDir(newCid);
+  }
+ else {
+    if (localLOGV) {
+      Slog.i(TAG,"Container " + newCid + " not mounted");
+    }
+  }
+  return newCachePath;
+}
