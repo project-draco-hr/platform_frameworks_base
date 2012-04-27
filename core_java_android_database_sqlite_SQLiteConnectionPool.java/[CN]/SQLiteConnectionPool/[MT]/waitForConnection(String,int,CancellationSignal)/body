@@ -1,6 +1,7 @@
 {
   final boolean wantPrimaryConnection=(connectionFlags & CONNECTION_FLAG_PRIMARY_CONNECTION_AFFINITY) != 0;
   final ConnectionWaiter waiter;
+  final int nonce;
 synchronized (mLock) {
     throwIfClosedLocked();
     if (cancellationSignal != null) {
@@ -35,51 +36,57 @@ synchronized (mLock) {
  else {
       mConnectionWaiterQueue=waiter;
     }
-    if (cancellationSignal != null) {
-      final int nonce=waiter.mNonce;
-      cancellationSignal.setOnCancelListener(new CancellationSignal.OnCancelListener(){
-        @Override public void onCancel(){
+    nonce=waiter.mNonce;
+  }
+  if (cancellationSignal != null) {
+    cancellationSignal.setOnCancelListener(new CancellationSignal.OnCancelListener(){
+      @Override public void onCancel(){
 synchronized (mLock) {
-            cancelConnectionWaiterLocked(waiter,nonce);
+          if (waiter.mNonce == nonce) {
+            cancelConnectionWaiterLocked(waiter);
           }
         }
       }
+    }
 );
+  }
+  try {
+    long busyTimeoutMillis=CONNECTION_POOL_BUSY_MILLIS;
+    long nextBusyTimeoutTime=waiter.mStartTime + busyTimeoutMillis;
+    for (; ; ) {
+      if (mConnectionLeaked.compareAndSet(true,false)) {
+synchronized (mLock) {
+          wakeConnectionWaitersLocked();
+        }
+      }
+      LockSupport.parkNanos(this,busyTimeoutMillis * 1000000L);
+      Thread.interrupted();
+synchronized (mLock) {
+        throwIfClosedLocked();
+        final SQLiteConnection connection=waiter.mAssignedConnection;
+        final RuntimeException ex=waiter.mException;
+        if (connection != null || ex != null) {
+          recycleConnectionWaiterLocked(waiter);
+          if (connection != null) {
+            return connection;
+          }
+          throw ex;
+        }
+        final long now=SystemClock.uptimeMillis();
+        if (now < nextBusyTimeoutTime) {
+          busyTimeoutMillis=now - nextBusyTimeoutTime;
+        }
+ else {
+          logConnectionPoolBusyLocked(now - waiter.mStartTime,connectionFlags);
+          busyTimeoutMillis=CONNECTION_POOL_BUSY_MILLIS;
+          nextBusyTimeoutTime=now + busyTimeoutMillis;
+        }
+      }
     }
   }
-  long busyTimeoutMillis=CONNECTION_POOL_BUSY_MILLIS;
-  long nextBusyTimeoutTime=waiter.mStartTime + busyTimeoutMillis;
-  for (; ; ) {
-    if (mConnectionLeaked.compareAndSet(true,false)) {
-synchronized (mLock) {
-        wakeConnectionWaitersLocked();
-      }
-    }
-    LockSupport.parkNanos(this,busyTimeoutMillis * 1000000L);
-    Thread.interrupted();
-synchronized (mLock) {
-      throwIfClosedLocked();
-      final SQLiteConnection connection=waiter.mAssignedConnection;
-      final RuntimeException ex=waiter.mException;
-      if (connection != null || ex != null) {
-        if (cancellationSignal != null) {
-          cancellationSignal.setOnCancelListener(null);
-        }
-        recycleConnectionWaiterLocked(waiter);
-        if (connection != null) {
-          return connection;
-        }
-        throw ex;
-      }
-      final long now=SystemClock.uptimeMillis();
-      if (now < nextBusyTimeoutTime) {
-        busyTimeoutMillis=now - nextBusyTimeoutTime;
-      }
- else {
-        logConnectionPoolBusyLocked(now - waiter.mStartTime,connectionFlags);
-        busyTimeoutMillis=CONNECTION_POOL_BUSY_MILLIS;
-        nextBusyTimeoutTime=now + busyTimeoutMillis;
-      }
+  finally {
+    if (cancellationSignal != null) {
+      cancellationSignal.setOnCancelListener(null);
     }
   }
 }
