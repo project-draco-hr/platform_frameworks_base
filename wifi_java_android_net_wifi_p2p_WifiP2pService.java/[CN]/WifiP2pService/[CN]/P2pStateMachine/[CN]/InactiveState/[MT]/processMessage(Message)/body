@@ -3,31 +3,47 @@
 switch (message.what) {
 case WifiP2pManager.CONNECT:
     if (DBG)     logd(getName() + " sending connect");
-  mSavedPeerConfig=(WifiP2pConfig)message.obj;
-mPersistGroup=false;
-int netId=configuredNetworkId(mSavedPeerConfig.deviceAddress);
-if (netId >= 0) {
-mWifiNative.p2pReinvoke(netId,mSavedPeerConfig.deviceAddress);
-}
- else {
+  WifiP2pConfig config=(WifiP2pConfig)message.obj;
+mAutonomousGroup=false;
+if (mSavedPeerConfig != null && config.deviceAddress.equals(mSavedPeerConfig.deviceAddress)) {
+mSavedPeerConfig=config;
 mWifiNative.p2pStopFind();
 if (mWifiNative.isGroupOwner(mSavedPeerConfig.deviceAddress)) {
-if (DBG) logd("Sending join to GO");
-p2pConnectWithPinDisplay(mSavedPeerConfig,JOIN_GROUP);
+  p2pConnectWithPinDisplay(mSavedPeerConfig,JOIN_GROUP);
+}
+ else {
+  p2pConnectWithPinDisplay(mSavedPeerConfig,FORM_GROUP);
+}
 transitionTo(mGroupNegotiationState);
 }
  else {
-if (DBG) logd("Sending prov disc");
-transitionTo(mProvisionDiscoveryState);
+mSavedPeerConfig=config;
+int netId=configuredNetworkId(mSavedPeerConfig.deviceAddress);
+if (netId >= 0) {
+  mWifiNative.p2pReinvoke(netId,mSavedPeerConfig.deviceAddress);
+}
+ else {
+  mWifiNative.p2pStopFind();
+  if (mWifiNative.isGroupOwner(mSavedPeerConfig.deviceAddress)) {
+    if (DBG)     logd("Sending join to GO");
+    p2pConnectWithPinDisplay(mSavedPeerConfig,JOIN_GROUP);
+    transitionTo(mGroupNegotiationState);
+  }
+ else {
+    if (DBG)     logd("Sending prov disc");
+    transitionTo(mProvisionDiscoveryState);
+  }
 }
 }
-updateDeviceStatus(mSavedPeerConfig.deviceAddress,WifiP2pDevice.INVITED);
+mPeers.updateStatus(mSavedPeerConfig.deviceAddress,WifiP2pDevice.INVITED);
 sendP2pPeersChangedBroadcast();
 replyToMessage(message,WifiP2pManager.CONNECT_SUCCEEDED);
 break;
 case WifiMonitor.P2P_GO_NEGOTIATION_REQUEST_EVENT:
 mSavedPeerConfig=(WifiP2pConfig)message.obj;
+if (!sendConnectNoticeToApp(mPeers.get(mSavedPeerConfig.deviceAddress),mSavedPeerConfig)) {
 transitionTo(mUserAuthorizingInvitationState);
+}
 break;
 case WifiMonitor.P2P_INVITATION_RECEIVED_EVENT:
 WifiP2pGroup group=(WifiP2pGroup)message.obj;
@@ -38,7 +54,7 @@ break;
 }
 mSavedPeerConfig=new WifiP2pConfig();
 mSavedPeerConfig.deviceAddress=group.getOwner().deviceAddress;
-if ((owner=getDeviceFromPeerList(owner.deviceAddress)) != null) {
+if ((owner=mPeers.get(owner.deviceAddress)) != null) {
 if (owner.wpsPbcSupported()) {
 mSavedPeerConfig.wps.setup=WpsInfo.PBC;
 }
@@ -49,31 +65,16 @@ mSavedPeerConfig.wps.setup=WpsInfo.KEYPAD;
 mSavedPeerConfig.wps.setup=WpsInfo.DISPLAY;
 }
 }
+if (!sendConnectNoticeToApp(mPeers.get(mSavedPeerConfig.deviceAddress),mSavedPeerConfig)) {
 transitionTo(mUserAuthorizingInvitationState);
+}
 break;
 case WifiMonitor.P2P_PROV_DISC_PBC_REQ_EVENT:
 case WifiMonitor.P2P_PROV_DISC_ENTER_PIN_EVENT:
 case WifiMonitor.P2P_PROV_DISC_SHOW_PIN_EVENT:
-WifiP2pProvDiscEvent provDisc=(WifiP2pProvDiscEvent)message.obj;
-mSavedPeerConfig=new WifiP2pConfig();
-mSavedPeerConfig.deviceAddress=provDisc.device.deviceAddress;
-if (message.what == WifiMonitor.P2P_PROV_DISC_ENTER_PIN_EVENT) {
-mSavedPeerConfig.wps.setup=WpsInfo.KEYPAD;
-if (DBG) logd("Keypad prov disc request");
-}
- else if (message.what == WifiMonitor.P2P_PROV_DISC_SHOW_PIN_EVENT) {
-mSavedPeerConfig.wps.setup=WpsInfo.DISPLAY;
-mSavedPeerConfig.wps.pin=provDisc.pin;
-if (DBG) logd("Display prov disc request");
-}
- else {
-mSavedPeerConfig.wps.setup=WpsInfo.PBC;
-if (DBG) logd("PBC prov disc request");
-}
-transitionTo(mUserAuthorizingInvitationState);
 break;
 case WifiP2pManager.CREATE_GROUP:
-mPersistGroup=true;
+mAutonomousGroup=true;
 if (mWifiNative.p2pGroupAdd()) {
 replyToMessage(message,WifiP2pManager.CREATE_GROUP_SUCCEEDED);
 }
