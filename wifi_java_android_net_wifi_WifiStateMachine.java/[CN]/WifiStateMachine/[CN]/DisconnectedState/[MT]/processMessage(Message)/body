@@ -1,14 +1,26 @@
 {
   if (DBG)   log(getName() + message.toString() + "\n");
+  boolean ret=HANDLED;
 switch (message.what) {
-case CMD_SET_SCAN_MODE:
-    if (message.arg1 == SCAN_ONLY_MODE) {
-      mWifiNative.setScanResultHandling(message.arg1);
-      mWifiNative.disconnect();
-      mIsScanMode=true;
-      transitionTo(mScanModeState);
+case CMD_NO_NETWORKS_PERIODIC_SCAN:
+    if (message.arg1 == mPeriodicScanToken && mWifiConfigStore.getConfiguredNetworks().size() == 0) {
+      sendMessage(CMD_START_SCAN);
+      sendMessageDelayed(obtainMessage(CMD_NO_NETWORKS_PERIODIC_SCAN,++mPeriodicScanToken,0),mSupplicantScanIntervalMs);
     }
   break;
+case WifiManager.FORGET_NETWORK:
+case CMD_REMOVE_NETWORK:
+sendMessageDelayed(obtainMessage(CMD_NO_NETWORKS_PERIODIC_SCAN,++mPeriodicScanToken,0),mSupplicantScanIntervalMs);
+ret=NOT_HANDLED;
+break;
+case CMD_SET_SCAN_MODE:
+if (message.arg1 == SCAN_ONLY_MODE) {
+mWifiNative.setScanResultHandling(message.arg1);
+mWifiNative.disconnect();
+mIsScanMode=true;
+transitionTo(mScanModeState);
+}
+break;
 case CMD_ENABLE_BACKGROUND_SCAN:
 mEnableBackgroundScan=(message.arg1 == 1);
 if (mEnableBackgroundScan) {
@@ -25,19 +37,22 @@ break;
 case WifiMonitor.SUPPLICANT_STATE_CHANGE_EVENT:
 StateChangeResult stateChangeResult=(StateChangeResult)message.obj;
 setNetworkDetailedState(WifiInfo.getDetailedStateOf(stateChangeResult.state));
-return NOT_HANDLED;
+ret=NOT_HANDLED;
+break;
 case CMD_START_SCAN:
 if (mEnableBackgroundScan) {
 mWifiNative.enableBackgroundScan(false);
 }
-return NOT_HANDLED;
+ret=NOT_HANDLED;
+break;
 case WifiMonitor.SCAN_RESULTS_EVENT:
 if (mEnableBackgroundScan && mScanResultIsPending) {
 mWifiNative.enableBackgroundScan(true);
 }
-return NOT_HANDLED;
+ret=NOT_HANDLED;
+break;
 default :
-return NOT_HANDLED;
+ret=NOT_HANDLED;
 }
-return HANDLED;
+return ret;
 }
