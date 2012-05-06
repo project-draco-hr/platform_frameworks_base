@@ -77,6 +77,7 @@ synchronized (mSyncQueue) {
     ActiveSyncContext conflict=null;
     ActiveSyncContext longRunning=null;
     ActiveSyncContext toReschedule=null;
+    ActiveSyncContext oldestNonExpeditedRegular=null;
     for (    ActiveSyncContext activeSyncContext : mActiveSyncContexts) {
       final SyncOperation activeOp=activeSyncContext.mSyncOperation;
       if (activeOp.isInitialization()) {
@@ -84,6 +85,11 @@ synchronized (mSyncQueue) {
       }
  else {
         numRegular++;
+        if (!activeOp.isExpedited()) {
+          if (oldestNonExpeditedRegular == null || (oldestNonExpeditedRegular.mStartTime > activeSyncContext.mStartTime)) {
+            oldestNonExpeditedRegular=activeSyncContext;
+          }
+        }
       }
       if (activeOp.account.type.equals(candidate.account.type) && activeOp.authority.equals(candidate.authority) && activeOp.userId == candidate.userId && (!activeOp.allowParallelSyncs || activeOp.account.name.equals(candidate.account.name))) {
         conflict=activeSyncContext;
@@ -99,7 +105,9 @@ synchronized (mSyncQueue) {
       Log.v(TAG,"  numActiveInit=" + numInit + ", numActiveRegular="+ numRegular);
       Log.v(TAG,"  longRunning: " + longRunning);
       Log.v(TAG,"  conflict: " + conflict);
+      Log.v(TAG,"  oldestNonExpeditedRegular: " + oldestNonExpeditedRegular);
     }
+    final boolean roomAvailable=candidateIsInitialization ? numInit < MAX_SIMULTANEOUS_INITIALIZATION_SYNCS : numRegular < MAX_SIMULTANEOUS_REGULAR_SYNCS;
     if (conflict != null) {
       if (candidateIsInitialization && !conflict.mSyncOperation.isInitialization() && numInit < MAX_SIMULTANEOUS_INITIALIZATION_SYNCS) {
         toReschedule=conflict;
@@ -117,19 +125,22 @@ synchronized (mSyncQueue) {
         continue;
       }
     }
+ else     if (roomAvailable) {
+    }
+ else     if (candidate.isExpedited() && oldestNonExpeditedRegular != null && !candidateIsInitialization) {
+      toReschedule=oldestNonExpeditedRegular;
+      if (Log.isLoggable(TAG,Log.VERBOSE)) {
+        Log.v(TAG,"canceling and rescheduling sync since an expedited is ready to run, " + oldestNonExpeditedRegular);
+      }
+    }
+ else     if (longRunning != null && (candidateIsInitialization == longRunning.mSyncOperation.isInitialization())) {
+      toReschedule=longRunning;
+      if (Log.isLoggable(TAG,Log.VERBOSE)) {
+        Log.v(TAG,"canceling and rescheduling sync since it ran roo long, " + longRunning);
+      }
+    }
  else {
-      final boolean roomAvailable=candidateIsInitialization ? numInit < MAX_SIMULTANEOUS_INITIALIZATION_SYNCS : numRegular < MAX_SIMULTANEOUS_REGULAR_SYNCS;
-      if (roomAvailable) {
-      }
- else       if (longRunning != null && (candidateIsInitialization == longRunning.mSyncOperation.isInitialization())) {
-        toReschedule=longRunning;
-        if (Log.isLoggable(TAG,Log.VERBOSE)) {
-          Log.v(TAG,"canceling and rescheduling sync since it ran roo long, " + longRunning);
-        }
-      }
- else {
-        continue;
-      }
+      continue;
     }
     if (toReschedule != null) {
       runSyncFinishedOrCanceledLocked(null,toReschedule);
