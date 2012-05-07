@@ -22,6 +22,9 @@
     wordEnd=mWordIterator.getEnd(wordStart);
   }
   if (wordEnd == BreakIterator.DONE) {
+    if (DBG) {
+      Log.i(TAG,"No more spell check.");
+    }
     removeRangeSpan(editable);
     return;
   }
@@ -30,39 +33,61 @@
   int wordCount=0;
   boolean scheduleOtherSpellCheck=false;
   if (mIsSentenceSpellCheckSupported) {
-    int regionEnd;
     if (wordIteratorWindowEnd < end) {
-      regionEnd=mWordIterator.preceding(wordIteratorWindowEnd);
+      if (DBG) {
+        Log.i(TAG,"schedule other spell check.");
+      }
       scheduleOtherSpellCheck=true;
     }
- else {
-      regionEnd=mWordIterator.preceding(end);
-    }
-    boolean correct=regionEnd != BreakIterator.DONE;
+    int spellCheckEnd=mWordIterator.preceding(wordIteratorWindowEnd);
+    boolean correct=spellCheckEnd != BreakIterator.DONE;
     if (correct) {
-      regionEnd=mWordIterator.getEnd(regionEnd);
-      correct=regionEnd != BreakIterator.DONE;
+      spellCheckEnd=mWordIterator.getEnd(spellCheckEnd);
+      correct=spellCheckEnd != BreakIterator.DONE;
     }
     if (!correct) {
-      editable.removeSpan(mRange);
+      if (DBG) {
+        Log.i(TAG,"Incorrect range span.");
+      }
+      removeRangeSpan(editable);
       return;
     }
-    if (wordEnd < start) {
-      return;
+    do {
+      int spellCheckStart=wordStart;
+      boolean createSpellCheckSpan=true;
+      for (int i=0; i < mLength; ++i) {
+        final SpellCheckSpan spellCheckSpan=mSpellCheckSpans[i];
+        if (mIds[i] < 0 || spellCheckSpan.isSpellCheckInProgress()) {
+          continue;
+        }
+        final int spanStart=editable.getSpanStart(spellCheckSpan);
+        final int spanEnd=editable.getSpanEnd(spellCheckSpan);
+        if (spanEnd < spellCheckStart || spellCheckEnd < spanStart) {
+          continue;
+        }
+        if (spanStart <= spellCheckStart && spellCheckEnd <= spanEnd) {
+          createSpellCheckSpan=false;
+          if (DBG) {
+            Log.i(TAG,"The range is overrapped. Skip spell check.");
+          }
+          break;
+        }
+        removeSpellCheckSpan(spellCheckSpan);
+        spellCheckStart=Math.min(spanStart,spellCheckStart);
+        spellCheckEnd=Math.max(spanEnd,spellCheckEnd);
+      }
+      if (DBG) {
+        Log.d(TAG,"addSpellCheckSpan: " + ", End = " + spellCheckEnd + ", Start = "+ spellCheckStart+ ", next = "+ scheduleOtherSpellCheck+ "\n"+ editable.subSequence(spellCheckStart,spellCheckEnd));
+      }
+      if (spellCheckEnd < start) {
+        break;
+      }
+      if (createSpellCheckSpan) {
+        addSpellCheckSpan(editable,spellCheckStart,spellCheckEnd);
+      }
     }
-    final int spellCheckStart=wordStart;
-    if (regionEnd <= spellCheckStart) {
-      return;
-    }
-    final int selectionStart=Selection.getSelectionStart(editable);
-    final int selectionEnd=Selection.getSelectionEnd(editable);
-    if (DBG) {
-      Log.d(TAG,"addSpellCheckSpan: " + editable.subSequence(spellCheckStart,regionEnd) + ", regionEnd = "+ regionEnd+ ", spellCheckStart = "+ spellCheckStart+ ", sel start = "+ selectionStart+ ", sel end ="+ selectionEnd);
-    }
-    if (spellCheckStart >= 0 && regionEnd > spellCheckStart && (selectionEnd < spellCheckStart || selectionStart > regionEnd)) {
-      addSpellCheckSpan(editable,spellCheckStart,regionEnd);
-    }
-    wordStart=regionEnd;
+ while (false);
+    wordStart=spellCheckEnd;
   }
  else {
     while (wordStart <= end) {
