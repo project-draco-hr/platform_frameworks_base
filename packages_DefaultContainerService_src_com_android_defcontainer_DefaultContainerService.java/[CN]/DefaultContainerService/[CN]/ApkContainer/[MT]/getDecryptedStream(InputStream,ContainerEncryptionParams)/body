@@ -1,0 +1,63 @@
+{
+  final Cipher c;
+  try {
+    c=Cipher.getInstance(encryptionParams.getEncryptionAlgorithm());
+    c.init(Cipher.DECRYPT_MODE,encryptionParams.getEncryptionKey(),encryptionParams.getEncryptionSpec());
+  }
+ catch (  NoSuchAlgorithmException e) {
+    throw new IOException(e);
+  }
+catch (  NoSuchPaddingException e) {
+    throw new IOException(e);
+  }
+catch (  InvalidKeyException e) {
+    throw new IOException(e);
+  }
+catch (  InvalidAlgorithmParameterException e) {
+    throw new IOException(e);
+  }
+  final int encStart=encryptionParams.getEncryptedDataStart();
+  final int end=encryptionParams.getDataEnd();
+  if (end < encStart) {
+    throw new IOException("end <= encStart");
+  }
+  final Mac mac=getMacInstance(encryptionParams);
+  if (mac != null) {
+    final int macStart=encryptionParams.getAuthenticatedDataStart();
+    final int furtherOffset;
+    if (macStart >= 0 && encStart >= 0 && macStart < encStart) {
+      final int authenticatedLength=encStart - macStart;
+      final byte[] authenticatedData=new byte[authenticatedLength];
+      Streams.readFully(inStream,authenticatedData,macStart,authenticatedLength);
+      mac.update(authenticatedData,0,authenticatedLength);
+      furtherOffset=0;
+    }
+ else {
+      if (encStart > 0) {
+        furtherOffset=encStart;
+      }
+ else {
+        furtherOffset=0;
+      }
+    }
+    if (furtherOffset >= 0 && end > furtherOffset) {
+      inStream=new LimitedLengthInputStream(inStream,furtherOffset,end - encStart);
+    }
+ else     if (furtherOffset > 0) {
+      inStream.skip(furtherOffset);
+    }
+    mAuthenticatedStream=new MacAuthenticatedInputStream(inStream,mac);
+    inStream=mAuthenticatedStream;
+  }
+ else {
+    if (encStart >= 0) {
+      if (end > encStart) {
+        inStream=new LimitedLengthInputStream(inStream,encStart,end - encStart);
+      }
+ else {
+        inStream.skip(encStart);
+      }
+    }
+  }
+  return new CipherInputStream(inStream,c);
+}
