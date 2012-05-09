@@ -2,31 +2,45 @@
   if (DEBUG_FALLBACK) {
     Slog.d(TAG,"Unhandled key: win=" + win + ", action="+ event.getAction()+ ", flags="+ event.getFlags()+ ", keyCode="+ event.getKeyCode()+ ", scanCode="+ event.getScanCode()+ ", metaState="+ event.getMetaState()+ ", repeatCount="+ event.getRepeatCount()+ ", policyFlags="+ policyFlags);
   }
+  KeyEvent fallbackEvent=null;
   if ((event.getFlags() & KeyEvent.FLAG_FALLBACK) == 0) {
     final KeyCharacterMap kcm=event.getKeyCharacterMap();
     final int keyCode=event.getKeyCode();
     final int metaState=event.getMetaState();
-    if (getFallbackAction(kcm,keyCode,metaState,mFallbackAction)) {
+    final boolean initialDown=event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0;
+    final FallbackAction fallbackAction;
+    if (initialDown) {
+      fallbackAction=kcm.getFallbackAction(keyCode,metaState);
+    }
+ else {
+      fallbackAction=mFallbackActions.get(keyCode);
+    }
+    if (fallbackAction != null) {
       if (DEBUG_FALLBACK) {
-        Slog.d(TAG,"Fallback: keyCode=" + mFallbackAction.keyCode + " metaState="+ Integer.toHexString(mFallbackAction.metaState));
+        Slog.d(TAG,"Fallback: keyCode=" + fallbackAction.keyCode + " metaState="+ Integer.toHexString(fallbackAction.metaState));
       }
-      int flags=event.getFlags() | KeyEvent.FLAG_FALLBACK;
-      KeyEvent fallbackEvent=KeyEvent.obtain(event.getDownTime(),event.getEventTime(),event.getAction(),mFallbackAction.keyCode,event.getRepeatCount(),mFallbackAction.metaState,event.getDeviceId(),event.getScanCode(),flags,event.getSource(),null);
-      int actions=interceptKeyBeforeQueueing(fallbackEvent,policyFlags,true);
-      if ((actions & ACTION_PASS_TO_USER) != 0) {
-        long delayMillis=interceptKeyBeforeDispatching(win,fallbackEvent,policyFlags);
-        if (delayMillis == 0) {
-          if (DEBUG_FALLBACK) {
-            Slog.d(TAG,"Performing fallback.");
-          }
-          return fallbackEvent;
-        }
+      final int flags=event.getFlags() | KeyEvent.FLAG_FALLBACK;
+      fallbackEvent=KeyEvent.obtain(event.getDownTime(),event.getEventTime(),event.getAction(),fallbackAction.keyCode,event.getRepeatCount(),fallbackAction.metaState,event.getDeviceId(),event.getScanCode(),flags,event.getSource(),null);
+      if (!interceptFallback(win,fallbackEvent,policyFlags)) {
+        fallbackEvent.recycle();
+        fallbackEvent=null;
       }
-      fallbackEvent.recycle();
+      if (initialDown) {
+        mFallbackActions.put(keyCode,fallbackAction);
+      }
+ else       if (event.getAction() == KeyEvent.ACTION_UP) {
+        mFallbackActions.remove(keyCode);
+        fallbackAction.recycle();
+      }
     }
   }
   if (DEBUG_FALLBACK) {
-    Slog.d(TAG,"No fallback.");
+    if (fallbackEvent == null) {
+      Slog.d(TAG,"No fallback.");
+    }
+ else {
+      Slog.d(TAG,"Performing fallback: " + fallbackEvent);
+    }
   }
-  return null;
+  return fallbackEvent;
 }
