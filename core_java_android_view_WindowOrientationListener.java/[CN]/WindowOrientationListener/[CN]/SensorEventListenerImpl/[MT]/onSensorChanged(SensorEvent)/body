@@ -1,9 +1,8 @@
 {
-  final boolean log=mOrientationListener.mLogEnabled;
   float x=event.values[ACCELEROMETER_DATA_X];
   float y=event.values[ACCELEROMETER_DATA_Y];
   float z=event.values[ACCELEROMETER_DATA_Z];
-  if (log) {
+  if (LOG) {
     Slog.v(TAG,"Raw acceleration vector: " + "x=" + x + ", y="+ y+ ", z="+ z+ ", magnitude="+ FloatMath.sqrt(x * x + y * y + z * z));
   }
   final long now=event.timestamp;
@@ -11,7 +10,7 @@
   final float timeDeltaMS=(now - then) * 0.000001f;
   final boolean skipSample;
   if (now < then || now > then + MAX_FILTER_DELTA_TIME_NANOS || (x == 0 && y == 0 && z == 0)) {
-    if (log) {
+    if (LOG) {
       Slog.v(TAG,"Resetting orientation listener.");
     }
     reset();
@@ -22,7 +21,7 @@
     x=alpha * (x - mLastFilteredX) + mLastFilteredX;
     y=alpha * (y - mLastFilteredY) + mLastFilteredY;
     z=alpha * (z - mLastFilteredZ) + mLastFilteredZ;
-    if (log) {
+    if (LOG) {
       Slog.v(TAG,"Filtered acceleration vector: " + "x=" + x + ", y="+ y+ ", z="+ z+ ", magnitude="+ FloatMath.sqrt(x * x + y * y + z * z));
     }
     skipSample=false;
@@ -31,18 +30,24 @@
   mLastFilteredX=x;
   mLastFilteredY=y;
   mLastFilteredZ=z;
+  boolean isAccelerating=false;
   boolean isFlat=false;
   boolean isSwinging=false;
   if (!skipSample) {
     final float magnitude=FloatMath.sqrt(x * x + y * y + z * z);
-    if (magnitude < MIN_ACCELERATION_MAGNITUDE || magnitude > MAX_ACCELERATION_MAGNITUDE) {
-      if (log) {
-        Slog.v(TAG,"Ignoring sensor data, magnitude out of range.");
+    if (magnitude < NEAR_ZERO_MAGNITUDE) {
+      if (LOG) {
+        Slog.v(TAG,"Ignoring sensor data, magnitude too close to zero.");
       }
       clearPredictedRotation();
     }
  else {
+      if (isAccelerating(magnitude)) {
+        isAccelerating=true;
+        mAccelerationTimestampNanos=now;
+      }
       final int tiltAngle=(int)Math.round(Math.asin(z / magnitude) * RADIANS_TO_DEGREES);
+      addTiltHistoryEntry(now,tiltAngle);
       if (isFlat(now)) {
         isFlat=true;
         mFlatTimestampNanos=now;
@@ -51,9 +56,8 @@
         isSwinging=true;
         mSwingTimestampNanos=now;
       }
-      addTiltHistoryEntry(now,tiltAngle);
       if (Math.abs(tiltAngle) > MAX_TILT) {
-        if (log) {
+        if (LOG) {
           Slog.v(TAG,"Ignoring sensor data, tilt angle too high: " + "tiltAngle=" + tiltAngle);
         }
         clearPredictedRotation();
@@ -69,12 +73,12 @@
         }
         if (isTiltAngleAcceptable(nearestRotation,tiltAngle) && isOrientationAngleAcceptable(nearestRotation,orientationAngle)) {
           updatePredictedRotation(now,nearestRotation);
-          if (log) {
+          if (LOG) {
             Slog.v(TAG,"Predicted: " + "tiltAngle=" + tiltAngle + ", orientationAngle="+ orientationAngle+ ", predictedRotation="+ mPredictedRotation+ ", predictedRotationAgeMS="+ ((now - mPredictedRotationTimestampNanos) * 0.000001f));
           }
         }
  else {
-          if (log) {
+          if (LOG) {
             Slog.v(TAG,"Ignoring sensor data, no predicted rotation: " + "tiltAngle=" + tiltAngle + ", orientationAngle="+ orientationAngle);
           }
           clearPredictedRotation();
@@ -86,11 +90,11 @@
   if (mPredictedRotation < 0 || isPredictedRotationAcceptable(now)) {
     mProposedRotation=mPredictedRotation;
   }
-  if (log) {
-    Slog.v(TAG,"Result: currentRotation=" + mOrientationListener.mCurrentRotation + ", proposedRotation="+ mProposedRotation+ ", predictedRotation="+ mPredictedRotation+ ", timeDeltaMS="+ timeDeltaMS+ ", isFlat="+ isFlat+ ", isSwinging="+ isSwinging+ ", timeUntilSettledMS="+ remainingMS(now,mPredictedRotationTimestampNanos + PROPOSAL_SETTLE_TIME_NANOS)+ ", timeUntilFlatDelayExpiredMS="+ remainingMS(now,mFlatTimestampNanos + PROPOSAL_MIN_TIME_SINCE_FLAT_ENDED_NANOS)+ ", timeUntilSwingDelayExpiredMS="+ remainingMS(now,mSwingTimestampNanos + PROPOSAL_MIN_TIME_SINCE_SWING_ENDED_NANOS));
+  if (LOG) {
+    Slog.v(TAG,"Result: currentRotation=" + mOrientationListener.mCurrentRotation + ", proposedRotation="+ mProposedRotation+ ", predictedRotation="+ mPredictedRotation+ ", timeDeltaMS="+ timeDeltaMS+ ", isAccelerating="+ isAccelerating+ ", isFlat="+ isFlat+ ", isSwinging="+ isSwinging+ ", timeUntilSettledMS="+ remainingMS(now,mPredictedRotationTimestampNanos + PROPOSAL_SETTLE_TIME_NANOS)+ ", timeUntilAccelerationDelayExpiredMS="+ remainingMS(now,mAccelerationTimestampNanos + PROPOSAL_MIN_TIME_SINCE_ACCELERATION_ENDED_NANOS)+ ", timeUntilFlatDelayExpiredMS="+ remainingMS(now,mFlatTimestampNanos + PROPOSAL_MIN_TIME_SINCE_FLAT_ENDED_NANOS)+ ", timeUntilSwingDelayExpiredMS="+ remainingMS(now,mSwingTimestampNanos + PROPOSAL_MIN_TIME_SINCE_SWING_ENDED_NANOS));
   }
   if (mProposedRotation != oldProposedRotation && mProposedRotation >= 0) {
-    if (log) {
+    if (LOG) {
       Slog.v(TAG,"Proposed rotation changed!  proposedRotation=" + mProposedRotation + ", oldProposedRotation="+ oldProposedRotation);
     }
     mOrientationListener.onProposedRotationChanged(mProposedRotation);
