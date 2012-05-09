@@ -1,7 +1,8 @@
 {
   ClientInfo clientInfo;
-  DnsSdServiceInfo servInfo;
+  NsdServiceInfo servInfo;
   boolean result=HANDLED;
+  int id;
 switch (msg.what) {
 case AsyncChannel.CMD_CHANNEL_HALF_CONNECTED:
     if (msg.arg1 == AsyncChannel.STATUS_SUCCESSFUL && mClients.size() == 0) {
@@ -20,96 +21,98 @@ transitionTo(mDisabledState);
 break;
 case NsdManager.DISCOVER_SERVICES:
 if (DBG) Slog.d(TAG,"Discover services");
-servInfo=(DnsSdServiceInfo)msg.obj;
+servInfo=(NsdServiceInfo)msg.obj;
 clientInfo=mClients.get(msg.replyTo);
-if (clientInfo.mDiscoveryId != INVALID_ID) {
-if (DBG) Slog.d(TAG,"discovery in progress");
-mReplyChannel.replyToMessage(msg,NsdManager.DISCOVER_SERVICES_FAILED,NsdManager.ALREADY_ACTIVE);
+if (requestLimitReached(clientInfo)) {
+replyToMessage(msg,NsdManager.DISCOVER_SERVICES_FAILED,NsdManager.FAILURE_MAX_LIMIT);
 break;
 }
-clientInfo.mDiscoveryId=getUniqueId();
-if (discoverServices(clientInfo.mDiscoveryId,servInfo.getServiceType())) {
-mReplyChannel.replyToMessage(msg,NsdManager.DISCOVER_SERVICES_STARTED);
+id=getUniqueId();
+if (discoverServices(id,servInfo.getServiceType())) {
+if (DBG) {
+Slog.d(TAG,"Discover " + msg.arg2 + " "+ id+ servInfo.getServiceType());
+}
+storeRequestMap(msg.arg2,id,clientInfo);
+replyToMessage(msg,NsdManager.DISCOVER_SERVICES_STARTED,servInfo);
 }
  else {
-mReplyChannel.replyToMessage(msg,NsdManager.DISCOVER_SERVICES_FAILED,NsdManager.ERROR);
-clientInfo.mDiscoveryId=INVALID_ID;
+stopServiceDiscovery(id);
+replyToMessage(msg,NsdManager.DISCOVER_SERVICES_FAILED,NsdManager.FAILURE_INTERNAL_ERROR);
 }
 break;
 case NsdManager.STOP_DISCOVERY:
 if (DBG) Slog.d(TAG,"Stop service discovery");
 clientInfo=mClients.get(msg.replyTo);
-if (clientInfo.mDiscoveryId == INVALID_ID) {
-if (DBG) Slog.d(TAG,"discovery already stopped");
-mReplyChannel.replyToMessage(msg,NsdManager.STOP_DISCOVERY_FAILED,NsdManager.ALREADY_ACTIVE);
+try {
+id=clientInfo.mClientIds.get(msg.arg2).intValue();
+}
+ catch (NullPointerException e) {
+replyToMessage(msg,NsdManager.STOP_DISCOVERY_FAILED,NsdManager.FAILURE_INTERNAL_ERROR);
 break;
 }
-if (stopServiceDiscovery(clientInfo.mDiscoveryId)) {
-clientInfo.mDiscoveryId=INVALID_ID;
-mReplyChannel.replyToMessage(msg,NsdManager.STOP_DISCOVERY_SUCCEEDED);
+removeRequestMap(msg.arg2,id,clientInfo);
+if (stopServiceDiscovery(id)) {
+replyToMessage(msg,NsdManager.STOP_DISCOVERY_SUCCEEDED);
 }
  else {
-mReplyChannel.replyToMessage(msg,NsdManager.STOP_DISCOVERY_FAILED,NsdManager.ERROR);
+replyToMessage(msg,NsdManager.STOP_DISCOVERY_FAILED,NsdManager.FAILURE_INTERNAL_ERROR);
 }
 break;
 case NsdManager.REGISTER_SERVICE:
 if (DBG) Slog.d(TAG,"Register service");
 clientInfo=mClients.get(msg.replyTo);
-if (clientInfo.mRegisteredIds.size() >= ClientInfo.MAX_REG) {
-if (DBG) Slog.d(TAG,"register service exceeds limit");
-mReplyChannel.replyToMessage(msg,NsdManager.REGISTER_SERVICE_FAILED,NsdManager.MAX_REGS_REACHED);
+if (requestLimitReached(clientInfo)) {
+replyToMessage(msg,NsdManager.REGISTER_SERVICE_FAILED,NsdManager.FAILURE_MAX_LIMIT);
+break;
 }
-int id=getUniqueId();
-if (registerService(id,(DnsSdServiceInfo)msg.obj)) {
-clientInfo.mRegisteredIds.add(id);
+id=getUniqueId();
+if (registerService(id,(NsdServiceInfo)msg.obj)) {
+if (DBG) Slog.d(TAG,"Register " + msg.arg2 + " "+ id);
+storeRequestMap(msg.arg2,id,clientInfo);
 }
  else {
-mReplyChannel.replyToMessage(msg,NsdManager.REGISTER_SERVICE_FAILED,NsdManager.ERROR);
+unregisterService(id);
+replyToMessage(msg,NsdManager.REGISTER_SERVICE_FAILED,NsdManager.FAILURE_INTERNAL_ERROR);
 }
 break;
 case NsdManager.UNREGISTER_SERVICE:
 if (DBG) Slog.d(TAG,"unregister service");
 clientInfo=mClients.get(msg.replyTo);
-int regId=msg.arg1;
-if (clientInfo.mRegisteredIds.remove(new Integer(regId)) && unregisterService(regId)) {
-mReplyChannel.replyToMessage(msg,NsdManager.UNREGISTER_SERVICE_SUCCEEDED);
+try {
+id=clientInfo.mClientIds.get(msg.arg2).intValue();
+}
+ catch (NullPointerException e) {
+replyToMessage(msg,NsdManager.UNREGISTER_SERVICE_FAILED,NsdManager.FAILURE_INTERNAL_ERROR);
+break;
+}
+removeRequestMap(msg.arg2,id,clientInfo);
+if (unregisterService(id)) {
+replyToMessage(msg,NsdManager.UNREGISTER_SERVICE_SUCCEEDED);
 }
  else {
-mReplyChannel.replyToMessage(msg,NsdManager.UNREGISTER_SERVICE_FAILED,NsdManager.ERROR);
+replyToMessage(msg,NsdManager.UNREGISTER_SERVICE_FAILED,NsdManager.FAILURE_INTERNAL_ERROR);
 }
-break;
-case NsdManager.UPDATE_SERVICE:
-if (DBG) Slog.d(TAG,"Update service");
-mReplyChannel.replyToMessage(msg,NsdManager.UPDATE_SERVICE_FAILED);
 break;
 case NsdManager.RESOLVE_SERVICE:
 if (DBG) Slog.d(TAG,"Resolve service");
-servInfo=(DnsSdServiceInfo)msg.obj;
+servInfo=(NsdServiceInfo)msg.obj;
 clientInfo=mClients.get(msg.replyTo);
-if (clientInfo.mResolveId != INVALID_ID) {
-stopResolveService(clientInfo.mResolveId);
-}
-clientInfo.mResolveId=getUniqueId();
-if (!resolveService(clientInfo.mResolveId,servInfo)) {
-mReplyChannel.replyToMessage(msg,NsdManager.RESOLVE_SERVICE_FAILED,NsdManager.ERROR);
-clientInfo.mResolveId=INVALID_ID;
-}
-break;
-case NsdManager.STOP_RESOLVE:
-if (DBG) Slog.d(TAG,"Stop resolve");
-clientInfo=mClients.get(msg.replyTo);
-if (clientInfo.mResolveId == INVALID_ID) {
-if (DBG) Slog.d(TAG,"resolve already stopped");
-mReplyChannel.replyToMessage(msg,NsdManager.STOP_RESOLVE_FAILED,NsdManager.ALREADY_ACTIVE);
+if (clientInfo.mResolvedService != null) {
+replyToMessage(msg,NsdManager.RESOLVE_SERVICE_FAILED,NsdManager.FAILURE_ALREADY_ACTIVE);
 break;
 }
-if (stopResolveService(clientInfo.mResolveId)) {
-clientInfo.mResolveId=INVALID_ID;
-mReplyChannel.replyToMessage(msg,NsdManager.STOP_RESOLVE_SUCCEEDED);
+id=getUniqueId();
+if (resolveService(id,servInfo)) {
+clientInfo.mResolvedService=new NsdServiceInfo();
+storeRequestMap(msg.arg2,id,clientInfo);
 }
  else {
-mReplyChannel.replyToMessage(msg,NsdManager.STOP_RESOLVE_FAILED,NsdManager.ERROR);
+replyToMessage(msg,NsdManager.RESOLVE_SERVICE_FAILED,NsdManager.FAILURE_INTERNAL_ERROR);
 }
+break;
+case NsdManager.NATIVE_DAEMON_EVENT:
+NativeEvent event=(NativeEvent)msg.obj;
+handleNativeEvent(event.code,event.raw,NativeDaemonEvent.unescapeArgs(event.raw));
 break;
 default :
 result=NOT_HANDLED;
