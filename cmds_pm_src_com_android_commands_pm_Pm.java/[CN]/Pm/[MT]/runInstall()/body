@@ -2,6 +2,12 @@
   int installFlags=0;
   String installerPackageName=null;
   String opt;
+  String algo=null;
+  byte[] iv=null;
+  byte[] key=null;
+  String macAlgo=null;
+  byte[] macKey=null;
+  byte[] tag=null;
   while ((opt=nextOption()) != null) {
     if (opt.equals("-l")) {
       installFlags|=PackageManager.INSTALL_FORWARD_LOCK;
@@ -26,11 +32,92 @@
  else     if (opt.equals("-f")) {
       installFlags|=PackageManager.INSTALL_INTERNAL;
     }
+ else     if (opt.equals("--algo")) {
+      algo=nextOptionData();
+      if (algo == null) {
+        System.err.println("Error: must supply argument for --algo");
+        showUsage();
+        return;
+      }
+    }
+ else     if (opt.equals("--iv")) {
+      iv=hexToBytes(nextOptionData());
+      if (iv == null) {
+        System.err.println("Error: must supply argument for --iv");
+        showUsage();
+        return;
+      }
+    }
+ else     if (opt.equals("--key")) {
+      key=hexToBytes(nextOptionData());
+      if (key == null) {
+        System.err.println("Error: must supply argument for --key");
+        showUsage();
+        return;
+      }
+    }
+ else     if (opt.equals("--macalgo")) {
+      macAlgo=nextOptionData();
+      if (macAlgo == null) {
+        System.err.println("Error: must supply argument for --macalgo");
+        showUsage();
+        return;
+      }
+    }
+ else     if (opt.equals("--mackey")) {
+      macKey=hexToBytes(nextOptionData());
+      if (macKey == null) {
+        System.err.println("Error: must supply argument for --mackey");
+        showUsage();
+        return;
+      }
+    }
+ else     if (opt.equals("--tag")) {
+      tag=hexToBytes(nextOptionData());
+      if (tag == null) {
+        System.err.println("Error: must supply argument for --tag");
+        showUsage();
+        return;
+      }
+    }
  else {
       System.err.println("Error: Unknown option: " + opt);
       showUsage();
       return;
     }
+  }
+  final ContainerEncryptionParams encryptionParams;
+  if (algo != null || iv != null || key != null || macAlgo != null || macKey != null || tag != null) {
+    if (algo == null || iv == null || key == null) {
+      System.err.println("Error: all of --algo, --iv, and --key must be specified");
+      showUsage();
+      return;
+    }
+    if (macAlgo != null || macKey != null || tag != null) {
+      if (macAlgo == null || macKey == null || tag == null) {
+        System.err.println("Error: all of --macalgo, --mackey, and --tag must " + "be specified");
+        showUsage();
+        return;
+      }
+    }
+    try {
+      final SecretKey encKey=new SecretKeySpec(key,"RAW");
+      final SecretKey macSecretKey;
+      if (macKey == null || macKey.length == 0) {
+        macSecretKey=null;
+      }
+ else {
+        macSecretKey=new SecretKeySpec(macKey,"RAW");
+      }
+      encryptionParams=new ContainerEncryptionParams(algo,new IvParameterSpec(iv),encKey,macAlgo,null,macSecretKey,tag,-1,-1,-1);
+    }
+ catch (    InvalidAlgorithmParameterException e) {
+      e.printStackTrace();
+      return;
+    }
+  }
+ else {
+    encryptionParams=null;
   }
   final Uri apkURI;
   final Uri verificationURI;
@@ -54,7 +141,7 @@
   }
   PackageInstallObserver obs=new PackageInstallObserver();
   try {
-    mPm.installPackageWithVerification(apkURI,obs,installFlags,installerPackageName,verificationURI,null);
+    mPm.installPackageWithVerification(apkURI,obs,installFlags,installerPackageName,verificationURI,null,encryptionParams);
 synchronized (obs) {
       while (!obs.finished) {
         try {
