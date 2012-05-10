@@ -1,0 +1,64 @@
+{
+  if (DEBUG)   Slog.d(TAG,"updateNotification(" + key + " -> "+ notification+ ")");
+  final NotificationData.Entry oldEntry=mNotificationData.findByKey(key);
+  if (oldEntry == null) {
+    Slog.w(TAG,"updateNotification for unknown key: " + key);
+    return;
+  }
+  final StatusBarNotification oldNotification=oldEntry.notification;
+  final RemoteViews oldContentView=(oldNotification.notification.bigContentView != null) ? oldNotification.notification.bigContentView : oldNotification.notification.contentView;
+  final RemoteViews contentView=(notification.notification.bigContentView != null) ? notification.notification.bigContentView : notification.notification.contentView;
+  if (DEBUG) {
+    Slog.d(TAG,"old notification: when=" + oldNotification.notification.when + " ongoing="+ oldNotification.isOngoing()+ " expanded="+ oldEntry.expanded+ " contentView="+ oldContentView+ " rowParent="+ oldEntry.row.getParent());
+    Slog.d(TAG,"new notification: when=" + notification.notification.when + " ongoing="+ oldNotification.isOngoing()+ " contentView="+ contentView);
+  }
+  boolean contentsUnchanged=oldEntry.expanded != null && contentView != null && oldContentView != null && contentView.getPackage() != null && oldContentView.getPackage() != null && oldContentView.getPackage().equals(contentView.getPackage()) && oldContentView.getLayoutId() == contentView.getLayoutId();
+  ViewGroup rowParent=(ViewGroup)oldEntry.row.getParent();
+  boolean orderUnchanged=notification.notification.when == oldNotification.notification.when && notification.score == oldNotification.score;
+  boolean updateTicker=notification.notification.tickerText != null && !TextUtils.equals(notification.notification.tickerText,oldEntry.notification.notification.tickerText);
+  boolean isTopAnyway=isTopNotification(rowParent,oldEntry);
+  if (contentsUnchanged && (orderUnchanged || isTopAnyway)) {
+    if (DEBUG)     Slog.d(TAG,"reusing notification for key: " + key);
+    oldEntry.notification=notification;
+    try {
+      contentView.reapply(mContext,oldEntry.content);
+      final PendingIntent contentIntent=notification.notification.contentIntent;
+      if (contentIntent != null) {
+        final View.OnClickListener listener=makeClicker(contentIntent,notification.pkg,notification.tag,notification.id);
+        oldEntry.content.setOnClickListener(listener);
+      }
+ else {
+        oldEntry.content.setOnClickListener(null);
+      }
+      final StatusBarIcon ic=new StatusBarIcon(notification.pkg,notification.notification.icon,notification.notification.iconLevel,notification.notification.number,notification.notification.tickerText);
+      if (!oldEntry.icon.set(ic)) {
+        handleNotificationError(key,notification,"Couldn't update icon: " + ic);
+        return;
+      }
+    }
+ catch (    RuntimeException e) {
+      Slog.w(TAG,"Couldn't reapply views for package " + contentView.getPackage(),e);
+      removeNotificationViews(key);
+      addNotificationViews(key,notification);
+    }
+  }
+ else {
+    if (DEBUG)     Slog.d(TAG,"not reusing notification for key: " + key);
+    removeNotificationViews(key);
+    addNotificationViews(key,notification);
+  }
+  updateNotificationVetoButton(oldEntry.row,notification);
+  if (updateTicker) {
+    haltTicker();
+    tick(key,notification,false);
+  }
+  setAreThereNotifications();
+  updateExpandedViewPos(EXPANDED_LEAVE_ALONE);
+  if (ENABLE_INTRUDERS && oldNotification == mCurrentlyIntrudingNotification) {
+    if (DEBUG)     Slog.d(TAG,"updating the current intruder:" + notification);
+    if (notification.notification.fullScreenIntent == null) {
+      if (DEBUG)       Slog.d(TAG,"no longer intrudes!");
+      mHandler.sendEmptyMessage(MSG_HIDE_INTRUDER);
+    }
+  }
+}
