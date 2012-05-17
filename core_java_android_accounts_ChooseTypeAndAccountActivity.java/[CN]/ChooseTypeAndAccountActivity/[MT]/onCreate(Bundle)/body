@@ -3,7 +3,6 @@
   if (Log.isLoggable(TAG,Log.VERBOSE)) {
     Log.v(TAG,"ChooseTypeAndAccountActivity.onCreate(savedInstanceState=" + savedInstanceState + ")");
   }
-  setContentView(R.layout.choose_type_and_account);
   if (savedInstanceState != null) {
     mPendingRequest=savedInstanceState.getInt(KEY_INSTANCE_STATE_PENDING_REQUEST);
     mExistingAccounts=savedInstanceState.getParcelableArray(KEY_INSTANCE_STATE_EXISTING_ACCOUNTS);
@@ -31,12 +30,23 @@
       setOfAllowableAccounts.add((Account)parcelable);
     }
   }
-  Set<String> setOfAllowableAccountTypes=null;
-  final String[] validAccountTypes=intent.getStringArrayExtra(EXTRA_ALLOWABLE_ACCOUNT_TYPES_STRING_ARRAY);
-  if (validAccountTypes != null) {
-    setOfAllowableAccountTypes=new HashSet<String>(validAccountTypes.length);
-    for (    String type : validAccountTypes) {
-      setOfAllowableAccountTypes.add(type);
+  Set<String> setOfRelevantAccountTypes=null;
+  final String[] allowedAccountTypes=intent.getStringArrayExtra(EXTRA_ALLOWABLE_ACCOUNT_TYPES_STRING_ARRAY);
+  if (allowedAccountTypes != null) {
+    setOfRelevantAccountTypes=new HashSet<String>(allowedAccountTypes.length);
+    Set<String> setOfAllowedAccountTypes=new HashSet<String>(allowedAccountTypes.length);
+    for (    String type : allowedAccountTypes) {
+      setOfAllowedAccountTypes.add(type);
+    }
+    AuthenticatorDescription[] descs=AccountManager.get(this).getAuthenticatorTypes();
+    Set<String> supportedAccountTypes=new HashSet<String>(descs.length);
+    for (    AuthenticatorDescription desc : descs) {
+      supportedAccountTypes.add(desc.type);
+    }
+    for (    String acctType : setOfAllowedAccountTypes) {
+      if (supportedAccountTypes.contains(acctType)) {
+        setOfRelevantAccountTypes.add(acctType);
+      }
     }
   }
   final Account[] accounts=accountManager.getAccounts();
@@ -45,30 +55,19 @@
     if (setOfAllowableAccounts != null && !setOfAllowableAccounts.contains(account)) {
       continue;
     }
-    if (setOfAllowableAccountTypes != null && !setOfAllowableAccountTypes.contains(account.type)) {
+    if (setOfRelevantAccountTypes != null && !setOfRelevantAccountTypes.contains(account.type)) {
       continue;
     }
     mAccountInfos.add(new AccountInfo(account,getDrawableForType(typeToAuthDescription,account.type),account.equals(selectedAccount)));
   }
-  ListView list=(ListView)findViewById(android.R.id.list);
-  list.setAdapter(new AccountArrayAdapter(this,android.R.layout.simple_list_item_1,mAccountInfos));
-  list.setChoiceMode(ListView.CHOICE_MODE_SINGLE);
-  list.setOnItemClickListener(new AdapterView.OnItemClickListener(){
-    public void onItemClick(    AdapterView<?> parent,    View v,    int position,    long id){
-      onListItemClick((ListView)parent,v,position,id);
-    }
-  }
-);
-  Button addAccountButton=(Button)findViewById(R.id.addAccount);
-  addAccountButton.setOnClickListener(new View.OnClickListener(){
-    public void onClick(    final View v){
-      startChooseAccountTypeActivity();
-    }
-  }
-);
   if (mPendingRequest == REQUEST_NULL) {
-    if (shouldSkipToChooseAccountTypeFlow()) {
-      startChooseAccountTypeActivity();
+    if (mAccountInfos.isEmpty()) {
+      if (setOfRelevantAccountTypes.size() == 1) {
+        runAddAccountForAuthenticator(setOfRelevantAccountTypes.iterator().next());
+      }
+ else {
+        startChooseAccountTypeActivity();
+      }
       return;
     }
     if (!intent.getBooleanExtra(EXTRA_ALWAYS_PROMPT_FOR_ACCOUNT,false) && mAccountInfos.size() == 1) {
@@ -77,4 +76,21 @@
       return;
     }
   }
+  setContentView(R.layout.choose_type_and_account);
+  ListView list=(ListView)findViewById(android.R.id.list);
+  list.setAdapter(new AccountArrayAdapter(this,android.R.layout.simple_list_item_1,mAccountInfos));
+  list.setChoiceMode(ListView.CHOICE_MODE_SINGLE);
+  list.setOnItemClickListener(new AdapterView.OnItemClickListener(){
+    @Override public void onItemClick(    AdapterView<?> parent,    View v,    int position,    long id){
+      onListItemClick((ListView)parent,v,position,id);
+    }
+  }
+);
+  Button addAccountButton=(Button)findViewById(R.id.addAccount);
+  addAccountButton.setOnClickListener(new View.OnClickListener(){
+    @Override public void onClick(    final View v){
+      startChooseAccountTypeActivity();
+    }
+  }
+);
 }
