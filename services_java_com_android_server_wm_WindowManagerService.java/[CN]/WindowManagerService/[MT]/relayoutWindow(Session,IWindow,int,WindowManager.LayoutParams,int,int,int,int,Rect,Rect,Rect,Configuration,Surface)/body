@@ -1,5 +1,5 @@
 {
-  boolean displayed=false;
+  boolean toBeDisplayed=false;
   boolean inTouchMode;
   boolean configChanged;
   boolean surfaceChanged=false;
@@ -70,7 +70,7 @@ synchronized (mWindowMap) {
       Slog.i(TAG,"Relayout " + win + ": oldVis="+ oldVisibility+ " newVis="+ viewVisibility,stack);
     }
     if (viewVisibility == View.VISIBLE && (win.mAppToken == null || !win.mAppToken.clientHidden)) {
-      displayed=!win.isVisibleLw();
+      toBeDisplayed=!win.isVisibleLw();
       if (win.mExiting) {
         winAnimator.cancelExitAnimationForNextAnimationLocked();
         win.mExiting=false;
@@ -82,7 +82,7 @@ synchronized (mWindowMap) {
       if (oldVisibility == View.GONE) {
         winAnimator.mEnterAnimationPending=true;
       }
-      if (displayed) {
+      if (toBeDisplayed) {
         if (win.isDrawnLw() && okToDisplay()) {
           winAnimator.applyEnterAnimationLocked();
         }
@@ -101,7 +101,7 @@ synchronized (mWindowMap) {
       }
       if ((attrChanges & WindowManager.LayoutParams.FORMAT_CHANGED) != 0) {
         winAnimator.destroySurfaceLocked();
-        displayed=true;
+        toBeDisplayed=true;
         surfaceChanged=true;
       }
       try {
@@ -111,8 +111,6 @@ synchronized (mWindowMap) {
         Surface surface=winAnimator.createSurfaceLocked();
         if (surface != null) {
           outSurface.copyFrom(surface);
-          winAnimator.mReportDestroySurface=false;
-          winAnimator.mSurfacePendingDestroy=false;
           if (SHOW_TRANSACTIONS)           Slog.i(TAG,"  OUT SURFACE " + outSurface + ": copied");
         }
  else {
@@ -125,7 +123,7 @@ synchronized (mWindowMap) {
         Binder.restoreCallingIdentity(origId);
         return 0;
       }
-      if (displayed) {
+      if (toBeDisplayed) {
         focusMayChange=true;
       }
       if (win.mAttrs.type == TYPE_INPUT_METHOD && mInputMethodWindow == null) {
@@ -141,14 +139,14 @@ synchronized (mWindowMap) {
  else {
       winAnimator.mEnterAnimationPending=false;
       if (winAnimator.mSurface != null) {
-        if (DEBUG_VISIBILITY)         Slog.i(TAG,"Relayout invis " + win + ": mExiting="+ win.mExiting+ " mSurfacePendingDestroy="+ winAnimator.mSurfacePendingDestroy);
-        if (!win.mExiting || winAnimator.mSurfacePendingDestroy) {
+        if (DEBUG_VISIBILITY)         Slog.i(TAG,"Relayout invis " + win + ": mExiting="+ win.mExiting);
+        if (!win.mExiting) {
           surfaceChanged=true;
           int transit=WindowManagerPolicy.TRANSIT_EXIT;
           if (win.mAttrs.type == TYPE_APPLICATION_STARTING) {
             transit=WindowManagerPolicy.TRANSIT_PREVIEW_DONE;
           }
-          if (!winAnimator.mSurfacePendingDestroy && win.isWinVisibleLw() && winAnimator.applyAnimationLocked(transit,false)) {
+          if (win.isWinVisibleLw() && winAnimator.applyAnimationLocked(transit,false)) {
             focusMayChange=true;
             win.mExiting=true;
           }
@@ -167,16 +165,8 @@ synchronized (mWindowMap) {
           }
         }
       }
-      if (winAnimator.mSurface == null || (win.getAttrs().flags & WindowManager.LayoutParams.FLAG_KEEP_SURFACE_WHILE_ANIMATING) == 0 || winAnimator.mSurfacePendingDestroy) {
-        winAnimator.mSurfacePendingDestroy=false;
-        outSurface.release();
-        if (DEBUG_VISIBILITY)         Slog.i(TAG,"Releasing surface in: " + win);
-      }
- else       if (winAnimator.mSurface != null) {
-        if (DEBUG_VISIBILITY)         Slog.i(TAG,"Keeping surface, will report destroy: " + win);
-        winAnimator.mReportDestroySurface=true;
-        outSurface.copyFrom(winAnimator.mSurface);
-      }
+      outSurface.release();
+      if (DEBUG_VISIBILITY)       Slog.i(TAG,"Releasing surface in: " + win);
     }
     if (focusMayChange) {
       if (updateFocusedWindowLocked(UPDATE_FOCUS_WILL_PLACE_SURFACES,false)) {
@@ -185,7 +175,7 @@ synchronized (mWindowMap) {
     }
     boolean assignLayers=false;
     if (imMayMove) {
-      if (moveInputMethodWindowsIfNeededLocked(false) || displayed) {
+      if (moveInputMethodWindowsIfNeededLocked(false) || toBeDisplayed) {
         assignLayers=true;
       }
     }
@@ -201,7 +191,7 @@ synchronized (mWindowMap) {
     }
     configChanged=updateOrientationFromAppTokensLocked(false);
     performLayoutAndPlaceSurfacesLocked();
-    if (displayed && win.mIsWallpaper) {
+    if (toBeDisplayed && win.mIsWallpaper) {
       updateWallpaperOffsetLocked(win,mAppDisplayWidth,mAppDisplayHeight,false);
     }
     if (win.mAppToken != null) {
@@ -223,5 +213,5 @@ synchronized (mWindowMap) {
     sendNewConfiguration();
   }
   Binder.restoreCallingIdentity(origId);
-  return (inTouchMode ? WindowManagerImpl.RELAYOUT_RES_IN_TOUCH_MODE : 0) | (displayed ? WindowManagerImpl.RELAYOUT_RES_FIRST_TIME : 0) | (surfaceChanged ? WindowManagerImpl.RELAYOUT_RES_SURFACE_CHANGED : 0)| (animating ? WindowManagerImpl.RELAYOUT_RES_ANIMATING : 0);
+  return (inTouchMode ? WindowManagerImpl.RELAYOUT_RES_IN_TOUCH_MODE : 0) | (toBeDisplayed ? WindowManagerImpl.RELAYOUT_RES_FIRST_TIME : 0) | (surfaceChanged ? WindowManagerImpl.RELAYOUT_RES_SURFACE_CHANGED : 0)| (animating ? WindowManagerImpl.RELAYOUT_RES_ANIMATING : 0);
 }
