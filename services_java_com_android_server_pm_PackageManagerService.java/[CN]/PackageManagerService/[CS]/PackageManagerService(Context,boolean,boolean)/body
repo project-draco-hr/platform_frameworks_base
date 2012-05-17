@@ -148,7 +148,7 @@ catch (          IOException e) {
       scanDirLI(mVendorAppDir,PackageParser.PARSE_IS_SYSTEM | PackageParser.PARSE_IS_SYSTEM_DIR,scanMode,0);
       if (DEBUG_UPGRADE)       Log.v(TAG,"Running installd update commands");
       mInstaller.moveFiles();
-      final List<String> possiblyDeletedSystemApps=new ArrayList<String>();
+      final List<String> possiblyDeletedUpdatedSystemApps=new ArrayList<String>();
       if (!mOnlyCore) {
         Iterator<PackageSetting> psit=mSettings.mPackages.values().iterator();
         while (psit.hasNext()) {
@@ -170,7 +170,10 @@ catch (          IOException e) {
             sUserManager.removePackageForAllUsers(ps.name);
           }
  else {
-            possiblyDeletedSystemApps.add(ps.name);
+            final PackageSetting disabledPs=mSettings.getDisabledSystemPkgLPr(ps.name);
+            if (disabledPs.codePath == null || !disabledPs.codePath.exists()) {
+              possiblyDeletedUpdatedSystemApps.add(ps.name);
+            }
           }
         }
       }
@@ -188,14 +191,22 @@ catch (          IOException e) {
         mDrmAppInstallObserver=new AppDirObserver(mDrmAppPrivateInstallDir.getPath(),OBSERVER_EVENTS,false);
         mDrmAppInstallObserver.startWatching();
         scanDirLI(mDrmAppPrivateInstallDir,PackageParser.PARSE_FORWARD_LOCK,scanMode,0);
-        for (        String deletedAppName : possiblyDeletedSystemApps) {
+        for (        String deletedAppName : possiblyDeletedUpdatedSystemApps) {
           PackageParser.Package deletedPkg=mPackages.get(deletedAppName);
-          if (deletedPkg != null) {
-            mSettings.removeDisabledSystemPackageLPw(deletedAppName);
+          mSettings.removeDisabledSystemPackageLPw(deletedAppName);
+          String msg;
+          if (deletedPkg == null) {
+            msg="Updated system package " + deletedAppName + " no longer exists; wiping its data";
+            mInstaller.remove(deletedAppName,0);
+            sUserManager.removePackageForAllUsers(deletedAppName);
+          }
+ else {
+            msg="Updated system app + " + deletedAppName + " no longer present; removing system privileges for "+ deletedAppName;
             deletedPkg.applicationInfo.flags&=~ApplicationInfo.FLAG_SYSTEM;
             PackageSetting deletedPs=mSettings.mPackages.get(deletedAppName);
             deletedPs.pkgFlags&=~ApplicationInfo.FLAG_SYSTEM;
           }
+          reportSettingsProblem(Log.WARN,msg);
         }
       }
  else {
