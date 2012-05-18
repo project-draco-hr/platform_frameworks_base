@@ -1,0 +1,61 @@
+{
+  int numFullKeyboardsAdded=0;
+  mTempInputDevicesChangedListenersToNotify.clear();
+  mTempFullKeyboards.clear();
+  final int numListeners;
+  final int[] deviceIdAndGeneration;
+synchronized (mInputDevicesLock) {
+    if (!mInputDevicesChangedPending) {
+      return;
+    }
+    mInputDevicesChangedPending=false;
+    numListeners=mInputDevicesChangedListeners.size();
+    for (int i=0; i < numListeners; i++) {
+      mTempInputDevicesChangedListenersToNotify.add(mInputDevicesChangedListeners.valueAt(i));
+    }
+    final int numDevices=mInputDevices.length;
+    deviceIdAndGeneration=new int[numDevices * 2];
+    for (int i=0; i < numDevices; i++) {
+      final InputDevice inputDevice=mInputDevices[i];
+      deviceIdAndGeneration[i * 2]=inputDevice.getId();
+      deviceIdAndGeneration[i * 2 + 1]=inputDevice.getGeneration();
+      if (isFullKeyboard(inputDevice)) {
+        if (!containsInputDeviceWithDescriptor(oldInputDevices,inputDevice.getDescriptor())) {
+          mTempFullKeyboards.add(numFullKeyboardsAdded++,inputDevice);
+        }
+ else {
+          mTempFullKeyboards.add(inputDevice);
+        }
+      }
+    }
+  }
+  for (int i=0; i < numListeners; i++) {
+    mTempInputDevicesChangedListenersToNotify.get(i).notifyInputDevicesChanged(deviceIdAndGeneration);
+  }
+  mTempInputDevicesChangedListenersToNotify.clear();
+  if (mNotificationManager != null) {
+    final int numFullKeyboards=mTempFullKeyboards.size();
+    boolean missingLayoutForExternalKeyboard=false;
+    boolean missingLayoutForExternalKeyboardAdded=false;
+synchronized (mDataStore) {
+      for (int i=0; i < numFullKeyboards; i++) {
+        final InputDevice inputDevice=mTempFullKeyboards.get(i);
+        if (mDataStore.getCurrentKeyboardLayout(inputDevice.getDescriptor()) == null) {
+          missingLayoutForExternalKeyboard=true;
+          if (i < numFullKeyboardsAdded) {
+            missingLayoutForExternalKeyboardAdded=true;
+          }
+        }
+      }
+    }
+    if (missingLayoutForExternalKeyboard) {
+      if (missingLayoutForExternalKeyboardAdded) {
+        showMissingKeyboardLayoutNotification();
+      }
+    }
+ else     if (mKeyboardLayoutNotificationShown) {
+      hideMissingKeyboardLayoutNotification();
+    }
+  }
+  mTempFullKeyboards.clear();
+}
