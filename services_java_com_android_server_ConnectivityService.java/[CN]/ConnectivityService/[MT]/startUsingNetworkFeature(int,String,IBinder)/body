@@ -1,89 +1,106 @@
 {
+  long startTime=0;
+  if (DBG) {
+    startTime=SystemClock.elapsedRealtime();
+  }
   if (VDBG) {
     log("startUsingNetworkFeature for net " + networkType + ": "+ feature+ ", uid="+ Binder.getCallingUid());
   }
   enforceChangePermission();
-  if (!ConnectivityManager.isNetworkTypeValid(networkType) || mNetConfigs[networkType] == null) {
-    return Phone.APN_REQUEST_FAILED;
-  }
-  FeatureUser f=new FeatureUser(networkType,feature,binder);
-  int usedNetworkType=convertFeatureToNetworkType(networkType,feature);
-  if (mProtectedNetworks.contains(usedNetworkType)) {
-    enforceConnectivityInternalPermission();
-  }
-  final boolean networkMetered=isNetworkMeteredUnchecked(usedNetworkType);
-  final int uidRules;
+  try {
+    if (!ConnectivityManager.isNetworkTypeValid(networkType) || mNetConfigs[networkType] == null) {
+      return Phone.APN_REQUEST_FAILED;
+    }
+    FeatureUser f=new FeatureUser(networkType,feature,binder);
+    int usedNetworkType=convertFeatureToNetworkType(networkType,feature);
+    if (mProtectedNetworks.contains(usedNetworkType)) {
+      enforceConnectivityInternalPermission();
+    }
+    final boolean networkMetered=isNetworkMeteredUnchecked(usedNetworkType);
+    final int uidRules;
 synchronized (mRulesLock) {
-    uidRules=mUidRules.get(Binder.getCallingUid(),RULE_ALLOW_ALL);
-  }
-  if (networkMetered && (uidRules & RULE_REJECT_METERED) != 0) {
-    return Phone.APN_REQUEST_FAILED;
-  }
-  NetworkStateTracker network=mNetTrackers[usedNetworkType];
-  if (network != null) {
-    Integer currentPid=new Integer(getCallingPid());
-    if (usedNetworkType != networkType) {
-      NetworkInfo ni=network.getNetworkInfo();
-      if (ni.isAvailable() == false) {
-        if (!TextUtils.equals(feature,Phone.FEATURE_ENABLE_DUN_ALWAYS)) {
-          if (DBG)           log("special network not available ni=" + ni.getTypeName());
-          return Phone.APN_TYPE_NOT_AVAILABLE;
-        }
- else {
-          if (DBG) {
-            log("special network not available, but try anyway ni=" + ni.getTypeName());
+      uidRules=mUidRules.get(Binder.getCallingUid(),RULE_ALLOW_ALL);
+    }
+    if (networkMetered && (uidRules & RULE_REJECT_METERED) != 0) {
+      return Phone.APN_REQUEST_FAILED;
+    }
+    NetworkStateTracker network=mNetTrackers[usedNetworkType];
+    if (network != null) {
+      Integer currentPid=new Integer(getCallingPid());
+      if (usedNetworkType != networkType) {
+        NetworkInfo ni=network.getNetworkInfo();
+        if (ni.isAvailable() == false) {
+          if (!TextUtils.equals(feature,Phone.FEATURE_ENABLE_DUN_ALWAYS)) {
+            if (DBG)             log("special network not available ni=" + ni.getTypeName());
+            return Phone.APN_TYPE_NOT_AVAILABLE;
           }
-        }
-      }
-      int restoreTimer=getRestoreDefaultNetworkDelay(usedNetworkType);
-synchronized (this) {
-        boolean addToList=true;
-        if (restoreTimer < 0) {
-          for (          FeatureUser u : mFeatureUsers) {
-            if (u.isSameUser(f)) {
-              addToList=false;
-              break;
+ else {
+            if (DBG) {
+              log("special network not available, but try anyway ni=" + ni.getTypeName());
             }
           }
         }
-        if (addToList)         mFeatureUsers.add(f);
-        if (!mNetRequestersPids[usedNetworkType].contains(currentPid)) {
-          mNetRequestersPids[usedNetworkType].add(currentPid);
-        }
-      }
-      if (restoreTimer >= 0) {
-        mHandler.sendMessageDelayed(mHandler.obtainMessage(EVENT_RESTORE_DEFAULT_NETWORK,f),restoreTimer);
-      }
-      if ((ni.isConnectedOrConnecting() == true) && !network.isTeardownRequested()) {
-        if (ni.isConnected() == true) {
-          final long token=Binder.clearCallingIdentity();
-          try {
-            handleDnsConfigurationChange(usedNetworkType);
-            if (VDBG)             log("special network already active");
+        int restoreTimer=getRestoreDefaultNetworkDelay(usedNetworkType);
+synchronized (this) {
+          boolean addToList=true;
+          if (restoreTimer < 0) {
+            for (            FeatureUser u : mFeatureUsers) {
+              if (u.isSameUser(f)) {
+                addToList=false;
+                break;
+              }
+            }
           }
+          if (addToList)           mFeatureUsers.add(f);
+          if (!mNetRequestersPids[usedNetworkType].contains(currentPid)) {
+            mNetRequestersPids[usedNetworkType].add(currentPid);
+          }
+        }
+        if (restoreTimer >= 0) {
+          mHandler.sendMessageDelayed(mHandler.obtainMessage(EVENT_RESTORE_DEFAULT_NETWORK,f),restoreTimer);
+        }
+        if ((ni.isConnectedOrConnecting() == true) && !network.isTeardownRequested()) {
+          if (ni.isConnected() == true) {
+            final long token=Binder.clearCallingIdentity();
+            try {
+              handleDnsConfigurationChange(usedNetworkType);
+              if (VDBG)               log("special network already active");
+            }
   finally {
-            Binder.restoreCallingIdentity(token);
+              Binder.restoreCallingIdentity(token);
+            }
+            return Phone.APN_ALREADY_ACTIVE;
           }
-          return Phone.APN_ALREADY_ACTIVE;
+          if (VDBG)           log("special network already connecting");
+          return Phone.APN_REQUEST_STARTED;
         }
-        if (VDBG)         log("special network already connecting");
+        if (DBG) {
+          log("startUsingNetworkFeature reconnecting to " + networkType + ": "+ feature);
+        }
+        network.reconnect();
         return Phone.APN_REQUEST_STARTED;
       }
-      if (DBG) {
-        log("startUsingNetworkFeature reconnecting to " + networkType + ": "+ feature);
-      }
-      network.reconnect();
-      return Phone.APN_REQUEST_STARTED;
-    }
  else {
 synchronized (this) {
-        mFeatureUsers.add(f);
-        if (!mNetRequestersPids[usedNetworkType].contains(currentPid)) {
-          mNetRequestersPids[usedNetworkType].add(currentPid);
+          mFeatureUsers.add(f);
+          if (!mNetRequestersPids[usedNetworkType].contains(currentPid)) {
+            mNetRequestersPids[usedNetworkType].add(currentPid);
+          }
         }
+        return -1;
       }
-      return -1;
+    }
+    return Phone.APN_TYPE_NOT_AVAILABLE;
+  }
+  finally {
+    if (DBG) {
+      final long execTime=SystemClock.elapsedRealtime() - startTime;
+      if (execTime > 250) {
+        loge("startUsingNetworkFeature took too long: " + execTime + "ms");
+      }
+ else {
+        if (VDBG)         log("startUsingNetworkFeature took " + execTime + "ms");
+      }
     }
   }
-  return Phone.APN_TYPE_NOT_AVAILABLE;
 }
