@@ -1,38 +1,48 @@
 {
-  int n=0;
-  while (true) {
-    n++;
-    IContentProvider provider=acquireUnstableProvider(uri);
-    if (provider == null) {
-      throw new FileNotFoundException("No content provider: " + uri);
-    }
+  IContentProvider unstableProvider=acquireUnstableProvider(uri);
+  if (unstableProvider == null) {
+    throw new FileNotFoundException("No content provider: " + uri);
+  }
+  IContentProvider stableProvider=null;
+  AssetFileDescriptor fd=null;
+  try {
     try {
-      AssetFileDescriptor fd=provider.openTypedAssetFile(uri,mimeType,opts);
+      fd=unstableProvider.openTypedAssetFile(uri,mimeType,opts);
       if (fd == null) {
         return null;
       }
-      ParcelFileDescriptor pfd=new ParcelFileDescriptorInner(fd.getParcelFileDescriptor(),provider);
-      provider=null;
-      return new AssetFileDescriptor(pfd,fd.getStartOffset(),fd.getDeclaredLength());
     }
- catch (    RemoteException e) {
-      if (n <= 2) {
-        try {
-          Thread.sleep(100);
-        }
- catch (        InterruptedException e1) {
-        }
-        continue;
+ catch (    DeadObjectException e) {
+      unstableProviderDied(unstableProvider);
+      stableProvider=acquireProvider(uri);
+      if (stableProvider == null) {
+        throw new FileNotFoundException("No content provider: " + uri);
       }
-      throw new FileNotFoundException("Dead content provider: " + uri);
+      fd=stableProvider.openTypedAssetFile(uri,mimeType,opts);
+      if (fd == null) {
+        return null;
+      }
     }
-catch (    FileNotFoundException e) {
-      throw e;
+    if (stableProvider == null) {
+      stableProvider=acquireProvider(uri);
     }
+    releaseUnstableProvider(unstableProvider);
+    ParcelFileDescriptor pfd=new ParcelFileDescriptorInner(fd.getParcelFileDescriptor(),stableProvider);
+    stableProvider=null;
+    return new AssetFileDescriptor(pfd,fd.getStartOffset(),fd.getDeclaredLength());
+  }
+ catch (  RemoteException e) {
+    throw new FileNotFoundException("Failed opening content provider: " + uri);
+  }
+catch (  FileNotFoundException e) {
+    throw e;
+  }
  finally {
-      if (provider != null) {
-        releaseUnstableProvider(provider);
-      }
+    if (stableProvider != null) {
+      releaseProvider(stableProvider);
+    }
+    if (unstableProvider != null) {
+      releaseUnstableProvider(unstableProvider);
     }
   }
 }

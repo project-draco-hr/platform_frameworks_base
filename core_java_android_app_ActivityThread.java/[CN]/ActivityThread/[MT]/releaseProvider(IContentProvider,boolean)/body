@@ -1,0 +1,65 @@
+{
+  if (provider == null) {
+    return false;
+  }
+  IBinder jBinder=provider.asBinder();
+synchronized (mProviderMap) {
+    ProviderRefCount prc=mProviderRefCountMap.get(jBinder);
+    if (prc == null) {
+      return false;
+    }
+    boolean lastRef=false;
+    if (stable) {
+      if (prc.stableCount == 0) {
+        if (DEBUG_PROVIDER)         Slog.v(TAG,"releaseProvider: stable ref count already 0, how?");
+        return false;
+      }
+      prc.stableCount-=1;
+      if (prc.stableCount == 0) {
+        lastRef=prc.unstableCount == 0;
+        try {
+          if (DEBUG_PROVIDER) {
+            Slog.v(TAG,"releaseProvider: No longer stable w/lastRef=" + lastRef + " - "+ prc.holder.info.name);
+          }
+          ActivityManagerNative.getDefault().refContentProvider(prc.holder.connection,-1,lastRef ? 1 : 0);
+        }
+ catch (        RemoteException e) {
+        }
+      }
+    }
+ else {
+      if (prc.unstableCount == 0) {
+        if (DEBUG_PROVIDER)         Slog.v(TAG,"releaseProvider: unstable ref count already 0, how?");
+        return false;
+      }
+      prc.unstableCount-=1;
+      if (prc.unstableCount == 0) {
+        lastRef=prc.stableCount == 0;
+        if (!lastRef) {
+          try {
+            if (DEBUG_PROVIDER) {
+              Slog.v(TAG,"releaseProvider: No longer unstable - " + prc.holder.info.name);
+            }
+            ActivityManagerNative.getDefault().refContentProvider(prc.holder.connection,0,-1);
+          }
+ catch (          RemoteException e) {
+          }
+        }
+      }
+    }
+    if (lastRef) {
+      if (!prc.removePending) {
+        if (DEBUG_PROVIDER) {
+          Slog.v(TAG,"releaseProvider: Enqueueing pending removal - " + prc.holder.info.name);
+        }
+        prc.removePending=true;
+        Message msg=mH.obtainMessage(H.REMOVE_PROVIDER,prc);
+        mH.sendMessage(msg);
+      }
+ else {
+        Slog.w(TAG,"Duplicate remove pending of provider " + prc.holder.info.name);
+      }
+    }
+    return true;
+  }
+}

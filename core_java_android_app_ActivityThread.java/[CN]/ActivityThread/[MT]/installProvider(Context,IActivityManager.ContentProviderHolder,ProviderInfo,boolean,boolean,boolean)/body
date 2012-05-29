@@ -1,0 +1,101 @@
+{
+  ContentProvider localProvider=null;
+  IContentProvider provider;
+  if (holder == null) {
+    if (DEBUG_PROVIDER || noisy) {
+      Slog.d(TAG,"Loading provider " + info.authority + ": "+ info.name);
+    }
+    Context c=null;
+    ApplicationInfo ai=info.applicationInfo;
+    if (context.getPackageName().equals(ai.packageName)) {
+      c=context;
+    }
+ else     if (mInitialApplication != null && mInitialApplication.getPackageName().equals(ai.packageName)) {
+      c=mInitialApplication;
+    }
+ else {
+      try {
+        c=context.createPackageContext(ai.packageName,Context.CONTEXT_INCLUDE_CODE);
+      }
+ catch (      PackageManager.NameNotFoundException e) {
+      }
+    }
+    if (c == null) {
+      Slog.w(TAG,"Unable to get context for package " + ai.packageName + " while loading content provider "+ info.name);
+      return null;
+    }
+    try {
+      final java.lang.ClassLoader cl=c.getClassLoader();
+      localProvider=(ContentProvider)cl.loadClass(info.name).newInstance();
+      provider=localProvider.getIContentProvider();
+      if (provider == null) {
+        Slog.e(TAG,"Failed to instantiate class " + info.name + " from sourceDir "+ info.applicationInfo.sourceDir);
+        return null;
+      }
+      if (DEBUG_PROVIDER)       Slog.v(TAG,"Instantiating local provider " + info.name);
+      localProvider.attachInfo(c,info);
+    }
+ catch (    java.lang.Exception e) {
+      if (!mInstrumentation.onException(null,e)) {
+        throw new RuntimeException("Unable to get provider " + info.name + ": "+ e.toString(),e);
+      }
+      return null;
+    }
+  }
+ else {
+    provider=holder.provider;
+    if (DEBUG_PROVIDER)     Slog.v(TAG,"Installing external provider " + info.authority + ": "+ info.name);
+  }
+  IActivityManager.ContentProviderHolder retHolder;
+synchronized (mProviderMap) {
+    if (DEBUG_PROVIDER)     Slog.v(TAG,"Checking to add " + provider + " / "+ info.name);
+    IBinder jBinder=provider.asBinder();
+    if (localProvider != null) {
+      ComponentName cname=new ComponentName(info.packageName,info.name);
+      ProviderClientRecord pr=mLocalProvidersByName.get(cname);
+      if (pr != null) {
+        if (DEBUG_PROVIDER) {
+          Slog.v(TAG,"installProvider: lost the race, " + "using existing local provider");
+        }
+        provider=pr.mProvider;
+      }
+ else {
+        holder=new IActivityManager.ContentProviderHolder(info);
+        holder.provider=provider;
+        holder.noReleaseNeeded=true;
+        pr=installProviderAuthoritiesLocked(provider,localProvider,holder);
+        mLocalProviders.put(jBinder,pr);
+        mLocalProvidersByName.put(cname,pr);
+      }
+      retHolder=pr.mHolder;
+    }
+ else {
+      ProviderRefCount prc=mProviderRefCountMap.get(jBinder);
+      if (prc != null) {
+        if (DEBUG_PROVIDER) {
+          Slog.v(TAG,"installProvider: lost the race, updating ref count");
+        }
+        if (!noReleaseNeeded) {
+          incProviderRefLocked(prc,stable);
+          try {
+            ActivityManagerNative.getDefault().removeContentProvider(holder.connection,stable);
+          }
+ catch (          RemoteException e) {
+          }
+        }
+      }
+ else {
+        ProviderClientRecord client=installProviderAuthoritiesLocked(provider,localProvider,holder);
+        if (noReleaseNeeded) {
+          prc=new ProviderRefCount(holder,client,1000,1000);
+        }
+ else {
+          prc=stable ? new ProviderRefCount(holder,client,1,0) : new ProviderRefCount(holder,client,0,1);
+        }
+        mProviderRefCountMap.put(jBinder,prc);
+      }
+      retHolder=prc.holder;
+    }
+  }
+  return retHolder;
+}

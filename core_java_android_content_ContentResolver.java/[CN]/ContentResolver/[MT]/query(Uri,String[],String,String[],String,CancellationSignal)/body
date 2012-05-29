@@ -1,32 +1,48 @@
 {
-  IContentProvider provider=acquireProvider(uri);
-  if (provider == null) {
+  IContentProvider unstableProvider=acquireUnstableProvider(uri);
+  if (unstableProvider == null) {
     return null;
   }
+  IContentProvider stableProvider=null;
   try {
     long startTime=SystemClock.uptimeMillis();
     ICancellationSignal remoteCancellationSignal=null;
     if (cancellationSignal != null) {
       cancellationSignal.throwIfCanceled();
-      remoteCancellationSignal=provider.createCancellationSignal();
+      remoteCancellationSignal=unstableProvider.createCancellationSignal();
       cancellationSignal.setRemote(remoteCancellationSignal);
     }
-    Cursor qCursor=provider.query(uri,projection,selection,selectionArgs,sortOrder,remoteCancellationSignal);
+    Cursor qCursor;
+    try {
+      qCursor=unstableProvider.query(uri,projection,selection,selectionArgs,sortOrder,remoteCancellationSignal);
+    }
+ catch (    DeadObjectException e) {
+      unstableProviderDied(unstableProvider);
+      stableProvider=acquireProvider(uri);
+      if (stableProvider == null) {
+        return null;
+      }
+      qCursor=stableProvider.query(uri,projection,selection,selectionArgs,sortOrder,remoteCancellationSignal);
+    }
     if (qCursor == null) {
-      releaseProvider(provider);
       return null;
     }
     qCursor.getCount();
     long durationMillis=SystemClock.uptimeMillis() - startTime;
     maybeLogQueryToEventLog(durationMillis,uri,projection,selection,sortOrder);
-    return new CursorWrapperInner(qCursor,provider);
+    CursorWrapperInner wrapper=new CursorWrapperInner(qCursor,stableProvider != null ? stableProvider : acquireProvider(uri));
+    stableProvider=null;
+    return wrapper;
   }
  catch (  RemoteException e) {
-    releaseProvider(provider);
     return null;
   }
-catch (  RuntimeException e) {
-    releaseProvider(provider);
-    throw e;
+ finally {
+    if (unstableProvider != null) {
+      releaseUnstableProvider(unstableProvider);
+    }
+    if (stableProvider != null) {
+      releaseProvider(stableProvider);
+    }
   }
 }
