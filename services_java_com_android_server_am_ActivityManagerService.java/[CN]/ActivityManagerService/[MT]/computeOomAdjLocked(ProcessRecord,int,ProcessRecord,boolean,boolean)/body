@@ -38,23 +38,25 @@
     }
     return (app.curAdj=app.maxAdj);
   }
-  final boolean hadForegroundActivities=app.foregroundActivities;
-  app.foregroundActivities=false;
   app.keeping=false;
   app.systemNoUi=false;
   int adj;
   int schedGroup;
+  boolean foregroundActivities=false;
+  boolean interesting=false;
   BroadcastQueue queue;
   if (app == TOP_APP) {
     adj=ProcessList.FOREGROUND_APP_ADJ;
     schedGroup=Process.THREAD_GROUP_DEFAULT;
     app.adjType="top-activity";
-    app.foregroundActivities=true;
+    foregroundActivities=true;
+    interesting=true;
   }
  else   if (app.instrumentationClass != null) {
     adj=ProcessList.FOREGROUND_APP_ADJ;
     schedGroup=Process.THREAD_GROUP_DEFAULT;
     app.adjType="instrumentation";
+    interesting=true;
   }
  else   if ((queue=isReceivingBroadcast(app)) != null) {
     adj=ProcessList.FOREGROUND_APP_ADJ;
@@ -80,7 +82,7 @@
     app.adjType="bg-empty";
   }
   boolean hasStoppingActivities=false;
-  if (!app.foregroundActivities && activitiesSize > 0) {
+  if (!foregroundActivities && activitiesSize > 0) {
     for (int j=0; j < activitiesSize; j++) {
       final ActivityRecord r=app.activities.get(j);
       if (r.visible) {
@@ -90,7 +92,7 @@
         }
         schedGroup=Process.THREAD_GROUP_DEFAULT;
         app.hidden=false;
-        app.foregroundActivities=true;
+        foregroundActivities=true;
         break;
       }
  else       if (r.state == ActivityState.PAUSING || r.state == ActivityState.PAUSED) {
@@ -99,11 +101,11 @@
           app.adjType="pausing";
         }
         app.hidden=false;
-        app.foregroundActivities=true;
+        foregroundActivities=true;
       }
  else       if (r.state == ActivityState.STOPPING) {
         app.hidden=false;
-        app.foregroundActivities=true;
+        foregroundActivities=true;
         hasStoppingActivities=true;
       }
     }
@@ -122,6 +124,9 @@
       app.adjSource=app.forcingToForeground;
       schedGroup=Process.THREAD_GROUP_DEFAULT;
     }
+  }
+  if (app.foregroundServices) {
+    interesting=true;
   }
   if (adj > ProcessList.HEAVY_WEIGHT_APP_ADJ && app == mHeavyWeightProcess) {
     adj=ProcessList.HEAVY_WEIGHT_APP_ADJ;
@@ -384,10 +389,82 @@
       adj++;
     }
   }
-  app.curAdj=adj;
-  app.curSchedGroup=schedGroup;
-  if (hadForegroundActivities != app.foregroundActivities) {
-    mHandler.obtainMessage(DISPATCH_FOREGROUND_ACTIVITIES_CHANGED,app.pid,app.info.uid,app.foregroundActivities).sendToTarget();
+  int importance=app.memImportance;
+  if (importance == 0 || adj != app.curAdj || schedGroup != app.curSchedGroup) {
+    app.curAdj=adj;
+    app.curSchedGroup=schedGroup;
+    if (!interesting) {
+      importance=ActivityManager.RunningAppProcessInfo.IMPORTANCE_BACKGROUND;
+    }
+ else     if (adj >= ProcessList.HIDDEN_APP_MIN_ADJ) {
+      importance=ActivityManager.RunningAppProcessInfo.IMPORTANCE_BACKGROUND;
+    }
+ else     if (adj >= ProcessList.SERVICE_B_ADJ) {
+      importance=ActivityManager.RunningAppProcessInfo.IMPORTANCE_SERVICE;
+    }
+ else     if (adj >= ProcessList.HOME_APP_ADJ) {
+      importance=ActivityManager.RunningAppProcessInfo.IMPORTANCE_BACKGROUND;
+    }
+ else     if (adj >= ProcessList.SERVICE_ADJ) {
+      importance=ActivityManager.RunningAppProcessInfo.IMPORTANCE_SERVICE;
+    }
+ else     if (adj >= ProcessList.HEAVY_WEIGHT_APP_ADJ) {
+      importance=ActivityManager.RunningAppProcessInfo.IMPORTANCE_CANT_SAVE_STATE;
+    }
+ else     if (adj >= ProcessList.PERCEPTIBLE_APP_ADJ) {
+      importance=ActivityManager.RunningAppProcessInfo.IMPORTANCE_PERCEPTIBLE;
+    }
+ else     if (adj >= ProcessList.VISIBLE_APP_ADJ) {
+      importance=ActivityManager.RunningAppProcessInfo.IMPORTANCE_VISIBLE;
+    }
+ else     if (adj >= ProcessList.FOREGROUND_APP_ADJ) {
+      importance=ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND;
+    }
+ else {
+      importance=ActivityManager.RunningAppProcessInfo.IMPORTANCE_PERSISTENT;
+    }
+  }
+  int changes=importance != app.memImportance ? ProcessChangeItem.CHANGE_IMPORTANCE : 0;
+  if (foregroundActivities != app.foregroundActivities) {
+    changes|=ProcessChangeItem.CHANGE_ACTIVITIES;
+  }
+  if (changes != 0) {
+    if (DEBUG_PROCESS_OBSERVERS)     Slog.i(TAG,"Changes in " + app + ": "+ changes);
+    app.memImportance=importance;
+    app.foregroundActivities=foregroundActivities;
+    int i=mPendingProcessChanges.size() - 1;
+    ProcessChangeItem item=null;
+    while (i >= 0) {
+      item=mPendingProcessChanges.get(i);
+      if (item.pid == app.pid) {
+        if (DEBUG_PROCESS_OBSERVERS)         Slog.i(TAG,"Re-using existing item: " + item);
+        break;
+      }
+      i--;
+    }
+    if (i < 0) {
+      final int NA=mAvailProcessChanges.size();
+      if (NA > 0) {
+        item=mAvailProcessChanges.remove(NA - 1);
+        if (DEBUG_PROCESS_OBSERVERS)         Slog.i(TAG,"Retreiving available item: " + item);
+      }
+ else {
+        item=new ProcessChangeItem();
+        if (DEBUG_PROCESS_OBSERVERS)         Slog.i(TAG,"Allocating new item: " + item);
+      }
+      item.changes=0;
+      item.pid=app.pid;
+      item.uid=app.info.uid;
+      if (mPendingProcessChanges.size() == 0) {
+        if (DEBUG_PROCESS_OBSERVERS)         Slog.i(TAG,"*** Enqueueing dispatch processes changed!");
+        mHandler.obtainMessage(DISPATCH_PROCESSES_CHANGED).sendToTarget();
+      }
+      mPendingProcessChanges.add(item);
+    }
+    item.changes|=changes;
+    item.importance=importance;
+    item.foregroundActivities=foregroundActivities;
+    if (DEBUG_PROCESS_OBSERVERS)     Slog.i(TAG,"Item " + Integer.toHexString(System.identityHashCode(item)) + " "+ app.toShortString()+ ": changes="+ item.changes+ " importance="+ item.importance+ " foreground="+ item.foregroundActivities+ " type="+ app.adjType+ " source="+ app.adjSource+ " target="+ app.adjTarget);
   }
   return app.curRawAdj;
 }
