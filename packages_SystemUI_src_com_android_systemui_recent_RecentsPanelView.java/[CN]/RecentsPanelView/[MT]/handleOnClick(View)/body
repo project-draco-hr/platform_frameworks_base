@@ -3,24 +3,57 @@
   TaskDescription ad=holder.taskDescription;
   final Context context=view.getContext();
   final ActivityManager am=(ActivityManager)context.getSystemService(Context.ACTIVITY_SERVICE);
-  holder.thumbnailViewImage.setDrawingCacheEnabled(true);
-  Bitmap bm=holder.thumbnailViewImage.getDrawingCache();
-  mPlaceholderThumbnail=(ImageView)findViewById(R.id.recents_transition_placeholder_icon);
+  Bitmap bm=holder.thumbnailViewImageBitmap;
+  boolean usingDrawingCache;
+  if (bm.getWidth() == holder.thumbnailViewImage.getWidth() && bm.getHeight() == holder.thumbnailViewImage.getHeight()) {
+    usingDrawingCache=false;
+  }
+ else {
+    holder.thumbnailViewImage.setDrawingCacheEnabled(true);
+    bm=holder.thumbnailViewImage.getDrawingCache();
+    usingDrawingCache=true;
+  }
+  if (mPlaceholderThumbnail == null) {
+    mPlaceholderThumbnail=(ImageView)findViewById(R.id.recents_transition_placeholder_icon);
+  }
+  if (mTransitionBg == null) {
+    mTransitionBg=(View)findViewById(R.id.recents_transition_background);
+    IWindowManager wm=IWindowManager.Stub.asInterface(ServiceManager.getService(Context.WINDOW_SERVICE));
+    try {
+      if (!wm.hasSystemNavBar()) {
+        FrameLayout.LayoutParams lp=(FrameLayout.LayoutParams)mTransitionBg.getLayoutParams();
+        int statusBarHeight=getResources().getDimensionPixelSize(com.android.internal.R.dimen.status_bar_height);
+        lp.setMargins(0,statusBarHeight,0,0);
+        mTransitionBg.setLayoutParams(lp);
+      }
+    }
+ catch (    RemoteException e) {
+      Log.w(TAG,"Failing checking whether status bar is visible",e);
+    }
+  }
   final ImageView placeholderThumbnail=mPlaceholderThumbnail;
-  mHideWindowAfterPlaceholderThumbnailIsHidden=false;
+  mHideRecentsAfterThumbnailScaleUpStarted=false;
   placeholderThumbnail.setVisibility(VISIBLE);
-  Bitmap b2=bm.copy(bm.getConfig(),true);
-  placeholderThumbnail.setImageBitmap(b2);
+  if (!usingDrawingCache) {
+    placeholderThumbnail.setImageBitmap(bm);
+  }
+ else {
+    Bitmap b2=bm.copy(bm.getConfig(),true);
+    placeholderThumbnail.setImageBitmap(b2);
+  }
   Rect r=new Rect();
   holder.thumbnailViewImage.getGlobalVisibleRect(r);
   placeholderThumbnail.setTranslationX(r.left);
   placeholderThumbnail.setTranslationY(r.top);
   show(false,true);
+  mThumbnailScaleUpStarted=false;
   ActivityOptions opts=ActivityOptions.makeDelayedThumbnailScaleUpAnimation(holder.thumbnailViewImage,bm,0,0,new ActivityOptions.OnAnimationStartedListener(){
     @Override public void onAnimationStarted(){
-      mPlaceholderThumbnail=null;
-      placeholderThumbnail.setVisibility(INVISIBLE);
-      if (mHideWindowAfterPlaceholderThumbnailIsHidden) {
+      mThumbnailScaleUpStarted=true;
+      if (!mHighEndGfx) {
+        mPlaceholderThumbnail.setVisibility(INVISIBLE);
+      }
+      if (mHideRecentsAfterThumbnailScaleUpStarted) {
         hideWindow();
       }
     }
@@ -35,5 +68,7 @@
     if (DEBUG)     Log.v(TAG,"Starting activity " + intent);
     context.startActivity(intent,opts.toBundle());
   }
-  holder.thumbnailViewImage.setDrawingCacheEnabled(false);
+  if (!usingDrawingCache) {
+    holder.thumbnailViewImage.setDrawingCacheEnabled(false);
+  }
 }
