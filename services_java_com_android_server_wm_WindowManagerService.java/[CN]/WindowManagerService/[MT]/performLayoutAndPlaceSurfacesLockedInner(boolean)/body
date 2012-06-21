@@ -25,6 +25,7 @@
   mInnerFields.mHoldScreen=null;
   mInnerFields.mScreenBrightness=-1;
   mInnerFields.mButtonBrightness=-1;
+  mTransactionSequence++;
   if (SHOW_LIGHT_TRANSACTIONS)   Slog.i(TAG,">>> OPEN TRANSACTION performLayoutAndPlaceSurfaces");
   Surface.openTransaction();
   if (mWatermark != null) {
@@ -83,6 +84,7 @@
     mInnerFields.mDimming=false;
     mInnerFields.mSyswin=false;
     boolean focusDisplayed=false;
+    boolean updateAllDrawn=false;
     final int N=mWindows.size();
     for (i=N - 1; i >= 0; i--) {
       WindowState w=mWindows.get(i);
@@ -114,11 +116,46 @@
           }
         }
         winAnimator.setSurfaceBoundaries(recoveringMemory);
+        final AppWindowToken atoken=w.mAppToken;
+        if (DEBUG_STARTING_WINDOW && atoken != null && w == atoken.startingWindow) {
+          Slog.d(TAG,"updateWindows: starting " + w + " isOnScreen="+ w.isOnScreen()+ " allDrawn="+ atoken.allDrawn+ " freezingScreen="+ atoken.mAppAnimator.freezingScreen);
+        }
+        if (atoken != null && (!atoken.allDrawn || atoken.mAppAnimator.freezingScreen)) {
+          if (atoken.lastTransactionSequence != mTransactionSequence) {
+            atoken.lastTransactionSequence=mTransactionSequence;
+            atoken.numInterestingWindows=atoken.numDrawnWindows=0;
+            atoken.startingDisplayed=false;
+          }
+          if ((w.isOnScreen() || winAnimator.mAttrType == WindowManager.LayoutParams.TYPE_BASE_APPLICATION) && !w.mExiting && !w.mDestroying) {
+            if (WindowManagerService.DEBUG_VISIBILITY || WindowManagerService.DEBUG_ORIENTATION) {
+              Slog.v(TAG,"Eval win " + w + ": isDrawn="+ w.isDrawnLw()+ ", isAnimating="+ winAnimator.isAnimating());
+              if (!w.isDrawnLw()) {
+                Slog.v(TAG,"Not displayed: s=" + winAnimator.mSurface + " pv="+ w.mPolicyVisibility+ " mDrawState="+ winAnimator.mDrawState+ " ah="+ w.mAttachedHidden+ " th="+ atoken.hiddenRequested+ " a="+ winAnimator.mAnimating);
+              }
+            }
+            if (w != atoken.startingWindow) {
+              if (!atoken.mAppAnimator.freezingScreen || !w.mAppFreezing) {
+                atoken.numInterestingWindows++;
+                if (w.isDrawnLw()) {
+                  atoken.numDrawnWindows++;
+                  if (WindowManagerService.DEBUG_VISIBILITY || WindowManagerService.DEBUG_ORIENTATION)                   Slog.v(TAG,"tokenMayBeDrawn: " + atoken + " freezingScreen="+ atoken.mAppAnimator.freezingScreen+ " mAppFreezing="+ w.mAppFreezing);
+                  updateAllDrawn=true;
+                }
+              }
+            }
+ else             if (w.isDrawnLw()) {
+              atoken.startingDisplayed=true;
+            }
+          }
+        }
       }
       if (someoneLosingFocus && w == mCurrentFocus && w.isDisplayedLw()) {
         focusDisplayed=true;
       }
       updateResizingWindows(w);
+    }
+    if (updateAllDrawn) {
+      updateAllDrawnLocked();
     }
     if (focusDisplayed) {
       mH.sendEmptyMessage(H.REPORT_LOSING_FOCUS);
