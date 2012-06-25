@@ -2,9 +2,7 @@
   ++mAnimTransactionSequence;
   ArrayList<WindowStateAnimator> unForceHiding=null;
   boolean wallpaperInUnForceHiding=false;
-  WindowStateAnimator windowAnimationBackground=null;
-  int windowAnimationBackgroundColor=0;
-  WindowState detachedWallpaper=null;
+  boolean forceHiding=false;
   for (int i=mWinAnimators.size() - 1; i >= 0; i--) {
     WindowStateAnimator winAnimator=mWinAnimators.get(i);
     WindowState win=winAnimator.mWin;
@@ -14,34 +12,6 @@
       final boolean nowAnimating=winAnimator.stepAnimationLocked(mCurrentTime);
       if (WindowManagerService.DEBUG_WALLPAPER) {
         Slog.v(TAG,win + ": wasAnimating=" + wasAnimating+ ", nowAnimating="+ nowAnimating);
-      }
-      if (nowAnimating) {
-        if (winAnimator.mAnimation != null) {
-          if ((flags & FLAG_SHOW_WALLPAPER) != 0 && winAnimator.mAnimation.getDetachWallpaper()) {
-            detachedWallpaper=win;
-          }
-          final int backgroundColor=winAnimator.mAnimation.getBackgroundColor();
-          if (backgroundColor != 0) {
-            if (windowAnimationBackground == null || (winAnimator.mAnimLayer < windowAnimationBackground.mAnimLayer)) {
-              windowAnimationBackground=winAnimator;
-              windowAnimationBackgroundColor=backgroundColor;
-            }
-          }
-        }
-        mAnimating=true;
-      }
-      final AppWindowAnimator appAnimator=win.mAppToken == null ? null : win.mAppToken.mAppAnimator;
-      if (appAnimator != null && appAnimator.animation != null && appAnimator.animating) {
-        if ((flags & FLAG_SHOW_WALLPAPER) != 0 && appAnimator.animation.getDetachWallpaper()) {
-          detachedWallpaper=win;
-        }
-        final int backgroundColor=appAnimator.animation.getBackgroundColor();
-        if (backgroundColor != 0) {
-          if (windowAnimationBackground == null || (winAnimator.mAnimLayer < windowAnimationBackground.mAnimLayer)) {
-            windowAnimationBackground=winAnimator;
-            windowAnimationBackgroundColor=backgroundColor;
-          }
-        }
       }
       if (wasAnimating && !winAnimator.mAnimating && mService.mWallpaperTarget == win) {
         mBulkUpdateParams|=SET_WALLPAPER_MAY_CHANGE;
@@ -61,13 +31,13 @@
           mService.mFocusMayChange=true;
         }
         if (win.isReadyForDisplay() && winAnimator.mAnimationIsEntrance) {
-          mInner.mForceHiding=true;
+          forceHiding=true;
         }
-        if (WindowManagerService.DEBUG_VISIBILITY)         Slog.v(TAG,"Force hide " + mInner.mForceHiding + " hasSurface="+ win.mHasSurface+ " policyVis="+ win.mPolicyVisibility+ " destroying="+ win.mDestroying+ " attHidden="+ win.mAttachedHidden+ " vis="+ win.mViewVisibility+ " hidden="+ win.mRootToken.hidden+ " anim="+ win.mWinAnimator.mAnimation);
+        if (WindowManagerService.DEBUG_VISIBILITY)         Slog.v(TAG,"Force hide " + forceHiding + " hasSurface="+ win.mHasSurface+ " policyVis="+ win.mPolicyVisibility+ " destroying="+ win.mDestroying+ " attHidden="+ win.mAttachedHidden+ " vis="+ win.mViewVisibility+ " hidden="+ win.mRootToken.hidden+ " anim="+ win.mWinAnimator.mAnimation);
       }
  else       if (mPolicy.canBeForceHidden(win,win.mAttrs)) {
         final boolean changed;
-        if (mInner.mForceHiding && (!winAnimator.isAnimating() || (winAnimator.mAttrFlags & FLAG_SHOW_WHEN_LOCKED) == 0)) {
+        if (forceHiding && (!winAnimator.isAnimating() || (winAnimator.mAttrFlags & FLAG_SHOW_WHEN_LOCKED) == 0)) {
           changed=win.hideLw(false,false);
           if (WindowManagerService.DEBUG_VISIBILITY && changed)           Slog.v(TAG,"Now policy hidden: " + win);
         }
@@ -119,31 +89,6 @@
         appAnimator.thumbnailLayer=winAnimator.mAnimLayer;
       }
     }
-  }
-  if (mWindowDetachedWallpaper != detachedWallpaper) {
-    if (WindowManagerService.DEBUG_WALLPAPER)     Slog.v(TAG,"Detached wallpaper changed from " + mWindowDetachedWallpaper + " to "+ detachedWallpaper);
-    mWindowDetachedWallpaper=detachedWallpaper;
-    mBulkUpdateParams|=SET_WALLPAPER_MAY_CHANGE;
-  }
-  if (windowAnimationBackgroundColor != 0) {
-    int animLayer=windowAnimationBackground.mAnimLayer;
-    WindowState win=windowAnimationBackground.mWin;
-    if (windowAnimationBackground != null && mService.mWallpaperTarget == win || mService.mLowerWallpaperTarget == win || mService.mUpperWallpaperTarget == win) {
-      final int N=mWinAnimators.size();
-      for (int i=0; i < N; i++) {
-        WindowStateAnimator winAnimator=mWinAnimators.get(i);
-        if (winAnimator.mWin.mIsWallpaper) {
-          animLayer=winAnimator.mAnimLayer;
-          break;
-        }
-      }
-    }
-    final int dw=mDw;
-    final int dh=mDh;
-    mWindowAnimationBackgroundSurface.show(dw,dh,animLayer - WindowManagerService.LAYER_OFFSET_DIM,windowAnimationBackgroundColor);
-  }
- else {
-    mWindowAnimationBackgroundSurface.hide();
   }
   if (unForceHiding != null) {
     for (int i=unForceHiding.size() - 1; i >= 0; i--) {
