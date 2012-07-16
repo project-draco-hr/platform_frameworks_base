@@ -1,58 +1,26 @@
 {
-  if (LOCAL_LOGV) {
-    Slog.v(TAG,"_removeUpdates: listener = " + receiver);
-  }
-  final int callingPid=Binder.getCallingPid();
-  final int callingUid=Binder.getCallingUid();
-  long identity=Binder.clearCallingIdentity();
-  try {
-    if (mReceivers.remove(receiver.mKey) != null && receiver.isListener()) {
-      receiver.getListener().asBinder().unlinkToDeath(receiver,0);
+  Log.i(TAG,"remove " + Integer.toHexString(System.identityHashCode(receiver)));
+  if (mReceivers.remove(receiver.mKey) != null && receiver.isListener()) {
+    receiver.getListener().asBinder().unlinkToDeath(receiver,0);
 synchronized (receiver) {
-        if (receiver.mPendingBroadcasts > 0) {
-          decrementPendingBroadcasts();
-          receiver.mPendingBroadcasts=0;
-        }
-      }
-    }
-    HashSet<String> providers=new HashSet<String>();
-    HashMap<String,UpdateRecord> oldRecords=receiver.mUpdateRecords;
-    if (oldRecords != null) {
-      for (      UpdateRecord record : oldRecords.values()) {
-        if (!providerHasListener(record.mProvider,callingUid,receiver)) {
-          LocationProviderInterface p=mProvidersByName.get(record.mProvider);
-          if (p != null) {
-            p.removeListener(callingUid);
-          }
-        }
-        record.disposeLocked();
-      }
-      providers.addAll(oldRecords.keySet());
-    }
-    for (    String provider : providers) {
-      if (!isAllowedBySettingsLocked(provider)) {
-        continue;
-      }
-      boolean hasOtherListener=false;
-      ArrayList<UpdateRecord> recordsForProvider=mRecordsByProvider.get(provider);
-      if (recordsForProvider != null && recordsForProvider.size() > 0) {
-        hasOtherListener=true;
-      }
-      LocationProviderInterface p=mProvidersByName.get(provider);
-      if (p != null) {
-        if (hasOtherListener) {
-          long minTime=getMinTimeLocked(provider);
-          Slog.i(TAG,"remove " + provider + " (pid "+ callingPid+ "), next minTime = "+ minTime);
-          p.setMinTime(minTime,mTmpWorkSource);
-        }
- else {
-          Slog.i(TAG,"remove " + provider + " (pid "+ callingPid+ "), disabled");
-          p.enableLocationTracking(false);
-        }
+      if (receiver.mPendingBroadcasts > 0) {
+        decrementPendingBroadcasts();
+        receiver.mPendingBroadcasts=0;
       }
     }
   }
-  finally {
-    Binder.restoreCallingIdentity(identity);
+  HashSet<String> providers=new HashSet<String>();
+  HashMap<String,UpdateRecord> oldRecords=receiver.mUpdateRecords;
+  if (oldRecords != null) {
+    for (    UpdateRecord record : oldRecords.values()) {
+      record.disposeLocked(false);
+    }
+    providers.addAll(oldRecords.keySet());
+  }
+  for (  String provider : providers) {
+    if (!isAllowedBySettingsLocked(provider)) {
+      continue;
+    }
+    applyRequirementsLocked(provider);
   }
 }
