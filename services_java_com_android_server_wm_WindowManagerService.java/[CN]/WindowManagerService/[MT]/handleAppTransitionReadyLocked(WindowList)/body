@@ -1,0 +1,182 @@
+{
+  int changes=0;
+  int i;
+  int NN=mOpeningApps.size();
+  boolean goodToGo=true;
+  if (DEBUG_APP_TRANSITIONS)   Slog.v(TAG,"Checking " + NN + " opening apps (frozen="+ mDisplayFrozen+ " timeout="+ mAppTransitionTimeout+ ")...");
+  if (!mDisplayFrozen && !mAppTransitionTimeout) {
+    for (i=0; i < NN && goodToGo; i++) {
+      AppWindowToken wtoken=mOpeningApps.get(i);
+      if (DEBUG_APP_TRANSITIONS)       Slog.v(TAG,"Check opening app=" + wtoken + ": allDrawn="+ wtoken.allDrawn+ " startingDisplayed="+ wtoken.startingDisplayed+ " startingMoved="+ wtoken.startingMoved);
+      if (!wtoken.allDrawn && !wtoken.startingDisplayed && !wtoken.startingMoved) {
+        goodToGo=false;
+      }
+    }
+  }
+  if (goodToGo) {
+    if (DEBUG_APP_TRANSITIONS)     Slog.v(TAG,"**** GOOD TO GO");
+    int transit=mNextAppTransition;
+    if (mSkipAppTransitionAnimation) {
+      transit=WindowManagerPolicy.TRANSIT_UNSET;
+    }
+    mNextAppTransition=WindowManagerPolicy.TRANSIT_UNSET;
+    mAppTransitionReady=false;
+    mAppTransitionRunning=true;
+    mAppTransitionTimeout=false;
+    mStartingIconInTransition=false;
+    mSkipAppTransitionAnimation=false;
+    mH.removeMessages(H.APP_TRANSITION_TIMEOUT);
+    rebuildAppWindowListLocked();
+    WindowState oldWallpaper=mWallpaperTarget != null && mWallpaperTarget.mWinAnimator.isAnimating() && !mWallpaperTarget.mWinAnimator.isDummyAnimation() ? null : mWallpaperTarget;
+    adjustWallpaperWindowsLocked();
+    mInnerFields.mWallpaperMayChange=false;
+    LayoutParams animLp=null;
+    int bestAnimLayer=-1;
+    boolean fullscreenAnim=false;
+    if (DEBUG_APP_TRANSITIONS)     Slog.v(TAG,"New wallpaper target=" + mWallpaperTarget + ", oldWallpaper="+ oldWallpaper+ ", lower target="+ mLowerWallpaperTarget+ ", upper target="+ mUpperWallpaperTarget);
+    int foundWallpapers=0;
+    final int NC=mClosingApps.size();
+    NN=NC + mOpeningApps.size();
+    for (i=0; i < NN; i++) {
+      AppWindowToken wtoken;
+      int mode;
+      if (i < NC) {
+        wtoken=mClosingApps.get(i);
+        mode=1;
+      }
+ else {
+        wtoken=mOpeningApps.get(i - NC);
+        mode=2;
+      }
+      if (mLowerWallpaperTarget != null) {
+        if (mLowerWallpaperTarget.mAppToken == wtoken || mUpperWallpaperTarget.mAppToken == wtoken) {
+          foundWallpapers|=mode;
+        }
+      }
+      if (wtoken.appFullscreen) {
+        WindowState ws=wtoken.findMainWindow();
+        if (ws != null) {
+          animLp=ws.mAttrs;
+          bestAnimLayer=ws.mLayer;
+          fullscreenAnim=true;
+        }
+      }
+ else       if (!fullscreenAnim) {
+        WindowState ws=wtoken.findMainWindow();
+        if (ws != null) {
+          if (ws.mLayer > bestAnimLayer) {
+            animLp=ws.mAttrs;
+            bestAnimLayer=ws.mLayer;
+          }
+        }
+      }
+    }
+    if (foundWallpapers == 3) {
+      if (DEBUG_APP_TRANSITIONS)       Slog.v(TAG,"Wallpaper animation!");
+switch (transit) {
+case WindowManagerPolicy.TRANSIT_ACTIVITY_OPEN:
+case WindowManagerPolicy.TRANSIT_TASK_OPEN:
+case WindowManagerPolicy.TRANSIT_TASK_TO_FRONT:
+        transit=WindowManagerPolicy.TRANSIT_WALLPAPER_INTRA_OPEN;
+      break;
+case WindowManagerPolicy.TRANSIT_ACTIVITY_CLOSE:
+case WindowManagerPolicy.TRANSIT_TASK_CLOSE:
+case WindowManagerPolicy.TRANSIT_TASK_TO_BACK:
+    transit=WindowManagerPolicy.TRANSIT_WALLPAPER_INTRA_CLOSE;
+  break;
+}
+if (DEBUG_APP_TRANSITIONS) Slog.v(TAG,"New transit: " + transit);
+}
+ else if ((oldWallpaper != null) && !mOpeningApps.contains(oldWallpaper.mAppToken)) {
+transit=WindowManagerPolicy.TRANSIT_WALLPAPER_CLOSE;
+if (DEBUG_APP_TRANSITIONS) Slog.v(TAG,"New transit away from wallpaper: " + transit);
+}
+ else if (mWallpaperTarget != null) {
+transit=WindowManagerPolicy.TRANSIT_WALLPAPER_OPEN;
+if (DEBUG_APP_TRANSITIONS) Slog.v(TAG,"New transit into wallpaper: " + transit);
+}
+if (!mPolicy.allowAppAnimationsLw()) {
+animLp=null;
+}
+AppWindowToken topOpeningApp=null;
+int topOpeningLayer=0;
+NN=mOpeningApps.size();
+for (i=0; i < NN; i++) {
+AppWindowToken wtoken=mOpeningApps.get(i);
+if (DEBUG_APP_TRANSITIONS) Slog.v(TAG,"Now opening app" + wtoken);
+wtoken.mAppAnimator.clearThumbnail();
+wtoken.reportedVisible=false;
+wtoken.inPendingTransaction=false;
+wtoken.mAppAnimator.animation=null;
+setTokenVisibilityLocked(wtoken,animLp,true,transit,false);
+wtoken.updateReportedVisibilityLocked();
+wtoken.waitingToShow=false;
+mAnimator.mAnimating|=wtoken.mAppAnimator.showAllWindowsLocked();
+if (animLp != null) {
+int layer=-1;
+for (int j=0; j < wtoken.windows.size(); j++) {
+  WindowState win=wtoken.windows.get(j);
+  if (win.mWinAnimator.mAnimLayer > layer) {
+    layer=win.mWinAnimator.mAnimLayer;
+  }
+}
+if (topOpeningApp == null || layer > topOpeningLayer) {
+  topOpeningApp=wtoken;
+  topOpeningLayer=layer;
+}
+}
+}
+NN=mClosingApps.size();
+for (i=0; i < NN; i++) {
+AppWindowToken wtoken=mClosingApps.get(i);
+if (DEBUG_APP_TRANSITIONS) Slog.v(TAG,"Now closing app" + wtoken);
+wtoken.mAppAnimator.clearThumbnail();
+wtoken.inPendingTransaction=false;
+wtoken.mAppAnimator.animation=null;
+setTokenVisibilityLocked(wtoken,animLp,false,transit,false);
+wtoken.updateReportedVisibilityLocked();
+wtoken.waitingToHide=false;
+wtoken.allDrawn=true;
+}
+if (mNextAppTransitionThumbnail != null && topOpeningApp != null && topOpeningApp.mAppAnimator.animation != null) {
+Rect dirty=new Rect(0,0,mNextAppTransitionThumbnail.getWidth(),mNextAppTransitionThumbnail.getHeight());
+try {
+Surface surface=new Surface(mFxSession,Process.myPid(),"thumbnail anim",Display.DEFAULT_DISPLAY,dirty.width(),dirty.height(),PixelFormat.TRANSLUCENT,Surface.HIDDEN);
+topOpeningApp.mAppAnimator.thumbnail=surface;
+if (SHOW_TRANSACTIONS) Slog.i(TAG,"  THUMBNAIL " + surface + ": CREATE");
+Surface drawSurface=new Surface();
+drawSurface.copyFrom(surface);
+Canvas c=drawSurface.lockCanvas(dirty);
+c.drawBitmap(mNextAppTransitionThumbnail,0,0,null);
+drawSurface.unlockCanvasAndPost(c);
+drawSurface.release();
+topOpeningApp.mAppAnimator.thumbnailLayer=topOpeningLayer;
+Animation anim=createThumbnailAnimationLocked(transit,true,true,mNextAppTransitionDelayed);
+topOpeningApp.mAppAnimator.thumbnailAnimation=anim;
+anim.restrictDuration(MAX_ANIMATION_DURATION);
+anim.scaleCurrentDuration(mTransitionAnimationScale);
+topOpeningApp.mAppAnimator.thumbnailX=mNextAppTransitionStartX;
+topOpeningApp.mAppAnimator.thumbnailY=mNextAppTransitionStartY;
+}
+ catch (Surface.OutOfResourcesException e) {
+Slog.e(TAG,"Can't allocate thumbnail surface w=" + dirty.width() + " h="+ dirty.height(),e);
+topOpeningApp.mAppAnimator.clearThumbnail();
+}
+}
+mNextAppTransitionType=ActivityOptions.ANIM_NONE;
+mNextAppTransitionPackage=null;
+mNextAppTransitionThumbnail=null;
+scheduleAnimationCallback(mNextAppTransitionCallback);
+mNextAppTransitionCallback=null;
+mOpeningApps.clear();
+mClosingApps.clear();
+changes|=PhoneWindowManager.FINISH_LAYOUT_REDO_LAYOUT | WindowManagerPolicy.FINISH_LAYOUT_REDO_CONFIG;
+mLayoutNeeded=true;
+if (windows == getDefaultWindowList() && !moveInputMethodWindowsIfNeededLocked(true)) {
+assignLayersLocked(windows);
+}
+updateFocusedWindowLocked(UPDATE_FOCUS_PLACING_SURFACES,false);
+mFocusMayChange=false;
+}
+return changes;
+}
