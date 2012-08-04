@@ -1,0 +1,103 @@
+{
+  if (DEBUG_SERVICE)   Slog.v(TAG,"bindService: " + service + " type="+ resolvedType+ " conn="+ connection.asBinder()+ " flags=0x"+ Integer.toHexString(flags));
+  if (DEBUG_MU)   Slog.i(TAG_MU,"bindService uid=" + Binder.getCallingUid() + " origUid="+ Binder.getOrigCallingUid());
+  final ProcessRecord callerApp=mAm.getRecordForAppLocked(caller);
+  if (callerApp == null) {
+    throw new SecurityException("Unable to find app for caller " + caller + " (pid="+ Binder.getCallingPid()+ ") when binding service "+ service);
+  }
+  ActivityRecord activity=null;
+  if (token != null) {
+    activity=mAm.mMainStack.isInStackLocked(token);
+    if (activity == null) {
+      Slog.w(TAG,"Binding with unknown activity: " + token);
+      return 0;
+    }
+  }
+  int clientLabel=0;
+  PendingIntent clientIntent=null;
+  if (callerApp.info.uid == Process.SYSTEM_UID) {
+    try {
+      clientIntent=(PendingIntent)service.getParcelableExtra(Intent.EXTRA_CLIENT_INTENT);
+    }
+ catch (    RuntimeException e) {
+    }
+    if (clientIntent != null) {
+      clientLabel=service.getIntExtra(Intent.EXTRA_CLIENT_LABEL,0);
+      if (clientLabel != 0) {
+        service=service.cloneFilter();
+      }
+    }
+  }
+  ServiceLookupResult res=retrieveServiceLocked(service,resolvedType,Binder.getCallingPid(),Binder.getCallingUid(),userId);
+  if (res == null) {
+    return 0;
+  }
+  if (res.record == null) {
+    return -1;
+  }
+  if (mAm.isSingleton(res.record.processName,res.record.appInfo)) {
+    userId=0;
+    res=retrieveServiceLocked(service,resolvedType,Binder.getCallingPid(),Binder.getCallingUid(),0);
+  }
+  ServiceRecord s=res.record;
+  final long origId=Binder.clearCallingIdentity();
+  try {
+    if (unscheduleServiceRestartLocked(s)) {
+      if (DEBUG_SERVICE)       Slog.v(TAG,"BIND SERVICE WHILE RESTART PENDING: " + s);
+    }
+    AppBindRecord b=s.retrieveAppBindingLocked(service,callerApp);
+    ConnectionRecord c=new ConnectionRecord(b,activity,connection,flags,clientLabel,clientIntent);
+    IBinder binder=connection.asBinder();
+    ArrayList<ConnectionRecord> clist=s.connections.get(binder);
+    if (clist == null) {
+      clist=new ArrayList<ConnectionRecord>();
+      s.connections.put(binder,clist);
+    }
+    clist.add(c);
+    b.connections.add(c);
+    if (activity != null) {
+      if (activity.connections == null) {
+        activity.connections=new HashSet<ConnectionRecord>();
+      }
+      activity.connections.add(c);
+    }
+    b.client.connections.add(c);
+    if ((c.flags & Context.BIND_ABOVE_CLIENT) != 0) {
+      b.client.hasAboveClient=true;
+    }
+    clist=mServiceConnections.get(binder);
+    if (clist == null) {
+      clist=new ArrayList<ConnectionRecord>();
+      mServiceConnections.put(binder,clist);
+    }
+    clist.add(c);
+    if ((flags & Context.BIND_AUTO_CREATE) != 0) {
+      s.lastActivity=SystemClock.uptimeMillis();
+      if (!bringUpServiceLocked(s,service.getFlags(),false)) {
+        return 0;
+      }
+    }
+    if (s.app != null) {
+      mAm.updateOomAdjLocked(s.app);
+    }
+    if (DEBUG_SERVICE)     Slog.v(TAG,"Bind " + s + " with "+ b+ ": received="+ b.intent.received+ " apps="+ b.intent.apps.size()+ " doRebind="+ b.intent.doRebind);
+    if (s.app != null && b.intent.received) {
+      try {
+        c.conn.connected(s.name,b.intent.binder);
+      }
+ catch (      Exception e) {
+        Slog.w(TAG,"Failure sending service " + s.shortName + " to connection "+ c.conn.asBinder()+ " (in "+ c.binding.client.processName+ ")",e);
+      }
+      if (b.intent.apps.size() == 1 && b.intent.doRebind) {
+        requestServiceBindingLocked(s,b.intent,true);
+      }
+    }
+ else     if (!b.intent.requested) {
+      requestServiceBindingLocked(s,b.intent,false);
+    }
+  }
+  finally {
+    Binder.restoreCallingIdentity(origId);
+  }
+  return 1;
+}

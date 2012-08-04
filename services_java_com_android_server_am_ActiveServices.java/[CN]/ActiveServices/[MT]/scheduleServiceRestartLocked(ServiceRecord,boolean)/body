@@ -1,0 +1,77 @@
+{
+  boolean canceled=false;
+  final long now=SystemClock.uptimeMillis();
+  long minDuration=SERVICE_RESTART_DURATION;
+  long resetTime=SERVICE_RESET_RUN_DURATION;
+  if ((r.serviceInfo.applicationInfo.flags & ApplicationInfo.FLAG_PERSISTENT) != 0) {
+    minDuration/=4;
+  }
+  final int N=r.deliveredStarts.size();
+  if (N > 0) {
+    for (int i=N - 1; i >= 0; i--) {
+      ServiceRecord.StartItem si=r.deliveredStarts.get(i);
+      si.removeUriPermissionsLocked();
+      if (si.intent == null) {
+      }
+ else       if (!allowCancel || (si.deliveryCount < ServiceRecord.MAX_DELIVERY_COUNT && si.doneExecutingCount < ServiceRecord.MAX_DONE_EXECUTING_COUNT)) {
+        r.pendingStarts.add(0,si);
+        long dur=SystemClock.uptimeMillis() - si.deliveredTime;
+        dur*=2;
+        if (minDuration < dur)         minDuration=dur;
+        if (resetTime < dur)         resetTime=dur;
+      }
+ else {
+        Slog.w(TAG,"Canceling start item " + si.intent + " in service "+ r.name);
+        canceled=true;
+      }
+    }
+    r.deliveredStarts.clear();
+  }
+  r.totalRestartCount++;
+  if (r.restartDelay == 0) {
+    r.restartCount++;
+    r.restartDelay=minDuration;
+  }
+ else {
+    if (now > (r.restartTime + resetTime)) {
+      r.restartCount=1;
+      r.restartDelay=minDuration;
+    }
+ else {
+      if ((r.serviceInfo.applicationInfo.flags & ApplicationInfo.FLAG_PERSISTENT) != 0) {
+        r.restartDelay+=minDuration / 2;
+      }
+ else {
+        r.restartDelay*=SERVICE_RESTART_DURATION_FACTOR;
+        if (r.restartDelay < minDuration) {
+          r.restartDelay=minDuration;
+        }
+      }
+    }
+  }
+  r.nextRestartTime=now + r.restartDelay;
+  boolean repeat;
+  do {
+    repeat=false;
+    for (int i=mRestartingServices.size() - 1; i >= 0; i--) {
+      ServiceRecord r2=mRestartingServices.get(i);
+      if (r2 != r && r.nextRestartTime >= (r2.nextRestartTime - SERVICE_MIN_RESTART_TIME_BETWEEN) && r.nextRestartTime < (r2.nextRestartTime + SERVICE_MIN_RESTART_TIME_BETWEEN)) {
+        r.nextRestartTime=r2.nextRestartTime + SERVICE_MIN_RESTART_TIME_BETWEEN;
+        r.restartDelay=r.nextRestartTime - now;
+        repeat=true;
+        break;
+      }
+    }
+  }
+ while (repeat);
+  if (!mRestartingServices.contains(r)) {
+    mRestartingServices.add(r);
+  }
+  r.cancelNotification();
+  mAm.mHandler.removeCallbacks(r.restarter);
+  mAm.mHandler.postAtTime(r.restarter,r.nextRestartTime);
+  r.nextRestartTime=SystemClock.uptimeMillis() + r.restartDelay;
+  Slog.w(TAG,"Scheduling restart of crashed service " + r.shortName + " in "+ r.restartDelay+ "ms");
+  EventLog.writeEvent(EventLogTags.AM_SCHEDULE_SERVICE_RESTART,r.shortName,r.restartDelay);
+  return canceled;
+}
