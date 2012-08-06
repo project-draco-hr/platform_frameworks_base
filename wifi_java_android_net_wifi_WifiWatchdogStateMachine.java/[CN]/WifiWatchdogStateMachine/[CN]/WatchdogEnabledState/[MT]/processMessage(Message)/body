@@ -1,27 +1,29 @@
 {
+  Intent intent;
 switch (msg.what) {
 case EVENT_WATCHDOG_TOGGLED:
     if (!isWatchdogEnabled())     transitionTo(mWatchdogDisabledState);
   break;
 case EVENT_NETWORK_STATE_CHANGE:
-Intent intent=(Intent)msg.obj;
+intent=(Intent)msg.obj;
 NetworkInfo networkInfo=(NetworkInfo)intent.getParcelableExtra(WifiManager.EXTRA_NETWORK_INFO);
-if (DBG) log("network state change " + networkInfo.getDetailedState());
+if (DBG) logd("Network state change " + networkInfo.getDetailedState());
+mWifiInfo=(WifiInfo)intent.getParcelableExtra(WifiManager.EXTRA_WIFI_INFO);
+updateCurrentBssid(mWifiInfo != null ? mWifiInfo.getBSSID() : null);
 switch (networkInfo.getDetailedState()) {
 case VERIFYING_POOR_LINK:
 mLinkProperties=(LinkProperties)intent.getParcelableExtra(WifiManager.EXTRA_LINK_PROPERTIES);
-mWifiInfo=(WifiInfo)intent.getParcelableExtra(WifiManager.EXTRA_WIFI_INFO);
 if (mPoorNetworkDetectionEnabled) {
 if (mWifiInfo == null) {
-log("Ignoring link verification, mWifiInfo is NULL");
-mWsmChannel.sendMessage(GOOD_LINK_DETECTED);
+if (DBG) logd("Ignoring link verification, mWifiInfo is NULL");
+sendLinkStatusNotification(true);
 }
  else {
 transitionTo(mVerifyingLinkState);
 }
 }
  else {
-mWsmChannel.sendMessage(GOOD_LINK_DETECTED);
+sendLinkStatusNotification(true);
 }
 break;
 case CONNECTED:
@@ -37,11 +39,16 @@ transitionTo(mNotConnectedState);
 break;
 }
 break;
-case EVENT_WIFI_RADIO_STATE_CHANGE:
-if ((Integer)msg.obj == WifiManager.WIFI_STATE_DISABLING) {
-if (DBG) log("WifiStateDisabling -- Resetting WatchdogState");
-transitionTo(mNotConnectedState);
+case EVENT_SUPPLICANT_STATE_CHANGE:
+intent=(Intent)msg.obj;
+SupplicantState supplicantState=(SupplicantState)intent.getParcelableExtra(WifiManager.EXTRA_NEW_STATE);
+if (supplicantState == SupplicantState.COMPLETED) {
+mWifiInfo=mWifiManager.getConnectionInfo();
+updateCurrentBssid(mWifiInfo.getBSSID());
 }
+break;
+case EVENT_WIFI_RADIO_STATE_CHANGE:
+if ((Integer)msg.obj == WifiManager.WIFI_STATE_DISABLING) transitionTo(mNotConnectedState);
 break;
 default :
 return NOT_HANDLED;

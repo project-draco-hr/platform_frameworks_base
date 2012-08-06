@@ -3,25 +3,43 @@ switch (msg.what) {
 case EVENT_WATCHDOG_SETTINGS_CHANGE:
     updateSettings();
   if (!mPoorNetworkDetectionEnabled) {
-    mWsmChannel.sendMessage(GOOD_LINK_DETECTED);
+    sendLinkStatusNotification(true);
   }
 break;
-case EVENT_RSSI_CHANGE:
-mCurrentSignalLevel=calculateSignalLevel(msg.arg1);
-handleRssiChange();
+case EVENT_BSSID_CHANGE:
+transitionTo(mVerifyingLinkState);
 break;
-case CMD_ARP_CHECK:
-if (msg.arg1 == mArpToken) {
-boolean success=ArpPeer.doArp(mWifiInfo.getMacAddress(),mLinkProperties,mArpPingTimeoutMs,mNumArpPings,mMinArpResponses);
-if (success) {
-if (DBG) log("Notify link is good " + mCurrentSignalLevel);
-mWsmChannel.sendMessage(GOOD_LINK_DETECTED);
+case CMD_RSSI_FETCH:
+if (msg.arg1 == mRssiFetchToken) {
+mWsmChannel.sendMessage(RSSI_PKTCNT_FETCH,new RssiPktcntStat());
+sendMessageDelayed(obtainMessage(CMD_RSSI_FETCH,++mRssiFetchToken,0),LINK_SAMPLING_INTERVAL_MS);
+}
+break;
+case RSSI_PKTCNT_FETCH_SUCCEEDED:
+RssiPktcntStat stat=(RssiPktcntStat)msg.obj;
+int rssi=stat.rssi;
+if (DBG) logd("Fetch RSSI succeed, rssi=" + rssi);
+long time=mCurrentBssid.mBssidAvoidTimeMax - SystemClock.elapsedRealtime();
+if (time <= 0) {
+if (DBG) logd("Max avoid time elapsed");
+sendLinkStatusNotification(true);
 }
  else {
-if (DBG) log("Continue ARP check, rssi level: " + mCurrentSignalLevel);
-sendMessageDelayed(obtainMessage(CMD_ARP_CHECK,++mArpToken,0),mArpCheckIntervalMs);
+if (rssi >= mCurrentBssid.mGoodLinkTargetRssi) {
+if (++mSampleCount >= mCurrentBssid.mGoodLinkTargetCount) {
+if (DBG) logd("Good link detected, rssi=" + rssi);
+mCurrentBssid.mBssidAvoidTimeMax=0;
+sendLinkStatusNotification(true);
 }
 }
+ else {
+mSampleCount=0;
+if (DBG) logd("Link is still poor, time left=" + time);
+}
+}
+break;
+case RSSI_PKTCNT_FETCH_FAILED:
+if (DBG) logd("RSSI_FETCH_FAILED");
 break;
 default :
 return NOT_HANDLED;
