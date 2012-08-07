@@ -1,0 +1,35 @@
+{
+  if (app.thread == null) {
+    throw new RemoteException();
+  }
+  if (DEBUG_MU)   Slog.v(TAG_MU,"realStartServiceLocked, ServiceRecord.uid = " + r.appInfo.uid + ", ProcessRecord.uid = "+ app.uid);
+  r.app=app;
+  r.restartTime=r.lastActivity=SystemClock.uptimeMillis();
+  app.services.add(r);
+  bumpServiceExecutingLocked(r,"create");
+  mAm.updateLruProcessLocked(app,true,true);
+  boolean created=false;
+  try {
+    mAm.mStringBuilder.setLength(0);
+    r.intent.getIntent().toShortString(mAm.mStringBuilder,true,false,true,false);
+    EventLog.writeEvent(EventLogTags.AM_CREATE_SERVICE,System.identityHashCode(r),r.shortName,mAm.mStringBuilder.toString(),r.app.pid);
+synchronized (r.stats.getBatteryStats()) {
+      r.stats.startLaunchedLocked();
+    }
+    mAm.ensurePackageDexOpt(r.serviceInfo.packageName);
+    app.thread.scheduleCreateService(r,r.serviceInfo,mAm.compatibilityInfoForPackageLocked(r.serviceInfo.applicationInfo));
+    r.postNotification();
+    created=true;
+  }
+  finally {
+    if (!created) {
+      app.services.remove(r);
+      scheduleServiceRestartLocked(r,false);
+    }
+  }
+  requestServiceBindingsLocked(r);
+  if (r.startRequested && r.callStart && r.pendingStarts.size() == 0) {
+    r.pendingStarts.add(new ServiceRecord.StartItem(r,false,r.makeNextStartId(),null,null));
+  }
+  sendServiceArgsLocked(r,true);
+}
