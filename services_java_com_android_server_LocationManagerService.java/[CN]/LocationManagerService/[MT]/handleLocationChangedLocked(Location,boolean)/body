@@ -1,29 +1,34 @@
 {
+  long now=SystemClock.elapsedRealtime();
   String provider=(passive ? LocationManager.PASSIVE_PROVIDER : location.getProvider());
   ArrayList<UpdateRecord> records=mRecordsByProvider.get(provider);
-  if (records == null || records.size() == 0) {
-    return;
-  }
+  if (records == null || records.size() == 0)   return;
   LocationProviderInterface p=mProvidersByName.get(provider);
-  if (p == null) {
-    return;
+  if (p == null)   return;
+  Location coarse=getCoarseLocationExtra(location);
+  if (coarse == null) {
+    coarse=addCoarseLocationExtra(location);
   }
-  Location lastLocation=mLastKnownLocation.get(provider);
+  Location lastLocation=mLastLocation.get(provider);
   if (lastLocation == null) {
-    mLastKnownLocation.put(provider,new Location(location));
+    lastLocation=new Location(provider);
+    mLastLocation.put(provider,lastLocation);
   }
- else {
-    lastLocation.set(location);
-  }
+  lastLocation.set(location);
   long newStatusUpdateTime=p.getStatusUpdateTime();
   Bundle extras=new Bundle();
   int status=p.getStatus(extras);
   ArrayList<Receiver> deadReceivers=null;
-  final int N=records.size();
-  for (int i=0; i < N; i++) {
-    UpdateRecord r=records.get(i);
+  ArrayList<UpdateRecord> deadUpdateRecords=null;
+  for (  UpdateRecord r : records) {
     Receiver receiver=r.mReceiver;
     boolean receiverDead=false;
+    if (ACCESS_FINE_LOCATION.equals(receiver.mPermission)) {
+      location=lastLocation;
+    }
+ else {
+      location=coarse;
+    }
     Location lastLoc=r.mLastFixBroadcast;
     if ((lastLoc == null) || shouldBroadcastSafe(location,lastLoc,r)) {
       if (lastLoc == null) {
@@ -46,7 +51,13 @@
         Slog.w(TAG,"RemoteException calling onStatusChanged on " + receiver);
       }
     }
-    if (receiverDead || r.mSingleShot) {
+    if (r.mRequest.getNumUpdates() == 0 || r.mRequest.getExpireAt() < now) {
+      if (deadUpdateRecords == null) {
+        deadUpdateRecords=new ArrayList<UpdateRecord>();
+      }
+      deadUpdateRecords.add(r);
+    }
+    if (receiverDead) {
       if (deadReceivers == null) {
         deadReceivers=new ArrayList<Receiver>();
       }
@@ -56,8 +67,13 @@
     }
   }
   if (deadReceivers != null) {
-    for (int i=deadReceivers.size() - 1; i >= 0; i--) {
-      removeUpdatesLocked(deadReceivers.get(i));
+    for (    Receiver receiver : deadReceivers) {
+      removeUpdatesLocked(receiver);
+    }
+  }
+  if (deadUpdateRecords != null) {
+    for (    UpdateRecord r : deadUpdateRecords) {
+      r.disposeLocked(true);
     }
   }
 }
