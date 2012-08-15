@@ -1,28 +1,32 @@
 {
-  mSensorManager=new SystemSensorManager(mHandlerThread.getLooper());
-  mProximitySensor=mSensorManager.getDefaultSensor(Sensor.TYPE_PROXIMITY);
-  if (mUseSoftwareAutoBrightness) {
-    mLightSensor=mSensorManager.getDefaultSensor(Sensor.TYPE_LIGHT);
-  }
-  if (mUseSoftwareAutoBrightness) {
-    setPowerState(SCREEN_BRIGHT);
-  }
- else {
-    setPowerState(ALL_BRIGHT);
-  }
-synchronized (mLocks) {
-    Slog.d(TAG,"system ready!");
-    mDoneBooting=true;
-    enableLightSensorLocked(mUseSoftwareAutoBrightness && mAutoBrightessEnabled);
-    long identity=Binder.clearCallingIdentity();
-    try {
-      mBatteryStats.noteScreenBrightness(getPreferredBrightness());
-      mBatteryStats.noteScreenOn();
-    }
- catch (    RemoteException e) {
-    }
- finally {
-      Binder.restoreCallingIdentity(identity);
-    }
+synchronized (mLock) {
+    mSystemReady=true;
+    PowerManager pm=(PowerManager)mContext.getSystemService(Context.POWER_SERVICE);
+    mScreenBrightnessSettingMinimum=pm.getMinimumScreenBrightnessSetting();
+    mScreenBrightnessSettingMaximum=pm.getMaximumScreenBrightnessSetting();
+    mScreenBrightnessSettingDefault=pm.getDefaultScreenBrightnessSetting();
+    mNotifier=new Notifier(mHandler.getLooper(),mContext,mBatteryStats,createSuspendBlockerLocked("PowerManagerService.Broadcasts"),mPolicy,mScreenOnListener);
+    mDisplayPowerController=new DisplayPowerController(mHandler.getLooper(),mContext,mNotifier,mLightsService,createSuspendBlockerLocked("PowerManagerService.Display"),mDisplayPowerControllerCallbacks,mHandler);
+    mSettingsObserver=new SettingsObserver(mHandler);
+    mAttentionLight=mLightsService.getLight(LightsService.LIGHT_ID_ATTENTION);
+    IntentFilter filter=new IntentFilter();
+    filter.addAction(Intent.ACTION_BATTERY_CHANGED);
+    mContext.registerReceiver(new BatteryReceiver(),filter);
+    filter=new IntentFilter();
+    filter.addAction(Intent.ACTION_BOOT_COMPLETED);
+    mContext.registerReceiver(new BootCompletedReceiver(),filter);
+    filter=new IntentFilter();
+    filter.addAction(Intent.ACTION_DOCK_EVENT);
+    mContext.registerReceiver(new DockReceiver(),filter);
+    final ContentResolver resolver=mContext.getContentResolver();
+    resolver.registerContentObserver(Settings.Secure.getUriFor(Settings.Secure.SCREENSAVER_ENABLED),false,mSettingsObserver);
+    resolver.registerContentObserver(Settings.System.getUriFor(Settings.System.SCREEN_OFF_TIMEOUT),false,mSettingsObserver);
+    resolver.registerContentObserver(Settings.System.getUriFor(Settings.System.STAY_ON_WHILE_PLUGGED_IN),false,mSettingsObserver);
+    resolver.registerContentObserver(Settings.System.getUriFor(Settings.System.SCREEN_BRIGHTNESS),false,mSettingsObserver);
+    resolver.registerContentObserver(Settings.System.getUriFor(Settings.System.SCREEN_BRIGHTNESS_MODE),false,mSettingsObserver);
+    readConfigurationLocked();
+    updateSettingsLocked();
+    mDirty|=DIRTY_BATTERY_STATE;
+    updatePowerStateLocked();
   }
 }

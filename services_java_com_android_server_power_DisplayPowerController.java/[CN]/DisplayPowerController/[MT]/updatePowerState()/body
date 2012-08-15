@@ -1,0 +1,101 @@
+{
+  final boolean mustNotify;
+  boolean mustInitialize=false;
+synchronized (mLock) {
+    mPendingUpdatePowerStateLocked=false;
+    if (mPendingRequestLocked == null) {
+      return;
+    }
+    if (mPowerRequest == null) {
+      mPowerRequest=new DisplayPowerRequest(mPendingRequestLocked);
+      mWaitingForNegativeProximity=mPendingWaitForNegativeProximityLocked;
+      mPendingRequestChangedLocked=false;
+      mustInitialize=true;
+    }
+ else     if (mPendingRequestChangedLocked) {
+      mPowerRequest.copyFrom(mPendingRequestLocked);
+      mWaitingForNegativeProximity|=mPendingWaitForNegativeProximityLocked;
+      mPendingRequestChangedLocked=false;
+      mDisplayReadyLocked=false;
+    }
+    mustNotify=!mDisplayReadyLocked;
+  }
+  if (mustInitialize) {
+    initialize();
+  }
+  if (mPowerRequest.screenState == DisplayPowerRequest.SCREEN_STATE_OFF || mProximity == PROXIMITY_NEGATIVE || mProximitySensor == null) {
+    mWaitingForNegativeProximity=false;
+  }
+  if (mProximitySensor != null) {
+    setProximitySensorEnabled(mPowerRequest.useProximitySensor || mWaitingForNegativeProximity);
+    if (mProximitySensorEnabled && mProximity == PROXIMITY_POSITIVE) {
+      mScreenOffBecauseOfProximity=true;
+      setScreenOn(false);
+    }
+ else     if (mScreenOffBecauseOfProximity) {
+      mScreenOffBecauseOfProximity=false;
+      sendOnProximityNegative();
+    }
+  }
+  if (mLightSensor != null) {
+    setLightSensorEnabled(mPowerRequest.useAutoBrightness && wantScreenOn(mPowerRequest.screenState));
+  }
+  if (mPowerRequest.screenState == DisplayPowerRequest.SCREEN_STATE_DIM) {
+    animateScreenBrightness(mScreenBrightnessDimConfig,BRIGHTNESS_RAMP_RATE_FAST);
+    mUsingScreenAutoBrightness=false;
+  }
+ else   if (mPowerRequest.screenState == DisplayPowerRequest.SCREEN_STATE_BRIGHT) {
+    if (mScreenAutoBrightness >= 0 && mLightSensorEnabled) {
+      animateScreenBrightness(Math.max(mScreenAutoBrightness,mScreenBrightnessDimConfig),mUsingScreenAutoBrightness ? BRIGHTNESS_RAMP_RATE_SLOW : BRIGHTNESS_RAMP_RATE_FAST);
+      mUsingScreenAutoBrightness=true;
+    }
+ else {
+      animateScreenBrightness(Math.max(mPowerRequest.screenBrightness,mScreenBrightnessDimConfig),BRIGHTNESS_RAMP_RATE_FAST);
+      mUsingScreenAutoBrightness=false;
+    }
+  }
+ else {
+    mUsingScreenAutoBrightness=false;
+  }
+  if (!mScreenOffBecauseOfProximity) {
+    if (wantScreenOn(mPowerRequest.screenState)) {
+      if (!mElectronBeamOffAnimator.isStarted()) {
+        setScreenOn(true);
+        if (!mElectronBeamOnAnimator.isStarted()) {
+          if (mPowerState.getElectronBeamLevel() == 1.0f) {
+            mPowerState.dismissElectronBeam();
+          }
+ else           if (mPowerState.prepareElectronBeam(true)) {
+            mElectronBeamOnAnimator.start();
+          }
+ else {
+            mElectronBeamOnAnimator.end();
+          }
+        }
+      }
+    }
+ else {
+      if (!mElectronBeamOnAnimator.isStarted()) {
+        if (!mElectronBeamOffAnimator.isStarted()) {
+          if (mPowerState.getElectronBeamLevel() == 0.0f) {
+            setScreenOn(false);
+          }
+ else           if (mPowerState.prepareElectronBeam(false) && mPowerState.isScreenOn()) {
+            mElectronBeamOffAnimator.start();
+          }
+ else {
+            mElectronBeamOffAnimator.end();
+          }
+        }
+      }
+    }
+  }
+  if (mustNotify && !mElectronBeamOnAnimator.isStarted() && !mElectronBeamOffAnimator.isStarted()&& mPowerState.waitUntilClean(mCleanListener)) {
+synchronized (mLock) {
+      if (!mPendingRequestChangedLocked) {
+        mDisplayReadyLocked=true;
+      }
+    }
+    sendOnStateChanged();
+  }
+}
