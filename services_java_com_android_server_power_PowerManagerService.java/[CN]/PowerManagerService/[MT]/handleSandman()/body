@@ -1,0 +1,69 @@
+{
+  boolean startDreaming=false;
+synchronized (mLock) {
+    mSandmanScheduled=false;
+    if (DEBUG_SPEW) {
+      Log.d(TAG,"handleSandman: canDream=" + canDreamLocked() + ", mWakefulness="+ wakefulnessToString(mWakefulness));
+    }
+    if (canDreamLocked() && mWakefulness == WAKEFULNESS_NAPPING) {
+      startDreaming=true;
+    }
+  }
+  if (startDreaming && mDreamManager == null) {
+    mDreamManager=IDreamManager.Stub.asInterface(ServiceManager.checkService("dreams"));
+    if (mDreamManager == null) {
+      Slog.w(TAG,"Unable to find IDreamManager.");
+    }
+  }
+  boolean isDreaming=false;
+  if (mDreamManager != null) {
+    try {
+      isDreaming=mDreamManager.isDreaming();
+      if (startDreaming && !isDreaming) {
+        Slog.i(TAG,"Entering dreamland.");
+        mDreamManager.dream();
+        isDreaming=mDreamManager.isDreaming();
+        if (!isDreaming) {
+          Slog.i(TAG,"Could not enter dreamland.  Sleep will be dreamless.");
+        }
+      }
+    }
+ catch (    RemoteException ex) {
+    }
+  }
+  boolean continueDreaming=false;
+synchronized (mLock) {
+    if (isDreaming && canDreamLocked()) {
+      if (mWakefulness == WAKEFULNESS_NAPPING) {
+        mWakefulness=WAKEFULNESS_DREAMING;
+        mDirty|=DIRTY_WAKEFULNESS;
+        updatePowerStateLocked();
+        continueDreaming=true;
+      }
+ else       if (mWakefulness == WAKEFULNESS_DREAMING) {
+        continueDreaming=true;
+      }
+    }
+    if (!continueDreaming) {
+      handleDreamFinishedLocked();
+    }
+    if (mWakefulness == WAKEFULNESS_DREAMING || mWakefulness == WAKEFULNESS_NAPPING) {
+      if (!mSandmanScheduled) {
+        mSandmanScheduled=true;
+        Message msg=mHandler.obtainMessage(MSG_SANDMAN);
+        msg.setAsynchronous(true);
+        mHandler.sendMessageDelayed(msg,1000);
+      }
+    }
+  }
+  if (mDreamManager != null) {
+    try {
+      if (!continueDreaming && isDreaming) {
+        Slog.i(TAG,"Leaving dreamland.");
+        mDreamManager.awaken();
+      }
+    }
+ catch (    RemoteException ex) {
+    }
+  }
+}
