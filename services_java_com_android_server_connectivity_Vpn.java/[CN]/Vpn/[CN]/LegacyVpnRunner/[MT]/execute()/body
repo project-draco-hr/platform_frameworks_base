@@ -1,7 +1,7 @@
 {
+  boolean initFinished=false;
   try {
     checkpoint(false);
-    mInfo.state=LegacyVpnInfo.STATE_INITIALIZING;
     for (    String daemon : mDaemons) {
       while (!SystemService.isStopped(daemon)) {
         checkpoint(true);
@@ -13,15 +13,16 @@
       throw new IllegalStateException("Cannot delete the state");
     }
     new File("/data/misc/vpn/abort").delete();
+    initFinished=true;
     boolean restart=false;
     for (    String[] arguments : mArguments) {
       restart=restart || (arguments != null);
     }
     if (!restart) {
-      mInfo.state=LegacyVpnInfo.STATE_DISCONNECTED;
+      updateState(DetailedState.DISCONNECTED,"execute");
       return;
     }
-    mInfo.state=LegacyVpnInfo.STATE_CONNECTING;
+    updateState(DetailedState.CONNECTING,"execute");
     for (int i=0; i < mDaemons.length; ++i) {
       String[] arguments=mArguments[i];
       if (arguments == null) {
@@ -110,8 +111,7 @@ synchronized (Vpn.this) {
       mCallback.override(mConfig.dnsServers,mConfig.searchDomains);
       showNotification(mConfig,null,null);
       Log.i(TAG,"Connected!");
-      mInfo.state=LegacyVpnInfo.STATE_CONNECTED;
-      mInfo.intent=VpnConfig.getIntentForStatusPanel(mContext,null);
+      updateState(DetailedState.CONNECTED,"execute");
     }
   }
  catch (  Exception e) {
@@ -119,13 +119,13 @@ synchronized (Vpn.this) {
     exit();
   }
  finally {
-    if (mInfo.state == LegacyVpnInfo.STATE_INITIALIZING) {
+    if (!initFinished) {
       for (      String daemon : mDaemons) {
         SystemService.stop(daemon);
       }
     }
-    if (mInfo.state == LegacyVpnInfo.STATE_INITIALIZING || mInfo.state == LegacyVpnInfo.STATE_CONNECTING) {
-      mInfo.state=LegacyVpnInfo.STATE_FAILED;
+    if (!initFinished || mNetworkInfo.getDetailedState() == DetailedState.CONNECTING) {
+      updateState(DetailedState.FAILED,"execute");
     }
   }
 }
