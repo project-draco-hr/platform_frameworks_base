@@ -1,0 +1,91 @@
+{
+  if (mState != State.CANCELLED) {
+    return;
+  }
+  mState=State.LOADING;
+  mFirstScreenful=true;
+  final LinkedBlockingQueue<TaskDescription> tasksWaitingForThumbnails=new LinkedBlockingQueue<TaskDescription>();
+  mTaskLoader=new AsyncTask<Void,ArrayList<TaskDescription>,Void>(){
+    @Override protected void onProgressUpdate(    ArrayList<TaskDescription>... values){
+      if (!isCancelled()) {
+        ArrayList<TaskDescription> newTasks=values[0];
+        if (mRecentsPanel != null) {
+          mRecentsPanel.onTasksLoaded(newTasks,mFirstScreenful);
+        }
+        if (mLoadedTasks == null) {
+          mLoadedTasks=new ArrayList<TaskDescription>();
+        }
+        mLoadedTasks.addAll(newTasks);
+        mFirstScreenful=false;
+      }
+    }
+    @Override protected Void doInBackground(    Void... params){
+      final int origPri=Process.getThreadPriority(Process.myTid());
+      Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND);
+      final PackageManager pm=mContext.getPackageManager();
+      final ActivityManager am=(ActivityManager)mContext.getSystemService(Context.ACTIVITY_SERVICE);
+      final List<ActivityManager.RecentTaskInfo> recentTasks=am.getRecentTasksForUser(MAX_TASKS,ActivityManager.RECENT_IGNORE_UNAVAILABLE,UserHandle.USER_CURRENT);
+      int numTasks=recentTasks.size();
+      ActivityInfo homeInfo=new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).resolveActivityInfo(pm,0);
+      boolean firstScreenful=true;
+      ArrayList<TaskDescription> tasks=new ArrayList<TaskDescription>();
+      final int first=0;
+      for (int i=first, index=0; i < numTasks && (index < MAX_TASKS); ++i) {
+        if (isCancelled()) {
+          break;
+        }
+        final ActivityManager.RecentTaskInfo recentInfo=recentTasks.get(i);
+        Intent intent=new Intent(recentInfo.baseIntent);
+        if (recentInfo.origActivity != null) {
+          intent.setComponent(recentInfo.origActivity);
+        }
+        if (isCurrentHomeActivity(intent.getComponent(),homeInfo)) {
+          if (index == 0) {
+            mFirstTaskLoaded=true;
+          }
+          continue;
+        }
+        if (intent.getComponent().getPackageName().equals(mContext.getPackageName())) {
+          continue;
+        }
+        TaskDescription item=createTaskDescription(recentInfo.id,recentInfo.persistentId,recentInfo.baseIntent,recentInfo.origActivity,recentInfo.description);
+        if (item != null) {
+          while (true) {
+            try {
+              tasksWaitingForThumbnails.put(item);
+              break;
+            }
+ catch (            InterruptedException e) {
+            }
+          }
+          tasks.add(item);
+          if (firstScreenful && tasks.size() == mNumTasksInFirstScreenful) {
+            publishProgress(tasks);
+            tasks=new ArrayList<TaskDescription>();
+            firstScreenful=false;
+          }
+          ++index;
+        }
+      }
+      if (!isCancelled()) {
+        publishProgress(tasks);
+        if (firstScreenful) {
+          publishProgress(new ArrayList<TaskDescription>());
+        }
+      }
+      while (true) {
+        try {
+          tasksWaitingForThumbnails.put(new TaskDescription());
+          break;
+        }
+ catch (        InterruptedException e) {
+        }
+      }
+      Process.setThreadPriority(origPri);
+      return null;
+    }
+  }
+;
+  mTaskLoader.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+  loadThumbnailsAndIconsInBackground(tasksWaitingForThumbnails);
+}
