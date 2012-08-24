@@ -1,0 +1,58 @@
+{
+  long newValuesVersion=SystemProperties.getLong(mVersionSystemProperty,0);
+synchronized (this) {
+    if (mValuesVersion != newValuesVersion) {
+      if (LOCAL_LOGV || false) {
+        Log.v(TAG,"invalidate [" + mUri.getLastPathSegment() + "]: current "+ newValuesVersion+ " != cached "+ mValuesVersion);
+      }
+      mValues.clear();
+      mValuesVersion=newValuesVersion;
+    }
+    if (mValues.containsKey(name)) {
+      return mValues.get(name);
+    }
+  }
+  IContentProvider cp=lazyGetProvider(cr);
+  if (mCallGetCommand != null) {
+    try {
+      Bundle args=null;
+      if (userHandle != UserHandle.myUserId()) {
+        args=new Bundle();
+        args.putInt(CALL_METHOD_USER_KEY,userHandle);
+      }
+      Bundle b=cp.call(mCallGetCommand,name,args);
+      if (b != null) {
+        String value=b.getPairValue();
+synchronized (this) {
+          mValues.put(name,value);
+        }
+        return value;
+      }
+    }
+ catch (    RemoteException e) {
+    }
+  }
+  Cursor c=null;
+  try {
+    c=cp.query(mUri,SELECT_VALUE,NAME_EQ_PLACEHOLDER,new String[]{name},null,null);
+    if (c == null) {
+      Log.w(TAG,"Can't get key " + name + " from "+ mUri);
+      return null;
+    }
+    String value=c.moveToNext() ? c.getString(0) : null;
+synchronized (this) {
+      mValues.put(name,value);
+    }
+    if (LOCAL_LOGV) {
+      Log.v(TAG,"cache miss [" + mUri.getLastPathSegment() + "]: "+ name+ " = "+ (value == null ? "(null)" : value));
+    }
+    return value;
+  }
+ catch (  RemoteException e) {
+    Log.w(TAG,"Can't get key " + name + " from "+ mUri,e);
+    return null;
+  }
+ finally {
+    if (c != null)     c.close();
+  }
+}
