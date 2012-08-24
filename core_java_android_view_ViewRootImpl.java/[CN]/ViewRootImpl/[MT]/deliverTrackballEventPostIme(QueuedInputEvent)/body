@@ -1,0 +1,77 @@
+{
+  final MotionEvent event=(MotionEvent)q.mEvent;
+  if (mView == null || !mAdded) {
+    finishInputEvent(q,false);
+    return;
+  }
+  if (mView.dispatchTrackballEvent(event)) {
+    ensureTouchMode(false);
+    finishInputEvent(q,true);
+    mLastTrackballTime=Integer.MIN_VALUE;
+    return;
+  }
+  final TrackballAxis x=mTrackballAxisX;
+  final TrackballAxis y=mTrackballAxisY;
+  long curTime=SystemClock.uptimeMillis();
+  if ((mLastTrackballTime + MAX_TRACKBALL_DELAY) < curTime) {
+    x.reset(0);
+    y.reset(0);
+    mLastTrackballTime=curTime;
+  }
+  final int action=event.getAction();
+  final int metaState=event.getMetaState();
+switch (action) {
+case MotionEvent.ACTION_DOWN:
+    x.reset(2);
+  y.reset(2);
+enqueueInputEvent(new KeyEvent(curTime,curTime,KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_DPAD_CENTER,0,metaState,KeyCharacterMap.VIRTUAL_KEYBOARD,0,KeyEvent.FLAG_FALLBACK,InputDevice.SOURCE_KEYBOARD));
+break;
+case MotionEvent.ACTION_UP:
+x.reset(2);
+y.reset(2);
+enqueueInputEvent(new KeyEvent(curTime,curTime,KeyEvent.ACTION_UP,KeyEvent.KEYCODE_DPAD_CENTER,0,metaState,KeyCharacterMap.VIRTUAL_KEYBOARD,0,KeyEvent.FLAG_FALLBACK,InputDevice.SOURCE_KEYBOARD));
+break;
+}
+if (DEBUG_TRACKBALL) Log.v(TAG,"TB X=" + x.position + " step="+ x.step+ " dir="+ x.dir+ " acc="+ x.acceleration+ " move="+ event.getX()+ " / Y="+ y.position+ " step="+ y.step+ " dir="+ y.dir+ " acc="+ y.acceleration+ " move="+ event.getY());
+final float xOff=x.collect(event.getX(),event.getEventTime(),"X");
+final float yOff=y.collect(event.getY(),event.getEventTime(),"Y");
+int keycode=0;
+int movement=0;
+float accel=1;
+if (xOff > yOff) {
+movement=x.generate((2 / event.getXPrecision()));
+if (movement != 0) {
+keycode=movement > 0 ? KeyEvent.KEYCODE_DPAD_RIGHT : KeyEvent.KEYCODE_DPAD_LEFT;
+accel=x.acceleration;
+y.reset(2);
+}
+}
+ else if (yOff > 0) {
+movement=y.generate((2 / event.getYPrecision()));
+if (movement != 0) {
+keycode=movement > 0 ? KeyEvent.KEYCODE_DPAD_DOWN : KeyEvent.KEYCODE_DPAD_UP;
+accel=y.acceleration;
+x.reset(2);
+}
+}
+if (keycode != 0) {
+if (movement < 0) movement=-movement;
+int accelMovement=(int)(movement * accel);
+if (DEBUG_TRACKBALL) Log.v(TAG,"Move: movement=" + movement + " accelMovement="+ accelMovement+ " accel="+ accel);
+if (accelMovement > movement) {
+if (DEBUG_TRACKBALL) Log.v("foo","Delivering fake DPAD: " + keycode);
+movement--;
+int repeatCount=accelMovement - movement;
+enqueueInputEvent(new KeyEvent(curTime,curTime,KeyEvent.ACTION_MULTIPLE,keycode,repeatCount,metaState,KeyCharacterMap.VIRTUAL_KEYBOARD,0,KeyEvent.FLAG_FALLBACK,InputDevice.SOURCE_KEYBOARD));
+}
+while (movement > 0) {
+if (DEBUG_TRACKBALL) Log.v("foo","Delivering fake DPAD: " + keycode);
+movement--;
+curTime=SystemClock.uptimeMillis();
+enqueueInputEvent(new KeyEvent(curTime,curTime,KeyEvent.ACTION_DOWN,keycode,0,metaState,KeyCharacterMap.VIRTUAL_KEYBOARD,0,KeyEvent.FLAG_FALLBACK,InputDevice.SOURCE_KEYBOARD));
+enqueueInputEvent(new KeyEvent(curTime,curTime,KeyEvent.ACTION_UP,keycode,0,metaState,KeyCharacterMap.VIRTUAL_KEYBOARD,0,KeyEvent.FLAG_FALLBACK,InputDevice.SOURCE_KEYBOARD));
+}
+mLastTrackballTime=curTime;
+}
+finishInputEvent(q,true);
+}
