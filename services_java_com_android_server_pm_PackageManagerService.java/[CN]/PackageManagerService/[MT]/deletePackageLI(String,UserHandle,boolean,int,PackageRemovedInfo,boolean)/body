@@ -1,0 +1,67 @@
+{
+  if (packageName == null) {
+    Slog.w(TAG,"Attempt to delete null packageName.");
+    return false;
+  }
+  PackageParser.Package p;
+  boolean dataOnly=false;
+  int removeUser=-1;
+  int appId=-1;
+synchronized (mPackages) {
+    p=mPackages.get(packageName);
+    if (p == null) {
+      dataOnly=true;
+      PackageSetting ps=mSettings.mPackages.get(packageName);
+      if (ps == null) {
+        Slog.w(TAG,"Package named '" + packageName + "' doesn't exist.");
+        return false;
+      }
+      p=ps.pkg;
+    }
+    if (p == null) {
+      Slog.w(TAG,"Package named '" + packageName + "' doesn't exist.");
+      return false;
+    }
+    final PackageSetting ps=(PackageSetting)p.mExtras;
+    if (!isSystemApp(p) && ps != null && user != null && user.getIdentifier() != UserHandle.USER_ALL) {
+      ps.setUserState(user.getIdentifier(),COMPONENT_ENABLED_STATE_DEFAULT,false,true,true,null,null);
+      if (ps.isAnyInstalled(sUserManager.getUserIds())) {
+        removeUser=user.getIdentifier();
+        appId=ps.appId;
+        mSettings.writePackageRestrictionsLPr(removeUser);
+      }
+ else {
+        ps.setInstalled(true,user.getIdentifier());
+      }
+    }
+  }
+  if (removeUser >= 0) {
+    if (outInfo != null) {
+      outInfo.removedPackage=packageName;
+      outInfo.removedAppId=appId;
+      outInfo.removedUsers=new int[]{removeUser};
+    }
+    mInstaller.clearUserData(packageName,removeUser);
+    schedulePackageCleaning(packageName,removeUser,false);
+    return true;
+  }
+  if (dataOnly) {
+    removePackageDataLI(p,outInfo,flags,writeSettings);
+    return true;
+  }
+  if (p.applicationInfo == null) {
+    Slog.w(TAG,"Package " + p.packageName + " has no applicationInfo.");
+    return false;
+  }
+  boolean ret=false;
+  if (isSystemApp(p)) {
+    Log.i(TAG,"Removing system package:" + p.packageName);
+    ret=deleteSystemPackageLI(p,flags,outInfo,writeSettings);
+  }
+ else {
+    Log.i(TAG,"Removing non-system package:" + p.packageName);
+    killApplication(packageName,p.applicationInfo.uid);
+    ret=deleteInstalledPackageLI(p,deleteCodeAndResources,flags,outInfo,writeSettings);
+  }
+  return ret;
+}
