@@ -1,28 +1,37 @@
 {
-  if (!mNetworkAvailable) {
-    mInjectNtpTimePending=true;
+  if (mInjectNtpTimePending == STATE_DOWNLOADING) {
     return;
   }
-  mInjectNtpTimePending=false;
-  long delay;
-  if (mNtpTime.getCacheAge() >= NTP_INTERVAL) {
-    mNtpTime.forceRefresh();
+  if (!mNetworkAvailable) {
+    mInjectNtpTimePending=STATE_PENDING_NETWORK;
+    return;
   }
-  if (mNtpTime.getCacheAge() < NTP_INTERVAL) {
-    long time=mNtpTime.getCachedNtpTime();
-    long timeReference=mNtpTime.getCachedNtpTimeReference();
-    long certainty=mNtpTime.getCacheCertainty();
-    long now=System.currentTimeMillis();
-    Log.d(TAG,"NTP server returned: " + time + " ("+ new Date(time)+ ") reference: "+ timeReference+ " certainty: "+ certainty+ " system time offset: "+ (time - now));
-    native_inject_time(time,timeReference,(int)certainty);
-    delay=NTP_INTERVAL;
-  }
+  mInjectNtpTimePending=STATE_DOWNLOADING;
+  AsyncTask.THREAD_POOL_EXECUTOR.execute(new Runnable(){
+    @Override public void run(){
+      long delay;
+      if (mNtpTime.getCacheAge() >= NTP_INTERVAL) {
+        mNtpTime.forceRefresh();
+      }
+      if (mNtpTime.getCacheAge() < NTP_INTERVAL) {
+        long time=mNtpTime.getCachedNtpTime();
+        long timeReference=mNtpTime.getCachedNtpTimeReference();
+        long certainty=mNtpTime.getCacheCertainty();
+        long now=System.currentTimeMillis();
+        Log.d(TAG,"NTP server returned: " + time + " ("+ new Date(time)+ ") reference: "+ timeReference+ " certainty: "+ certainty+ " system time offset: "+ (time - now));
+        native_inject_time(time,timeReference,(int)certainty);
+        delay=NTP_INTERVAL;
+      }
  else {
-    if (DEBUG)     Log.d(TAG,"requestTime failed");
-    delay=RETRY_INTERVAL;
+        if (DEBUG)         Log.d(TAG,"requestTime failed");
+        delay=RETRY_INTERVAL;
+      }
+      mHandler.sendMessage(Message.obtain(mHandler,INJECT_NTP_TIME_FINISHED));
+      if (mPeriodicTimeInjection) {
+        mHandler.removeMessages(INJECT_NTP_TIME);
+        mHandler.sendMessageDelayed(Message.obtain(mHandler,INJECT_NTP_TIME),delay);
+      }
+    }
   }
-  if (mPeriodicTimeInjection) {
-    mHandler.removeMessages(INJECT_NTP_TIME);
-    mHandler.sendMessageDelayed(Message.obtain(mHandler,INJECT_NTP_TIME),delay);
-  }
+);
 }
