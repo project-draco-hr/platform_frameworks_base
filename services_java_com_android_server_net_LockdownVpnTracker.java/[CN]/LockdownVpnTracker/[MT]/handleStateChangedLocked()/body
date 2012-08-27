@@ -1,0 +1,51 @@
+{
+  Slog.d(TAG,"handleStateChanged()");
+  final NetworkInfo egressInfo=mConnService.getActiveNetworkInfoUnfiltered();
+  final LinkProperties egressProp=mConnService.getActiveLinkProperties();
+  final NetworkInfo vpnInfo=mVpn.getNetworkInfo();
+  final VpnConfig vpnConfig=mVpn.getLegacyVpnConfig();
+  final boolean egressDisconnected=egressInfo == null || State.DISCONNECTED.equals(egressInfo.getState());
+  final boolean egressChanged=egressProp == null || !TextUtils.equals(mAcceptedEgressIface,egressProp.getInterfaceName());
+  if (egressDisconnected || egressChanged) {
+    clearSourceRules();
+    mAcceptedEgressIface=null;
+    mVpn.stopLegacyVpn();
+  }
+  if (egressDisconnected)   return;
+  if (mErrorCount > MAX_ERROR_COUNT) {
+    showNotification(R.string.vpn_lockdown_error,R.drawable.vpn_disconnected);
+  }
+ else   if (egressInfo.isConnected() && !vpnInfo.isConnectedOrConnecting()) {
+    if (mProfile.isValidLockdownProfile()) {
+      Slog.d(TAG,"Active network connected; starting VPN");
+      showNotification(R.string.vpn_lockdown_connecting,R.drawable.vpn_disconnected);
+      mAcceptedEgressIface=egressProp.getInterfaceName();
+      mVpn.startLegacyVpn(mProfile,KeyStore.getInstance(),egressProp);
+    }
+ else {
+      Slog.e(TAG,"Invalid VPN profile; requires IP-based server and DNS");
+      showNotification(R.string.vpn_lockdown_error,R.drawable.vpn_disconnected);
+    }
+  }
+ else   if (vpnInfo.isConnected() && vpnConfig != null) {
+    final String iface=vpnConfig.interfaze;
+    final String sourceAddr=vpnConfig.addresses;
+    if (TextUtils.equals(iface,mAcceptedIface) && TextUtils.equals(sourceAddr,mAcceptedSourceAddr)) {
+      return;
+    }
+    Slog.d(TAG,"VPN connected using iface=" + iface + ", sourceAddr="+ sourceAddr);
+    showNotification(R.string.vpn_lockdown_connected,R.drawable.vpn_connected);
+    try {
+      clearSourceRules();
+      mNetService.setFirewallInterfaceRule(iface,true);
+      mNetService.setFirewallEgressSourceRule(sourceAddr,true);
+      mErrorCount=0;
+      mAcceptedIface=iface;
+      mAcceptedSourceAddr=sourceAddr;
+    }
+ catch (    RemoteException e) {
+      throw new RuntimeException("Problem setting firewall rules",e);
+    }
+    mConnService.sendConnectedBroadcast(augmentNetworkInfo(egressInfo));
+  }
+}
