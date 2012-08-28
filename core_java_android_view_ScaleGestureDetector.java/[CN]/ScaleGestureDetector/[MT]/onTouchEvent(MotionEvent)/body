@@ -3,143 +3,69 @@
     mInputEventConsistencyVerifier.onTouchEvent(event,0);
   }
   final int action=event.getActionMasked();
-  if (action == MotionEvent.ACTION_DOWN) {
-    reset();
+  final boolean streamComplete=action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL;
+  if (action == MotionEvent.ACTION_DOWN || streamComplete) {
+    if (mInProgress) {
+      mListener.onScaleEnd(this);
+      mInProgress=false;
+    }
+    if (streamComplete) {
+      return true;
+    }
   }
-  boolean handled=true;
-  if (mInvalidGesture) {
-    handled=false;
+  final boolean configChanged=action == MotionEvent.ACTION_POINTER_UP || action == MotionEvent.ACTION_POINTER_DOWN;
+  final boolean pointerUp=action == MotionEvent.ACTION_POINTER_UP;
+  final int skipIndex=pointerUp ? event.getActionIndex() : -1;
+  float sumX=0, sumY=0;
+  final int count=event.getPointerCount();
+  for (int i=0; i < count; i++) {
+    if (skipIndex == i)     continue;
+    sumX+=event.getX(i);
+    sumY+=event.getY(i);
   }
- else   if (!mGestureInProgress) {
-switch (action) {
-case MotionEvent.ACTION_DOWN:
-{
-        mActiveId0=event.getPointerId(0);
-        mActive0MostRecent=true;
-      }
-    break;
-case MotionEvent.ACTION_UP:
-  reset();
-break;
-case MotionEvent.ACTION_POINTER_DOWN:
-{
-if (mPrevEvent != null) mPrevEvent.recycle();
-mPrevEvent=MotionEvent.obtain(event);
-mTimeDelta=0;
-int index1=event.getActionIndex();
-int index0=event.findPointerIndex(mActiveId0);
-mActiveId1=event.getPointerId(index1);
-if (index0 < 0 || index0 == index1) {
-  index0=findNewActiveIndex(event,mActiveId1,-1);
-  mActiveId0=event.getPointerId(index0);
-}
-mActive0MostRecent=false;
-setContext(event);
-mGestureInProgress=mListener.onScaleBegin(this);
-break;
-}
-}
-}
- else {
-switch (action) {
-case MotionEvent.ACTION_POINTER_DOWN:
-{
-mListener.onScaleEnd(this);
-final int oldActive0=mActiveId0;
-final int oldActive1=mActiveId1;
-reset();
-mPrevEvent=MotionEvent.obtain(event);
-mActiveId0=mActive0MostRecent ? oldActive0 : oldActive1;
-mActiveId1=event.getPointerId(event.getActionIndex());
-mActive0MostRecent=false;
-int index0=event.findPointerIndex(mActiveId0);
-if (index0 < 0 || mActiveId0 == mActiveId1) {
-Log.e(TAG,"Got " + MotionEvent.actionToString(action) + " with bad state while a gesture was in progress. "+ "Did you forget to pass an event to "+ "ScaleGestureDetector#onTouchEvent?");
-index0=findNewActiveIndex(event,mActiveId1,-1);
-mActiveId0=event.getPointerId(index0);
-}
-setContext(event);
-mGestureInProgress=mListener.onScaleBegin(this);
-}
-break;
-case MotionEvent.ACTION_POINTER_UP:
-{
-final int pointerCount=event.getPointerCount();
-final int actionIndex=event.getActionIndex();
-final int actionId=event.getPointerId(actionIndex);
-boolean gestureEnded=false;
-if (pointerCount > 2) {
-if (actionId == mActiveId0) {
-final int newIndex=findNewActiveIndex(event,mActiveId1,actionIndex);
-if (newIndex >= 0) {
-mListener.onScaleEnd(this);
-mActiveId0=event.getPointerId(newIndex);
-mActive0MostRecent=true;
-mPrevEvent=MotionEvent.obtain(event);
-setContext(event);
-mGestureInProgress=mListener.onScaleBegin(this);
-}
- else {
-gestureEnded=true;
-}
-}
- else if (actionId == mActiveId1) {
-final int newIndex=findNewActiveIndex(event,mActiveId0,actionIndex);
-if (newIndex >= 0) {
-mListener.onScaleEnd(this);
-mActiveId1=event.getPointerId(newIndex);
-mActive0MostRecent=false;
-mPrevEvent=MotionEvent.obtain(event);
-setContext(event);
-mGestureInProgress=mListener.onScaleBegin(this);
-}
- else {
-gestureEnded=true;
-}
-}
-mPrevEvent.recycle();
-mPrevEvent=MotionEvent.obtain(event);
-setContext(event);
-}
- else {
-gestureEnded=true;
-}
-if (gestureEnded) {
-setContext(event);
-final int activeId=actionId == mActiveId0 ? mActiveId1 : mActiveId0;
-final int index=event.findPointerIndex(activeId);
-mFocusX=event.getX(index);
-mFocusY=event.getY(index);
-mListener.onScaleEnd(this);
-reset();
-mActiveId0=activeId;
-mActive0MostRecent=true;
-}
-}
-break;
-case MotionEvent.ACTION_CANCEL:
-mListener.onScaleEnd(this);
-reset();
-break;
-case MotionEvent.ACTION_UP:
-reset();
-break;
-case MotionEvent.ACTION_MOVE:
-{
-setContext(event);
-if (mCurrPressure / mPrevPressure > PRESSURE_THRESHOLD) {
-final boolean updatePrevious=mListener.onScale(this);
-if (updatePrevious) {
-mPrevEvent.recycle();
-mPrevEvent=MotionEvent.obtain(event);
-}
-}
-}
-break;
-}
-}
-if (!handled && mInputEventConsistencyVerifier != null) {
-mInputEventConsistencyVerifier.onUnhandledEvent(event,0);
-}
-return handled;
+  final int div=pointerUp ? count - 1 : count;
+  final float focusX=sumX / div;
+  final float focusY=sumY / div;
+  float devSumX=0, devSumY=0;
+  for (int i=0; i < count; i++) {
+    if (skipIndex == i)     continue;
+    devSumX+=Math.abs(event.getX(i) - focusX);
+    devSumY+=Math.abs(event.getY(i) - focusY);
+  }
+  final float devX=devSumX / div;
+  final float devY=devSumY / div;
+  final float spanX=devX * 2;
+  final float spanY=devY * 2;
+  final float span=FloatMath.sqrt(spanX * spanX + spanY * spanY);
+  if (mInProgress && (span == 0 || configChanged)) {
+    mListener.onScaleEnd(this);
+    mInProgress=false;
+  }
+  if (configChanged) {
+    mPrevSpanX=mCurrSpanX=spanX;
+    mPrevSpanY=mCurrSpanY=spanY;
+    mPrevSpan=mCurrSpan=span;
+  }
+  if (!mInProgress && span != 0) {
+    mFocusX=focusX;
+    mFocusY=focusY;
+    mInProgress=mListener.onScaleBegin(this);
+  }
+  if (action == MotionEvent.ACTION_MOVE) {
+    mCurrSpanX=spanX;
+    mCurrSpanY=spanY;
+    mCurrSpan=span;
+    mFocusX=focusX;
+    mFocusY=focusY;
+    boolean updatePrev=true;
+    if (mInProgress) {
+      updatePrev=mListener.onScale(this);
+    }
+    if (updatePrev) {
+      mPrevSpanX=mCurrSpanX;
+      mPrevSpanY=mCurrSpanY;
+      mPrevSpan=mCurrSpan;
+    }
+  }
+  return true;
 }
