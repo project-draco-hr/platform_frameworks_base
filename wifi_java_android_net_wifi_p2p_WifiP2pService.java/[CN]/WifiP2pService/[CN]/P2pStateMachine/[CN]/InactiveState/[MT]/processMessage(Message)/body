@@ -7,39 +7,30 @@ case WifiP2pManager.CONNECT:
 mAutonomousGroup=false;
 int gc=mWifiNative.getGroupCapability(config.deviceAddress);
 mPeers.updateGroupCapability(config.deviceAddress,gc);
-if (mSavedPeerConfig != null && config.deviceAddress.equals(mSavedPeerConfig.deviceAddress)) {
-mSavedPeerConfig=config;
-mWifiNative.p2pStopFind();
-if (mPeers.isGroupOwner(mSavedPeerConfig.deviceAddress)) {
-p2pConnectWithPinDisplay(mSavedPeerConfig,JOIN_GROUP);
-}
- else {
-p2pConnectWithPinDisplay(mSavedPeerConfig,FORM_GROUP);
-}
-transitionTo(mGroupNegotiationState);
-}
- else {
-mSavedPeerConfig=config;
-int netId=configuredNetworkId(mSavedPeerConfig.deviceAddress);
-if (netId >= 0) {
-mWifiNative.p2pReinvoke(netId,mSavedPeerConfig.deviceAddress);
-}
- else {
-mWifiNative.p2pStopFind();
-if (mPeers.isGroupOwner(mSavedPeerConfig.deviceAddress)) {
-if (DBG) logd("Sending join to GO");
-p2pConnectWithPinDisplay(mSavedPeerConfig,JOIN_GROUP);
-transitionTo(mGroupNegotiationState);
-}
- else {
-if (DBG) logd("Sending prov disc");
-transitionTo(mProvisionDiscoveryState);
-}
-}
+int connectRet=connect(config,TRY_REINVOCATION);
+if (connectRet == CONNECT_FAILURE) {
+replyToMessage(message,WifiP2pManager.CONNECT_FAILED);
+break;
 }
 mPeers.updateStatus(mSavedPeerConfig.deviceAddress,WifiP2pDevice.INVITED);
 sendP2pPeersChangedBroadcast();
 replyToMessage(message,WifiP2pManager.CONNECT_SUCCEEDED);
+if (connectRet == NEEDS_PROVISION_REQ) {
+if (DBG) logd("Sending prov disc");
+transitionTo(mProvisionDiscoveryState);
+break;
+}
+transitionTo(mGroupNegotiationState);
+break;
+case WifiP2pManager.STOP_DISCOVERY:
+if (mWifiNative.p2pStopFind()) {
+mWifiNative.p2pFlush();
+mServiceDiscReqId=null;
+replyToMessage(message,WifiP2pManager.STOP_DISCOVERY_SUCCEEDED);
+}
+ else {
+replyToMessage(message,WifiP2pManager.STOP_DISCOVERY_FAILED,WifiP2pManager.ERROR);
+}
 break;
 case WifiMonitor.P2P_GO_NEGOTIATION_REQUEST_EVENT:
 mSavedPeerConfig=(WifiP2pConfig)message.obj;
@@ -75,24 +66,45 @@ if (!sendConnectNoticeToApp(mPeers.get(mSavedPeerConfig.deviceAddress),mSavedPee
 transitionTo(mUserAuthorizingInvitationState);
 }
 break;
-case WifiMonitor.P2P_FIND_STOPPED_EVENT:
-mWifiNative.p2pFlush();
-mServiceDiscReqId=null;
-sendP2pDiscoveryChangedBroadcast(false);
-break;
 case WifiMonitor.P2P_PROV_DISC_PBC_REQ_EVENT:
 case WifiMonitor.P2P_PROV_DISC_ENTER_PIN_EVENT:
 case WifiMonitor.P2P_PROV_DISC_SHOW_PIN_EVENT:
 break;
 case WifiP2pManager.CREATE_GROUP:
 mAutonomousGroup=true;
-if (mWifiNative.p2pGroupAdd()) {
+int netId=message.arg1;
+boolean ret=false;
+if (netId == WifiP2pGroup.PERSISTENT_NET_ID) {
+netId=mGroups.getNetworkId(mThisDevice.deviceAddress);
+if (netId != -1) {
+ret=mWifiNative.p2pGroupAdd(netId);
+}
+ else {
+ret=mWifiNative.p2pGroupAdd(true);
+}
+}
+ else {
+ret=mWifiNative.p2pGroupAdd(false);
+}
+if (ret) {
 replyToMessage(message,WifiP2pManager.CREATE_GROUP_SUCCEEDED);
+transitionTo(mGroupNegotiationState);
 }
  else {
 replyToMessage(message,WifiP2pManager.CREATE_GROUP_FAILED,WifiP2pManager.ERROR);
 }
+break;
+case WifiMonitor.P2P_GROUP_STARTED_EVENT:
+mGroup=(WifiP2pGroup)message.obj;
+if (DBG) logd(getName() + " group started");
+if (mGroup.getNetworkId() == WifiP2pGroup.PERSISTENT_NET_ID) {
+mAutonomousGroup=false;
+deferMessage(message);
 transitionTo(mGroupNegotiationState);
+}
+ else {
+return NOT_HANDLED;
+}
 break;
 default :
 return NOT_HANDLED;
