@@ -1,7 +1,7 @@
 {
   int i;
   int N;
-  if (uid < 0) {
+  if (uid < 0 && name != null) {
     try {
       uid=AppGlobals.getPackageManager().getPackageUid(name,userId);
     }
@@ -9,20 +9,40 @@
     }
   }
   if (doit) {
-    Slog.i(TAG,"Force stopping package " + name + " uid="+ uid);
+    if (name != null) {
+      Slog.i(TAG,"Force stopping package " + name + " uid="+ uid);
+    }
+ else {
+      Slog.i(TAG,"Force stopping user " + userId);
+    }
     Iterator<SparseArray<Long>> badApps=mProcessCrashTimes.getMap().values().iterator();
     while (badApps.hasNext()) {
       SparseArray<Long> ba=badApps.next();
-      if (ba.get(uid) != null) {
+      for (i=ba.size() - 1; i >= 0; i--) {
+        boolean remove=false;
+        final int entUid=ba.keyAt(i);
+        if (name != null) {
+          if (entUid == uid) {
+            remove=true;
+          }
+        }
+ else         if (UserHandle.getUserId(entUid) == userId) {
+          remove=true;
+        }
+        if (remove) {
+          ba.removeAt(i);
+        }
+      }
+      if (ba.size() == 0) {
         badApps.remove();
       }
     }
   }
-  boolean didSomething=killPackageProcessesLocked(name,uid,-100,callerWillRestart,false,doit,evenPersistent,"force stop");
+  boolean didSomething=killPackageProcessesLocked(name,uid,name == null ? userId : -1,-100,callerWillRestart,false,doit,evenPersistent,name == null ? ("force stop user " + userId) : ("force stop " + name));
   TaskRecord lastTask=null;
   for (i=0; i < mMainStack.mHistory.size(); i++) {
     ActivityRecord r=(ActivityRecord)mMainStack.mHistory.get(i);
-    final boolean samePackage=r.packageName.equals(name);
+    final boolean samePackage=r.packageName.equals(name) || (name == null && r.userId == userId);
     if (r.userId == userId && (samePackage || r.task == lastTask) && (r.app == null || evenPersistent || !r.app.persistent)) {
       if (!doit) {
         if (r.finishing) {
@@ -52,7 +72,7 @@
   }
   ArrayList<ContentProviderRecord> providers=new ArrayList<ContentProviderRecord>();
   for (  ContentProviderRecord provider : mProviderMap.getProvidersByClass(userId).values()) {
-    if (provider.info.packageName.equals(name) && (provider.proc == null || evenPersistent || !provider.proc.persistent)) {
+    if ((name == null || provider.info.packageName.equals(name)) && (provider.proc == null || evenPersistent || !provider.proc.persistent)) {
       if (!doit) {
         return true;
       }
@@ -65,7 +85,7 @@
     removeDyingProviderLocked(null,providers.get(i),true);
   }
   if (doit) {
-    if (purgeCache) {
+    if (purgeCache && name != null) {
       AttributeCache ac=AttributeCache.instance();
       if (ac != null) {
         ac.removePackage(name);
