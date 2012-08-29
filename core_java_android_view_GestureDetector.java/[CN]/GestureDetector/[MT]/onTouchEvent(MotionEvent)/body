@@ -3,27 +3,32 @@
     mInputEventConsistencyVerifier.onTouchEvent(ev,0);
   }
   final int action=ev.getAction();
-  final float y=ev.getY();
-  final float x=ev.getX();
   if (mVelocityTracker == null) {
     mVelocityTracker=VelocityTracker.obtain();
   }
   mVelocityTracker.addMovement(ev);
+  final boolean pointerUp=action == MotionEvent.ACTION_POINTER_UP;
+  final int skipIndex=pointerUp ? ev.getActionIndex() : -1;
+  float sumX=0, sumY=0;
+  final int count=ev.getPointerCount();
+  for (int i=0; i < count; i++) {
+    if (skipIndex == i)     continue;
+    sumX+=ev.getX(i);
+    sumY+=ev.getY(i);
+  }
+  final int div=pointerUp ? count - 1 : count;
+  final float focusX=sumX / div;
+  final float focusY=sumY / div;
   boolean handled=false;
 switch (action & MotionEvent.ACTION_MASK) {
 case MotionEvent.ACTION_POINTER_DOWN:
-    if (mIgnoreMultitouch) {
-      cancel();
-    }
-  break;
+    mDownFocusX=mLastFocusX=focusX;
+  mDownFocusY=mLastFocusY=focusY;
+cancelTaps();
+break;
 case MotionEvent.ACTION_POINTER_UP:
-if (mIgnoreMultitouch && ev.getPointerCount() == 2) {
-  int index=(((action & MotionEvent.ACTION_POINTER_INDEX_MASK) >> MotionEvent.ACTION_POINTER_INDEX_SHIFT) == 0) ? 1 : 0;
-  mLastMotionX=ev.getX(index);
-  mLastMotionY=ev.getY(index);
-  mVelocityTracker.recycle();
-  mVelocityTracker=VelocityTracker.obtain();
-}
+mDownFocusX=mLastFocusX=focusX;
+mDownFocusY=mLastFocusY=focusY;
 break;
 case MotionEvent.ACTION_DOWN:
 if (mDoubleTapListener != null) {
@@ -38,8 +43,8 @@ handled|=mDoubleTapListener.onDoubleTapEvent(ev);
 mHandler.sendEmptyMessageDelayed(TAP,DOUBLE_TAP_TIMEOUT);
 }
 }
-mLastMotionX=x;
-mLastMotionY=y;
+mDownFocusX=mLastFocusX=focusX;
+mDownFocusY=mLastFocusY=focusY;
 if (mCurrentDownEvent != null) {
 mCurrentDownEvent.recycle();
 }
@@ -56,22 +61,22 @@ mHandler.sendEmptyMessageAtTime(SHOW_PRESS,mCurrentDownEvent.getDownTime() + TAP
 handled|=mListener.onDown(ev);
 break;
 case MotionEvent.ACTION_MOVE:
-if (mInLongPress || (mIgnoreMultitouch && ev.getPointerCount() > 1)) {
+if (mInLongPress) {
 break;
 }
-final float scrollX=mLastMotionX - x;
-final float scrollY=mLastMotionY - y;
+final float scrollX=mLastFocusX - focusX;
+final float scrollY=mLastFocusY - focusY;
 if (mIsDoubleTapping) {
 handled|=mDoubleTapListener.onDoubleTapEvent(ev);
 }
  else if (mAlwaysInTapRegion) {
-final int deltaX=(int)(x - mCurrentDownEvent.getX());
-final int deltaY=(int)(y - mCurrentDownEvent.getY());
+final int deltaX=(int)(focusX - mDownFocusX);
+final int deltaY=(int)(focusY - mDownFocusY);
 int distance=(deltaX * deltaX) + (deltaY * deltaY);
 if (distance > mTouchSlopSquare) {
 handled=mListener.onScroll(mCurrentDownEvent,ev,scrollX,scrollY);
-mLastMotionX=x;
-mLastMotionY=y;
+mLastFocusX=focusX;
+mLastFocusY=focusY;
 mAlwaysInTapRegion=false;
 mHandler.removeMessages(TAP);
 mHandler.removeMessages(SHOW_PRESS);
@@ -83,8 +88,8 @@ mAlwaysInBiggerTapRegion=false;
 }
  else if ((Math.abs(scrollX) >= 1) || (Math.abs(scrollY) >= 1)) {
 handled=mListener.onScroll(mCurrentDownEvent,ev,scrollX,scrollY);
-mLastMotionX=x;
-mLastMotionY=y;
+mLastFocusX=focusX;
+mLastFocusY=focusY;
 }
 break;
 case MotionEvent.ACTION_UP:
@@ -102,9 +107,10 @@ handled=mListener.onSingleTapUp(ev);
 }
  else {
 final VelocityTracker velocityTracker=mVelocityTracker;
+final int pointerId=ev.getPointerId(0);
 velocityTracker.computeCurrentVelocity(1000,mMaximumFlingVelocity);
-final float velocityY=velocityTracker.getYVelocity();
-final float velocityX=velocityTracker.getXVelocity();
+final float velocityY=velocityTracker.getYVelocity(pointerId);
+final float velocityX=velocityTracker.getXVelocity(pointerId);
 if ((Math.abs(velocityY) > mMinimumFlingVelocity) || (Math.abs(velocityX) > mMinimumFlingVelocity)) {
 handled=mListener.onFling(mCurrentDownEvent,ev,velocityX,velocityY);
 }
