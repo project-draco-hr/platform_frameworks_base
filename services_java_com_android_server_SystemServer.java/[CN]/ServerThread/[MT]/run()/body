@@ -50,6 +50,33 @@
   NetworkTimeUpdateService networkTimeUpdater=null;
   CommonTimeManagementService commonTimeMgmtService=null;
   InputManagerService inputManager=null;
+  HandlerThread uiHandlerThread=new HandlerThread("UI");
+  uiHandlerThread.start();
+  Handler uiHandler=new Handler(uiHandlerThread.getLooper());
+  uiHandler.post(new Runnable(){
+    @Override public void run(){
+      android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_FOREGROUND);
+      android.os.Process.setCanSelfBackground(false);
+      if (StrictMode.conditionallyEnableDebugLogging()) {
+        Slog.i(TAG,"Enabled StrictMode logging for UI Looper");
+      }
+    }
+  }
+);
+  HandlerThread wmHandlerThread=new HandlerThread("WindowManager");
+  wmHandlerThread.start();
+  Handler wmHandler=new Handler(wmHandlerThread.getLooper());
+  wmHandler.post(new Runnable(){
+    @Override public void run(){
+      android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_DISPLAY);
+      android.os.Process.setCanSelfBackground(false);
+      if (StrictMode.conditionallyEnableDebugLogging()) {
+        Slog.i(TAG,"Enabled StrictMode logging for UI Looper");
+      }
+    }
+  }
+);
+  boolean onlyCore=false;
   try {
     Slog.i(TAG,"Entropy Mixer");
     ServiceManager.addService("entropy",new EntropyMixer());
@@ -59,16 +86,18 @@
     Slog.i(TAG,"Activity Manager");
     context=ActivityManagerService.main(factoryTest);
     Slog.i(TAG,"Display Manager");
-    display=new DisplayManagerService(context);
+    display=new DisplayManagerService(context,uiHandler);
     ServiceManager.addService(Context.DISPLAY_SERVICE,display,true);
     Slog.i(TAG,"Telephony Registry");
     ServiceManager.addService("telephony.registry",new TelephonyRegistry(context));
     Slog.i(TAG,"Scheduling Policy");
     ServiceManager.addService(Context.SCHEDULING_POLICY_SERVICE,new SchedulingPolicyService());
     AttributeCache.init(context);
+    if (!display.waitForDefaultDisplay()) {
+      reportWtf("Timeout waiting for default display to be initialized.",new Throwable());
+    }
     Slog.i(TAG,"Package Manager");
     String cryptState=SystemProperties.get("vold.decrypt");
-    boolean onlyCore=false;
     if (ENCRYPTING_STATE.equals(cryptState)) {
       Slog.w(TAG,"Detected encryption in progress - only parsing core apps");
       onlyCore=true;
@@ -115,7 +144,7 @@
     Slog.i(TAG,"Init Watchdog");
     Watchdog.getInstance().init(context,battery,power,alarm,ActivityManagerService.self());
     Slog.i(TAG,"Window Manager");
-    wm=WindowManagerService.main(context,power,display,factoryTest != SystemServer.FACTORY_TEST_LOW_LEVEL,!firstBoot,onlyCore);
+    wm=WindowManagerService.main(context,power,display,uiHandler,wmHandler,factoryTest != SystemServer.FACTORY_TEST_LOW_LEVEL,!firstBoot,onlyCore);
     ServiceManager.addService(Context.WINDOW_SERVICE,wm);
     inputManager=wm.getInputManagerService();
     ServiceManager.addService(Context.INPUT_SERVICE,inputManager);
@@ -564,6 +593,12 @@
   }
  catch (  Throwable e) {
     reportWtf("making Package Manager Service ready",e);
+  }
+  try {
+    display.systemReady(safeMode,onlyCore);
+  }
+ catch (  Throwable e) {
+    reportWtf("making Display Manager Service ready",e);
   }
   final Context contextF=context;
   final BatteryService batteryF=battery;
