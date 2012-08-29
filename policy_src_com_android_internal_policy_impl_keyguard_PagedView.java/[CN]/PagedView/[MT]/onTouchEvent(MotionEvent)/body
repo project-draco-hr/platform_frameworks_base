@@ -1,0 +1,113 @@
+{
+  if (getChildCount() <= 0)   return super.onTouchEvent(ev);
+  acquireVelocityTrackerAndAddMovement(ev);
+  final int action=ev.getAction();
+switch (action & MotionEvent.ACTION_MASK) {
+case MotionEvent.ACTION_DOWN:
+    if (!mScroller.isFinished()) {
+      mScroller.abortAnimation();
+    }
+  mDownMotionX=mLastMotionX=ev.getX();
+mLastMotionXRemainder=0;
+mTotalMotionX=0;
+mActivePointerId=ev.getPointerId(0);
+if (mTouchState == TOUCH_STATE_SCROLLING) {
+pageBeginMoving();
+}
+break;
+case MotionEvent.ACTION_MOVE:
+if (mTouchState == TOUCH_STATE_SCROLLING) {
+final int pointerIndex=ev.findPointerIndex(mActivePointerId);
+final float x=ev.getX(pointerIndex);
+final float deltaX=mLastMotionX + mLastMotionXRemainder - x;
+mTotalMotionX+=Math.abs(deltaX);
+if (Math.abs(deltaX) >= 1.0f) {
+mTouchX+=deltaX;
+mSmoothingTime=System.nanoTime() / NANOTIME_DIV;
+if (!mDeferScrollUpdate) {
+scrollBy((int)deltaX,0);
+if (DEBUG) Log.d(TAG,"onTouchEvent().Scrolling: " + deltaX);
+}
+ else {
+invalidate();
+}
+mLastMotionX=x;
+mLastMotionXRemainder=deltaX - (int)deltaX;
+}
+ else {
+awakenScrollBars();
+}
+}
+ else {
+determineScrollingStart(ev);
+}
+break;
+case MotionEvent.ACTION_UP:
+if (mTouchState == TOUCH_STATE_SCROLLING) {
+final int activePointerId=mActivePointerId;
+final int pointerIndex=ev.findPointerIndex(activePointerId);
+final float x=ev.getX(pointerIndex);
+final VelocityTracker velocityTracker=mVelocityTracker;
+velocityTracker.computeCurrentVelocity(1000,mMaximumVelocity);
+int velocityX=(int)velocityTracker.getXVelocity(activePointerId);
+final int deltaX=(int)(x - mDownMotionX);
+final int pageWidth=getScaledMeasuredWidth(getPageAt(mCurrentPage));
+boolean isSignificantMove=Math.abs(deltaX) > pageWidth * SIGNIFICANT_MOVE_THRESHOLD;
+mTotalMotionX+=Math.abs(mLastMotionX + mLastMotionXRemainder - x);
+boolean isFling=mTotalMotionX > MIN_LENGTH_FOR_FLING && Math.abs(velocityX) > mFlingThresholdVelocity;
+boolean returnToOriginalPage=false;
+if (Math.abs(deltaX) > pageWidth * RETURN_TO_ORIGINAL_PAGE_THRESHOLD && Math.signum(velocityX) != Math.signum(deltaX) && isFling) {
+returnToOriginalPage=true;
+}
+int finalPage;
+if (((isSignificantMove && deltaX > 0 && !isFling) || (isFling && velocityX > 0)) && mCurrentPage > 0) {
+finalPage=returnToOriginalPage ? mCurrentPage : mCurrentPage - 1;
+snapToPageWithVelocity(finalPage,velocityX);
+}
+ else if (((isSignificantMove && deltaX < 0 && !isFling) || (isFling && velocityX < 0)) && mCurrentPage < getChildCount() - 1) {
+finalPage=returnToOriginalPage ? mCurrentPage : mCurrentPage + 1;
+snapToPageWithVelocity(finalPage,velocityX);
+}
+ else {
+snapToDestination();
+}
+}
+ else if (mTouchState == TOUCH_STATE_PREV_PAGE) {
+int nextPage=Math.max(0,mCurrentPage - 1);
+if (nextPage != mCurrentPage) {
+snapToPage(nextPage);
+}
+ else {
+snapToDestination();
+}
+}
+ else if (mTouchState == TOUCH_STATE_NEXT_PAGE) {
+int nextPage=Math.min(getChildCount() - 1,mCurrentPage + 1);
+if (nextPage != mCurrentPage) {
+snapToPage(nextPage);
+}
+ else {
+snapToDestination();
+}
+}
+ else {
+onUnhandledTap(ev);
+}
+mTouchState=TOUCH_STATE_REST;
+mActivePointerId=INVALID_POINTER;
+releaseVelocityTracker();
+break;
+case MotionEvent.ACTION_CANCEL:
+if (mTouchState == TOUCH_STATE_SCROLLING) {
+snapToDestination();
+}
+mTouchState=TOUCH_STATE_REST;
+mActivePointerId=INVALID_POINTER;
+releaseVelocityTracker();
+break;
+case MotionEvent.ACTION_POINTER_UP:
+onSecondaryPointerUp(ev);
+break;
+}
+return true;
+}
