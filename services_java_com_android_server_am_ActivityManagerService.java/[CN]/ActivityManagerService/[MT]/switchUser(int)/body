@@ -1,25 +1,30 @@
 {
-  final int callingUid=Binder.getCallingUid();
-  if (callingUid != 0 && callingUid != Process.myUid()) {
-    Slog.e(TAG,"Trying to switch user from unauthorized app");
-    return false;
+  if (checkCallingPermission(android.Manifest.permission.INTERACT_ACROSS_USERS_FULL) != PackageManager.PERMISSION_GRANTED) {
+    String msg="Permission Denial: switchUser() from pid=" + Binder.getCallingPid() + ", uid="+ Binder.getCallingUid()+ " requires "+ android.Manifest.permission.INTERACT_ACROSS_USERS_FULL;
+    Slog.w(TAG,msg);
+    throw new SecurityException(msg);
   }
-  if (mCurrentUserId == userId)   return true;
 synchronized (this) {
-    if (mLoggedInUsers.indexOfKey(userId) < 0) {
-      if (!userExists(userId)) {
-        return false;
-      }
-      mLoggedInUsers.append(userId,userId);
+    if (mCurrentUserId == userId) {
+      return true;
+    }
+    if (mStartedUsers.get(userId) == null) {
+      mStartedUsers.put(userId,new UserStartedState(new UserHandle(userId),false));
     }
     mCurrentUserId=userId;
     boolean haveActivities=mMainStack.switchUser(userId);
     if (!haveActivities) {
-      startHomeActivityLocked(userId);
+      startHomeActivityLocked(userId,mStartedUsers.get(userId));
     }
   }
-  Intent addedIntent=new Intent(Intent.ACTION_USER_SWITCHED);
-  addedIntent.putExtra(Intent.EXTRA_USER_HANDLE,userId);
-  mContext.sendBroadcast(addedIntent,android.Manifest.permission.MANAGE_USERS);
+  long ident=Binder.clearCallingIdentity();
+  try {
+    Intent addedIntent=new Intent(Intent.ACTION_USER_SWITCHED);
+    addedIntent.putExtra(Intent.EXTRA_USER_HANDLE,userId);
+    mContext.sendBroadcast(addedIntent,android.Manifest.permission.MANAGE_USERS);
+  }
+  finally {
+    Binder.restoreCallingIdentity(ident);
+  }
   return true;
 }
