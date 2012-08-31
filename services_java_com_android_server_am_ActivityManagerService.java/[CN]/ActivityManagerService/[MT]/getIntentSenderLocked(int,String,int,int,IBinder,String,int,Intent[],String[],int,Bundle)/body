@@ -1,0 +1,54 @@
+{
+  if (DEBUG_MU)   Slog.v(TAG_MU,"getIntentSenderLocked(): uid=" + callingUid);
+  ActivityRecord activity=null;
+  if (type == ActivityManager.INTENT_SENDER_ACTIVITY_RESULT) {
+    activity=mMainStack.isInStackLocked(token);
+    if (activity == null) {
+      return null;
+    }
+    if (activity.finishing) {
+      return null;
+    }
+  }
+  final boolean noCreate=(flags & PendingIntent.FLAG_NO_CREATE) != 0;
+  final boolean cancelCurrent=(flags & PendingIntent.FLAG_CANCEL_CURRENT) != 0;
+  final boolean updateCurrent=(flags & PendingIntent.FLAG_UPDATE_CURRENT) != 0;
+  flags&=~(PendingIntent.FLAG_NO_CREATE | PendingIntent.FLAG_CANCEL_CURRENT | PendingIntent.FLAG_UPDATE_CURRENT);
+  PendingIntentRecord.Key key=new PendingIntentRecord.Key(type,packageName,activity,resultWho,requestCode,intents,resolvedTypes,flags,options,userId);
+  WeakReference<PendingIntentRecord> ref;
+  ref=mIntentSenderRecords.get(key);
+  PendingIntentRecord rec=ref != null ? ref.get() : null;
+  if (rec != null) {
+    if (!cancelCurrent) {
+      if (updateCurrent) {
+        if (rec.key.requestIntent != null) {
+          rec.key.requestIntent.replaceExtras(intents != null ? intents[intents.length - 1] : null);
+        }
+        if (intents != null) {
+          intents[intents.length - 1]=rec.key.requestIntent;
+          rec.key.allIntents=intents;
+          rec.key.allResolvedTypes=resolvedTypes;
+        }
+ else {
+          rec.key.allIntents=null;
+          rec.key.allResolvedTypes=null;
+        }
+      }
+      return rec;
+    }
+    rec.canceled=true;
+    mIntentSenderRecords.remove(key);
+  }
+  if (noCreate) {
+    return rec;
+  }
+  rec=new PendingIntentRecord(this,key,callingUid);
+  mIntentSenderRecords.put(key,rec.ref);
+  if (type == ActivityManager.INTENT_SENDER_ACTIVITY_RESULT) {
+    if (activity.pendingResults == null) {
+      activity.pendingResults=new HashSet<WeakReference<PendingIntentRecord>>();
+    }
+    activity.pendingResults.add(rec.ref);
+  }
+  return rec;
+}
