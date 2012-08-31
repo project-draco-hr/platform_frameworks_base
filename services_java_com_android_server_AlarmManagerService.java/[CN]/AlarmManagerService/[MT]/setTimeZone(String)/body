@@ -1,23 +1,31 @@
 {
   mContext.enforceCallingOrSelfPermission("android.permission.SET_TIME_ZONE","setTimeZone");
-  if (TextUtils.isEmpty(tz))   return;
-  TimeZone zone=TimeZone.getTimeZone(tz);
-  boolean timeZoneWasChanged=false;
+  long oldId=Binder.clearCallingIdentity();
+  try {
+    if (TextUtils.isEmpty(tz))     return;
+    TimeZone zone=TimeZone.getTimeZone(tz);
+    boolean timeZoneWasChanged=false;
 synchronized (this) {
-    String current=SystemProperties.get(TIMEZONE_PROPERTY);
-    if (current == null || !current.equals(zone.getID())) {
-      if (localLOGV)       Slog.v(TAG,"timezone changed: " + current + ", new="+ zone.getID());
-      timeZoneWasChanged=true;
-      SystemProperties.set(TIMEZONE_PROPERTY,zone.getID());
+      String current=SystemProperties.get(TIMEZONE_PROPERTY);
+      if (current == null || !current.equals(zone.getID())) {
+        if (localLOGV) {
+          Slog.v(TAG,"timezone changed: " + current + ", new="+ zone.getID());
+        }
+        timeZoneWasChanged=true;
+        SystemProperties.set(TIMEZONE_PROPERTY,zone.getID());
+      }
+      int gmtOffset=zone.getOffset(System.currentTimeMillis());
+      setKernelTimezone(mDescriptor,-(gmtOffset / 60000));
     }
-    int gmtOffset=zone.getOffset(System.currentTimeMillis());
-    setKernelTimezone(mDescriptor,-(gmtOffset / 60000));
+    TimeZone.setDefault(null);
+    if (timeZoneWasChanged) {
+      Intent intent=new Intent(Intent.ACTION_TIMEZONE_CHANGED);
+      intent.addFlags(Intent.FLAG_RECEIVER_REPLACE_PENDING);
+      intent.putExtra("time-zone",zone.getID());
+      mContext.sendBroadcastAsUser(intent,UserHandle.ALL);
+    }
   }
-  TimeZone.setDefault(null);
-  if (timeZoneWasChanged) {
-    Intent intent=new Intent(Intent.ACTION_TIMEZONE_CHANGED);
-    intent.addFlags(Intent.FLAG_RECEIVER_REPLACE_PENDING);
-    intent.putExtra("time-zone",zone.getID());
-    mContext.sendBroadcastAsUser(intent,UserHandle.ALL);
+  finally {
+    Binder.restoreCallingIdentity(oldId);
   }
 }
