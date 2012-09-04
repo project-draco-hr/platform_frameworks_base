@@ -2,7 +2,72 @@
   if (!mInitialized) {
     return;
   }
-  for (int i=mWinAnimatorLists.size() - 1; i >= 0; i--) {
-    animateLocked(mWinAnimatorLists.get(i));
+  mPendingLayoutChanges.clear();
+  mCurrentTime=SystemClock.uptimeMillis();
+  mBulkUpdateParams=SET_ORIENTATION_CHANGE_COMPLETE;
+  boolean wasAnimating=mAnimating;
+  mAnimating=false;
+  if (WindowManagerService.DEBUG_WINDOW_TRACE) {
+    Slog.i(TAG,"!!! animate: entry time=" + mCurrentTime);
+  }
+  if (WindowManagerService.SHOW_TRANSACTIONS)   Slog.i(TAG,">>> OPEN TRANSACTION animateLocked");
+  Surface.openTransaction();
+  try {
+    updateWindowsAppsAndRotationAnimationsLocked();
+    for (int i=mWinAnimatorLists.size() - 1; i >= 0; i--) {
+      final WinAnimatorList winAnimatorList=mWinAnimatorLists.get(i);
+      performAnimationsLocked(winAnimatorList);
+      final int N=winAnimatorList.size();
+      for (int j=0; j < N; j++) {
+        winAnimatorList.get(j).prepareSurfaceLocked(true);
+      }
+    }
+    testTokenMayBeDrawnLocked();
+    if (mScreenRotationAnimation != null) {
+      mScreenRotationAnimation.updateSurfacesInTransaction();
+    }
+    if (mDimParams != null) {
+      mDimAnimator.updateParameters(mContext.getResources(),mDimParams,mCurrentTime);
+    }
+    if (mDimAnimator != null && mDimAnimator.mDimShown) {
+      mAnimating|=mDimAnimator.updateSurface(isDimming(),mCurrentTime,!mService.okToDisplay());
+    }
+    if (mService.mBlackFrame != null) {
+      if (mScreenRotationAnimation != null) {
+        mService.mBlackFrame.setMatrix(mScreenRotationAnimation.getEnterTransformation().getMatrix());
+      }
+ else {
+        mService.mBlackFrame.clearMatrix();
+      }
+    }
+    if (mService.mWatermark != null) {
+      mService.mWatermark.drawIfNeeded();
+    }
+  }
+ catch (  RuntimeException e) {
+    Log.wtf(TAG,"Unhandled exception in Window Manager",e);
+  }
+ finally {
+    Surface.closeTransaction();
+    if (WindowManagerService.SHOW_TRANSACTIONS)     Slog.i(TAG,"<<< CLOSE TRANSACTION animateLocked");
+  }
+  for (int i=mPendingLayoutChanges.size() - 1; i >= 0; i--) {
+    if ((mPendingLayoutChanges.valueAt(i) & WindowManagerPolicy.FINISH_LAYOUT_REDO_WALLPAPER) != 0) {
+      mPendingActions|=WALLPAPER_ACTION_PENDING;
+    }
+  }
+  if (mBulkUpdateParams != 0 || mPendingLayoutChanges.size() > 0) {
+    updateAnimToLayoutLocked();
+  }
+  if (mAnimating) {
+synchronized (mService.mLayoutToAnim) {
+      mService.scheduleAnimationLocked();
+    }
+  }
+ else   if (wasAnimating) {
+    mService.requestTraversalLocked();
+  }
+  if (WindowManagerService.DEBUG_WINDOW_TRACE) {
+    Slog.i(TAG,"!!! animate: exit mAnimating=" + mAnimating + " mBulkUpdateParams="+ Integer.toHexString(mBulkUpdateParams)+ " mPendingLayoutChanges(DEFAULT_DISPLAY)="+ Integer.toHexString(mPendingLayoutChanges.get(Display.DEFAULT_DISPLAY)));
   }
 }
