@@ -45,36 +45,33 @@
       final DisplayContent displayContent=iterator.next();
       WindowList windows=displayContent.getWindowList();
       DisplayInfo displayInfo=displayContent.getDisplayInfo();
+      final int displayId=displayContent.getDisplayId();
       final int dw=displayInfo.logicalWidth;
       final int dh=displayInfo.logicalHeight;
       final int innerDw=displayInfo.appWidth;
       final int innerDh=displayInfo.appHeight;
-      final boolean isDefaultDisplay=displayContent.getDisplayId() == Display.DEFAULT_DISPLAY;
+      final boolean isDefaultDisplay=(displayId == Display.DEFAULT_DISPLAY);
       int repeats=0;
       do {
         repeats++;
         if (repeats > 6) {
           Slog.w(TAG,"Animation repeat aborted after too many iterations");
-          mLayoutNeeded=false;
           displayContent.layoutNeeded=false;
           break;
         }
         if (DEBUG_LAYOUT_REPEATS)         debugLayoutRepeats("On entry to LockedInner",displayContent.pendingLayoutChanges);
         if (isDefaultDisplay && ((displayContent.pendingLayoutChanges & WindowManagerPolicy.FINISH_LAYOUT_REDO_WALLPAPER) != 0) && ((adjustWallpaperWindowsLocked() & ADJUST_WALLPAPER_LAYERS_CHANGED) != 0)) {
           assignLayersLocked(windows);
-          mLayoutNeeded=true;
           displayContent.layoutNeeded=true;
         }
         if (isDefaultDisplay && (displayContent.pendingLayoutChanges & WindowManagerPolicy.FINISH_LAYOUT_REDO_CONFIG) != 0) {
           if (DEBUG_LAYOUT)           Slog.v(TAG,"Computing new config from layout");
           if (updateOrientationFromAppTokensLocked(true)) {
-            mLayoutNeeded=true;
             displayContent.layoutNeeded=true;
             mH.sendEmptyMessage(H.SEND_NEW_CONFIGURATION);
           }
         }
         if ((displayContent.pendingLayoutChanges & WindowManagerPolicy.FINISH_LAYOUT_REDO_LAYOUT) != 0) {
-          mLayoutNeeded=true;
           displayContent.layoutNeeded=true;
         }
         if (repeats < 4) {
@@ -226,7 +223,7 @@
       mInnerFields.mAdjResult=0;
     }
   }
-  if (mLayoutNeeded) {
+  if (needsLayout()) {
     defaultDisplay.pendingLayoutChanges|=WindowManagerPolicy.FINISH_LAYOUT_REDO_LAYOUT;
     if (DEBUG_LAYOUT_REPEATS)     debugLayoutRepeats("mLayoutNeeded",defaultDisplay.pendingLayoutChanges);
   }
@@ -311,14 +308,14 @@
     }
     mRelayoutWhileAnimating.clear();
   }
-  if (wallpaperDestroyed) {
-    mLayoutNeeded|=adjustWallpaperWindowsLocked() != 0;
+  if (wallpaperDestroyed && (adjustWallpaperWindowsLocked() != 0)) {
+    getDefaultDisplayContent().layoutNeeded=true;
   }
   DisplayContentsIterator iterator=new DisplayContentsIterator();
   while (iterator.hasNext()) {
     DisplayContent displayContent=iterator.next();
     if (displayContent.pendingLayoutChanges != 0) {
-      mLayoutNeeded=true;
+      displayContent.layoutNeeded=true;
     }
   }
   mInputMonitor.updateInputWindowsLw(true);
@@ -351,7 +348,7 @@
       mInnerFields.mUpdateRotation=false;
     }
   }
-  if (mInnerFields.mOrientationChangeComplete && !mLayoutNeeded && !mInnerFields.mUpdateRotation) {
+  if (mInnerFields.mOrientationChangeComplete && !defaultDisplay.layoutNeeded && !mInnerFields.mUpdateRotation) {
     checkDrawnWindowsLocked();
   }
   final int N=mPendingRemove.size();
@@ -371,12 +368,12 @@
     }
     for (    DisplayContent displayContent : displayList) {
       assignLayersLocked(displayContent.getWindowList());
+      displayContent.layoutNeeded=true;
     }
-    mLayoutNeeded=true;
   }
   enableScreenIfNeededLocked();
   updateLayoutToAnimationLocked();
   if (DEBUG_WINDOW_TRACE) {
-    Slog.e(TAG,"performLayoutAndPlaceSurfacesLockedInner exit: mLayoutNeeded=" + mLayoutNeeded + " animating="+ mAnimator.mAnimating);
+    Slog.e(TAG,"performLayoutAndPlaceSurfacesLockedInner exit: animating=" + mAnimator.mAnimating);
   }
 }
