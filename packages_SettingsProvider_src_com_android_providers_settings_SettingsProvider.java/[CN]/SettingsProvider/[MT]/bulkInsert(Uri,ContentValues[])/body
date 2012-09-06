@@ -1,12 +1,19 @@
 {
+  final int callingUser=UserHandle.getCallingUserId();
+  if (LOCAL_LOGV)   Slog.v(TAG,"bulkInsert() for user " + callingUser);
   SqlArguments args=new SqlArguments(uri);
   if (TABLE_FAVORITES.equals(args.table)) {
     return 0;
   }
   checkWritePermissions(args);
-  SettingsCache cache=SettingsCache.forTable(args.table);
-  sKnownMutationsInFlight.incrementAndGet();
-  SQLiteDatabase db=mOpenHelper.getWritableDatabase();
+  SettingsCache cache=cacheForTable(callingUser,args.table);
+  final AtomicInteger mutationCount=sKnownMutationsInFlight.get(callingUser);
+  mutationCount.incrementAndGet();
+  DatabaseHelper dbH;
+synchronized (this) {
+    dbH=getOrEstablishDatabaseLocked(callingUser);
+  }
+  SQLiteDatabase db=dbH.getWritableDatabase();
   db.beginTransaction();
   try {
     int numValues=values.length;
@@ -19,8 +26,8 @@
   }
   finally {
     db.endTransaction();
-    sKnownMutationsInFlight.decrementAndGet();
+    mutationCount.decrementAndGet();
   }
-  sendNotify(uri);
+  sendNotify(uri,callingUser);
   return values.length;
 }

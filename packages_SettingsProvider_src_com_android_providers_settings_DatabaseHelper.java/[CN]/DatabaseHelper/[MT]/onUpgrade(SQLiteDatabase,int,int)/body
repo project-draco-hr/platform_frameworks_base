@@ -65,7 +65,7 @@
   }
   if (upgradeVersion == 27) {
     String[] settingsToMove={Settings.Secure.ADB_ENABLED,Settings.Secure.ANDROID_ID,Settings.Secure.BLUETOOTH_ON,Settings.Secure.DATA_ROAMING,Settings.Secure.DEVICE_PROVISIONED,Settings.Secure.HTTP_PROXY,Settings.Secure.INSTALL_NON_MARKET_APPS,Settings.Secure.LOCATION_PROVIDERS_ALLOWED,Settings.Secure.LOGGING_ID,Settings.Secure.NETWORK_PREFERENCE,Settings.Secure.PARENTAL_CONTROL_ENABLED,Settings.Secure.PARENTAL_CONTROL_LAST_UPDATE,Settings.Secure.PARENTAL_CONTROL_REDIRECT_URL,Settings.Secure.SETTINGS_CLASSNAME,Settings.Secure.USB_MASS_STORAGE_ENABLED,Settings.Secure.USE_GOOGLE_MAIL,Settings.Secure.WIFI_NETWORKS_AVAILABLE_NOTIFICATION_ON,Settings.Secure.WIFI_NETWORKS_AVAILABLE_REPEAT_DELAY,Settings.Secure.WIFI_NUM_OPEN_NETWORKS_KEPT,Settings.Secure.WIFI_ON,Settings.Secure.WIFI_WATCHDOG_ACCEPTABLE_PACKET_LOSS_PERCENTAGE,Settings.Secure.WIFI_WATCHDOG_AP_COUNT,Settings.Secure.WIFI_WATCHDOG_BACKGROUND_CHECK_DELAY_MS,Settings.Secure.WIFI_WATCHDOG_BACKGROUND_CHECK_ENABLED,Settings.Secure.WIFI_WATCHDOG_BACKGROUND_CHECK_TIMEOUT_MS,Settings.Secure.WIFI_WATCHDOG_INITIAL_IGNORED_PING_COUNT,Settings.Secure.WIFI_WATCHDOG_MAX_AP_CHECKS,Settings.Secure.WIFI_WATCHDOG_ON,Settings.Secure.WIFI_WATCHDOG_PING_COUNT,Settings.Secure.WIFI_WATCHDOG_PING_DELAY_MS,Settings.Secure.WIFI_WATCHDOG_PING_TIMEOUT_MS};
-    moveFromSystemToSecure(db,settingsToMove);
+    moveSettingsToNewTable(db,TABLE_SYSTEM,TABLE_SECURE,settingsToMove);
     upgradeVersion=28;
   }
   if (upgradeVersion == 28 || upgradeVersion == 29) {
@@ -316,7 +316,7 @@
   }
   if (upgradeVersion == 51) {
     String[] settingsToMove={Secure.LOCK_PATTERN_ENABLED,Secure.LOCK_PATTERN_VISIBLE,Secure.LOCK_PATTERN_TACTILE_FEEDBACK_ENABLED,"lockscreen.password_type","lockscreen.lockoutattemptdeadline","lockscreen.patterneverchosen","lock_pattern_autolock","lockscreen.lockedoutpermanently","lockscreen.password_salt"};
-    moveFromSystemToSecure(db,settingsToMove);
+    moveSettingsToNewTable(db,TABLE_SYSTEM,TABLE_SECURE,settingsToMove);
     upgradeVersion=52;
   }
   if (upgradeVersion == 52) {
@@ -349,7 +349,7 @@
   }
   if (upgradeVersion == 55) {
     String[] settingsToMove={Secure.SET_INSTALL_LOCATION,Secure.DEFAULT_INSTALL_LOCATION};
-    moveFromSystemToSecure(db,settingsToMove);
+    moveSettingsToNewTable(db,TABLE_SYSTEM,TABLE_SECURE,settingsToMove);
     db.beginTransaction();
     SQLiteStatement stmt=null;
     try {
@@ -589,7 +589,7 @@
     SQLiteStatement stmt=null;
     Cursor c=null;
     try {
-      c=db.query("secure",new String[]{"_id","value"},"name='lockscreen.disabled'",null,null,null,null);
+      c=db.query(TABLE_SECURE,new String[]{"_id","value"},"name='lockscreen.disabled'",null,null,null,null);
       if (c == null || c.getCount() == 0) {
         stmt=db.compileStatement("INSERT INTO system(name,value)" + " VALUES(?,?);");
         loadBooleanSetting(stmt,Settings.System.LOCKSCREEN_DISABLED,R.bool.def_lockscreen_disabled);
@@ -633,11 +633,11 @@
     upgradeVersion=79;
   }
   if (upgradeVersion == 79) {
-    final boolean accessibilityEnabled=getIntValueFromTable(db,"secure",Settings.Secure.ACCESSIBILITY_ENABLED,0) == 1;
-    final boolean touchExplorationEnabled=getIntValueFromTable(db,"secure",Settings.Secure.TOUCH_EXPLORATION_ENABLED,0) == 1;
+    final boolean accessibilityEnabled=getIntValueFromTable(db,TABLE_SECURE,Settings.Secure.ACCESSIBILITY_ENABLED,0) == 1;
+    final boolean touchExplorationEnabled=getIntValueFromTable(db,TABLE_SECURE,Settings.Secure.TOUCH_EXPLORATION_ENABLED,0) == 1;
     if (accessibilityEnabled && touchExplorationEnabled) {
-      String enabledServices=getStringValueFromTable(db,"secure",Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,"");
-      String touchExplorationGrantedServices=getStringValueFromTable(db,"secure",Settings.Secure.TOUCH_EXPLORATION_GRANTED_ACCESSIBILITY_SERVICES,"");
+      String enabledServices=getStringValueFromTable(db,TABLE_SECURE,Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,"");
+      String touchExplorationGrantedServices=getStringValueFromTable(db,TABLE_SECURE,Settings.Secure.TOUCH_EXPLORATION_GRANTED_ACCESSIBILITY_SERVICES,"");
       if (TextUtils.isEmpty(touchExplorationGrantedServices) && !TextUtils.isEmpty(enabledServices)) {
         SQLiteStatement stmt=null;
         try {
@@ -664,6 +664,11 @@
       loadBooleanSetting(stmt,Settings.Secure.SCREENSAVER_ACTIVATE_ON_SLEEP,R.bool.def_screensaver_activate_on_sleep);
       loadStringSetting(stmt,Settings.Secure.SCREENSAVER_DEFAULT_COMPONENT,R.string.def_screensaver_component);
       loadStringSetting(stmt,Settings.Secure.SCREENSAVER_COMPONENTS,R.string.def_screensaver_component);
+      createGlobalTable(db);
+      String[] settingsToMove=(String[])SettingsProvider.sSystemGlobalKeys.toArray();
+      moveSettingsToNewTable(db,TABLE_SYSTEM,TABLE_GLOBAL,settingsToMove);
+      settingsToMove=(String[])SettingsProvider.sSecureGlobalKeys.toArray();
+      moveSettingsToNewTable(db,TABLE_SECURE,TABLE_GLOBAL,settingsToMove);
       db.setTransactionSuccessful();
     }
   finally {
@@ -686,8 +691,27 @@
     }
     upgradeVersion=82;
   }
+  if (upgradeVersion == 82) {
+    db.beginTransaction();
+    SQLiteStatement stmt=null;
+    try {
+      createGlobalTable(db);
+      String[] settingsToMove=(String[])SettingsProvider.sSystemGlobalKeys.toArray();
+      moveSettingsToNewTable(db,TABLE_SYSTEM,TABLE_GLOBAL,settingsToMove);
+      settingsToMove=(String[])SettingsProvider.sSecureGlobalKeys.toArray();
+      moveSettingsToNewTable(db,TABLE_SECURE,TABLE_GLOBAL,settingsToMove);
+      db.setTransactionSuccessful();
+    }
+  finally {
+      db.endTransaction();
+      if (stmt != null)       stmt.close();
+    }
+    upgradeVersion=83;
+  }
   if (upgradeVersion != currentVersion) {
     Log.w(TAG,"Got stuck trying to upgrade from version " + upgradeVersion + ", must wipe the settings provider");
+    db.execSQL("DROP TABLE IF EXISTS global");
+    db.execSQL("DROP TABLE IF EXISTS globalIndex1");
     db.execSQL("DROP TABLE IF EXISTS system");
     db.execSQL("DROP INDEX IF EXISTS systemIndex1");
     db.execSQL("DROP TABLE IF EXISTS secure");
