@@ -290,9 +290,7 @@ synchronized (mPackages) {
     }
     if (pkg.applicationInfo.nativeLibraryDir == null && pkg.applicationInfo.dataDir != null) {
       if (pkgSetting.nativeLibraryPathString == null) {
-        final String nativeLibraryPath=new File(dataPath,LIB_DIR_NAME).getPath();
-        pkg.applicationInfo.nativeLibraryDir=nativeLibraryPath;
-        pkgSetting.nativeLibraryPathString=nativeLibraryPath;
+        setInternalAppNativeLibraryPath(pkg,pkgSetting);
       }
  else {
         pkg.applicationInfo.nativeLibraryDir=pkgSetting.nativeLibraryPathString;
@@ -303,25 +301,35 @@ synchronized (mPackages) {
   String path=scanFile.getPath();
   if (pkg.applicationInfo.nativeLibraryDir != null) {
     try {
-      final File nativeLibraryDir=new File(pkg.applicationInfo.nativeLibraryDir);
+      File nativeLibraryDir=new File(pkg.applicationInfo.nativeLibraryDir);
       final String dataPathString=dataPath.getCanonicalPath();
       if (isSystemApp(pkg) && !isUpdatedSystemApp(pkg)) {
         if (NativeLibraryHelper.removeNativeBinariesFromDirLI(nativeLibraryDir)) {
           Log.i(TAG,"removed obsolete native libraries for system package " + path);
         }
       }
- else       if (nativeLibraryDir.getParentFile().getCanonicalPath().equals(dataPathString)) {
-        boolean isSymLink;
+ else       if (!isForwardLocked(pkg) && !isExternal(pkg)) {
+        if (nativeLibraryDir.getParent().startsWith(dataPathString)) {
+          setInternalAppNativeLibraryPath(pkg,pkgSetting);
+          nativeLibraryDir=new File(pkg.applicationInfo.nativeLibraryDir);
+        }
         try {
-          isSymLink=S_ISLNK(Libcore.os.lstat(nativeLibraryDir.getPath()).st_mode);
+          if (copyNativeLibrariesForInternalApp(scanFile,nativeLibraryDir) != PackageManager.INSTALL_SUCCEEDED) {
+            Slog.e(TAG,"Unable to copy native libraries");
+            mLastScanError=PackageManager.INSTALL_FAILED_INTERNAL_ERROR;
+            return null;
+          }
         }
- catch (        ErrnoException e) {
-          isSymLink=true;
+ catch (        IOException e) {
+          Slog.e(TAG,"Unable to copy native libraries",e);
+          mLastScanError=PackageManager.INSTALL_FAILED_INTERNAL_ERROR;
+          return null;
         }
-        if (isSymLink) {
-          mInstaller.unlinkNativeLibraryDirectory(dataPathString);
+        if (mInstaller.linkNativeLibraryDirectory(dataPathString,pkg.applicationInfo.nativeLibraryDir) == -1) {
+          Slog.e(TAG,"Unable to link native library directory");
+          mLastScanError=PackageManager.INSTALL_FAILED_INTERNAL_ERROR;
+          return null;
         }
-        NativeLibraryHelper.copyNativeBinariesIfNeededLI(scanFile,nativeLibraryDir);
       }
  else {
         Slog.i(TAG,"Linking native library dir for " + path);
@@ -334,7 +342,7 @@ synchronized (mPackages) {
       }
     }
  catch (    IOException ioe) {
-      Log.e(TAG,"Unable to get canonical file " + ioe.toString());
+      Slog.e(TAG,"Unable to get canonical file " + ioe.toString());
     }
   }
   pkg.mScanPath=path;
