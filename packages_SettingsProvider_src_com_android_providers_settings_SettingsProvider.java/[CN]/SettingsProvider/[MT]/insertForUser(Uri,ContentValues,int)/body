@@ -1,0 +1,39 @@
+{
+  final int callingUser=UserHandle.getCallingUserId();
+  if (callingUser != desiredUserHandle) {
+    getContext().enforceCallingPermission(android.Manifest.permission.INTERACT_ACROSS_USERS_FULL,"Not permitted to access settings for other users");
+  }
+  if (LOCAL_LOGV)   Slog.v(TAG,"insert(" + url + ") for user "+ desiredUserHandle+ " by "+ callingUser);
+  SqlArguments args=new SqlArguments(url);
+  if (TABLE_FAVORITES.equals(args.table)) {
+    return null;
+  }
+  checkWritePermissions(args);
+  String name=initialValues.getAsString(Settings.Secure.NAME);
+  if (Settings.Secure.LOCATION_PROVIDERS_ALLOWED.equals(name)) {
+    if (!parseProviderList(url,initialValues))     return null;
+  }
+  if (TABLE_GLOBAL.equals(args.table)) {
+    desiredUserHandle=UserHandle.USER_OWNER;
+  }
+  SettingsCache cache=cacheForTable(desiredUserHandle,args.table);
+  String value=initialValues.getAsString(Settings.NameValueTable.VALUE);
+  if (SettingsCache.isRedundantSetValue(cache,name,value)) {
+    return Uri.withAppendedPath(url,name);
+  }
+  final AtomicInteger mutationCount=sKnownMutationsInFlight.get(desiredUserHandle);
+  mutationCount.incrementAndGet();
+  DatabaseHelper dbH;
+synchronized (this) {
+    dbH=getOrEstablishDatabaseLocked(callingUser);
+  }
+  SQLiteDatabase db=dbH.getWritableDatabase();
+  final long rowId=db.insert(args.table,null,initialValues);
+  mutationCount.decrementAndGet();
+  if (rowId <= 0)   return null;
+  SettingsCache.populate(cache,initialValues);
+  if (LOCAL_LOGV)   Log.v(TAG,args.table + " <- " + initialValues);
+  url=getUriFor(url,initialValues,rowId);
+  sendNotify(url,desiredUserHandle);
+  return url;
+}

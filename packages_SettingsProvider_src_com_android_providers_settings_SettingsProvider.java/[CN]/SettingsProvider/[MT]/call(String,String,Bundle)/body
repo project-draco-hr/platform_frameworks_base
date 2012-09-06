@@ -1,9 +1,69 @@
 {
+  int callingUser=UserHandle.getCallingUserId();
+  if (args != null) {
+    int reqUser=args.getInt(Settings.CALL_METHOD_USER_KEY,callingUser);
+    if (reqUser != callingUser) {
+      getContext().enforceCallingPermission(android.Manifest.permission.INTERACT_ACROSS_USERS_FULL,"Not permitted to access settings for other users");
+      if (reqUser == UserHandle.USER_CURRENT) {
+        try {
+          reqUser=ActivityManagerNative.getDefault().getCurrentUser().id;
+        }
+ catch (        RemoteException e) {
+        }
+        if (LOCAL_LOGV) {
+          Slog.v(TAG,"   USER_CURRENT resolved to " + reqUser);
+        }
+      }
+      if (reqUser < 0) {
+        throw new IllegalArgumentException("Bad user handle " + reqUser);
+      }
+      callingUser=reqUser;
+      if (LOCAL_LOGV)       Slog.v(TAG,"   fetching setting for user " + callingUser);
+    }
+  }
+  DatabaseHelper dbHelper;
+  SettingsCache cache;
   if (Settings.CALL_METHOD_GET_SYSTEM.equals(method)) {
-    return lookupValue("system",sSystemCache,request);
+    if (LOCAL_LOGV)     Slog.v(TAG,"call(system:" + request + ") for "+ callingUser);
+synchronized (this) {
+      dbHelper=getOrEstablishDatabaseLocked(callingUser);
+      cache=sSystemCaches.get(callingUser);
+    }
+    return lookupValue(dbHelper,TABLE_SYSTEM,cache,request);
   }
   if (Settings.CALL_METHOD_GET_SECURE.equals(method)) {
-    return lookupValue("secure",sSecureCache,request);
+    if (LOCAL_LOGV)     Slog.v(TAG,"call(secure:" + request + ") for "+ callingUser);
+synchronized (this) {
+      dbHelper=getOrEstablishDatabaseLocked(callingUser);
+      cache=sSecureCaches.get(callingUser);
+    }
+    return lookupValue(dbHelper,TABLE_SECURE,cache,request);
+  }
+  if (Settings.CALL_METHOD_GET_GLOBAL.equals(method)) {
+    if (LOCAL_LOGV)     Slog.v(TAG,"call(global:" + request + ") for "+ callingUser);
+    return lookupValue(getOrEstablishDatabaseLocked(UserHandle.USER_OWNER),TABLE_GLOBAL,sGlobalCache,request);
+  }
+  final String newValue=(args == null) ? null : args.getString(Settings.NameValueTable.VALUE);
+  if (newValue == null) {
+    throw new IllegalArgumentException("Bad value for " + method);
+  }
+  final ContentValues values=new ContentValues();
+  values.put(Settings.NameValueTable.NAME,request);
+  values.put(Settings.NameValueTable.VALUE,newValue);
+  if (Settings.CALL_METHOD_PUT_SYSTEM.equals(method)) {
+    if (LOCAL_LOGV)     Slog.v(TAG,"call_put(system:" + request + "="+ newValue+ ") for "+ callingUser);
+    insert(Settings.System.CONTENT_URI,values);
+  }
+ else   if (Settings.CALL_METHOD_PUT_SECURE.equals(method)) {
+    if (LOCAL_LOGV)     Slog.v(TAG,"call_put(secure:" + request + "="+ newValue+ ") for "+ callingUser);
+    insert(Settings.Secure.CONTENT_URI,values);
+  }
+ else   if (Settings.CALL_METHOD_PUT_GLOBAL.equals(method)) {
+    if (LOCAL_LOGV)     Slog.v(TAG,"call_put(global:" + request + "="+ newValue+ ") for "+ callingUser);
+    insert(Settings.Global.CONTENT_URI,values);
+  }
+ else {
+    Slog.w(TAG,"call() with invalid method: " + method);
   }
   return null;
 }

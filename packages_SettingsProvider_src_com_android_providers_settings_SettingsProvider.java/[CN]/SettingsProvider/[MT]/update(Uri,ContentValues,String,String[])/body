@@ -1,18 +1,25 @@
 {
+  final int callingUser=UserHandle.getCallingUserId();
+  if (LOCAL_LOGV)   Slog.v(TAG,"update() for user " + callingUser);
   SqlArguments args=new SqlArguments(url,where,whereArgs);
   if (TABLE_FAVORITES.equals(args.table)) {
     return 0;
   }
   checkWritePermissions(args);
-  sKnownMutationsInFlight.incrementAndGet();
-  SQLiteDatabase db=mOpenHelper.getWritableDatabase();
-  int count=db.update(args.table,initialValues,args.where,args.args);
-  sKnownMutationsInFlight.decrementAndGet();
-  if (count > 0) {
-    SettingsCache.invalidate(args.table);
-    sendNotify(url);
+  final AtomicInteger mutationCount=sKnownMutationsInFlight.get(callingUser);
+  mutationCount.incrementAndGet();
+  DatabaseHelper dbH;
+synchronized (this) {
+    dbH=getOrEstablishDatabaseLocked(callingUser);
   }
-  startAsyncCachePopulation();
+  SQLiteDatabase db=dbH.getWritableDatabase();
+  int count=db.update(args.table,initialValues,args.where,args.args);
+  mutationCount.decrementAndGet();
+  if (count > 0) {
+    invalidateCache(callingUser,args.table);
+    sendNotify(url,callingUser);
+  }
+  startAsyncCachePopulation(callingUser);
   if (LOCAL_LOGV)   Log.v(TAG,args.table + ": " + count+ " row(s) <- "+ initialValues);
   return count;
 }
