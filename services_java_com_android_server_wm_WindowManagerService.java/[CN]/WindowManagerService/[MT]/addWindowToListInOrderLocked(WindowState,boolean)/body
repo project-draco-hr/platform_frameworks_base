@@ -1,34 +1,38 @@
 {
   final IWindow client=win.mClient;
   final WindowToken token=win.mToken;
+  final DisplayContent displayContent=win.mDisplayContent;
   final WindowList windows=win.getWindowList();
   final int N=windows.size();
   final WindowState attached=win.mAttachedWindow;
   int i;
+  WindowList tokenWindowList=getTokenWindowsOnDisplay(token,displayContent);
   if (attached == null) {
-    int tokenWindowsPos=token.windows.size();
+    int tokenWindowsPos=0;
+    int windowListPos=tokenWindowList.size();
     if (token.appWindowToken != null) {
-      int index=tokenWindowsPos - 1;
+      int index=windowListPos - 1;
       if (index >= 0) {
         if (win.mAttrs.type == TYPE_BASE_APPLICATION) {
-          placeWindowBefore(token.windows.get(0),win);
-          tokenWindowsPos=0;
+          WindowState lowestWindow=tokenWindowList.get(0);
+          placeWindowBefore(lowestWindow,win);
+          tokenWindowsPos=token.windows.indexOf(lowestWindow);
         }
  else {
           AppWindowToken atoken=win.mAppToken;
-          if (atoken != null && token.windows.get(index) == atoken.startingWindow) {
-            placeWindowBefore(token.windows.get(index),win);
-            tokenWindowsPos--;
+          WindowState lastWindow=tokenWindowList.get(index);
+          if (atoken != null && lastWindow == atoken.startingWindow) {
+            placeWindowBefore(lastWindow,win);
+            tokenWindowsPos=token.windows.indexOf(lastWindow) - 1;
           }
  else {
             int newIdx=findIdxBasedOnAppTokens(win);
-            if (newIdx != -1) {
-              if (DEBUG_FOCUS || DEBUG_WINDOW_MOVEMENT || DEBUG_ADD_REMOVE) {
-                Slog.v(TAG,"Adding window " + win + " at "+ (newIdx + 1)+ " of "+ N);
-              }
-              windows.add(newIdx + 1,win);
-              mWindowsChanged=true;
+            if (DEBUG_FOCUS || DEBUG_WINDOW_MOVEMENT || DEBUG_ADD_REMOVE) {
+              Slog.v(TAG,"Adding window " + win + " at "+ (newIdx + 1)+ " of "+ N);
             }
+            windows.add(newIdx + 1,win);
+            tokenWindowsPos=token.windows.indexOf(windows.get(newIdx)) + 1;
+            mWindowsChanged=true;
           }
         }
       }
@@ -42,16 +46,18 @@
             i--;
             break;
           }
-          if (!t.sendingToBottom && t.windows.size() > 0) {
-            pos=t.windows.get(0);
+          tokenWindowList=getTokenWindowsOnDisplay(t,win.mDisplayContent);
+          if (!t.sendingToBottom && tokenWindowList.size() > 0) {
+            pos=tokenWindowList.get(0);
           }
         }
         if (pos != null) {
           WindowToken atoken=mTokenMap.get(pos.mClient.asBinder());
           if (atoken != null) {
-            final int NC=atoken.windows.size();
+            tokenWindowList=getTokenWindowsOnDisplay(atoken,win.mDisplayContent);
+            final int NC=tokenWindowList.size();
             if (NC > 0) {
-              WindowState bottom=atoken.windows.get(0);
+              WindowState bottom=tokenWindowList.get(0);
               if (bottom.mSubLayer < 0) {
                 pos=bottom;
               }
@@ -62,9 +68,10 @@
  else {
           while (i >= 0) {
             AppWindowToken t=mAnimatingAppTokens.get(i);
-            final int NW=t.windows.size();
+            tokenWindowList=getTokenWindowsOnDisplay(t,win.mDisplayContent);
+            final int NW=tokenWindowList.size();
             if (NW > 0) {
-              pos=t.windows.get(NW - 1);
+              pos=tokenWindowList.get(NW - 1);
               break;
             }
             i--;
@@ -103,11 +110,10 @@
       final int myLayer=win.mBaseLayer;
       for (i=N - 1; i >= 0; i--) {
         if (windows.get(i).mBaseLayer <= myLayer) {
-          i++;
           break;
         }
       }
-      if (i < 0)       i=0;
+      i++;
       if (DEBUG_FOCUS || DEBUG_WINDOW_MOVEMENT || DEBUG_ADD_REMOVE)       Slog.v(TAG,"Adding window " + win + " at "+ i+ " of "+ N);
       windows.add(i,win);
       mWindowsChanged=true;
@@ -118,12 +124,12 @@
     }
   }
  else {
-    final int NA=token.windows.size();
+    final int NA=tokenWindowList.size();
     final int sublayer=win.mSubLayer;
     int largestSublayer=Integer.MIN_VALUE;
     WindowState windowWithLargestSublayer=null;
     for (i=0; i < NA; i++) {
-      WindowState w=token.windows.get(i);
+      WindowState w=tokenWindowList.get(i);
       final int wSublayer=w.mSubLayer;
       if (wSublayer >= largestSublayer) {
         largestSublayer=wSublayer;
