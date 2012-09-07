@@ -1,16 +1,19 @@
 {
   int i;
   int N;
-  if (uid < 0 && name != null) {
+  if (userId == UserHandle.USER_ALL && name == null) {
+    Slog.w(TAG,"Can't force stop all processes of all users, that is insane!");
+  }
+  if (appId < 0 && name != null) {
     try {
-      uid=AppGlobals.getPackageManager().getPackageUid(name,userId);
+      appId=UserHandle.getAppId(AppGlobals.getPackageManager().getPackageUid(name,0));
     }
  catch (    RemoteException e) {
     }
   }
   if (doit) {
     if (name != null) {
-      Slog.i(TAG,"Force stopping package " + name + " uid="+ uid);
+      Slog.i(TAG,"Force stopping package " + name + " appid="+ appId+ " user="+ userId);
     }
  else {
       Slog.i(TAG,"Force stopping user " + userId);
@@ -22,8 +25,15 @@
         boolean remove=false;
         final int entUid=ba.keyAt(i);
         if (name != null) {
-          if (entUid == uid) {
-            remove=true;
+          if (userId == UserHandle.USER_ALL) {
+            if (UserHandle.getAppId(entUid) == appId) {
+              remove=true;
+            }
+          }
+ else {
+            if (entUid == UserHandle.getUid(userId,appId)) {
+              remove=true;
+            }
           }
         }
  else         if (UserHandle.getUserId(entUid) == userId) {
@@ -38,12 +48,12 @@
       }
     }
   }
-  boolean didSomething=killPackageProcessesLocked(name,uid,name == null ? userId : -1,-100,callerWillRestart,false,doit,evenPersistent,name == null ? ("force stop user " + userId) : ("force stop " + name));
+  boolean didSomething=killPackageProcessesLocked(name,appId,userId,-100,callerWillRestart,false,doit,evenPersistent,name == null ? ("force stop user " + userId) : ("force stop " + name));
   TaskRecord lastTask=null;
   for (i=0; i < mMainStack.mHistory.size(); i++) {
     ActivityRecord r=(ActivityRecord)mMainStack.mHistory.get(i);
     final boolean samePackage=r.packageName.equals(name) || (name == null && r.userId == userId);
-    if (r.userId == userId && (samePackage || r.task == lastTask) && (r.app == null || evenPersistent || !r.app.persistent)) {
+    if ((userId == UserHandle.USER_ALL || r.userId == userId) && (samePackage || r.task == lastTask) && (r.app == null || evenPersistent || !r.app.persistent)) {
       if (!doit) {
         if (r.finishing) {
           continue;
@@ -74,18 +84,55 @@
     mStickyBroadcasts.remove(userId);
   }
   ArrayList<ContentProviderRecord> providers=new ArrayList<ContentProviderRecord>();
-  for (  ContentProviderRecord provider : mProviderMap.getProvidersByClass(userId).values()) {
-    if ((name == null || provider.info.packageName.equals(name)) && (provider.proc == null || evenPersistent || !provider.proc.persistent)) {
-      if (!doit) {
-        return true;
-      }
-      didSomething=true;
-      providers.add(provider);
+  if (mProviderMap.collectForceStopProviders(name,appId,doit,evenPersistent,userId,providers)) {
+    if (!doit) {
+      return true;
     }
+    didSomething=true;
   }
   N=providers.size();
   for (i=0; i < N; i++) {
     removeDyingProviderLocked(null,providers.get(i),true);
+  }
+  if (mIntentSenderRecords.size() > 0) {
+    Iterator<WeakReference<PendingIntentRecord>> it=mIntentSenderRecords.values().iterator();
+    while (it.hasNext()) {
+      WeakReference<PendingIntentRecord> wpir=it.next();
+      if (wpir == null) {
+        it.remove();
+        continue;
+      }
+      PendingIntentRecord pir=wpir.get();
+      if (pir == null) {
+        it.remove();
+        continue;
+      }
+      if (name == null) {
+        if (pir.key.userId != userId) {
+          continue;
+        }
+      }
+ else {
+        if (UserHandle.getAppId(pir.uid) != appId) {
+          continue;
+        }
+        if (userId != UserHandle.USER_ALL && pir.key.userId != userId) {
+          continue;
+        }
+        if (!pir.key.packageName.equals(name)) {
+          continue;
+        }
+      }
+      if (!doit) {
+        return true;
+      }
+      didSomething=true;
+      it.remove();
+      pir.canceled=true;
+      if (pir.key.activity != null) {
+        pir.key.activity.pendingResults.remove(pir.ref);
+      }
+    }
   }
   if (doit) {
     if (purgeCache && name != null) {
