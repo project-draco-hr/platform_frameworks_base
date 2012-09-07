@@ -1,0 +1,100 @@
+{
+  if (mPublishedDevice != null && mPublishedDevice != mDesiredDevice) {
+    mHandler.post(new Runnable(){
+      @Override public void run(){
+        mListener.onDisplayDisconnected();
+      }
+    }
+);
+    mPublishedDevice=null;
+  }
+  if (mConnectedDevice != null && mConnectedDevice != mDesiredDevice) {
+    Slog.i(TAG,"Disconnecting from Wifi display: " + mConnectedDevice.deviceName);
+    final WifiP2pDevice oldDevice=mConnectedDevice;
+    mWifiP2pManager.removeGroup(mWifiP2pChannel,new ActionListener(){
+      @Override public void onSuccess(){
+        Slog.i(TAG,"Disconnected from Wifi display: " + oldDevice.deviceName);
+        next();
+      }
+      @Override public void onFailure(      int reason){
+        Slog.i(TAG,"Failed to disconnect from Wifi display: " + oldDevice.deviceName + ", reason="+ reason);
+        next();
+      }
+      private void next(){
+        if (mConnectedDevice == oldDevice) {
+          mConnectedDevice=null;
+          updateConnection();
+        }
+      }
+    }
+);
+    return;
+  }
+  if (mConnectingDevice != null && mConnectingDevice != mDesiredDevice) {
+    Slog.i(TAG,"Canceling connection to Wifi display: " + mConnectingDevice.deviceName);
+    mHandler.removeCallbacks(mConnectionTimeout);
+    final WifiP2pDevice oldDevice=mConnectingDevice;
+    mWifiP2pManager.cancelConnect(mWifiP2pChannel,new ActionListener(){
+      @Override public void onSuccess(){
+        Slog.i(TAG,"Canceled connection to Wifi display: " + oldDevice.deviceName);
+        next();
+      }
+      @Override public void onFailure(      int reason){
+        Slog.i(TAG,"Failed to cancel connection to Wifi display: " + oldDevice.deviceName + ", reason="+ reason);
+        next();
+      }
+      private void next(){
+        if (mConnectingDevice == oldDevice) {
+          mConnectingDevice=null;
+          updateConnection();
+        }
+      }
+    }
+);
+    return;
+  }
+  if (mDesiredDevice == null) {
+    return;
+  }
+  if (mConnectedDevice == null && mConnectingDevice == null) {
+    Slog.i(TAG,"Connecting to Wifi display: " + mDesiredDevice.deviceName);
+    mConnectingDevice=mDesiredDevice;
+    WifiP2pConfig config=new WifiP2pConfig();
+    config.deviceAddress=mConnectingDevice.deviceAddress;
+    final WifiP2pDevice newDevice=mDesiredDevice;
+    mWifiP2pManager.connect(mWifiP2pChannel,config,new ActionListener(){
+      @Override public void onSuccess(){
+        Slog.i(TAG,"Initiated connection to Wifi display: " + newDevice.deviceName);
+        mHandler.postDelayed(mConnectionTimeout,CONNECTION_TIMEOUT_SECONDS * 1000);
+      }
+      @Override public void onFailure(      int reason){
+        Slog.i(TAG,"Failed to initiate connection to Wifi display: " + newDevice.deviceName + ", reason="+ reason);
+        if (mConnectingDevice == newDevice) {
+          mConnectingDevice=null;
+          handleConnectionFailure();
+        }
+      }
+    }
+);
+    return;
+  }
+  if (mConnectedDevice != null && mPublishedDevice == null) {
+    Inet4Address addr=getInterfaceAddress(mConnectedDeviceGroupInfo);
+    if (addr == null) {
+      Slog.i(TAG,"Failed to get local interface address for communicating " + "with Wifi display: " + mConnectedDevice.deviceName);
+      handleConnectionFailure();
+      return;
+    }
+    WifiP2pWfdInfo wfdInfo=mConnectedDevice.wfdInfo;
+    int port=(wfdInfo != null ? wfdInfo.getControlPort() : DEFAULT_CONTROL_PORT);
+    final String name=mConnectedDevice.deviceName;
+    final String iface=addr.getHostAddress() + ":" + port;
+    mPublishedDevice=mConnectedDevice;
+    mHandler.post(new Runnable(){
+      @Override public void run(){
+        mListener.onDisplayConnected(name,iface);
+      }
+    }
+);
+  }
+}
