@@ -1,0 +1,51 @@
+{
+  if (r.finishing) {
+    Slog.w(TAG,"Duplicate finish request for " + r);
+    return false;
+  }
+  r.makeFinishing();
+  EventLog.writeEvent(EventLogTags.AM_FINISH_ACTIVITY,System.identityHashCode(r),r.task.taskId,r.shortComponentName,reason);
+  if (index < (mHistory.size() - 1)) {
+    ActivityRecord next=mHistory.get(index + 1);
+    if (next.task == r.task) {
+      if (r.frontOfTask) {
+        next.frontOfTask=true;
+      }
+      if ((r.intent.getFlags() & Intent.FLAG_ACTIVITY_CLEAR_WHEN_TASK_RESET) != 0) {
+        next.intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_WHEN_TASK_RESET);
+      }
+    }
+  }
+  r.pauseKeyDispatchingLocked();
+  if (mMainStack) {
+    if (mService.mFocusedActivity == r) {
+      mService.setFocusedActivityLocked(topRunningActivityLocked(null));
+    }
+  }
+  finishActivityResultsLocked(r,resultCode,resultData);
+  if (mService.mPendingThumbnails.size() > 0) {
+    mService.mCancelledThumbnails.add(r);
+  }
+  if (immediate) {
+    return finishCurrentActivityLocked(r,index,FINISH_IMMEDIATELY,oomAdj) == null;
+  }
+ else   if (mResumedActivity == r) {
+    boolean endTask=index <= 0 || (mHistory.get(index - 1)).task != r.task;
+    if (DEBUG_TRANSITION)     Slog.v(TAG,"Prepare close transition: finishing " + r);
+    mService.mWindowManager.prepareAppTransition(endTask ? WindowManagerPolicy.TRANSIT_TASK_CLOSE : WindowManagerPolicy.TRANSIT_ACTIVITY_CLOSE,false);
+    mService.mWindowManager.setAppVisibility(r.appToken,false);
+    if (mPausingActivity == null) {
+      if (DEBUG_PAUSE)       Slog.v(TAG,"Finish needs to pause: " + r);
+      if (DEBUG_USER_LEAVING)       Slog.v(TAG,"finish() => pause with userLeaving=false");
+      startPausingLocked(false,false);
+    }
+  }
+ else   if (r.state != ActivityState.PAUSING) {
+    if (DEBUG_PAUSE)     Slog.v(TAG,"Finish not pausing: " + r);
+    return finishCurrentActivityLocked(r,index,FINISH_AFTER_PAUSE,oomAdj) == null;
+  }
+ else {
+    if (DEBUG_PAUSE)     Slog.v(TAG,"Finish waiting for pause of: " + r);
+  }
+  return false;
+}
