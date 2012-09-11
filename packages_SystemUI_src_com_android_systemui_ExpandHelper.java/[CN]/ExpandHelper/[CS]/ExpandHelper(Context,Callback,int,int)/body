@@ -8,6 +8,8 @@
   mGravity=Gravity.TOP;
   mScaleAnimation=ObjectAnimator.ofFloat(mScaler,"height",0f);
   mScaleAnimation.setDuration(EXPAND_DURATION);
+  mPopLimit=mContext.getResources().getDimension(R.dimen.one_finger_pop_limit);
+  mPopDuration=mContext.getResources().getInteger(R.integer.one_finger_pop_duration_ms);
   AnimatorListenerAdapter glowVisibilityController=new AnimatorListenerAdapter(){
     @Override public void onAnimationStart(    Animator animation){
       View target=(View)((ObjectAnimator)animation).getTarget();
@@ -30,30 +32,21 @@
   mGlowAnimationSet=new AnimatorSet();
   mGlowAnimationSet.play(mGlowTopAnimation).with(mGlowBottomAnimation);
   mGlowAnimationSet.setDuration(GLOW_DURATION);
+  final ViewConfiguration configuration=ViewConfiguration.get(mContext);
+  mTouchSlop=configuration.getScaledTouchSlop();
   mDetector=new ScaleGestureDetector(context,new ScaleGestureDetector.SimpleOnScaleGestureListener(){
     @Override public boolean onScaleBegin(    ScaleGestureDetector detector){
-      if (DEBUG)       Slog.v(TAG,"onscalebegin()");
+      if (DEBUG_SCALE)       Slog.v(TAG,"onscalebegin()");
       float x=detector.getFocusX();
       float y=detector.getFocusY();
-      View v=null;
-      if (mEventSource != null) {
-        int[] location=new int[2];
-        mEventSource.getLocationOnScreen(location);
-        x+=(float)location[0];
-        y+=(float)location[1];
-        v=mCallback.getChildAtRawPosition(x,y);
-      }
- else {
-        v=mCallback.getChildAtPosition(x,y);
-      }
       mInitialTouchFocusY=detector.getFocusY();
       mInitialTouchSpan=Math.abs(detector.getCurrentSpan());
-      if (DEBUG)       Slog.d(TAG,"got mInitialTouchSpan: (" + mInitialTouchSpan + ")");
-      mStretching=initScale(v);
+      if (DEBUG_SCALE)       Slog.d(TAG,"got mInitialTouchSpan: (" + mInitialTouchSpan + ")");
+      mStretching=initScale(findView(x,y));
       return mStretching;
     }
     @Override public boolean onScale(    ScaleGestureDetector detector){
-      if (DEBUG)       Slog.v(TAG,"onscale() on " + mCurrView);
+      if (DEBUG_SCALE)       Slog.v(TAG,"onscale() on " + mCurrView);
       float span=Math.abs(detector.getCurrentSpan()) - mInitialTouchSpan;
       span*=USE_SPAN ? 1f : 0f;
       float drag=detector.getFocusY() - mInitialTouchFocusY;
@@ -61,24 +54,18 @@
       drag*=mGravity == Gravity.BOTTOM ? -1f : 1f;
       float pull=Math.abs(drag) + Math.abs(span) + 1f;
       float hand=drag * Math.abs(drag) / pull + span * Math.abs(span) / pull;
-      if (DEBUG)       Slog.d(TAG,"current span handle is: " + hand);
-      hand=hand + mOldHeight;
-      float target=hand;
-      if (DEBUG)       Slog.d(TAG,"target is: " + target);
-      hand=hand < mSmallSize ? mSmallSize : (hand > mLargeSize ? mLargeSize : hand);
-      hand=hand > mNaturalHeight ? mNaturalHeight : hand;
-      if (DEBUG)       Slog.d(TAG,"scale continues: hand =" + hand);
-      mScaler.setHeight(hand);
-      float stretch=(float)Math.abs((target - hand) / mMaximumStretch);
-      float strength=1f / (1f + (float)Math.pow(Math.E,-1 * ((8f * stretch) - 5f)));
-      if (DEBUG)       Slog.d(TAG,"stretch: " + stretch + " strength: "+ strength);
-      setGlow(GLOW_BASE + strength * (1f - GLOW_BASE));
+      float target=hand + mOldHeight;
+      float newHeight=clamp(target);
+      mScaler.setHeight(newHeight);
+      setGlow(calculateGlow(target,newHeight));
       return true;
     }
     @Override public void onScaleEnd(    ScaleGestureDetector detector){
-      if (DEBUG)       Slog.v(TAG,"onscaleend()");
-      if (DEBUG)       Slog.d(TAG,"scale end");
+      if (DEBUG_SCALE)       Slog.v(TAG,"onscaleend()");
+      if (DEBUG_SCALE)       Slog.d(TAG,"scale end");
       finishScale(false);
+      clearView();
+      mStretching=false;
     }
   }
 );
