@@ -1,12 +1,24 @@
 {
-  if (DEBUG)   Slog.d(TAG,"interceptTouch: act=" + (ev.getAction()) + " stretching="+ mStretching+ " onefinger="+ mPullingWithOneFinger);
-  mDetector.onTouchEvent(ev);
-  if (mStretching) {
+  final int action=ev.getAction();
+  if (DEBUG_SCALE)   Slog.d(TAG,"intercept: act=" + MotionEvent.actionToString(action) + " expanding="+ mExpanding+ (0 != (mExpansionStyle & BLINDS) ? " (blinds)" : "")+ (0 != (mExpansionStyle & PULL) ? " (pull)" : "")+ (0 != (mExpansionStyle & STRETCH) ? " (stretch)" : ""));
+  mSGD.onTouchEvent(ev);
+  final int x=(int)mSGD.getFocusX();
+  final int y=(int)mSGD.getFocusY();
+  if (mExpanding) {
     return true;
   }
  else {
-    final int action=ev.getAction();
-    if ((action == MotionEvent.ACTION_MOVE) && mPullingWithOneFinger) {
+    if ((action == MotionEvent.ACTION_MOVE) && 0 != (mExpansionStyle & BLINDS)) {
+      return true;
+    }
+    final float xspan=mSGD.getCurrentSpanX();
+    if ((action == MotionEvent.ACTION_MOVE && xspan > mPullGestureMinXSpan && xspan > mSGD.getCurrentSpanY())) {
+      if (DEBUG_SCALE)       Slog.v(TAG,"got pull gesture (xspan=" + xspan + "px)");
+      mInitialTouchFocusY=y;
+      final View underFocus=findView(x,y);
+      if (underFocus != null) {
+        startExpanding(underFocus,PULL);
+      }
       return true;
     }
     if (mScrollView != null && mScrollView.getScrollY() > 0) {
@@ -16,13 +28,13 @@ switch (action & MotionEvent.ACTION_MASK) {
 case MotionEvent.ACTION_MOVE:
 {
         if (mWatchingForPull) {
-          final int x=(int)ev.getX();
-          final int y=(int)ev.getY();
           final int yDiff=y - mLastMotionY;
           if (yDiff > mTouchSlop) {
+            if (DEBUG)             Slog.v(TAG,"got venetian gesture (dy=" + yDiff + "px)");
             mLastMotionY=y;
-            mPullingWithOneFinger=initScale(findView(x,y));
-            if (mPullingWithOneFinger) {
+            final View underFocus=findView(x,y);
+            if (underFocus != null) {
+              startExpanding(underFocus,BLINDS);
               mInitialTouchY=mLastMotionY;
               mHasPopped=false;
             }
@@ -31,19 +43,16 @@ case MotionEvent.ACTION_MOVE:
         break;
       }
 case MotionEvent.ACTION_DOWN:
-    mWatchingForPull=isInside(mScrollView,ev.getX(),ev.getY());
-  mLastMotionY=(int)ev.getY();
+    mWatchingForPull=isInside(mScrollView,x,y);
+  mLastMotionY=y;
 break;
 case MotionEvent.ACTION_CANCEL:
 case MotionEvent.ACTION_UP:
-if (mPullingWithOneFinger) {
-finishScale(false);
+if (DEBUG) Slog.d(TAG,"up/cancel");
+finishExpanding(false);
 clearView();
-}
-mPullingWithOneFinger=false;
-mWatchingForPull=false;
 break;
 }
-return mPullingWithOneFinger;
+return mExpanding;
 }
 }
