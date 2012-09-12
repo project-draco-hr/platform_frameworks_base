@@ -1,24 +1,21 @@
 {
   mContext=context;
-  readStorageList();
-  if (mPrimaryVolume != null) {
-    mExternalStoragePath=mPrimaryVolume.getPath();
-    mEmulateExternalStorage=mPrimaryVolume.isEmulated();
-    if (mEmulateExternalStorage) {
-      Slog.d(TAG,"using emulated external storage");
-      mVolumeStates.put(mExternalStoragePath,Environment.MEDIA_MOUNTED);
-    }
+synchronized (mVolumesLock) {
+    readStorageListLocked();
   }
   mPms=(PackageManagerService)ServiceManager.getService("package");
-  IntentFilter filter=new IntentFilter();
-  filter.addAction(Intent.ACTION_BOOT_COMPLETED);
-  if (mPrimaryVolume != null && mPrimaryVolume.allowMassStorage()) {
-    filter.addAction(UsbManager.ACTION_USB_STATE);
-  }
-  mContext.registerReceiver(mBroadcastReceiver,filter,null,null);
   mHandlerThread=new HandlerThread("MountService");
   mHandlerThread.start();
   mHandler=new MountServiceHandler(mHandlerThread.getLooper());
+  mContext.registerReceiverAsUser(mBootReceiver,UserHandle.ALL,new IntentFilter(Intent.ACTION_BOOT_COMPLETED),null,mHandler);
+  final IntentFilter userFilter=new IntentFilter();
+  userFilter.addAction(Intent.ACTION_USER_ADDED);
+  userFilter.addAction(Intent.ACTION_USER_REMOVED);
+  mContext.registerReceiver(mUserReceiver,userFilter,null,mHandler);
+  final StorageVolume primary=getPrimaryPhysicalVolume();
+  if (primary != null && primary.allowMassStorage()) {
+    mContext.registerReceiver(mUsbReceiver,new IntentFilter(UsbManager.ACTION_USB_STATE),null,mHandler);
+  }
   mObbActionHandler=new ObbActionHandler(mHandlerThread.getLooper());
   mConnector=new NativeDaemonConnector(this,"vold",MAX_CONTAINERS * 2,VOLD_TAG,25);
   Thread thread=new Thread(mConnector,VOLD_TAG);
