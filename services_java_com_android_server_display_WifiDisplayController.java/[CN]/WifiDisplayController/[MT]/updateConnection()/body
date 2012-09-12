@@ -1,12 +1,17 @@
 {
-  if (mPublishedDevice != null && mPublishedDevice != mDesiredDevice) {
+  if (mRemoteDisplay != null && mConnectedDevice != mDesiredDevice) {
+    Slog.i(TAG,"Stopped listening for RTSP connection on " + mRemoteDisplayInterface + " from Wifi display: "+ mConnectedDevice.deviceName);
+    mRemoteDisplay.dispose();
+    mRemoteDisplay=null;
+    mRemoteDisplayInterface=null;
+    mRemoteDisplayConnected=false;
+    mHandler.removeCallbacks(mRtspTimeout);
     mHandler.post(new Runnable(){
       @Override public void run(){
         mListener.onDisplayDisconnected();
       }
     }
 );
-    mPublishedDevice=null;
   }
   if (mConnectedDevice != null && mConnectedDevice != mDesiredDevice) {
     Slog.i(TAG,"Disconnecting from Wifi display: " + mConnectedDevice.deviceName);
@@ -75,8 +80,8 @@
         mHandler.postDelayed(mConnectionTimeout,CONNECTION_TIMEOUT_SECONDS * 1000);
       }
       @Override public void onFailure(      int reason){
-        Slog.i(TAG,"Failed to initiate connection to Wifi display: " + newDevice.deviceName + ", reason="+ reason);
         if (mConnectingDevice == newDevice) {
+          Slog.i(TAG,"Failed to initiate connection to Wifi display: " + newDevice.deviceName + ", reason="+ reason);
           mConnectingDevice=null;
           handleConnectionFailure(false);
         }
@@ -85,22 +90,49 @@
 );
     return;
   }
-  if (mConnectedDevice != null && mPublishedDevice == null) {
+  if (mConnectedDevice != null && mRemoteDisplay == null) {
     Inet4Address addr=getInterfaceAddress(mConnectedDeviceGroupInfo);
     if (addr == null) {
       Slog.i(TAG,"Failed to get local interface address for communicating " + "with Wifi display: " + mConnectedDevice.deviceName);
       handleConnectionFailure(false);
       return;
     }
-    final WifiDisplay display=createWifiDisplay(mConnectedDevice);
+    final WifiP2pDevice oldDevice=mConnectedDevice;
     final int port=getPortNumber(mConnectedDevice);
     final String iface=addr.getHostAddress() + ":" + port;
-    mPublishedDevice=mConnectedDevice;
-    mHandler.post(new Runnable(){
-      @Override public void run(){
-        mListener.onDisplayConnected(display,iface);
+    mRemoteDisplayInterface=iface;
+    Slog.i(TAG,"Listening for RTSP connection on " + iface + " from Wifi display: "+ mConnectedDevice.deviceName);
+    mRemoteDisplay=RemoteDisplay.listen(iface,new RemoteDisplay.Listener(){
+      @Override public void onDisplayConnected(      final Surface surface,      final int width,      final int height,      final int flags){
+        if (mConnectedDevice == oldDevice && !mRemoteDisplayConnected) {
+          Slog.i(TAG,"Opened RTSP connection with Wifi display: " + mConnectedDevice.deviceName);
+          mRemoteDisplayConnected=true;
+          mHandler.removeCallbacks(mRtspTimeout);
+          final WifiDisplay display=createWifiDisplay(mConnectedDevice);
+          mHandler.post(new Runnable(){
+            @Override public void run(){
+              mListener.onDisplayConnected(display,surface,width,height,flags);
+            }
+          }
+);
+        }
+      }
+      @Override public void onDisplayDisconnected(){
+        if (mConnectedDevice == oldDevice) {
+          Slog.i(TAG,"Closed RTSP connection with Wifi display: " + mConnectedDevice.deviceName);
+          mHandler.removeCallbacks(mRtspTimeout);
+          disconnect();
+        }
+      }
+      @Override public void onDisplayError(      int error){
+        if (mConnectedDevice == oldDevice) {
+          Slog.i(TAG,"Lost RTSP connection with Wifi display due to error " + error + ": "+ mConnectedDevice.deviceName);
+          mHandler.removeCallbacks(mRtspTimeout);
+          handleConnectionFailure(false);
+        }
       }
     }
-);
+,mHandler);
+    mHandler.postDelayed(mRtspTimeout,RTSP_TIMEOUT_SECONDS * 1000);
   }
 }
