@@ -1,4 +1,5 @@
 {
+  mIPackageManager=AppGlobals.getPackageManager();
   mContext=context;
   mRes=context.getResources();
   mHandler=new Handler(this);
@@ -27,15 +28,37 @@ synchronized (mMethodMap) {
     mFileManager=new InputMethodFileManager(mMethodMap);
   }
   mImListManager=new InputMethodAndSubtypeListManager(context,this);
-  (new MyPackageMonitor()).register(mContext,null,true);
-  IntentFilter screenOnOffFilt=new IntentFilter();
-  screenOnOffFilt.addAction(Intent.ACTION_SCREEN_ON);
-  screenOnOffFilt.addAction(Intent.ACTION_SCREEN_OFF);
-  screenOnOffFilt.addAction(Intent.ACTION_CLOSE_SYSTEM_DIALOGS);
-  mContext.registerReceiver(new ScreenOnOffReceiver(),screenOnOffFilt);
+  final IntentFilter broadcastFilter=new IntentFilter();
+  broadcastFilter.addAction(Intent.ACTION_SCREEN_ON);
+  broadcastFilter.addAction(Intent.ACTION_SCREEN_OFF);
+  broadcastFilter.addAction(Intent.ACTION_CLOSE_SYSTEM_DIALOGS);
+  mContext.registerReceiver(new ImmsBroadcastReceiver(),broadcastFilter);
   mNotificationShown=false;
-  mSettings=new InputMethodSettings(mRes,context.getContentResolver(),mMethodMap,mMethodList);
-  final String defaultImiId=Settings.Secure.getString(mContext.getContentResolver(),Settings.Secure.DEFAULT_INPUT_METHOD);
+  int userId=0;
+  try {
+    ActivityManagerNative.getDefault().registerUserSwitchObserver(new IUserSwitchObserver.Stub(){
+      @Override public void onUserSwitching(      int newUserId,      IRemoteCallback reply){
+        switchUser(newUserId);
+        if (reply != null) {
+          try {
+            reply.sendResult(null);
+          }
+ catch (          RemoteException e) {
+          }
+        }
+      }
+      @Override public void onUserSwitchComplete(      int newUserId) throws RemoteException {
+      }
+    }
+);
+    userId=ActivityManagerNative.getDefault().getCurrentUser().id;
+  }
+ catch (  RemoteException e) {
+    Slog.w(TAG,"Couldn't get current user ID; guessing it's 0",e);
+  }
+  mMyPackageMonitor.register(mContext,null,true);
+  mSettings=new InputMethodSettings(mRes,context.getContentResolver(),mMethodMap,mMethodList,userId);
+  final String defaultImiId=mSettings.getSelectedInputMethod();
   mImeSelectedOnBoot=!TextUtils.isEmpty(defaultImiId);
   buildInputMethodListLocked(mMethodList,mMethodMap);
   mSettings.enableAllIMEsIfThereIsNoEnabledIME();
