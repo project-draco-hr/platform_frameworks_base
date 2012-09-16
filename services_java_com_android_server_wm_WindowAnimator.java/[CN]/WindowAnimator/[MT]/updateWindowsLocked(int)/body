@@ -1,0 +1,119 @@
+{
+  ++mAnimTransactionSequence;
+  final WinAnimatorList winAnimatorList=getDisplayContentsAnimatorLocked(displayId).mWinAnimators;
+  ArrayList<WindowStateAnimator> unForceHiding=null;
+  boolean wallpaperInUnForceHiding=false;
+  final int KEYGUARD_NOT_SHOWN=0;
+  final int KEYGUARD_ANIMATING_IN=1;
+  final int KEYGUARD_SHOWN=2;
+  final int KEYGUARD_ANIMATING_OUT=3;
+  int forceHiding=KEYGUARD_NOT_SHOWN;
+  for (int i=winAnimatorList.size() - 1; i >= 0; i--) {
+    WindowStateAnimator winAnimator=winAnimatorList.get(i);
+    WindowState win=winAnimator.mWin;
+    final int flags=winAnimator.mAttrFlags;
+    if (winAnimator.mSurface != null) {
+      final boolean wasAnimating=winAnimator.mWasAnimating;
+      final boolean nowAnimating=winAnimator.stepAnimationLocked(mCurrentTime);
+      if (WindowManagerService.DEBUG_WALLPAPER) {
+        Slog.v(TAG,win + ": wasAnimating=" + wasAnimating+ ", nowAnimating="+ nowAnimating);
+      }
+      if (wasAnimating && !winAnimator.mAnimating && mWallpaperTarget == win) {
+        mBulkUpdateParams|=SET_WALLPAPER_MAY_CHANGE;
+        setPendingLayoutChanges(Display.DEFAULT_DISPLAY,WindowManagerPolicy.FINISH_LAYOUT_REDO_WALLPAPER);
+        if (WindowManagerService.DEBUG_LAYOUT_REPEATS) {
+          mService.debugLayoutRepeats("updateWindowsAndWallpaperLocked 2",mPendingLayoutChanges.get(Display.DEFAULT_DISPLAY));
+        }
+      }
+      if (mPolicy.doesForceHide(win,win.mAttrs)) {
+        if (!wasAnimating && nowAnimating) {
+          if (WindowManagerService.DEBUG_ANIM || WindowManagerService.DEBUG_VISIBILITY)           Slog.v(TAG,"Animation started that could impact force hide: " + win);
+          mBulkUpdateParams|=SET_FORCE_HIDING_CHANGED;
+          setPendingLayoutChanges(displayId,WindowManagerPolicy.FINISH_LAYOUT_REDO_WALLPAPER);
+          if (WindowManagerService.DEBUG_LAYOUT_REPEATS) {
+            mService.debugLayoutRepeats("updateWindowsAndWallpaperLocked 3",mPendingLayoutChanges.get(displayId));
+          }
+          mService.mFocusMayChange=true;
+        }
+        if (win.isReadyForDisplay()) {
+          if (nowAnimating) {
+            if (winAnimator.mAnimationIsEntrance) {
+              forceHiding=KEYGUARD_ANIMATING_IN;
+            }
+ else {
+              forceHiding=KEYGUARD_ANIMATING_OUT;
+            }
+          }
+ else {
+            forceHiding=KEYGUARD_SHOWN;
+          }
+        }
+        if (WindowManagerService.DEBUG_VISIBILITY)         Slog.v(TAG,"Force hide " + forceHiding + " hasSurface="+ win.mHasSurface+ " policyVis="+ win.mPolicyVisibility+ " destroying="+ win.mDestroying+ " attHidden="+ win.mAttachedHidden+ " vis="+ win.mViewVisibility+ " hidden="+ win.mRootToken.hidden+ " anim="+ win.mWinAnimator.mAnimation);
+      }
+ else       if (mPolicy.canBeForceHidden(win,win.mAttrs)) {
+        final boolean hideWhenLocked=(winAnimator.mAttrFlags & FLAG_SHOW_WHEN_LOCKED) == 0;
+        final boolean changed;
+        if (((forceHiding == KEYGUARD_ANIMATING_IN) && (!winAnimator.isAnimating() || hideWhenLocked)) || ((forceHiding == KEYGUARD_SHOWN) && hideWhenLocked)) {
+          changed=win.hideLw(false,false);
+          if (WindowManagerService.DEBUG_VISIBILITY && changed)           Slog.v(TAG,"Now policy hidden: " + win);
+        }
+ else {
+          changed=win.showLw(false,false);
+          if (WindowManagerService.DEBUG_VISIBILITY && changed)           Slog.v(TAG,"Now policy shown: " + win);
+          if (changed) {
+            if ((mBulkUpdateParams & SET_FORCE_HIDING_CHANGED) != 0 && win.isVisibleNow()) {
+              if (unForceHiding == null) {
+                unForceHiding=new ArrayList<WindowStateAnimator>();
+              }
+              unForceHiding.add(winAnimator);
+              if ((flags & FLAG_SHOW_WALLPAPER) != 0) {
+                wallpaperInUnForceHiding=true;
+              }
+            }
+            if (mCurrentFocus == null || mCurrentFocus.mLayer < win.mLayer) {
+              mService.mFocusMayChange=true;
+            }
+          }
+        }
+        if (changed && (flags & FLAG_SHOW_WALLPAPER) != 0) {
+          mBulkUpdateParams|=SET_WALLPAPER_MAY_CHANGE;
+          setPendingLayoutChanges(Display.DEFAULT_DISPLAY,WindowManagerPolicy.FINISH_LAYOUT_REDO_WALLPAPER);
+          if (WindowManagerService.DEBUG_LAYOUT_REPEATS) {
+            mService.debugLayoutRepeats("updateWindowsAndWallpaperLocked 4",mPendingLayoutChanges.get(Display.DEFAULT_DISPLAY));
+          }
+        }
+      }
+    }
+    final AppWindowToken atoken=win.mAppToken;
+    if (winAnimator.mDrawState == WindowStateAnimator.READY_TO_SHOW) {
+      if (atoken == null || atoken.allDrawn) {
+        if (winAnimator.performShowLocked()) {
+          mPendingLayoutChanges.put(displayId,WindowManagerPolicy.FINISH_LAYOUT_REDO_ANIM);
+          if (WindowManagerService.DEBUG_LAYOUT_REPEATS) {
+            mService.debugLayoutRepeats("updateWindowsAndWallpaperLocked 5",mPendingLayoutChanges.get(displayId));
+          }
+        }
+      }
+    }
+    final AppWindowAnimator appAnimator=winAnimator.mAppAnimator;
+    if (appAnimator != null && appAnimator.thumbnail != null) {
+      if (appAnimator.thumbnailTransactionSeq != mAnimTransactionSequence) {
+        appAnimator.thumbnailTransactionSeq=mAnimTransactionSequence;
+        appAnimator.thumbnailLayer=0;
+      }
+      if (appAnimator.thumbnailLayer < winAnimator.mAnimLayer) {
+        appAnimator.thumbnailLayer=winAnimator.mAnimLayer;
+      }
+    }
+  }
+  if (unForceHiding != null) {
+    for (int i=unForceHiding.size() - 1; i >= 0; i--) {
+      Animation a=mPolicy.createForceHideEnterAnimation(wallpaperInUnForceHiding);
+      if (a != null) {
+        final WindowStateAnimator winAnimator=unForceHiding.get(i);
+        winAnimator.setAnimation(a);
+        winAnimator.mAnimationIsEntrance=true;
+      }
+    }
+  }
+}
