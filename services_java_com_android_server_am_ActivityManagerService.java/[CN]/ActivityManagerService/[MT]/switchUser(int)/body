@@ -4,31 +4,57 @@
     Slog.w(TAG,msg);
     throw new SecurityException(msg);
   }
-synchronized (this) {
-    if (mCurrentUserId == userId) {
-      return true;
-    }
-    mWindowManager.startFreezingScreen(R.anim.screen_user_exit,R.anim.screen_user_enter);
-    if (mStartedUsers.get(userId) == null) {
-      mStartedUsers.put(userId,new UserStartedState(new UserHandle(userId),false));
-    }
-    mCurrentUserId=userId;
-    Integer userIdInt=Integer.valueOf(userId);
-    mUserLru.remove(userIdInt);
-    mUserLru.add(userIdInt);
-    boolean haveActivities=mMainStack.switchUser(userId);
-    if (!haveActivities) {
-      startHomeActivityLocked(userId,mStartedUsers.get(userId));
-    }
- else {
-      mMainStack.addStartingUserLocked(mStartedUsers.get(userId));
-    }
-  }
-  long ident=Binder.clearCallingIdentity();
+  final long ident=Binder.clearCallingIdentity();
   try {
-    Intent addedIntent=new Intent(Intent.ACTION_USER_SWITCHED);
-    addedIntent.putExtra(Intent.EXTRA_USER_HANDLE,userId);
-    mContext.sendBroadcastAsUser(addedIntent,UserHandle.ALL,android.Manifest.permission.MANAGE_USERS);
+synchronized (this) {
+      final int oldUserId=mCurrentUserId;
+      if (oldUserId == userId) {
+        return true;
+      }
+      final UserInfo userInfo=getUserManagerLocked().getUserInfo(userId);
+      if (userInfo == null) {
+        Slog.w(TAG,"No user info for user #" + userId);
+        return false;
+      }
+      mWindowManager.startFreezingScreen(R.anim.screen_user_exit,R.anim.screen_user_enter);
+      if (mStartedUsers.get(userId) == null) {
+        mStartedUsers.put(userId,new UserStartedState(new UserHandle(userId),false));
+      }
+      mCurrentUserId=userId;
+      final Integer userIdInt=Integer.valueOf(userId);
+      mUserLru.remove(userIdInt);
+      mUserLru.add(userIdInt);
+      final UserStartedState uss=mStartedUsers.get(userId);
+      mHandler.removeMessages(REPORT_USER_SWITCH_MSG);
+      mHandler.removeMessages(USER_SWITCH_TIMEOUT_MSG);
+      mHandler.sendMessage(mHandler.obtainMessage(REPORT_USER_SWITCH_MSG,oldUserId,userId,uss));
+      mHandler.sendMessageDelayed(mHandler.obtainMessage(USER_SWITCH_TIMEOUT_MSG,oldUserId,userId,uss),USER_SWITCH_TIMEOUT);
+      Intent intent=new Intent(Intent.ACTION_USER_STARTED);
+      intent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY);
+      intent.putExtra(Intent.EXTRA_USER_HANDLE,userId);
+      broadcastIntentLocked(null,null,intent,null,null,0,null,null,null,false,false,MY_PID,Process.SYSTEM_UID,userId);
+      if ((userInfo.flags & UserInfo.FLAG_INITIALIZED) == 0) {
+        if (userId != 0) {
+          intent=new Intent(Intent.ACTION_USER_INITIALIZE);
+          broadcastIntentLocked(null,null,intent,null,new IIntentReceiver.Stub(){
+            public void performReceive(            Intent intent,            int resultCode,            String data,            Bundle extras,            boolean ordered,            boolean sticky,            int sendingUser){
+synchronized (ActivityManagerService.this) {
+                getUserManagerLocked().makeInitialized(userInfo.id);
+              }
+            }
+          }
+,0,null,null,null,true,false,MY_PID,Process.SYSTEM_UID,userId);
+        }
+ else {
+          getUserManagerLocked().makeInitialized(userInfo.id);
+        }
+      }
+      boolean haveActivities=mMainStack.switchUserLocked(userId,uss);
+      if (!haveActivities) {
+        startHomeActivityLocked(userId);
+      }
+      sendUserSwitchBroadcastsLocked(oldUserId,userId);
+    }
   }
   finally {
     Binder.restoreCallingIdentity(ident);

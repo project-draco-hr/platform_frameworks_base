@@ -1,24 +1,30 @@
 {
   checkManageUsersPermission("Only the system can create users");
-  if (isUserLimitReached())   return null;
-  int userId=getNextAvailableId();
-  UserInfo userInfo=new UserInfo(userId,name,null,flags);
-  File userPath=new File(mBaseUserPath,Integer.toString(userId));
+  final long ident=Binder.clearCallingIdentity();
+  final UserInfo userInfo;
+  try {
 synchronized (mInstallLock) {
 synchronized (mPackagesLock) {
-      userInfo.serialNumber=mNextSerialNumber++;
-      mUsers.put(userId,userInfo);
-      writeUserListLocked();
-      writeUserLocked(userInfo);
-      updateUserIdsLocked();
-      mPm.createNewUserLILPw(userId,userPath);
+        if (isUserLimitReachedLocked())         return null;
+        int userId=getNextAvailableIdLocked();
+        userInfo=new UserInfo(userId,name,null,flags);
+        File userPath=new File(mBaseUserPath,Integer.toString(userId));
+        userInfo.serialNumber=mNextSerialNumber++;
+        mUsers.put(userId,userInfo);
+        writeUserListLocked();
+        writeUserLocked(userInfo);
+        updateUserIdsLocked();
+        mPm.createNewUserLILPw(userId,userPath);
+      }
+    }
+    if (userInfo != null) {
+      Intent addedIntent=new Intent(Intent.ACTION_USER_ADDED);
+      addedIntent.putExtra(Intent.EXTRA_USER_HANDLE,userInfo.id);
+      mContext.sendBroadcastAsUser(addedIntent,UserHandle.ALL,android.Manifest.permission.MANAGE_USERS);
     }
   }
-  if (userInfo != null) {
-    Intent addedIntent=new Intent(Intent.ACTION_USER_ADDED);
-    addedIntent.putExtra(Intent.EXTRA_USER_HANDLE,userInfo.id);
-    mContext.sendBroadcastAsUser(new Intent(Intent.ACTION_BOOT_COMPLETED),new UserHandle(userInfo.id));
-    mContext.sendBroadcastAsUser(addedIntent,UserHandle.ALL,android.Manifest.permission.MANAGE_USERS);
+  finally {
+    Binder.restoreCallingIdentity(ident);
   }
   return userInfo;
 }

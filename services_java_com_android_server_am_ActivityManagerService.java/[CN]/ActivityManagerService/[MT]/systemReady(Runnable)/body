@@ -32,34 +32,37 @@ synchronized (this) {
             i--;
           }
         }
+        final int[] users=getUsersLocked();
         for (int i=0; i < ris.size(); i++) {
           ActivityInfo ai=ris.get(i).activityInfo;
           ComponentName comp=new ComponentName(ai.packageName,ai.name);
           doneReceivers.add(comp);
           intent.setComponent(comp);
-          IIntentReceiver finisher=null;
-          if (i == ris.size() - 1) {
-            finisher=new IIntentReceiver.Stub(){
-              public void performReceive(              Intent intent,              int resultCode,              String data,              Bundle extras,              boolean ordered,              boolean sticky,              int sendingUser){
-                mHandler.post(new Runnable(){
-                  public void run(){
+          for (int j=0; j < users.length; j++) {
+            IIntentReceiver finisher=null;
+            if (i == ris.size() - 1 && j == users.length - 1) {
+              finisher=new IIntentReceiver.Stub(){
+                public void performReceive(                Intent intent,                int resultCode,                String data,                Bundle extras,                boolean ordered,                boolean sticky,                int sendingUser){
+                  mHandler.post(new Runnable(){
+                    public void run(){
 synchronized (ActivityManagerService.this) {
-                      mDidUpdate=true;
+                        mDidUpdate=true;
+                      }
+                      writeLastDonePreBootReceivers(doneReceivers);
+                      showBootMessage(mContext.getText(R.string.android_upgrading_complete),false);
+                      systemReady(goingCallback);
                     }
-                    writeLastDonePreBootReceivers(doneReceivers);
-                    showBootMessage(mContext.getText(R.string.android_upgrading_complete),false);
-                    systemReady(goingCallback);
                   }
-                }
 );
+                }
               }
-            }
 ;
-          }
-          Slog.i(TAG,"Sending system update to: " + intent.getComponent());
-          broadcastIntentLocked(null,null,intent,null,finisher,0,null,null,null,true,false,MY_PID,Process.SYSTEM_UID,UserHandle.USER_ALL);
-          if (finisher != null) {
-            mWaitingUpdate=true;
+            }
+            Slog.i(TAG,"Sending system update to " + intent.getComponent() + " for user "+ users[j]);
+            broadcastIntentLocked(null,null,intent,null,finisher,0,null,null,null,true,false,MY_PID,Process.SYSTEM_UID,users[j]);
+            if (finisher != null) {
+              mWaitingUpdate=true;
+            }
           }
         }
       }
@@ -157,6 +160,17 @@ synchronized (this) {
     }
  catch (    RemoteException e) {
     }
+    long ident=Binder.clearCallingIdentity();
+    try {
+      Intent intent=new Intent(Intent.ACTION_USER_STARTED);
+      intent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY);
+      intent.putExtra(Intent.EXTRA_USER_HANDLE,mCurrentUserId);
+      broadcastIntentLocked(null,null,intent,null,null,0,null,null,null,false,false,MY_PID,Process.SYSTEM_UID,mCurrentUserId);
+    }
+  finally {
+      Binder.restoreCallingIdentity(ident);
+    }
     mMainStack.resumeTopActivityLocked(null);
+    sendUserSwitchBroadcastsLocked(-1,mCurrentUserId);
   }
 }
