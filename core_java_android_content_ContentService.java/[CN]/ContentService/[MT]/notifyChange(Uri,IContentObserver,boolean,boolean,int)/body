@@ -1,0 +1,59 @@
+{
+  if (Log.isLoggable(TAG,Log.VERBOSE)) {
+    Log.v(TAG,"Notifying update of " + uri + " for user "+ userHandle+ " from observer "+ observer+ ", syncToNetwork "+ syncToNetwork);
+  }
+  final int callingUserHandle=UserHandle.getCallingUserId();
+  if (userHandle != callingUserHandle) {
+    mContext.enforceCallingOrSelfPermission(Manifest.permission.INTERACT_ACROSS_USERS_FULL,"no permission to notify other users");
+  }
+  if (userHandle < 0) {
+    if (userHandle == UserHandle.USER_CURRENT) {
+      userHandle=ActivityManager.getCurrentUser();
+    }
+ else     if (userHandle != UserHandle.USER_ALL) {
+      throw new InvalidParameterException("Bad user handle for notifyChange: " + userHandle);
+    }
+  }
+  long identityToken=clearCallingIdentity();
+  try {
+    ArrayList<ObserverCall> calls=new ArrayList<ObserverCall>();
+synchronized (mRootNode) {
+      mRootNode.collectObserversLocked(uri,0,observer,observerWantsSelfNotifications,userHandle,calls);
+    }
+    final int numCalls=calls.size();
+    for (int i=0; i < numCalls; i++) {
+      ObserverCall oc=calls.get(i);
+      try {
+        oc.mObserver.onChange(oc.mSelfChange,uri);
+        if (Log.isLoggable(TAG,Log.VERBOSE)) {
+          Log.v(TAG,"Notified " + oc.mObserver + " of "+ "update at "+ uri);
+        }
+      }
+ catch (      RemoteException ex) {
+synchronized (mRootNode) {
+          Log.w(TAG,"Found dead observer, removing");
+          IBinder binder=oc.mObserver.asBinder();
+          final ArrayList<ObserverNode.ObserverEntry> list=oc.mNode.mObservers;
+          int numList=list.size();
+          for (int j=0; j < numList; j++) {
+            ObserverNode.ObserverEntry oe=list.get(j);
+            if (oe.observer.asBinder() == binder) {
+              list.remove(j);
+              j--;
+              numList--;
+            }
+          }
+        }
+      }
+    }
+    if (syncToNetwork) {
+      SyncManager syncManager=getSyncManager();
+      if (syncManager != null) {
+        syncManager.scheduleLocalSync(null,callingUserHandle,uri.getAuthority());
+      }
+    }
+  }
+  finally {
+    restoreCallingIdentity(identityToken);
+  }
+}
