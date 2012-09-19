@@ -1,0 +1,105 @@
+{
+  JournaledFile journal=makeJournaledFile(userHandle);
+  FileInputStream stream=null;
+  File file=journal.chooseForRead();
+  try {
+    stream=new FileInputStream(file);
+    XmlPullParser parser=Xml.newPullParser();
+    parser.setInput(stream,null);
+    int type;
+    while ((type=parser.next()) != XmlPullParser.END_DOCUMENT && type != XmlPullParser.START_TAG) {
+    }
+    String tag=parser.getName();
+    if (!"policies".equals(tag)) {
+      throw new XmlPullParserException("Settings do not start with policies tag: found " + tag);
+    }
+    type=parser.next();
+    int outerDepth=parser.getDepth();
+    while ((type=parser.next()) != XmlPullParser.END_DOCUMENT && (type != XmlPullParser.END_TAG || parser.getDepth() > outerDepth)) {
+      if (type == XmlPullParser.END_TAG || type == XmlPullParser.TEXT) {
+        continue;
+      }
+      tag=parser.getName();
+      if ("admin".equals(tag)) {
+        String name=parser.getAttributeValue(null,"name");
+        try {
+          DeviceAdminInfo dai=findAdmin(ComponentName.unflattenFromString(name),userHandle);
+          if (DBG && (UserHandle.getUserId(dai.getActivityInfo().applicationInfo.uid) != userHandle)) {
+            Slog.w(TAG,"findAdmin returned an incorrect uid " + dai.getActivityInfo().applicationInfo.uid + " for user "+ userHandle);
+          }
+          if (dai != null) {
+            ActiveAdmin ap=new ActiveAdmin(dai);
+            ap.readFromXml(parser);
+            policy.mAdminMap.put(ap.info.getComponent(),ap);
+            policy.mAdminList.add(ap);
+          }
+        }
+ catch (        RuntimeException e) {
+          Slog.w(TAG,"Failed loading admin " + name,e);
+        }
+      }
+ else       if ("failed-password-attempts".equals(tag)) {
+        policy.mFailedPasswordAttempts=Integer.parseInt(parser.getAttributeValue(null,"value"));
+        XmlUtils.skipCurrentTag(parser);
+      }
+ else       if ("password-owner".equals(tag)) {
+        policy.mPasswordOwner=Integer.parseInt(parser.getAttributeValue(null,"value"));
+        XmlUtils.skipCurrentTag(parser);
+      }
+ else       if ("active-password".equals(tag)) {
+        policy.mActivePasswordQuality=Integer.parseInt(parser.getAttributeValue(null,"quality"));
+        policy.mActivePasswordLength=Integer.parseInt(parser.getAttributeValue(null,"length"));
+        policy.mActivePasswordUpperCase=Integer.parseInt(parser.getAttributeValue(null,"uppercase"));
+        policy.mActivePasswordLowerCase=Integer.parseInt(parser.getAttributeValue(null,"lowercase"));
+        policy.mActivePasswordLetters=Integer.parseInt(parser.getAttributeValue(null,"letters"));
+        policy.mActivePasswordNumeric=Integer.parseInt(parser.getAttributeValue(null,"numeric"));
+        policy.mActivePasswordSymbols=Integer.parseInt(parser.getAttributeValue(null,"symbols"));
+        policy.mActivePasswordNonLetter=Integer.parseInt(parser.getAttributeValue(null,"nonletter"));
+        XmlUtils.skipCurrentTag(parser);
+      }
+ else {
+        Slog.w(TAG,"Unknown tag: " + tag);
+        XmlUtils.skipCurrentTag(parser);
+      }
+    }
+  }
+ catch (  NullPointerException e) {
+    Slog.w(TAG,"failed parsing " + file + " "+ e);
+  }
+catch (  NumberFormatException e) {
+    Slog.w(TAG,"failed parsing " + file + " "+ e);
+  }
+catch (  XmlPullParserException e) {
+    Slog.w(TAG,"failed parsing " + file + " "+ e);
+  }
+catch (  FileNotFoundException e) {
+  }
+catch (  IOException e) {
+    Slog.w(TAG,"failed parsing " + file + " "+ e);
+  }
+catch (  IndexOutOfBoundsException e) {
+    Slog.w(TAG,"failed parsing " + file + " "+ e);
+  }
+  try {
+    if (stream != null) {
+      stream.close();
+    }
+  }
+ catch (  IOException e) {
+  }
+  LockPatternUtils utils=new LockPatternUtils(mContext);
+  if (utils.getActivePasswordQuality() < policy.mActivePasswordQuality) {
+    Slog.w(TAG,"Active password quality 0x" + Integer.toHexString(policy.mActivePasswordQuality) + " does not match actual quality 0x"+ Integer.toHexString(utils.getActivePasswordQuality()));
+    policy.mActivePasswordQuality=DevicePolicyManager.PASSWORD_QUALITY_UNSPECIFIED;
+    policy.mActivePasswordLength=0;
+    policy.mActivePasswordUpperCase=0;
+    policy.mActivePasswordLowerCase=0;
+    policy.mActivePasswordLetters=0;
+    policy.mActivePasswordNumeric=0;
+    policy.mActivePasswordSymbols=0;
+    policy.mActivePasswordNonLetter=0;
+  }
+  validatePasswordOwnerLocked(policy);
+  syncDeviceCapabilitiesLocked(policy);
+  updateMaximumTimeToLockLocked(policy);
+}
