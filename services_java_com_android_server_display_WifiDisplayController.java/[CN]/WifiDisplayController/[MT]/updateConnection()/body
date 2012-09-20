@@ -7,15 +7,11 @@
     mRemoteDisplayConnected=false;
     mHandler.removeCallbacks(mRtspTimeout);
     setRemoteSubmixOn(false);
-    mHandler.post(new Runnable(){
-      @Override public void run(){
-        mListener.onDisplayDisconnected();
-      }
-    }
-);
+    unadvertiseDisplay();
   }
   if (mConnectedDevice != null && mConnectedDevice != mDesiredDevice) {
     Slog.i(TAG,"Disconnecting from Wifi display: " + mConnectedDevice.deviceName);
+    unadvertiseDisplay();
     final WifiP2pDevice oldDevice=mConnectedDevice;
     mWifiP2pManager.removeGroup(mWifiP2pChannel,new ActionListener(){
       @Override public void onSuccess(){
@@ -38,6 +34,7 @@
   }
   if (mConnectingDevice != null && mConnectingDevice != mDesiredDevice) {
     Slog.i(TAG,"Canceling connection to Wifi display: " + mConnectingDevice.deviceName);
+    unadvertiseDisplay();
     mHandler.removeCallbacks(mConnectionTimeout);
     final WifiP2pDevice oldDevice=mConnectingDevice;
     mWifiP2pManager.cancelConnect(mWifiP2pChannel,new ActionListener(){
@@ -60,6 +57,7 @@
     return;
   }
   if (mDesiredDevice == null) {
+    unadvertiseDisplay();
     return;
   }
   if (mConnectedDevice == null && mConnectingDevice == null) {
@@ -68,13 +66,8 @@
     WifiP2pConfig config=new WifiP2pConfig();
     config.deviceAddress=mConnectingDevice.deviceAddress;
     config.groupOwnerIntent=WifiP2pConfig.MAX_GROUP_OWNER_INTENT;
-    final WifiDisplay display=createWifiDisplay(mConnectingDevice);
-    mHandler.post(new Runnable(){
-      @Override public void run(){
-        mListener.onDisplayConnecting(display);
-      }
-    }
-);
+    WifiDisplay display=createWifiDisplay(mConnectingDevice);
+    advertiseDisplay(display,null,0,0,0);
     final WifiP2pDevice newDevice=mDesiredDevice;
     mWifiP2pManager.connect(mWifiP2pChannel,config,new ActionListener(){
       @Override public void onSuccess(){
@@ -84,12 +77,6 @@
       @Override public void onFailure(      int reason){
         if (mConnectingDevice == newDevice) {
           Slog.i(TAG,"Failed to initiate connection to Wifi display: " + newDevice.deviceName + ", reason="+ reason);
-          mHandler.post(new Runnable(){
-            @Override public void run(){
-              mListener.onDisplayDisconnected();
-            }
-          }
-);
           mConnectingDevice=null;
           handleConnectionFailure(false);
         }
@@ -112,18 +99,13 @@
     mRemoteDisplayInterface=iface;
     Slog.i(TAG,"Listening for RTSP connection on " + iface + " from Wifi display: "+ mConnectedDevice.deviceName);
     mRemoteDisplay=RemoteDisplay.listen(iface,new RemoteDisplay.Listener(){
-      @Override public void onDisplayConnected(      final Surface surface,      final int width,      final int height,      final int flags){
+      @Override public void onDisplayConnected(      Surface surface,      int width,      int height,      int flags){
         if (mConnectedDevice == oldDevice && !mRemoteDisplayConnected) {
           Slog.i(TAG,"Opened RTSP connection with Wifi display: " + mConnectedDevice.deviceName);
           mRemoteDisplayConnected=true;
           mHandler.removeCallbacks(mRtspTimeout);
           final WifiDisplay display=createWifiDisplay(mConnectedDevice);
-          mHandler.post(new Runnable(){
-            @Override public void run(){
-              mListener.onDisplayConnected(display,surface,width,height,flags);
-            }
-          }
-);
+          advertiseDisplay(display,surface,width,height,flags);
         }
       }
       @Override public void onDisplayDisconnected(){
