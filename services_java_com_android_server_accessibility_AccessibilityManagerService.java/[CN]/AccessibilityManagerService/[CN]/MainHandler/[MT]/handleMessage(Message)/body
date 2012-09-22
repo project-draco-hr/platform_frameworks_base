@@ -1,89 +1,50 @@
 {
   final int type=msg.what;
 switch (type) {
-case MSG_TOGGLE_TOUCH_EXPLORATION:
-{
-      final int value=msg.arg1;
-      Settings.Secure.putInt(mContext.getContentResolver(),Settings.Secure.TOUCH_EXPLORATION_ENABLED,value);
-    }
-  break;
-case MSG_SHOW_ENABLE_TOUCH_EXPLORATION_DIALOG:
-{
-  final Service service=(Service)msg.obj;
-  String label=service.mResolveInfo.loadLabel(mContext.getPackageManager()).toString();
-synchronized (mLock) {
-    if (mIsTouchExplorationEnabled) {
-      return;
-    }
-    if (mEnableTouchExplorationDialog != null && mEnableTouchExplorationDialog.isShowing()) {
-      return;
-    }
-    mEnableTouchExplorationDialog=new AlertDialog.Builder(mContext).setIcon(android.R.drawable.ic_dialog_alert).setPositiveButton(android.R.string.ok,new OnClickListener(){
-      @Override public void onClick(      DialogInterface dialog,      int which){
-        mTouchExplorationGrantedServices.add(service.mComponentName);
-        persistComponentNamesToSettingLocked(Settings.Secure.TOUCH_EXPLORATION_GRANTED_ACCESSIBILITY_SERVICES,mTouchExplorationGrantedServices);
-        Settings.Secure.putInt(mContext.getContentResolver(),Settings.Secure.TOUCH_EXPLORATION_ENABLED,1);
-      }
-    }
-).setNegativeButton(android.R.string.cancel,new OnClickListener(){
-      @Override public void onClick(      DialogInterface dialog,      int which){
-        dialog.dismiss();
-      }
-    }
-).setTitle(R.string.enable_explore_by_touch_warning_title).setMessage(mContext.getString(R.string.enable_explore_by_touch_warning_message,label)).create();
-    mEnableTouchExplorationDialog.getWindow().setType(WindowManager.LayoutParams.TYPE_INPUT_METHOD_DIALOG);
-    mEnableTouchExplorationDialog.setCanceledOnTouchOutside(true);
-    mEnableTouchExplorationDialog.show();
-  }
-}
-break;
 case MSG_SEND_ACCESSIBILITY_EVENT_TO_INPUT_FILTER:
 {
-AccessibilityEvent event=(AccessibilityEvent)msg.obj;
-if (mHasInputFilter && mInputFilter != null) {
-mInputFilter.notifyAccessibilityEvent(event);
-}
-event.recycle();
+      AccessibilityEvent event=(AccessibilityEvent)msg.obj;
+synchronized (mLock) {
+        if (mHasInputFilter && mInputFilter != null) {
+          mInputFilter.notifyAccessibilityEvent(event);
+        }
+      }
+      event.recycle();
+    }
+  break;
+case MSG_SEND_STATE_TO_CLIENTS:
+{
+  final int clientState=msg.arg1;
+  final int userId=msg.arg2;
+  sendStateToClients(clientState,mGlobalClients);
+  sendStateToClientsForUser(clientState,userId);
 }
 break;
-case MSG_SEND_UPDATE_INPUT_FILTER:
+case MSG_SEND_CLEARED_STATE_TO_CLIENTS_FOR_USER:
 {
-boolean setInputFilter=false;
-AccessibilityInputFilter inputFilter=null;
+final int userId=msg.arg1;
+sendStateToClientsForUser(0,userId);
+}
+break;
+case MSG_SEND_RECREATE_INTERNAL_STATE:
+{
+final int userId=msg.arg1;
 synchronized (mLock) {
-if ((mIsAccessibilityEnabled && mIsTouchExplorationEnabled) || mIsScreenMagnificationEnabled) {
-if (!mHasInputFilter) {
-mHasInputFilter=true;
-if (mInputFilter == null) {
-  mInputFilter=new AccessibilityInputFilter(mContext,AccessibilityManagerService.this);
-}
-inputFilter=mInputFilter;
-setInputFilter=true;
-}
-int flags=0;
-if (mIsScreenMagnificationEnabled) {
-flags|=AccessibilityInputFilter.FLAG_FEATURE_SCREEN_MAGNIFIER;
-}
-if (mIsTouchExplorationEnabled) {
-flags|=AccessibilityInputFilter.FLAG_FEATURE_TOUCH_EXPLORATION;
-}
-mInputFilter.setEnabledFeatures(flags);
-}
- else {
-if (mHasInputFilter) {
-mHasInputFilter=false;
-mInputFilter.setEnabledFeatures(0);
-inputFilter=null;
-setInputFilter=true;
+UserState userState=getUserStateLocked(userId);
+recreateInternalStateLocked(userState);
 }
 }
-}
-if (setInputFilter) {
+break;
+case MSG_REGISTER_UI_TEST_AUTOMATION_SERVICE:
+{
+SomeArgs args=(SomeArgs)msg.obj;
 try {
-mWindowManager.setInputFilter(inputFilter);
+IAccessibilityServiceClient client=(IAccessibilityServiceClient)args.arg1;
+AccessibilityServiceInfo info=(AccessibilityServiceInfo)args.arg2;
+registerUiTestAutomationService(client,info);
 }
- catch (RemoteException re) {
-}
+  finally {
+args.recycle();
 }
 }
 break;
