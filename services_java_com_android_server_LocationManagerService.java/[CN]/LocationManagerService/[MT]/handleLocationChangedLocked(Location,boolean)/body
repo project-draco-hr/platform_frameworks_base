@@ -6,13 +6,24 @@
   if (records == null || records.size() == 0)   return;
   LocationProviderInterface p=mProvidersByName.get(provider);
   if (p == null)   return;
-  Location coarse=mLocationFudger.getOrCreate(location);
+  Location noGPSLocation=location.getExtraLocation(Location.EXTRA_NO_GPS_LOCATION);
+  Location lastNoGPSLocation=null;
   Location lastLocation=mLastLocation.get(provider);
   if (lastLocation == null) {
     lastLocation=new Location(provider);
     mLastLocation.put(provider,lastLocation);
   }
+ else {
+    lastNoGPSLocation=lastLocation.getExtraLocation(Location.EXTRA_NO_GPS_LOCATION);
+    if (noGPSLocation == null && lastNoGPSLocation != null) {
+      location.setExtraLocation(Location.EXTRA_NO_GPS_LOCATION,lastNoGPSLocation);
+    }
+  }
   lastLocation.set(location);
+  Location coarseLocation=null;
+  if (noGPSLocation != null && !noGPSLocation.equals(lastNoGPSLocation)) {
+    coarseLocation=mLocationFudger.getOrCreate(noGPSLocation);
+  }
   long newStatusUpdateTime=p.getStatusUpdateTime();
   Bundle extras=new Bundle();
   int status=p.getStatus(extras);
@@ -25,24 +36,27 @@
       if (D)       Log.d(TAG,"skipping loc update for blacklisted app: " + receiver.mPackageName);
       continue;
     }
+    Location notifyLocation=null;
     if (ACCESS_FINE_LOCATION.equals(receiver.mPermission)) {
-      location=lastLocation;
+      notifyLocation=lastLocation;
     }
  else {
-      location=coarse;
+      notifyLocation=coarseLocation;
     }
-    Location lastLoc=r.mLastFixBroadcast;
-    if ((lastLoc == null) || shouldBroadcastSafe(location,lastLoc,r)) {
-      if (lastLoc == null) {
-        lastLoc=new Location(location);
-        r.mLastFixBroadcast=lastLoc;
-      }
+    if (notifyLocation != null) {
+      Location lastLoc=r.mLastFixBroadcast;
+      if ((lastLoc == null) || shouldBroadcastSafe(notifyLocation,lastLoc,r)) {
+        if (lastLoc == null) {
+          lastLoc=new Location(notifyLocation);
+          r.mLastFixBroadcast=lastLoc;
+        }
  else {
-        lastLoc.set(location);
-      }
-      if (!receiver.callLocationChangedLocked(location)) {
-        Slog.w(TAG,"RemoteException calling onLocationChanged on " + receiver);
-        receiverDead=true;
+          lastLoc.set(notifyLocation);
+        }
+        if (!receiver.callLocationChangedLocked(notifyLocation)) {
+          Slog.w(TAG,"RemoteException calling onLocationChanged on " + receiver);
+          receiverDead=true;
+        }
       }
     }
     long prevStatusUpdateTime=r.mLastStatusBroadcast;
