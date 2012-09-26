@@ -1,6 +1,7 @@
 {
   final ActivityRecord TOP_ACT=resumedAppLocked();
   final ProcessRecord TOP_APP=TOP_ACT != null ? TOP_ACT.app : null;
+  final long oldTime=SystemClock.uptimeMillis() - ProcessList.MAX_EMPTY_TIME;
   if (false) {
     RuntimeException e=new RuntimeException();
     e.fillInStackTrace();
@@ -8,15 +9,30 @@
   }
   mAdjSeq++;
   mNewNumServiceProcs=0;
+  final int emptyProcessLimit;
+  final int hiddenProcessLimit;
+  if (mProcessLimit <= 0) {
+    emptyProcessLimit=hiddenProcessLimit=0;
+  }
+ else   if (mProcessLimit == 1) {
+    emptyProcessLimit=1;
+    hiddenProcessLimit=0;
+  }
+ else {
+    emptyProcessLimit=(mProcessLimit * 2) / 3;
+    hiddenProcessLimit=mProcessLimit - emptyProcessLimit;
+  }
   int numSlots=(ProcessList.HIDDEN_APP_MAX_ADJ - ProcessList.HIDDEN_APP_MIN_ADJ + 1) / 2;
-  int emptyFactor=(mLruProcesses.size() - mNumNonHiddenProcs - mNumHiddenProcs) / numSlots;
+  int numEmptyProcs=mLruProcesses.size() - mNumNonHiddenProcs - mNumHiddenProcs;
+  if (numEmptyProcs > hiddenProcessLimit) {
+    numEmptyProcs=hiddenProcessLimit;
+  }
+  int emptyFactor=numEmptyProcs / numSlots;
   if (emptyFactor < 1)   emptyFactor=1;
   int hiddenFactor=(mNumHiddenProcs > 0 ? mNumHiddenProcs : 1) / numSlots;
   if (hiddenFactor < 1)   hiddenFactor=1;
   int stepHidden=0;
   int stepEmpty=0;
-  final int emptyProcessLimit=mProcessLimit > 1 ? mProcessLimit / 2 : mProcessLimit;
-  final int hiddenProcessLimit=mProcessLimit > 1 ? mProcessLimit / 2 : mProcessLimit;
   int numHidden=0;
   int numEmpty=0;
   int numTrimming=0;
@@ -27,10 +43,11 @@
   int nextHiddenAdj=curHiddenAdj + 1;
   int curEmptyAdj=ProcessList.HIDDEN_APP_MIN_ADJ;
   int nextEmptyAdj=curEmptyAdj + 2;
+  int curClientHiddenAdj=curEmptyAdj;
   while (i > 0) {
     i--;
     ProcessRecord app=mLruProcesses.get(i);
-    updateOomAdjLocked(app,curHiddenAdj,curEmptyAdj,TOP_APP,true);
+    updateOomAdjLocked(app,curHiddenAdj,curClientHiddenAdj,curEmptyAdj,TOP_APP,true);
     if (!app.killedBackground) {
       if (app.curRawAdj == curHiddenAdj && app.hasActivities) {
         mNumHiddenProcs++;
@@ -43,14 +60,26 @@
             if (nextHiddenAdj > ProcessList.HIDDEN_APP_MAX_ADJ) {
               nextHiddenAdj=ProcessList.HIDDEN_APP_MAX_ADJ;
             }
+            if (curClientHiddenAdj <= curHiddenAdj) {
+              curClientHiddenAdj=curHiddenAdj + 1;
+              if (curClientHiddenAdj > ProcessList.HIDDEN_APP_MAX_ADJ) {
+                curClientHiddenAdj=ProcessList.HIDDEN_APP_MAX_ADJ;
+              }
+            }
           }
         }
         numHidden++;
         if (numHidden > hiddenProcessLimit) {
           Slog.i(TAG,"No longer want " + app.processName + " (pid "+ app.pid+ "): hidden #"+ numHidden);
-          EventLog.writeEvent(EventLogTags.AM_KILL,app.pid,app.processName,app.setAdj,"too many background");
+          EventLog.writeEvent(EventLogTags.AM_KILL,app.userId,app.pid,app.processName,app.setAdj,"too many background");
           app.killedBackground=true;
           Process.killProcessQuiet(app.pid);
+        }
+      }
+ else       if (app.curRawAdj == curHiddenAdj && app.hasClientActivities) {
+        curClientHiddenAdj++;
+        if (curClientHiddenAdj > ProcessList.HIDDEN_APP_MAX_ADJ) {
+          curClientHiddenAdj=ProcessList.HIDDEN_APP_MAX_ADJ;
         }
       }
  else {
@@ -70,19 +99,27 @@
  else         if (app.curRawAdj < ProcessList.HIDDEN_APP_MIN_ADJ) {
           mNumNonHiddenProcs++;
         }
-        if (app.curAdj >= ProcessList.HIDDEN_APP_MIN_ADJ) {
-          numEmpty++;
-          if (numEmpty > emptyProcessLimit) {
-            Slog.i(TAG,"No longer want " + app.processName + " (pid "+ app.pid+ "): empty #"+ numEmpty);
-            EventLog.writeEvent(EventLogTags.AM_KILL,app.pid,app.processName,app.setAdj,"too many background");
+        if (app.curAdj >= ProcessList.HIDDEN_APP_MIN_ADJ && !app.hasClientActivities) {
+          if (numEmpty > ProcessList.TRIM_EMPTY_APPS && app.lastActivityTime < oldTime) {
+            Slog.i(TAG,"No longer want " + app.processName + " (pid "+ app.pid+ "): empty for "+ ((oldTime + ProcessList.MAX_EMPTY_TIME - app.lastActivityTime) / 1000)+ "s");
+            EventLog.writeEvent(EventLogTags.AM_KILL,app.userId,app.pid,app.processName,app.setAdj,"old background process");
             app.killedBackground=true;
             Process.killProcessQuiet(app.pid);
+          }
+ else {
+            numEmpty++;
+            if (numEmpty > emptyProcessLimit) {
+              Slog.i(TAG,"No longer want " + app.processName + " (pid "+ app.pid+ "): empty #"+ numEmpty);
+              EventLog.writeEvent(EventLogTags.AM_KILL,app.userId,app.pid,app.processName,app.setAdj,"too many background");
+              app.killedBackground=true;
+              Process.killProcessQuiet(app.pid);
+            }
           }
         }
       }
       if (app.isolated && app.services.size() <= 0) {
         Slog.i(TAG,"Isolated process " + app.processName + " (pid "+ app.pid+ ") no longer needed");
-        EventLog.writeEvent(EventLogTags.AM_KILL,app.pid,app.processName,app.setAdj,"isolated not needed");
+        EventLog.writeEvent(EventLogTags.AM_KILL,app.userId,app.pid,app.processName,app.setAdj,"isolated not needed");
         app.killedBackground=true;
         Process.killProcessQuiet(app.pid);
       }
@@ -92,7 +129,7 @@
     }
   }
   mNumServiceProcs=mNewNumServiceProcs;
-  if (numHidden <= (ProcessList.MAX_HIDDEN_APPS / 4) && numEmpty <= (ProcessList.MAX_HIDDEN_APPS / 4)) {
+  if (numHidden <= ProcessList.TRIM_HIDDEN_APPS && numEmpty <= ProcessList.TRIM_EMPTY_APPS) {
     final int numHiddenAndEmpty=numHidden + numEmpty;
     final int N=mLruProcesses.size();
     int factor=numTrimming / 3;
@@ -102,10 +139,10 @@
     if (factor < minFactor)     factor=minFactor;
     int step=0;
     int fgTrimLevel;
-    if (numHiddenAndEmpty <= (ProcessList.MAX_HIDDEN_APPS / 5)) {
+    if (numHiddenAndEmpty <= ProcessList.TRIM_CRITICAL_THRESHOLD) {
       fgTrimLevel=ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL;
     }
- else     if (numHiddenAndEmpty <= (ProcessList.MAX_HIDDEN_APPS / 3)) {
+ else     if (numHiddenAndEmpty <= ProcessList.TRIM_LOW_THRESHOLD) {
       fgTrimLevel=ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW;
     }
  else {
