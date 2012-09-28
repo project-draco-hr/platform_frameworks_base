@@ -1,0 +1,47 @@
+{
+  List<AccessibilityServiceInfo> services=getInstalledSpeakingAccessibilityServices(mContext);
+  if (services.isEmpty()) {
+    return;
+  }
+  boolean keyguardLocked=false;
+  try {
+    keyguardLocked=mWindowManager.isKeyguardLocked();
+  }
+ catch (  RemoteException re) {
+  }
+  final boolean hasMoreThanOneUser=mUserManager.getUsers().size() > 1;
+  AccessibilityServiceInfo service=services.get(0);
+  boolean enableTouchExploration=(service.flags & AccessibilityServiceInfo.FLAG_REQUEST_TOUCH_EXPLORATION_MODE) != 0;
+  if (!enableTouchExploration) {
+    final int serviceCount=services.size();
+    for (int i=1; i < serviceCount; i++) {
+      AccessibilityServiceInfo candidate=services.get(i);
+      if ((candidate.flags & AccessibilityServiceInfo.FLAG_REQUEST_TOUCH_EXPLORATION_MODE) != 0) {
+        enableTouchExploration=true;
+        service=candidate;
+        break;
+      }
+    }
+  }
+  ServiceInfo serviceInfo=service.getResolveInfo().serviceInfo;
+  ComponentName componentName=new ComponentName(serviceInfo.packageName,serviceInfo.name);
+  if (!keyguardLocked || !hasMoreThanOneUser) {
+    final int userId=ActivityManager.getCurrentUser();
+    String enabledServiceString=componentName.flattenToString();
+    ContentResolver resolver=mContext.getContentResolver();
+    Settings.Secure.putStringForUser(resolver,Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,enabledServiceString,userId);
+    Settings.Secure.putStringForUser(resolver,Settings.Secure.TOUCH_EXPLORATION_GRANTED_ACCESSIBILITY_SERVICES,enabledServiceString,userId);
+    if (enableTouchExploration) {
+      Settings.Secure.putIntForUser(resolver,Settings.Secure.TOUCH_EXPLORATION_ENABLED,1,userId);
+    }
+    Settings.Secure.putIntForUser(resolver,Settings.Secure.ACCESSIBILITY_SCRIPT_INJECTION,1,userId);
+    Settings.Secure.putIntForUser(resolver,Settings.Secure.ACCESSIBILITY_ENABLED,1,userId);
+  }
+ else   if (keyguardLocked) {
+    try {
+      mAccessibilityManager.temporaryEnableAccessibilityStateUntilKeyguardRemoved(componentName,enableTouchExploration);
+    }
+ catch (    RemoteException re) {
+    }
+  }
+}
