@@ -17,6 +17,7 @@
   mInnerFields.mHoldScreen=null;
   mInnerFields.mScreenBrightness=-1;
   mInnerFields.mButtonBrightness=-1;
+  mInnerFields.mDisplayHasContent=LayoutFields.DISPLAY_CONTENT_UNKNOWN;
   mTransactionSequence++;
   final DisplayContent defaultDisplay=getDefaultDisplayContentLocked();
   final DisplayInfo defaultInfo=defaultDisplay.getDisplayInfo();
@@ -31,7 +32,6 @@
     if (mStrictModeFlash != null) {
       mStrictModeFlash.positionSurface(defaultDw,defaultDh);
     }
-    mDisplayManagerService.performTraversalInTransactionFromWindowManager();
     boolean focusDisplayed=false;
     boolean updateAllDrawn=false;
     DisplayContentsIterator iterator=new DisplayContentsIterator();
@@ -45,6 +45,9 @@
       final int innerDw=displayInfo.appWidth;
       final int innerDh=displayInfo.appHeight;
       final boolean isDefaultDisplay=(displayId == Display.DEFAULT_DISPLAY);
+      if (mInnerFields.mDisplayHasContent != LayoutFields.DISPLAY_CONTENT_MIRROR) {
+        mInnerFields.mDisplayHasContent=LayoutFields.DISPLAY_CONTENT_UNKNOWN;
+      }
       int repeats=0;
       do {
         repeats++;
@@ -120,8 +123,8 @@
         if (w.mHasSurface) {
           final boolean committed=winAnimator.commitFinishDrawingLocked(currentTime);
           if (isDefaultDisplay && committed) {
-            if ((w.mAttrs.flags & WindowManager.LayoutParams.FLAG_SHOW_WALLPAPER) != 0) {
-              if (WindowManagerService.DEBUG_WALLPAPER)               Slog.v(TAG,"First draw done in potential wallpaper target " + w);
+            if ((w.mAttrs.flags & FLAG_SHOW_WALLPAPER) != 0) {
+              if (DEBUG_WALLPAPER)               Slog.v(TAG,"First draw done in potential wallpaper target " + w);
               mInnerFields.mWallpaperMayChange=true;
               displayContent.pendingLayoutChanges|=WindowManagerPolicy.FINISH_LAYOUT_REDO_WALLPAPER;
               if (WindowManagerService.DEBUG_LAYOUT_REPEATS) {
@@ -140,7 +143,7 @@
               atoken.numInterestingWindows=atoken.numDrawnWindows=0;
               atoken.startingDisplayed=false;
             }
-            if ((w.isOnScreen() || winAnimator.mAttrType == WindowManager.LayoutParams.TYPE_BASE_APPLICATION) && !w.mExiting && !w.mDestroying) {
+            if ((w.isOnScreen() || winAnimator.mAttrType == TYPE_BASE_APPLICATION) && !w.mExiting && !w.mDestroying) {
               if (WindowManagerService.DEBUG_VISIBILITY || WindowManagerService.DEBUG_ORIENTATION) {
                 Slog.v(TAG,"Eval win " + w + ": isDrawn="+ w.isDrawnLw()+ ", isAnimating="+ winAnimator.isAnimating());
                 if (!w.isDrawnLw()) {
@@ -168,209 +171,224 @@
         }
         updateResizingWindows(w);
       }
-      if (!mInnerFields.mDimming && mAnimator.isDimmingLocked(displayId)) {
-        stopDimmingLocked(displayId);
-      }
-    }
-    if (updateAllDrawn) {
-      updateAllDrawnLocked();
-    }
-    if (focusDisplayed) {
-      mH.sendEmptyMessage(H.REPORT_LOSING_FOCUS);
-    }
-  }
- catch (  RuntimeException e) {
-    Log.wtf(TAG,"Unhandled exception in Window Manager",e);
-  }
+      final boolean hasUniqueContent;
+switch (mInnerFields.mDisplayHasContent) {
+case LayoutFields.DISPLAY_CONTENT_MIRROR:
+        hasUniqueContent=isDefaultDisplay;
+      break;
+case LayoutFields.DISPLAY_CONTENT_UNIQUE:
+    hasUniqueContent=true;
+  break;
+case LayoutFields.DISPLAY_CONTENT_UNKNOWN:
+default :
+hasUniqueContent=false;
+break;
+}
+mDisplayManagerService.setDisplayHasContent(displayId,hasUniqueContent,true);
+if (!mInnerFields.mDimming && mAnimator.isDimmingLocked(displayId)) {
+stopDimmingLocked(displayId);
+}
+}
+if (updateAllDrawn) {
+updateAllDrawnLocked();
+}
+if (focusDisplayed) {
+mH.sendEmptyMessage(H.REPORT_LOSING_FOCUS);
+}
+mDisplayManagerService.performTraversalInTransactionFromWindowManager();
+}
+ catch (RuntimeException e) {
+Log.wtf(TAG,"Unhandled exception in Window Manager",e);
+}
  finally {
-    Surface.closeTransaction();
-  }
-  final WindowList defaultWindows=defaultDisplay.getWindowList();
-  if (mAppTransitionReady) {
-    defaultDisplay.pendingLayoutChanges|=handleAppTransitionReadyLocked(defaultWindows);
-    if (DEBUG_LAYOUT_REPEATS)     debugLayoutRepeats("after handleAppTransitionReadyLocked",defaultDisplay.pendingLayoutChanges);
-  }
-  mInnerFields.mAdjResult=0;
-  if (!mAnimator.mAnimating && mAppTransitionRunning) {
-    defaultDisplay.pendingLayoutChanges|=handleAnimatingStoppedAndTransitionLocked();
-    if (DEBUG_LAYOUT_REPEATS)     debugLayoutRepeats("after handleAnimStopAndXitionLock",defaultDisplay.pendingLayoutChanges);
-  }
-  if (mInnerFields.mWallpaperForceHidingChanged && defaultDisplay.pendingLayoutChanges == 0 && !mAppTransitionReady) {
-    defaultDisplay.pendingLayoutChanges|=animateAwayWallpaperLocked();
-    if (DEBUG_LAYOUT_REPEATS)     debugLayoutRepeats("after animateAwayWallpaperLocked",defaultDisplay.pendingLayoutChanges);
-  }
-  mInnerFields.mWallpaperForceHidingChanged=false;
-  if (mInnerFields.mWallpaperMayChange) {
-    if (WindowManagerService.DEBUG_WALLPAPER)     Slog.v(TAG,"Wallpaper may change!  Adjusting");
-    mInnerFields.mAdjResult|=adjustWallpaperWindowsLocked();
-  }
-  if ((mInnerFields.mAdjResult & ADJUST_WALLPAPER_LAYERS_CHANGED) != 0) {
-    if (DEBUG_WALLPAPER)     Slog.v(TAG,"Wallpaper layer changed: assigning layers + relayout");
-    defaultDisplay.pendingLayoutChanges|=WindowManagerPolicy.FINISH_LAYOUT_REDO_LAYOUT;
-    assignLayersLocked(defaultWindows);
-  }
- else   if ((mInnerFields.mAdjResult & ADJUST_WALLPAPER_VISIBILITY_CHANGED) != 0) {
-    if (DEBUG_WALLPAPER)     Slog.v(TAG,"Wallpaper visibility changed: relayout");
-    defaultDisplay.pendingLayoutChanges|=WindowManagerPolicy.FINISH_LAYOUT_REDO_LAYOUT;
-  }
-  if (mFocusMayChange) {
-    mFocusMayChange=false;
-    if (updateFocusedWindowLocked(UPDATE_FOCUS_PLACING_SURFACES,false)) {
-      defaultDisplay.pendingLayoutChanges|=WindowManagerPolicy.FINISH_LAYOUT_REDO_ANIM;
-      mInnerFields.mAdjResult=0;
-    }
-  }
-  if (needsLayout()) {
-    defaultDisplay.pendingLayoutChanges|=WindowManagerPolicy.FINISH_LAYOUT_REDO_LAYOUT;
-    if (DEBUG_LAYOUT_REPEATS)     debugLayoutRepeats("mLayoutNeeded",defaultDisplay.pendingLayoutChanges);
-  }
-  if (!mResizingWindows.isEmpty()) {
-    for (i=mResizingWindows.size() - 1; i >= 0; i--) {
-      WindowState win=mResizingWindows.get(i);
-      final WindowStateAnimator winAnimator=win.mWinAnimator;
-      try {
-        if (DEBUG_RESIZE || DEBUG_ORIENTATION)         Slog.v(TAG,"Reporting new frame to " + win + ": "+ win.mCompatFrame);
-        int diff=0;
-        boolean configChanged=win.isConfigChanged();
-        if ((DEBUG_RESIZE || DEBUG_ORIENTATION || DEBUG_CONFIGURATION|| ((String)win.mAttrs.getTitle()).contains("Keyguard")) && configChanged) {
-          Slog.i(TAG,"Sending new config to window " + win + ": "+ winAnimator.mSurfaceW+ "x"+ winAnimator.mSurfaceH+ " / "+ mCurConfiguration+ " / 0x"+ Integer.toHexString(diff));
-        }
-        win.mConfiguration=mCurConfiguration;
-        if (DEBUG_ORIENTATION && winAnimator.mDrawState == WindowStateAnimator.DRAW_PENDING)         Slog.i(TAG,"Resizing " + win + " WITH DRAW PENDING");
-        win.mClient.resized(win.mFrame,win.mLastContentInsets,win.mLastVisibleInsets,winAnimator.mDrawState == WindowStateAnimator.DRAW_PENDING,configChanged ? win.mConfiguration : null);
-        win.mContentInsetsChanged=false;
-        win.mVisibleInsetsChanged=false;
-        winAnimator.mSurfaceResized=false;
-      }
- catch (      RemoteException e) {
-        win.mOrientationChanging=false;
-      }
-    }
-    mResizingWindows.clear();
-  }
-  if (DEBUG_ORIENTATION && mDisplayFrozen)   Slog.v(TAG,"With display frozen, orientationChangeComplete=" + mInnerFields.mOrientationChangeComplete);
-  if (mInnerFields.mOrientationChangeComplete) {
-    if (mWindowsFreezingScreen) {
-      mWindowsFreezingScreen=false;
-      mH.removeMessages(H.WINDOW_FREEZE_TIMEOUT);
-    }
-    stopFreezingDisplayLocked();
-  }
-  boolean wallpaperDestroyed=false;
-  i=mDestroySurface.size();
-  if (i > 0) {
-    do {
-      i--;
-      WindowState win=mDestroySurface.get(i);
-      win.mDestroying=false;
-      if (mInputMethodWindow == win) {
-        mInputMethodWindow=null;
-      }
-      if (win == mWallpaperTarget) {
-        wallpaperDestroyed=true;
-      }
-      win.mWinAnimator.destroySurfaceLocked();
-    }
+Surface.closeTransaction();
+}
+final WindowList defaultWindows=defaultDisplay.getWindowList();
+if (mAppTransitionReady) {
+defaultDisplay.pendingLayoutChanges|=handleAppTransitionReadyLocked(defaultWindows);
+if (DEBUG_LAYOUT_REPEATS) debugLayoutRepeats("after handleAppTransitionReadyLocked",defaultDisplay.pendingLayoutChanges);
+}
+mInnerFields.mAdjResult=0;
+if (!mAnimator.mAnimating && mAppTransitionRunning) {
+defaultDisplay.pendingLayoutChanges|=handleAnimatingStoppedAndTransitionLocked();
+if (DEBUG_LAYOUT_REPEATS) debugLayoutRepeats("after handleAnimStopAndXitionLock",defaultDisplay.pendingLayoutChanges);
+}
+if (mInnerFields.mWallpaperForceHidingChanged && defaultDisplay.pendingLayoutChanges == 0 && !mAppTransitionReady) {
+defaultDisplay.pendingLayoutChanges|=animateAwayWallpaperLocked();
+if (DEBUG_LAYOUT_REPEATS) debugLayoutRepeats("after animateAwayWallpaperLocked",defaultDisplay.pendingLayoutChanges);
+}
+mInnerFields.mWallpaperForceHidingChanged=false;
+if (mInnerFields.mWallpaperMayChange) {
+if (WindowManagerService.DEBUG_WALLPAPER) Slog.v(TAG,"Wallpaper may change!  Adjusting");
+mInnerFields.mAdjResult|=adjustWallpaperWindowsLocked();
+}
+if ((mInnerFields.mAdjResult & ADJUST_WALLPAPER_LAYERS_CHANGED) != 0) {
+if (DEBUG_WALLPAPER) Slog.v(TAG,"Wallpaper layer changed: assigning layers + relayout");
+defaultDisplay.pendingLayoutChanges|=WindowManagerPolicy.FINISH_LAYOUT_REDO_LAYOUT;
+assignLayersLocked(defaultWindows);
+}
+ else if ((mInnerFields.mAdjResult & ADJUST_WALLPAPER_VISIBILITY_CHANGED) != 0) {
+if (DEBUG_WALLPAPER) Slog.v(TAG,"Wallpaper visibility changed: relayout");
+defaultDisplay.pendingLayoutChanges|=WindowManagerPolicy.FINISH_LAYOUT_REDO_LAYOUT;
+}
+if (mFocusMayChange) {
+mFocusMayChange=false;
+if (updateFocusedWindowLocked(UPDATE_FOCUS_PLACING_SURFACES,false)) {
+defaultDisplay.pendingLayoutChanges|=WindowManagerPolicy.FINISH_LAYOUT_REDO_ANIM;
+mInnerFields.mAdjResult=0;
+}
+}
+if (needsLayout()) {
+defaultDisplay.pendingLayoutChanges|=WindowManagerPolicy.FINISH_LAYOUT_REDO_LAYOUT;
+if (DEBUG_LAYOUT_REPEATS) debugLayoutRepeats("mLayoutNeeded",defaultDisplay.pendingLayoutChanges);
+}
+if (!mResizingWindows.isEmpty()) {
+for (i=mResizingWindows.size() - 1; i >= 0; i--) {
+WindowState win=mResizingWindows.get(i);
+final WindowStateAnimator winAnimator=win.mWinAnimator;
+try {
+if (DEBUG_RESIZE || DEBUG_ORIENTATION) Slog.v(TAG,"Reporting new frame to " + win + ": "+ win.mCompatFrame);
+int diff=0;
+boolean configChanged=win.isConfigChanged();
+if ((DEBUG_RESIZE || DEBUG_ORIENTATION || DEBUG_CONFIGURATION|| ((String)win.mAttrs.getTitle()).contains("Keyguard")) && configChanged) {
+Slog.i(TAG,"Sending new config to window " + win + ": "+ winAnimator.mSurfaceW+ "x"+ winAnimator.mSurfaceH+ " / "+ mCurConfiguration+ " / 0x"+ Integer.toHexString(diff));
+}
+win.mConfiguration=mCurConfiguration;
+if (DEBUG_ORIENTATION && winAnimator.mDrawState == WindowStateAnimator.DRAW_PENDING) Slog.i(TAG,"Resizing " + win + " WITH DRAW PENDING");
+win.mClient.resized(win.mFrame,win.mLastContentInsets,win.mLastVisibleInsets,winAnimator.mDrawState == WindowStateAnimator.DRAW_PENDING,configChanged ? win.mConfiguration : null);
+win.mContentInsetsChanged=false;
+win.mVisibleInsetsChanged=false;
+winAnimator.mSurfaceResized=false;
+}
+ catch (RemoteException e) {
+win.mOrientationChanging=false;
+}
+}
+mResizingWindows.clear();
+}
+if (DEBUG_ORIENTATION && mDisplayFrozen) Slog.v(TAG,"With display frozen, orientationChangeComplete=" + mInnerFields.mOrientationChangeComplete);
+if (mInnerFields.mOrientationChangeComplete) {
+if (mWindowsFreezingScreen) {
+mWindowsFreezingScreen=false;
+mH.removeMessages(H.WINDOW_FREEZE_TIMEOUT);
+}
+stopFreezingDisplayLocked();
+}
+boolean wallpaperDestroyed=false;
+i=mDestroySurface.size();
+if (i > 0) {
+do {
+i--;
+WindowState win=mDestroySurface.get(i);
+win.mDestroying=false;
+if (mInputMethodWindow == win) {
+mInputMethodWindow=null;
+}
+if (win == mWallpaperTarget) {
+wallpaperDestroyed=true;
+}
+win.mWinAnimator.destroySurfaceLocked();
+}
  while (i > 0);
-    mDestroySurface.clear();
-  }
-  for (i=mExitingTokens.size() - 1; i >= 0; i--) {
-    WindowToken token=mExitingTokens.get(i);
-    if (!token.hasVisible) {
-      mExitingTokens.remove(i);
-      if (token.windowType == TYPE_WALLPAPER) {
-        mWallpaperTokens.remove(token);
-        updateLayoutToAnimWallpaperTokens();
-      }
-    }
-  }
-  for (i=mExitingAppTokens.size() - 1; i >= 0; i--) {
-    AppWindowToken token=mExitingAppTokens.get(i);
-    if (!token.hasVisible && !mClosingApps.contains(token)) {
-      token.mAppAnimator.clearAnimation();
-      token.mAppAnimator.animating=false;
-      if (DEBUG_ADD_REMOVE || DEBUG_TOKEN_MOVEMENT)       Slog.v(TAG,"performLayout: App token exiting now removed" + token);
-      mAppTokens.remove(token);
-      mAnimatingAppTokens.remove(token);
-      mExitingAppTokens.remove(i);
-    }
-  }
-  if (!mAnimator.mAnimating && mRelayoutWhileAnimating.size() > 0) {
-    for (int j=mRelayoutWhileAnimating.size() - 1; j >= 0; j--) {
-      try {
-        mRelayoutWhileAnimating.get(j).mClient.doneAnimating();
-      }
- catch (      RemoteException e) {
-      }
-    }
-    mRelayoutWhileAnimating.clear();
-  }
-  if (wallpaperDestroyed && (adjustWallpaperWindowsLocked() != 0)) {
-    getDefaultDisplayContentLocked().layoutNeeded=true;
-  }
-  DisplayContentsIterator iterator=new DisplayContentsIterator();
-  while (iterator.hasNext()) {
-    DisplayContent displayContent=iterator.next();
-    if (displayContent.pendingLayoutChanges != 0) {
-      displayContent.layoutNeeded=true;
-    }
-  }
-  mInputMonitor.updateInputWindowsLw(true);
-  setHoldScreenLocked(mInnerFields.mHoldScreen);
-  if (!mDisplayFrozen) {
-    if (mInnerFields.mScreenBrightness < 0 || mInnerFields.mScreenBrightness > 1.0f) {
-      mPowerManager.setScreenBrightnessOverrideFromWindowManager(-1);
-    }
+mDestroySurface.clear();
+}
+for (i=mExitingTokens.size() - 1; i >= 0; i--) {
+WindowToken token=mExitingTokens.get(i);
+if (!token.hasVisible) {
+mExitingTokens.remove(i);
+if (token.windowType == TYPE_WALLPAPER) {
+mWallpaperTokens.remove(token);
+updateLayoutToAnimWallpaperTokens();
+}
+}
+}
+for (i=mExitingAppTokens.size() - 1; i >= 0; i--) {
+AppWindowToken token=mExitingAppTokens.get(i);
+if (!token.hasVisible && !mClosingApps.contains(token)) {
+token.mAppAnimator.clearAnimation();
+token.mAppAnimator.animating=false;
+if (DEBUG_ADD_REMOVE || DEBUG_TOKEN_MOVEMENT) Slog.v(TAG,"performLayout: App token exiting now removed" + token);
+mAppTokens.remove(token);
+mAnimatingAppTokens.remove(token);
+mExitingAppTokens.remove(i);
+}
+}
+if (!mAnimator.mAnimating && mRelayoutWhileAnimating.size() > 0) {
+for (int j=mRelayoutWhileAnimating.size() - 1; j >= 0; j--) {
+try {
+mRelayoutWhileAnimating.get(j).mClient.doneAnimating();
+}
+ catch (RemoteException e) {
+}
+}
+mRelayoutWhileAnimating.clear();
+}
+if (wallpaperDestroyed && (adjustWallpaperWindowsLocked() != 0)) {
+getDefaultDisplayContentLocked().layoutNeeded=true;
+}
+DisplayContentsIterator iterator=new DisplayContentsIterator();
+while (iterator.hasNext()) {
+DisplayContent displayContent=iterator.next();
+if (displayContent.pendingLayoutChanges != 0) {
+displayContent.layoutNeeded=true;
+}
+}
+mInputMonitor.updateInputWindowsLw(true);
+setHoldScreenLocked(mInnerFields.mHoldScreen);
+if (!mDisplayFrozen) {
+if (mInnerFields.mScreenBrightness < 0 || mInnerFields.mScreenBrightness > 1.0f) {
+mPowerManager.setScreenBrightnessOverrideFromWindowManager(-1);
+}
  else {
-      mPowerManager.setScreenBrightnessOverrideFromWindowManager(toBrightnessOverride(mInnerFields.mScreenBrightness));
-    }
-    if (mInnerFields.mButtonBrightness < 0 || mInnerFields.mButtonBrightness > 1.0f) {
-      mPowerManager.setButtonBrightnessOverrideFromWindowManager(-1);
-    }
+mPowerManager.setScreenBrightnessOverrideFromWindowManager(toBrightnessOverride(mInnerFields.mScreenBrightness));
+}
+if (mInnerFields.mButtonBrightness < 0 || mInnerFields.mButtonBrightness > 1.0f) {
+mPowerManager.setButtonBrightnessOverrideFromWindowManager(-1);
+}
  else {
-      mPowerManager.setButtonBrightnessOverrideFromWindowManager(toBrightnessOverride(mInnerFields.mButtonBrightness));
-    }
-  }
-  if (mTurnOnScreen) {
-    if (DEBUG_VISIBILITY)     Slog.v(TAG,"Turning screen on after layout!");
-    mPowerManager.wakeUp(SystemClock.uptimeMillis());
-    mTurnOnScreen=false;
-  }
-  if (mInnerFields.mUpdateRotation) {
-    if (DEBUG_ORIENTATION)     Slog.d(TAG,"Performing post-rotate rotation");
-    if (updateRotationUncheckedLocked(false)) {
-      mH.sendEmptyMessage(H.SEND_NEW_CONFIGURATION);
-    }
+mPowerManager.setButtonBrightnessOverrideFromWindowManager(toBrightnessOverride(mInnerFields.mButtonBrightness));
+}
+}
+if (mTurnOnScreen) {
+if (DEBUG_VISIBILITY) Slog.v(TAG,"Turning screen on after layout!");
+mPowerManager.wakeUp(SystemClock.uptimeMillis());
+mTurnOnScreen=false;
+}
+if (mInnerFields.mUpdateRotation) {
+if (DEBUG_ORIENTATION) Slog.d(TAG,"Performing post-rotate rotation");
+if (updateRotationUncheckedLocked(false)) {
+mH.sendEmptyMessage(H.SEND_NEW_CONFIGURATION);
+}
  else {
-      mInnerFields.mUpdateRotation=false;
-    }
-  }
-  if (mInnerFields.mOrientationChangeComplete && !defaultDisplay.layoutNeeded && !mInnerFields.mUpdateRotation) {
-    checkDrawnWindowsLocked();
-  }
-  final int N=mPendingRemove.size();
-  if (N > 0) {
-    if (mPendingRemoveTmp.length < N) {
-      mPendingRemoveTmp=new WindowState[N + 10];
-    }
-    mPendingRemove.toArray(mPendingRemoveTmp);
-    mPendingRemove.clear();
-    DisplayContentList displayList=new DisplayContentList();
-    for (i=0; i < N; i++) {
-      WindowState w=mPendingRemoveTmp[i];
-      removeWindowInnerLocked(w.mSession,w);
-      if (!displayList.contains(w.mDisplayContent)) {
-        displayList.add(w.mDisplayContent);
-      }
-    }
-    for (    DisplayContent displayContent : displayList) {
-      assignLayersLocked(displayContent.getWindowList());
-      displayContent.layoutNeeded=true;
-    }
-  }
-  enableScreenIfNeededLocked();
-  updateLayoutToAnimationLocked();
-  if (DEBUG_WINDOW_TRACE) {
-    Slog.e(TAG,"performLayoutAndPlaceSurfacesLockedInner exit: animating=" + mAnimator.mAnimating);
-  }
+mInnerFields.mUpdateRotation=false;
+}
+}
+if (mInnerFields.mOrientationChangeComplete && !defaultDisplay.layoutNeeded && !mInnerFields.mUpdateRotation) {
+checkDrawnWindowsLocked();
+}
+final int N=mPendingRemove.size();
+if (N > 0) {
+if (mPendingRemoveTmp.length < N) {
+mPendingRemoveTmp=new WindowState[N + 10];
+}
+mPendingRemove.toArray(mPendingRemoveTmp);
+mPendingRemove.clear();
+DisplayContentList displayList=new DisplayContentList();
+for (i=0; i < N; i++) {
+WindowState w=mPendingRemoveTmp[i];
+removeWindowInnerLocked(w.mSession,w);
+if (!displayList.contains(w.mDisplayContent)) {
+displayList.add(w.mDisplayContent);
+}
+}
+for (DisplayContent displayContent : displayList) {
+assignLayersLocked(displayContent.getWindowList());
+displayContent.layoutNeeded=true;
+}
+}
+enableScreenIfNeededLocked();
+updateLayoutToAnimationLocked();
+if (DEBUG_WINDOW_TRACE) {
+Slog.e(TAG,"performLayoutAndPlaceSurfacesLockedInner exit: animating=" + mAnimator.mAnimating);
+}
 }
