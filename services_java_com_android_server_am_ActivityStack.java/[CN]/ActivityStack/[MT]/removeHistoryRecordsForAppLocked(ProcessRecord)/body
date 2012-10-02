@@ -1,7 +1,43 @@
 {
-  removeHistoryRecordsForAppLocked(mLRUActivities,app);
-  removeHistoryRecordsForAppLocked(mStoppingActivities,app);
-  removeHistoryRecordsForAppLocked(mGoingToSleepActivities,app);
-  removeHistoryRecordsForAppLocked(mWaitingVisibleActivities,app);
-  removeHistoryRecordsForAppLocked(mFinishingActivities,app);
+  removeHistoryRecordsForAppLocked(mLRUActivities,app,"mLRUActivities");
+  removeHistoryRecordsForAppLocked(mStoppingActivities,app,"mStoppingActivities");
+  removeHistoryRecordsForAppLocked(mGoingToSleepActivities,app,"mGoingToSleepActivities");
+  removeHistoryRecordsForAppLocked(mWaitingVisibleActivities,app,"mWaitingVisibleActivities");
+  removeHistoryRecordsForAppLocked(mFinishingActivities,app,"mFinishingActivities");
+  boolean hasVisibleActivities=false;
+  int i=mHistory.size();
+  if (DEBUG_CLEANUP)   Slog.v(TAG,"Removing app " + app + " from history with "+ i+ " entries");
+  while (i > 0) {
+    i--;
+    ActivityRecord r=(ActivityRecord)mHistory.get(i);
+    if (DEBUG_CLEANUP)     Slog.v(TAG,"Record #" + i + " "+ r+ ": app="+ r.app);
+    if (r.app == app) {
+      if ((!r.haveState && !r.stateNotNeeded) || r.finishing) {
+        if (ActivityStack.DEBUG_ADD_REMOVE || DEBUG_CLEANUP) {
+          RuntimeException here=new RuntimeException("here");
+          here.fillInStackTrace();
+          Slog.i(TAG,"Removing activity " + r + " from stack at "+ i+ ": haveState="+ r.haveState+ " stateNotNeeded="+ r.stateNotNeeded+ " finishing="+ r.finishing+ " state="+ r.state,here);
+        }
+        if (!r.finishing) {
+          Slog.w(TAG,"Force removing " + r + ": app died, no saved state");
+          EventLog.writeEvent(EventLogTags.AM_FINISH_ACTIVITY,r.userId,System.identityHashCode(r),r.task.taskId,r.shortComponentName,"proc died without state saved");
+        }
+        removeActivityFromHistoryLocked(r);
+      }
+ else {
+        if (localLOGV)         Slog.v(TAG,"Keeping entry, setting app to null");
+        if (r.visible) {
+          hasVisibleActivities=true;
+        }
+        r.app=null;
+        r.nowVisible=false;
+        if (!r.haveState) {
+          if (ActivityStack.DEBUG_SAVED_STATE)           Slog.i(TAG,"App died, clearing saved state of " + r);
+          r.icicle=null;
+        }
+      }
+      r.stack.cleanUpActivityLocked(r,true,true);
+    }
+  }
+  return hasVisibleActivities;
 }
