@@ -1,36 +1,84 @@
 {
-  final long time=event.getEventTime();
-  MotionEvent trackballEvent;
+  final long time=SystemClock.uptimeMillis();
 switch (event.getAction()) {
 case MotionEvent.ACTION_HOVER_ENTER:
     mLastTouchPadStartTimeMs=time;
   mAlwaysInTapRegion=true;
 mTouchpadEnterXPosition=event.getX();
 mTouchpadEnterYPosition=event.getY();
+mAccumulatedX=0;
+mAccumulatedY=0;
+mLastMoveX=0;
+mLastMoveY=0;
+mHandler.removeMessages(0);
 break;
 case MotionEvent.ACTION_HOVER_MOVE:
-float deltaX=event.getX() - mLastTouchpadXPosition;
-float deltaY=event.getY() - mLastTouchpadYPosition;
-trackballEvent=MotionEvent.obtain(mLastTouchPadStartTimeMs,time,MotionEvent.ACTION_MOVE,deltaX / 50,deltaY / 50,0,0,event.getMetaState(),10f,10f,event.getDeviceId(),0);
-trackballEvent.setSource(InputDevice.SOURCE_CLASS_TRACKBALL);
-viewroot.enqueueInputEvent(trackballEvent);
-deltaX=event.getX() - mTouchpadEnterXPosition;
-deltaY=event.getY() - mTouchpadEnterYPosition;
+float deltaX=event.getX() - mTouchpadEnterXPosition;
+float deltaY=event.getY() - mTouchpadEnterYPosition;
 if (mTouchSlopSquared < deltaX * deltaX + deltaY * deltaY) {
 mAlwaysInTapRegion=false;
+}
+mLastMoveX=event.getX() - mLastTouchpadXPosition;
+mLastMoveY=event.getY() - mLastTouchpadYPosition;
+mAccumulatedX+=mLastMoveX;
+mAccumulatedY+=mLastMoveY;
+float mAccumulatedXSquared=mAccumulatedX * mAccumulatedX;
+float mAccumulatedYSquared=mAccumulatedY * mAccumulatedY;
+if (mAccumulatedXSquared > mDistancePerTickSquared || mAccumulatedYSquared > mDistancePerTickSquared) {
+float dominantAxis;
+float sign;
+boolean isXAxis;
+int key;
+int repeatCount=0;
+if (mAccumulatedXSquared > mAccumulatedYSquared) {
+dominantAxis=mAccumulatedX;
+isXAxis=true;
+}
+ else {
+dominantAxis=mAccumulatedY;
+isXAxis=false;
+}
+sign=(dominantAxis > 0) ? 1 : -1;
+if (isXAxis) {
+key=(sign == 1) ? KeyEvent.KEYCODE_DPAD_RIGHT : KeyEvent.KEYCODE_DPAD_LEFT;
+}
+ else {
+key=(sign == 1) ? KeyEvent.KEYCODE_DPAD_DOWN : KeyEvent.KEYCODE_DPAD_UP;
+}
+while (dominantAxis * dominantAxis > mDistancePerTickSquared) {
+repeatCount++;
+dominantAxis-=sign * mDistancePerTick;
+viewroot.enqueueInputEvent(new KeyEvent(time,time,KeyEvent.ACTION_DOWN,key,0,event.getMetaState(),event.getDeviceId(),0,KeyEvent.FLAG_FALLBACK,event.getSource()));
+viewroot.enqueueInputEvent(new KeyEvent(time,time,KeyEvent.ACTION_UP,key,0,event.getMetaState(),event.getDeviceId(),0,KeyEvent.FLAG_FALLBACK,event.getSource()));
+}
+mAccumulatedX=isXAxis ? dominantAxis : 0;
+mAccumulatedY=isXAxis ? 0 : dominantAxis;
+mLastKeySent=key;
+mKeySendRateMs=(int)((time - mLastTouchPadKeySendTimeMs) / repeatCount);
+mLastTouchPadKeySendTimeMs=time;
 }
 break;
 case MotionEvent.ACTION_HOVER_EXIT:
 if (time - mLastTouchPadStartTimeMs < MAX_TAP_TIME && mAlwaysInTapRegion) {
-trackballEvent=MotionEvent.obtain(mLastTouchPadStartTimeMs,time,MotionEvent.ACTION_DOWN,0,0,0,0,event.getMetaState(),10f,10f,event.getDeviceId(),0);
+MotionEvent trackballEvent=MotionEvent.obtain(mLastTouchPadStartTimeMs,time,MotionEvent.ACTION_DOWN,0,0,0,0,event.getMetaState(),10f,10f,event.getDeviceId(),0);
 trackballEvent.setSource(InputDevice.SOURCE_CLASS_TRACKBALL);
 viewroot.enqueueInputEvent(trackballEvent);
 trackballEvent=MotionEvent.obtain(mLastTouchPadStartTimeMs,time,MotionEvent.ACTION_UP,0,0,0,0,event.getMetaState(),10f,10f,event.getDeviceId(),0);
 trackballEvent.setSource(InputDevice.SOURCE_CLASS_TRACKBALL);
 viewroot.enqueueInputEvent(trackballEvent);
 }
+ else {
+float xMoveSquared=mLastMoveX * mLastMoveX;
+float yMoveSquared=mLastMoveY * mLastMoveY;
+if (mMinFlickDistanceSquared <= xMoveSquared + yMoveSquared && time - mLastTouchPadEventTimeMs <= MAX_TAP_TIME && mKeySendRateMs <= mMaxRepeatDelay && mKeySendRateMs > 0) {
+Message message=Message.obtain(mHandler,FLICK_MSG_ID,mKeySendRateMs,mLastKeySent,viewroot);
+mRecentEvent=event;
+mHandler.sendMessageDelayed(message,mKeySendRateMs);
+}
+}
 break;
 }
+mLastTouchPadEventTimeMs=time;
 mLastTouchpadXPosition=event.getX();
 mLastTouchpadYPosition=event.getY();
 }
