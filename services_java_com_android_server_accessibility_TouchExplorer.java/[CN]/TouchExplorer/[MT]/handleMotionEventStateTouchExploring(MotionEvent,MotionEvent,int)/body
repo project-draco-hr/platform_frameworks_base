@@ -5,37 +5,41 @@
   mDoubleTapDetector.onMotionEvent(event,policyFlags);
 switch (event.getActionMasked()) {
 case MotionEvent.ACTION_DOWN:
-    if (mSendHoverEnterDelayed.isPending()) {
-      sendAccessibilityEvent(AccessibilityEvent.TYPE_TOUCH_INTERACTION_END);
-    }
-  sendAccessibilityEvent(AccessibilityEvent.TYPE_TOUCH_INTERACTION_START);
-handleMotionEventGestureDetecting(rawEvent,policyFlags);
+    handleMotionEventGestureDetecting(rawEvent,policyFlags);
 case MotionEvent.ACTION_POINTER_DOWN:
 {
 switch (activePointerCount) {
 case 0:
 {
-    throw new IllegalStateException("The must always be one active pointer in" + "touch exploring state!");
-  }
+        throw new IllegalStateException("The must always be one active pointer in" + "touch exploring state!");
+      }
 case 1:
 {
-  if (mSendHoverEnterDelayed.isPending()) {
-    mSendHoverEnterDelayed.remove();
-    mSendHoverExitDelayed.remove();
-  }
-  if (mSendInteractionEndEventsDelayed.isPending()) {
-    mSendInteractionEndEventsDelayed.forceSendAndRemove();
-  }
-  mPerformLongPressDelayed.remove();
-  if (mDoubleTapDetector.firstTapDetected()) {
-    mPerformLongPressDelayed.post(event,policyFlags);
-    break;
-  }
-  final int pointerId=receivedTracker.getPrimaryActivePointerId();
-  final int pointerIdBits=(1 << pointerId);
-  mSendHoverEnterDelayed.post(event,true,pointerIdBits,policyFlags);
-}
-break;
+      if (mSendHoverEnterDelayed.isPending()) {
+        mSendHoverEnterDelayed.remove();
+        mSendHoverExitDelayed.remove();
+      }
+      if (mSendTouchExplorationEndDelayed.isPending()) {
+        mSendTouchExplorationEndDelayed.forceSendAndRemove();
+      }
+      if (mSendTouchInteractionEndDelayed.isPending()) {
+        mSendTouchInteractionEndDelayed.forceSendAndRemove();
+      }
+      if (event.getPointerCount() == 1) {
+        sendAccessibilityEvent(AccessibilityEvent.TYPE_TOUCH_INTERACTION_START);
+      }
+      mPerformLongPressDelayed.remove();
+      if (mDoubleTapDetector.firstTapDetected()) {
+        mPerformLongPressDelayed.post(event,policyFlags);
+        break;
+      }
+      if (!mTouchExplorationInProgress) {
+        final int pointerId=receivedTracker.getPrimaryActivePointerId();
+        final int pointerIdBits=(1 << pointerId);
+        mSendHoverEnterDelayed.post(event,true,pointerIdBits,policyFlags);
+      }
+    }
+  break;
 default :
 {
 }
@@ -82,10 +86,18 @@ break;
 }
 }
  else {
+if (mPerformLongPressDelayed.isPending()) {
+final float deltaX=receivedTracker.getReceivedPointerDownX(pointerId) - rawEvent.getX(pointerIndex);
+final float deltaY=receivedTracker.getReceivedPointerDownY(pointerId) - rawEvent.getY(pointerIndex);
+final double moveDelta=Math.hypot(deltaX,deltaY);
+if (moveDelta > mTouchSlop) {
+mPerformLongPressDelayed.remove();
+}
+}
 if (mDoubleTapDetector.firstTapDetected()) {
 break;
 }
-sendEnterEventsIfNeeded(policyFlags);
+sendTouchExplorationGestureStartAndHoverEnterIfNeeded(policyFlags);
 sendMotionEvent(event,MotionEvent.ACTION_HOVER_MOVE,pointerIdBits,policyFlags);
 }
 }
@@ -105,7 +117,7 @@ final double moveDelta=Math.hypot(deltaX,deltaY);
 if (moveDelta < mDoubleTapSlop) {
 break;
 }
-sendExitEventsIfNeeded(policyFlags);
+sendHoverExitAndTouchExplorationGestureEndIfNeeded(policyFlags);
 }
 mStrokeBuffer.clear();
 if (isDraggingGesture(event)) {
@@ -129,7 +141,7 @@ mPerformLongPressDelayed.remove();
 }
  else {
 mPerformLongPressDelayed.remove();
-sendExitEventsIfNeeded(policyFlags);
+sendHoverExitAndTouchExplorationGestureEndIfNeeded(policyFlags);
 }
 mCurrentState=STATE_DELEGATING;
 sendDownForAllActiveNotInjectedPointers(event,policyFlags);
@@ -152,11 +164,13 @@ break;
 }
 mPerformLongPressDelayed.remove();
 if (mSendHoverEnterDelayed.isPending()) {
-mSendHoverEnterDelayed.mTouchExplorationInProgress=false;
 mSendHoverExitDelayed.post(event,false,pointerIdBits,policyFlags);
 }
  else {
-sendExitEventsIfNeeded(policyFlags);
+sendHoverExitAndTouchExplorationGestureEndIfNeeded(policyFlags);
+}
+if (!mSendTouchInteractionEndDelayed.isPending()) {
+mSendTouchInteractionEndDelayed.post();
 }
 }
 break;
