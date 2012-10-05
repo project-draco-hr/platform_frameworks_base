@@ -2,6 +2,7 @@
   final boolean mustNotify;
   boolean mustInitialize=false;
   boolean updateAutoBrightness=mTwilightChanged;
+  boolean screenOnWasBlocked=false;
   mTwilightChanged=false;
 synchronized (mLock) {
     mPendingUpdatePowerStateLocked=false;
@@ -48,7 +49,6 @@ synchronized (mLock) {
     }
     if (mScreenOffBecauseOfProximity && mProximity != PROXIMITY_POSITIVE) {
       mScreenOffBecauseOfProximity=false;
-      setScreenOn(true);
       sendOnProximityNegative();
     }
   }
@@ -78,23 +78,41 @@ synchronized (mLock) {
   if (!mScreenOffBecauseOfProximity) {
     if (wantScreenOn(mPowerRequest.screenState)) {
       if (!mElectronBeamOffAnimator.isStarted()) {
-        setScreenOn(true);
-        if (USE_ELECTRON_BEAM_ON_ANIMATION) {
-          if (!mElectronBeamOnAnimator.isStarted()) {
-            if (mPowerState.getElectronBeamLevel() == 1.0f) {
-              mPowerState.dismissElectronBeam();
-            }
- else             if (mPowerState.prepareElectronBeam(true)) {
-              mElectronBeamOnAnimator.start();
-            }
- else {
-              mElectronBeamOnAnimator.end();
-            }
+        if (mPowerRequest.blockScreenOn && !mPowerState.isScreenOn()) {
+          if (DEBUG) {
+            Slog.d(TAG,"Blocked screen on while screen currently off.");
           }
+          screenOnWasBlocked=true;
         }
  else {
-          mPowerState.setElectronBeamLevel(1.0f);
-          mPowerState.dismissElectronBeam();
+          setScreenOn(true);
+          if (USE_ELECTRON_BEAM_ON_ANIMATION) {
+            if (!mElectronBeamOnAnimator.isStarted()) {
+              if (mPowerState.getElectronBeamLevel() == 1.0f) {
+                mPowerState.dismissElectronBeam();
+              }
+ else               if (mPowerState.prepareElectronBeam(true)) {
+                mElectronBeamOnAnimator.start();
+              }
+ else {
+                mElectronBeamOnAnimator.end();
+              }
+            }
+          }
+ else {
+            mPowerState.setElectronBeamLevel(1.0f);
+            mPowerState.dismissElectronBeam();
+          }
+        }
+      }
+ else {
+        if (mPowerRequest.blockScreenOn) {
+          if (DEBUG) {
+            Slog.d(TAG,"Blocked screen on while screen off animation running.");
+          }
+          screenOnWasBlocked=true;
+          setScreenOn(false);
+          mElectronBeamOffAnimator.end();
         }
       }
     }
@@ -114,10 +132,13 @@ synchronized (mLock) {
       }
     }
   }
-  if (mustNotify && !mElectronBeamOnAnimator.isStarted() && !mElectronBeamOffAnimator.isStarted()&& mPowerState.waitUntilClean(mCleanListener)) {
+  if (mustNotify && !screenOnWasBlocked && !mElectronBeamOnAnimator.isStarted()&& !mElectronBeamOffAnimator.isStarted()&& mPowerState.waitUntilClean(mCleanListener)) {
 synchronized (mLock) {
       if (!mPendingRequestChangedLocked) {
         mDisplayReadyLocked=true;
+        if (DEBUG) {
+          Slog.d(TAG,"Display ready!");
+        }
       }
     }
     sendOnStateChanged();
