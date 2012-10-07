@@ -1,21 +1,41 @@
 {
-  System.out.println("queryForUserInformation");
-  Uri userContactUri=Uri.withAppendedPath(ContactsContract.Profile.CONTENT_URI,ContactsContract.Contacts.Data.CONTENT_DIRECTORY);
-  String[] selectArgs={ContactsContract.CommonDataKinds.StructuredName.DISPLAY_NAME,ContactsContract.CommonDataKinds.Photo.PHOTO};
-  String where=String.format("(%s = ? OR %s = ?) AND %s IS NULL",ContactsContract.Contacts.Data.MIMETYPE,ContactsContract.Contacts.Data.MIMETYPE,ContactsContract.RawContacts.ACCOUNT_TYPE);
-  String[] whereArgs={ContactsContract.CommonDataKinds.StructuredName.CONTENT_ITEM_TYPE,ContactsContract.CommonDataKinds.Photo.CONTENT_ITEM_TYPE};
-  mUserInfoLoader=new CursorLoader(mContext,userContactUri,selectArgs,where,whereArgs,null);
-  mUserInfoLoader.registerListener(0,new Loader.OnLoadCompleteListener<Cursor>(){
-    @Override public void onLoadComplete(    Loader<Cursor> loader,    Cursor cursor){
-      UserManager userManager=(UserManager)mContext.getSystemService(Context.USER_SERVICE);
-      if (cursor != null && cursor.moveToFirst()) {
-        String name=cursor.getString(0);
-        BitmapDrawable d=new BitmapDrawable(userManager.getUserIcon(userManager.getUserHandle()));
-        mModel.setUserTileInfo(name,d);
+  Context currentUserContext=null;
+  UserInfo userInfo=null;
+  try {
+    userInfo=ActivityManagerNative.getDefault().getCurrentUser();
+    currentUserContext=mContext.createPackageContextAsUser("android",0,new UserHandle(userInfo.id));
+  }
+ catch (  NameNotFoundException e) {
+    Log.e(TAG,"Couldn't create user context",e);
+    throw new RuntimeException(e);
+  }
+catch (  RemoteException e) {
+    Log.e(TAG,"Couldn't get user info",e);
+  }
+  final int userId=userInfo.id;
+  final Context context=currentUserContext;
+  mUserInfoTask=new AsyncTask<Void,Void,Pair<String,BitmapDrawable>>(){
+    @Override protected Pair<String,BitmapDrawable> doInBackground(    Void... params){
+      Cursor cursor=context.getContentResolver().query(Profile.CONTENT_URI,new String[]{Phone._ID,Phone.DISPLAY_NAME},null,null,null);
+      String name=null;
+      try {
+        if (cursor.moveToFirst()) {
+          name=cursor.getString(cursor.getColumnIndex(Phone.DISPLAY_NAME));
+        }
       }
-      mUserInfoLoader.stopLoading();
+  finally {
+        cursor.close();
+      }
+      final UserManager userManager=(UserManager)mContext.getSystemService(Context.USER_SERVICE);
+      final BitmapDrawable icon=new BitmapDrawable(mContext.getResources(),userManager.getUserIcon(userId));
+      return new Pair<String,BitmapDrawable>(name,icon);
+    }
+    @Override protected void onPostExecute(    Pair<String,BitmapDrawable> result){
+      super.onPostExecute(result);
+      mModel.setUserTileInfo(result.first,result.second);
+      mUserInfoTask=null;
     }
   }
-);
-  mUserInfoLoader.startLoading();
+;
+  mUserInfoTask.execute();
 }
