@@ -21,18 +21,33 @@
   if (callback != null) {
     uss.mStopCallbacks.add(callback);
   }
-  if (uss.mState != UserStartedState.STATE_STOPPING) {
+  if (uss.mState != UserStartedState.STATE_STOPPING && uss.mState != UserStartedState.STATE_SHUTDOWN) {
     uss.mState=UserStartedState.STATE_STOPPING;
     long ident=Binder.clearCallingIdentity();
     try {
-      Intent intent=new Intent(Intent.ACTION_SHUTDOWN);
-      final IIntentReceiver resultReceiver=new IIntentReceiver.Stub(){
+      final Intent stoppingIntent=new Intent(Intent.ACTION_USER_STOPPING);
+      stoppingIntent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY);
+      stoppingIntent.putExtra(Intent.EXTRA_USER_HANDLE,userId);
+      final Intent shutdownIntent=new Intent(Intent.ACTION_SHUTDOWN);
+      final IIntentReceiver shutdownReceiver=new IIntentReceiver.Stub(){
         @Override public void performReceive(        Intent intent,        int resultCode,        String data,        Bundle extras,        boolean ordered,        boolean sticky,        int sendingUser){
           finishUserStop(uss);
         }
       }
 ;
-      broadcastIntentLocked(null,null,intent,null,resultReceiver,0,null,null,null,true,false,MY_PID,Process.SYSTEM_UID,userId);
+      final IIntentReceiver stoppingReceiver=new IIntentReceiver.Stub(){
+        @Override public void performReceive(        Intent intent,        int resultCode,        String data,        Bundle extras,        boolean ordered,        boolean sticky,        int sendingUser){
+synchronized (ActivityManagerService.this) {
+            if (uss.mState != UserStartedState.STATE_STOPPING) {
+              return;
+            }
+            uss.mState=UserStartedState.STATE_SHUTDOWN;
+          }
+          broadcastIntentLocked(null,null,shutdownIntent,null,shutdownReceiver,0,null,null,null,true,false,MY_PID,Process.SYSTEM_UID,userId);
+        }
+      }
+;
+      broadcastIntentLocked(null,null,stoppingIntent,null,stoppingReceiver,0,null,null,android.Manifest.permission.INTERACT_ACROSS_USERS,true,false,MY_PID,Process.SYSTEM_UID,UserHandle.USER_ALL);
     }
   finally {
       Binder.restoreCallingIdentity(ident);
