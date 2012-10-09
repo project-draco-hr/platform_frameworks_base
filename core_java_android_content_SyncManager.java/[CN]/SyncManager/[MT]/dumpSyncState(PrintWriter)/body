@@ -50,12 +50,13 @@
   pw.println(sb.toString());
   pw.println();
   pw.println("Active Syncs: " + mActiveSyncContexts.size());
+  final PackageManager pm=mContext.getPackageManager();
   for (  SyncManager.ActiveSyncContext activeSyncContext : mActiveSyncContexts) {
     final long durationInSeconds=(now - activeSyncContext.mStartTime) / 1000;
     pw.print("  ");
     pw.print(DateUtils.formatElapsedTime(durationInSeconds));
     pw.print(" - ");
-    pw.print(activeSyncContext.mSyncOperation.dump(false));
+    pw.print(activeSyncContext.mSyncOperation.dump(pm,false));
     pw.println();
   }
 synchronized (mSyncQueue) {
@@ -67,73 +68,57 @@ synchronized (mSyncQueue) {
   pw.println();
   pw.println("Sync Status");
   for (  AccountAndUser account : accounts) {
-    pw.print("  Account ");
-    pw.print(account.account.name);
-    pw.print(" u");
-    pw.print(account.userId);
-    pw.print(" ");
-    pw.print(account.account.type);
-    pw.println(":");
-    for (    RegisteredServicesCache.ServiceInfo<SyncAdapterType> syncAdapterType : mSyncAdapters.getAllServices(account.userId)) {
+    pw.printf("Account %s u%d %s\n",account.account.name,account.userId,account.account.type);
+    pw.println("=======================================================================");
+    final PrintTable table=new PrintTable(13);
+    table.set(0,0,"Authority","Syncable","Enabled","Delay","Loc","Poll","Per","Serv","User","Tot","Time","Last Sync","Periodic");
+    final List<RegisteredServicesCache.ServiceInfo<SyncAdapterType>> sorted=Lists.newArrayList();
+    sorted.addAll(mSyncAdapters.getAllServices(account.userId));
+    Collections.sort(sorted,new Comparator<RegisteredServicesCache.ServiceInfo<SyncAdapterType>>(){
+      @Override public int compare(      RegisteredServicesCache.ServiceInfo<SyncAdapterType> lhs,      RegisteredServicesCache.ServiceInfo<SyncAdapterType> rhs){
+        return lhs.type.authority.compareTo(rhs.type.authority);
+      }
+    }
+);
+    for (    RegisteredServicesCache.ServiceInfo<SyncAdapterType> syncAdapterType : sorted) {
       if (!syncAdapterType.type.accountType.equals(account.account.type)) {
         continue;
       }
+      int row=table.getNumRows();
       SyncStorageEngine.AuthorityInfo settings=mSyncStorageEngine.getOrCreateAuthority(account.account,account.userId,syncAdapterType.type.authority);
       SyncStatusInfo status=mSyncStorageEngine.getOrCreateSyncStatus(settings);
-      pw.print("    ");
-      pw.print(settings.authority);
-      pw.println(":");
-      pw.print("      settings:");
-      pw.print(" " + (settings.syncable > 0 ? "syncable" : (settings.syncable == 0 ? "not syncable" : "not initialized")));
-      pw.print(", " + (settings.enabled ? "enabled" : "disabled"));
+      String authority=settings.authority;
+      if (authority.length() > 50) {
+        authority=authority.substring(authority.length() - 50);
+      }
+      table.set(row,0,authority,settings.syncable,settings.enabled);
+      table.set(row,4,status.numSourceLocal,status.numSourcePoll,status.numSourcePeriodic,status.numSourceServer,status.numSourceUser,status.numSyncs,DateUtils.formatElapsedTime(status.totalElapsedTime / 1000));
+      for (int i=0; i < settings.periodicSyncs.size(); i++) {
+        final Pair<Bundle,Long> pair=settings.periodicSyncs.get(0);
+        final String period=String.valueOf(pair.second);
+        final String extras=pair.first.size() > 0 ? pair.first.toString() : "";
+        final String next=formatTime(status.getPeriodicSyncTime(0) + pair.second * 1000);
+        table.set(row + i * 2,12,period + extras);
+        table.set(row + i * 2 + 1,12,next);
+      }
+      int row1=row;
       if (settings.delayUntil > now) {
-        pw.print(", delay for " + ((settings.delayUntil - now) / 1000) + " sec");
+        table.set(row1++,12,"D: " + (settings.delayUntil - now) / 1000);
+        if (settings.backoffTime > now) {
+          table.set(row1++,12,"B: " + (settings.backoffTime - now) / 1000);
+          table.set(row1++,12,settings.backoffDelay / 1000);
+        }
       }
-      if (settings.backoffTime > now) {
-        pw.print(", backoff for " + ((settings.backoffTime - now) / 1000) + " sec");
-      }
-      if (settings.backoffDelay > 0) {
-        pw.print(", the backoff increment is " + settings.backoffDelay / 1000 + " sec");
-      }
-      pw.println();
-      for (int periodicIndex=0; periodicIndex < settings.periodicSyncs.size(); periodicIndex++) {
-        Pair<Bundle,Long> info=settings.periodicSyncs.get(periodicIndex);
-        long lastPeriodicTime=status.getPeriodicSyncTime(periodicIndex);
-        long nextPeriodicTime=lastPeriodicTime + info.second * 1000;
-        pw.println("      periodic period=" + info.second + ", extras="+ info.first+ ", next="+ formatTime(nextPeriodicTime));
-      }
-      pw.print("      count: local=");
-      pw.print(status.numSourceLocal);
-      pw.print(" poll=");
-      pw.print(status.numSourcePoll);
-      pw.print(" periodic=");
-      pw.print(status.numSourcePeriodic);
-      pw.print(" server=");
-      pw.print(status.numSourceServer);
-      pw.print(" user=");
-      pw.print(status.numSourceUser);
-      pw.print(" total=");
-      pw.print(status.numSyncs);
-      pw.println();
-      pw.print("      total duration: ");
-      pw.println(DateUtils.formatElapsedTime(status.totalElapsedTime / 1000));
       if (status.lastSuccessTime != 0) {
-        pw.print("      SUCCESS: source=");
-        pw.print(SyncStorageEngine.SOURCES[status.lastSuccessSource]);
-        pw.print(" time=");
-        pw.println(formatTime(status.lastSuccessTime));
+        table.set(row1++,11,SyncStorageEngine.SOURCES[status.lastSuccessSource] + " " + "SUCCESS");
+        table.set(row1++,11,formatTime(status.lastSuccessTime));
       }
       if (status.lastFailureTime != 0) {
-        pw.print("      FAILURE: source=");
-        pw.print(SyncStorageEngine.SOURCES[status.lastFailureSource]);
-        pw.print(" initialTime=");
-        pw.print(formatTime(status.initialFailureTime));
-        pw.print(" lastTime=");
-        pw.println(formatTime(status.lastFailureTime));
-        int errCode=status.getLastFailureMesgAsInt(0);
-        pw.print("      message: ");
-        pw.println(getLastFailureMessage(errCode) + " (" + errCode+ ")");
+        table.set(row1++,11,SyncStorageEngine.SOURCES[status.lastFailureSource] + " " + "FAILURE");
+        table.set(row1++,11,formatTime(status.lastFailureTime));
+        table.set(row1++,11,status.lastFailureMesg);
       }
     }
+    table.writeTo(pw);
   }
 }
