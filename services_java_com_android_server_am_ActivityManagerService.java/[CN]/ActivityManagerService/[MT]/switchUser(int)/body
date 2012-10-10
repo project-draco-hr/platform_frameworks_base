@@ -17,9 +17,11 @@ synchronized (this) {
         return false;
       }
       mWindowManager.startFreezingScreen(R.anim.screen_user_exit,R.anim.screen_user_enter);
+      boolean needStart=false;
       if (mStartedUsers.get(userId) == null) {
         mStartedUsers.put(userId,new UserStartedState(new UserHandle(userId),false));
         updateStartedUserArrayLocked();
+        needStart=true;
       }
       mCurrentUserId=userId;
       mCurrentUserArray=new int[]{userId};
@@ -32,22 +34,26 @@ synchronized (this) {
       if (uss.mState == UserStartedState.STATE_STOPPING) {
         uss.mState=UserStartedState.STATE_RUNNING;
         updateStartedUserArrayLocked();
+        needStart=true;
       }
  else       if (uss.mState == UserStartedState.STATE_SHUTDOWN) {
         uss.mState=UserStartedState.STATE_BOOTING;
         updateStartedUserArrayLocked();
+        needStart=true;
       }
       mHandler.removeMessages(REPORT_USER_SWITCH_MSG);
       mHandler.removeMessages(USER_SWITCH_TIMEOUT_MSG);
       mHandler.sendMessage(mHandler.obtainMessage(REPORT_USER_SWITCH_MSG,oldUserId,userId,uss));
       mHandler.sendMessageDelayed(mHandler.obtainMessage(USER_SWITCH_TIMEOUT_MSG,oldUserId,userId,uss),USER_SWITCH_TIMEOUT);
-      Intent intent=new Intent(Intent.ACTION_USER_STARTED);
-      intent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY | Intent.FLAG_RECEIVER_FOREGROUND);
-      intent.putExtra(Intent.EXTRA_USER_HANDLE,userId);
-      broadcastIntentLocked(null,null,intent,null,null,0,null,null,null,false,false,MY_PID,Process.SYSTEM_UID,userId);
+      if (needStart) {
+        Intent intent=new Intent(Intent.ACTION_USER_STARTED);
+        intent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY | Intent.FLAG_RECEIVER_FOREGROUND);
+        intent.putExtra(Intent.EXTRA_USER_HANDLE,userId);
+        broadcastIntentLocked(null,null,intent,null,null,0,null,null,null,false,false,MY_PID,Process.SYSTEM_UID,userId);
+      }
       if ((userInfo.flags & UserInfo.FLAG_INITIALIZED) == 0) {
         if (userId != 0) {
-          intent=new Intent(Intent.ACTION_USER_INITIALIZE);
+          Intent intent=new Intent(Intent.ACTION_USER_INITIALIZE);
           intent.addFlags(Intent.FLAG_RECEIVER_FOREGROUND);
           broadcastIntentLocked(null,null,intent,null,new IIntentReceiver.Stub(){
             public void performReceive(            Intent intent,            int resultCode,            String data,            Bundle extras,            boolean ordered,            boolean sticky,            int sendingUser){
@@ -67,6 +73,16 @@ synchronized (this) {
       }
       getUserManagerLocked().userForeground(userId);
       sendUserSwitchBroadcastsLocked(oldUserId,userId);
+      if (needStart) {
+        Intent intent=new Intent(Intent.ACTION_USER_STARTING);
+        intent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY);
+        intent.putExtra(Intent.EXTRA_USER_HANDLE,userId);
+        broadcastIntentLocked(null,null,intent,null,new IIntentReceiver.Stub(){
+          @Override public void performReceive(          Intent intent,          int resultCode,          String data,          Bundle extras,          boolean ordered,          boolean sticky,          int sendingUser) throws RemoteException {
+          }
+        }
+,0,null,null,android.Manifest.permission.INTERACT_ACROSS_USERS,false,false,MY_PID,Process.SYSTEM_UID,UserHandle.USER_ALL);
+      }
     }
   }
   finally {
