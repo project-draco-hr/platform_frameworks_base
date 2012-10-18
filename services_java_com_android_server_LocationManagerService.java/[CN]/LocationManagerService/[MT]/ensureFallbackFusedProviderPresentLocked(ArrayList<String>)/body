@@ -1,0 +1,42 @@
+{
+  PackageManager pm=mContext.getPackageManager();
+  String systemPackageName=mContext.getPackageName();
+  ArrayList<HashSet<Signature>> sigSets=ServiceWatcher.getSignatureSets(mContext,pkgs);
+  List<ResolveInfo> rInfos=pm.queryIntentServicesAsUser(new Intent(FUSED_LOCATION_SERVICE_ACTION),PackageManager.GET_META_DATA,mCurrentUserId);
+  for (  ResolveInfo rInfo : rInfos) {
+    String packageName=rInfo.serviceInfo.packageName;
+    try {
+      PackageInfo pInfo;
+      pInfo=pm.getPackageInfo(packageName,PackageManager.GET_SIGNATURES);
+      if (!ServiceWatcher.isSignatureMatch(pInfo.signatures,sigSets)) {
+        Log.w(TAG,packageName + " resolves service " + FUSED_LOCATION_SERVICE_ACTION+ ", but has wrong signature, ignoring");
+        continue;
+      }
+    }
+ catch (    NameNotFoundException e) {
+      Log.e(TAG,"missing package: " + packageName);
+      continue;
+    }
+    if (rInfo.serviceInfo.metaData == null) {
+      Log.w(TAG,"Found fused provider without metadata: " + packageName);
+      continue;
+    }
+    int version=rInfo.serviceInfo.metaData.getInt(ServiceWatcher.EXTRA_SERVICE_VERSION,-1);
+    if (version == 0) {
+      if ((rInfo.serviceInfo.applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) == 0) {
+        if (D)         Log.d(TAG,"Fallback candidate not in /system: " + packageName);
+        continue;
+      }
+      if (pm.checkSignatures(systemPackageName,packageName) != PackageManager.SIGNATURE_MATCH) {
+        if (D)         Log.d(TAG,"Fallback candidate not signed the same as system: " + packageName);
+        continue;
+      }
+      if (D)       Log.d(TAG,"Found fallback provider: " + packageName);
+      return;
+    }
+ else {
+      if (D)       Log.d(TAG,"Fallback candidate not version 0: " + packageName);
+    }
+  }
+  throw new IllegalStateException("Unable to find a fused location provider that is in the " + "system partition with version 0 and signed with the platform certificate. " + "Such a package is needed to provide a default fused location provider in the "+ "event that no other fused location provider has been installed or is currently "+ "available. For example, coreOnly boot mode when decrypting the data "+ "partition. The fallback must also be marked coreApp=\"true\" in the manifest");
+}
