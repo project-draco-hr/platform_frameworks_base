@@ -11,9 +11,19 @@ case MotionEvent.ACTION_DOWN:
       mScroller.abortAnimation();
     }
   mDownMotionX=mLastMotionX=ev.getX();
+mDownMotionY=mLastMotionY=ev.getY();
+mDownScrollX=getScrollX();
+float[] p=mapPointFromSelfToParent(mLastMotionX,mLastMotionY);
+mParentDownMotionX=p[0];
+mParentDownMotionY=p[1];
 mLastMotionXRemainder=0;
 mTotalMotionX=0;
 mActivePointerId=ev.getPointerId(0);
+int leftEdgeBoundary=getOffsetX() + mEdgeSwipeRegionSize;
+int rightEdgeBoundary=getMeasuredWidth() - getOffsetX() - mEdgeSwipeRegionSize;
+if ((mDownMotionX <= leftEdgeBoundary || mDownMotionX >= rightEdgeBoundary)) {
+mDownEventOnEdge=true;
+}
 if (mTouchState == TOUCH_STATE_SCROLLING) {
 pageBeginMoving();
 }
@@ -39,6 +49,65 @@ mLastMotionXRemainder=deltaX - (int)deltaX;
 }
  else {
 awakenScrollBars();
+}
+}
+ else if (mTouchState == TOUCH_STATE_REORDERING) {
+mLastMotionX=ev.getX();
+mLastMotionY=ev.getY();
+float[] pt=mapPointFromSelfToParent(mLastMotionX,mLastMotionY);
+mParentDownMotionX=pt[0];
+mParentDownMotionY=pt[1];
+updateDragViewTranslationDuringDrag();
+final int dragViewIndex=indexOfChild(mDragView);
+int bufferSize=(int)(REORDERING_SIDE_PAGE_BUFFER_PERCENTAGE * getMinScaledMeasuredWidth());
+int leftBufferEdge=(int)mapPointFromSelfToParent(0,0)[0] + bufferSize;
+int rightBufferEdge=(int)mapPointFromSelfToParent(getMeasuredWidth(),0)[0] - bufferSize;
+float parentX=mParentDownMotionX;
+int pageIndexToSnapTo=-1;
+if (parentX < leftBufferEdge && dragViewIndex > 0) {
+pageIndexToSnapTo=dragViewIndex - 1;
+}
+ else if (parentX > rightBufferEdge && dragViewIndex < getChildCount() - 1) {
+pageIndexToSnapTo=dragViewIndex + 1;
+}
+final int pageUnderPointIndex=pageIndexToSnapTo;
+if (pageUnderPointIndex > -1) {
+if (pageUnderPointIndex != mSidePageHoverIndex && mScroller.isFinished()) {
+mSidePageHoverIndex=pageUnderPointIndex;
+mSidePageHoverRunnable=new Runnable(){
+@Override public void run(){
+mDownScrollX=getChildOffset(pageUnderPointIndex) - getRelativeChildOffset(pageUnderPointIndex);
+snapToPage(pageUnderPointIndex);
+int shiftDelta=(dragViewIndex < pageUnderPointIndex) ? -1 : 1;
+int lowerIndex=(dragViewIndex < pageUnderPointIndex) ? dragViewIndex + 1 : pageUnderPointIndex;
+int upperIndex=(dragViewIndex > pageUnderPointIndex) ? dragViewIndex - 1 : pageUnderPointIndex;
+for (int i=lowerIndex; i <= upperIndex; ++i) {
+View v=getChildAt(i);
+int oldX=getOffsetX() + getChildOffset(i);
+int newX=getOffsetX() + getChildOffset(i + shiftDelta);
+AnimatorSet anim=(AnimatorSet)v.getTag();
+if (anim != null) {
+anim.cancel();
+}
+v.setTranslationX(oldX - newX);
+anim=new AnimatorSet();
+anim.setDuration(REORDERING_REORDER_REPOSITION_DURATION);
+anim.playTogether(ObjectAnimator.ofFloat(v,"translationX",0f));
+anim.start();
+v.setTag(anim);
+}
+removeView(mDragView);
+addView(mDragView,pageUnderPointIndex);
+mSidePageHoverIndex=-1;
+}
+}
+;
+postDelayed(mSidePageHoverRunnable,REORDERING_SIDE_PAGE_HOVER_TIMEOUT);
+}
+}
+ else {
+removeCallbacks(mSidePageHoverRunnable);
+mSidePageHoverIndex=-1;
 }
 }
  else {
@@ -93,20 +162,25 @@ snapToPage(nextPage);
 snapToDestination();
 }
 }
+ else if (mTouchState == TOUCH_STATE_REORDERING) {
+if (!DISABLE_FLING_TO_DELETE) {
+PointF flingToDeleteVector=isFlingingToDelete();
+if (flingToDeleteVector != null) {
+onFlingToDelete(flingToDeleteVector);
+}
+}
+}
  else {
 onUnhandledTap(ev);
 }
-mTouchState=TOUCH_STATE_REST;
-mActivePointerId=INVALID_POINTER;
-releaseVelocityTracker();
+removeCallbacks(mSidePageHoverRunnable);
+resetTouchState();
 break;
 case MotionEvent.ACTION_CANCEL:
 if (mTouchState == TOUCH_STATE_SCROLLING) {
 snapToDestination();
 }
-mTouchState=TOUCH_STATE_REST;
-mActivePointerId=INVALID_POINTER;
-releaseVelocityTracker();
+resetTouchState();
 break;
 case MotionEvent.ACTION_POINTER_UP:
 onSecondaryPointerUp(ev);
