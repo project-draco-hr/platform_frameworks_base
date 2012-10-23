@@ -1,24 +1,30 @@
 {
   if (!mAmbientLuxValid || (time - mLightSensorEnableTime) < mLightSensorWarmUpTimeConfig) {
-    if (DEBUG) {
-      Slog.d(TAG,"updateAmbientLux: Initializing, " + "mAmbientLux=" + (mAmbientLuxValid ? mAmbientLux : -1) + ", mRecentShortTermAverageLux="+ mRecentShortTermAverageLux+ ", mRecentLongTermAverageLux="+ mRecentLongTermAverageLux);
-    }
     mAmbientLux=mRecentShortTermAverageLux;
     mAmbientLuxValid=true;
-    mLastAmbientBrightenTime=time;
-    mLastAmbientDarkenTime=time;
+    mDebounceLuxDirection=0;
+    mDebounceLuxTime=time;
+    if (DEBUG) {
+      Slog.d(TAG,"updateAmbientLux: Initializing: " + ", mRecentShortTermAverageLux=" + mRecentShortTermAverageLux + ", mRecentLongTermAverageLux="+ mRecentLongTermAverageLux+ ", mAmbientLux="+ mAmbientLux);
+    }
     updateAutoBrightness(true);
     return;
   }
-  float minAmbientLux=mAmbientLux * (1.0f + BRIGHTENING_LIGHT_HYSTERESIS);
-  if (mRecentShortTermAverageLux > minAmbientLux && mRecentLongTermAverageLux > minAmbientLux) {
-    long debounceTime=mLastAmbientDarkenTime + BRIGHTENING_LIGHT_DEBOUNCE;
-    if (time >= debounceTime) {
+  float brighteningLuxThreshold=mAmbientLux * (1.0f + BRIGHTENING_LIGHT_HYSTERESIS);
+  if (mRecentShortTermAverageLux > brighteningLuxThreshold && mRecentLongTermAverageLux > brighteningLuxThreshold) {
+    if (mDebounceLuxDirection <= 0) {
+      mDebounceLuxDirection=1;
+      mDebounceLuxTime=time;
       if (DEBUG) {
-        Slog.d(TAG,"updateAmbientLux: Brightened: " + "mAmbientLux=" + mAmbientLux + ", mRecentShortTermAverageLux="+ mRecentShortTermAverageLux+ ", mRecentLongTermAverageLux="+ mRecentLongTermAverageLux);
+        Slog.d(TAG,"updateAmbientLux: Possibly brightened, waiting for " + BRIGHTENING_LIGHT_DEBOUNCE + " ms: "+ "brighteningLuxThreshold="+ brighteningLuxThreshold+ ", mRecentShortTermAverageLux="+ mRecentShortTermAverageLux+ ", mRecentLongTermAverageLux="+ mRecentLongTermAverageLux+ ", mAmbientLux="+ mAmbientLux);
       }
-      mLastAmbientBrightenTime=time;
+    }
+    long debounceTime=mDebounceLuxTime + BRIGHTENING_LIGHT_DEBOUNCE;
+    if (time >= debounceTime) {
       mAmbientLux=mRecentShortTermAverageLux;
+      if (DEBUG) {
+        Slog.d(TAG,"updateAmbientLux: Brightened: " + "brighteningLuxThreshold=" + brighteningLuxThreshold + ", mRecentShortTermAverageLux="+ mRecentShortTermAverageLux+ ", mRecentLongTermAverageLux="+ mRecentLongTermAverageLux+ ", mAmbientLux="+ mAmbientLux);
+      }
       updateAutoBrightness(true);
     }
  else {
@@ -26,19 +32,36 @@
     }
     return;
   }
-  float maxAmbientLux=mAmbientLux * (1.0f - DARKENING_LIGHT_HYSTERESIS);
-  if (mRecentShortTermAverageLux < maxAmbientLux && mRecentLongTermAverageLux < maxAmbientLux) {
-    long debounceTime=mLastAmbientBrightenTime + DARKENING_LIGHT_DEBOUNCE;
-    if (time >= debounceTime) {
+  float darkeningLuxThreshold=mAmbientLux * (1.0f - DARKENING_LIGHT_HYSTERESIS);
+  if (mRecentShortTermAverageLux < darkeningLuxThreshold && mRecentLongTermAverageLux < darkeningLuxThreshold) {
+    if (mDebounceLuxDirection >= 0) {
+      mDebounceLuxDirection=-1;
+      mDebounceLuxTime=time;
       if (DEBUG) {
-        Slog.d(TAG,"updateAmbientLux: Darkened: " + "mAmbientLux=" + mAmbientLux + ", mRecentShortTermAverageLux="+ mRecentShortTermAverageLux+ ", mRecentLongTermAverageLux="+ mRecentLongTermAverageLux);
+        Slog.d(TAG,"updateAmbientLux: Possibly darkened, waiting for " + DARKENING_LIGHT_DEBOUNCE + " ms: "+ "darkeningLuxThreshold="+ darkeningLuxThreshold+ ", mRecentShortTermAverageLux="+ mRecentShortTermAverageLux+ ", mRecentLongTermAverageLux="+ mRecentLongTermAverageLux+ ", mAmbientLux="+ mAmbientLux);
       }
-      mLastAmbientDarkenTime=time;
-      mAmbientLux=mRecentShortTermAverageLux;
+    }
+    long debounceTime=mDebounceLuxTime + DARKENING_LIGHT_DEBOUNCE;
+    if (time >= debounceTime) {
+      mAmbientLux=Math.max(mRecentShortTermAverageLux,mRecentLongTermAverageLux);
+      if (DEBUG) {
+        Slog.d(TAG,"updateAmbientLux: Darkened: " + "darkeningLuxThreshold=" + darkeningLuxThreshold + ", mRecentShortTermAverageLux="+ mRecentShortTermAverageLux+ ", mRecentLongTermAverageLux="+ mRecentLongTermAverageLux+ ", mAmbientLux="+ mAmbientLux);
+      }
       updateAutoBrightness(true);
     }
  else {
       mHandler.sendEmptyMessageAtTime(MSG_LIGHT_SENSOR_DEBOUNCED,debounceTime);
     }
+    return;
+  }
+  if (mDebounceLuxDirection != 0) {
+    mDebounceLuxDirection=0;
+    mDebounceLuxTime=time;
+    if (DEBUG) {
+      Slog.d(TAG,"updateAmbientLux: Canceled debounce: " + "brighteningLuxThreshold=" + brighteningLuxThreshold + ", darkeningLuxThreshold="+ darkeningLuxThreshold+ ", mRecentShortTermAverageLux="+ mRecentShortTermAverageLux+ ", mRecentLongTermAverageLux="+ mRecentLongTermAverageLux+ ", mAmbientLux="+ mAmbientLux);
+    }
+  }
+  if (mLastObservedLux > brighteningLuxThreshold || mLastObservedLux < darkeningLuxThreshold) {
+    mHandler.sendEmptyMessageAtTime(MSG_LIGHT_SENSOR_DEBOUNCED,time + SYNTHETIC_LIGHT_SENSOR_RATE_MILLIS);
   }
 }
