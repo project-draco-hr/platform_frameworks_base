@@ -34,7 +34,19 @@ synchronized (mConnection) {
     }
 case MESSAGE_SAVE_NAME_AND_ADDRESS:
 {
+    boolean unbind=false;
     if (DBG)     Log.d(TAG,"MESSAGE_SAVE_NAME_AND_ADDRESS");
+synchronized (mConnection) {
+      if (!mEnable && mBluetooth != null) {
+        try {
+          mBluetooth.enable();
+        }
+ catch (        RemoteException e) {
+          Log.e(TAG,"Unable to call enable()",e);
+        }
+      }
+    }
+    if (mBluetooth != null)     waitForOnOff(true,false);
 synchronized (mConnection) {
       if (mBluetooth != null) {
         String name=null;
@@ -49,7 +61,7 @@ synchronized (mConnection) {
         if (name != null && address != null) {
           storeNameAndAddress(name,address);
           if (mConnection.isGetNameAddressOnly()) {
-            unbindAndFinish();
+            unbind=true;
           }
         }
  else {
@@ -62,8 +74,16 @@ synchronized (mConnection) {
  else {
             Log.w(TAG,"Maximum name/address remote retrieval retry exceeded");
             if (mConnection.isGetNameAddressOnly()) {
-              unbindAndFinish();
+              unbind=true;
             }
+          }
+        }
+        if (!mEnable) {
+          try {
+            mBluetooth.disable();
+          }
+ catch (          RemoteException e) {
+            Log.e(TAG,"Unable to call disable()",e);
           }
         }
       }
@@ -71,6 +91,10 @@ synchronized (mConnection) {
         Message getMsg=mHandler.obtainMessage(MESSAGE_GET_NAME_AND_ADDRESS);
         mHandler.sendMessage(getMsg);
       }
+    }
+    if (!mEnable && mBluetooth != null)     waitForOnOff(false,true);
+    if (unbind) {
+      unbindAndFinish();
     }
     break;
   }
@@ -142,15 +166,6 @@ mBluetooth.registerCallback(mBluetoothCallback);
 Log.e(TAG,"Unable to register BluetoothCallback",re);
 }
 sendBluetoothServiceUpCallback();
-if (!isNameAndAddressSet()) {
-try {
-storeNameAndAddress(mBluetooth.getName(),mBluetooth.getAddress());
-}
- catch (RemoteException e) {
-Log.e(TAG,"",e);
-}
-;
-}
 try {
 if (mQuietEnable == false) {
 if (!mBluetooth.enable()) {
