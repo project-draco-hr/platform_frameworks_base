@@ -2,27 +2,44 @@
   final int childCount=mAppWidgetContainer.getChildCount();
   boolean widgetPageExists=false;
   for (int i=0; i < childCount; i++) {
-    if (isWidgetPage(i)) {
+    if (mAppWidgetContainer.isWidgetPage(i)) {
       widgetPageExists=true;
       break;
     }
   }
   if (!widgetPageExists) {
-    final int addPageIndex=getAddPageIndex();
-    Resources res=getContext().getResources();
-    ComponentName defaultAppWidget=new ComponentName(res.getString(R.string.widget_default_package_name),res.getString(R.string.widget_default_class_name));
-    int appWidgetId=mAppWidgetHost.allocateAppWidgetId();
-    boolean bindSuccessful=false;
-    try {
-      mAppWidgetManager.bindAppWidgetId(appWidgetId,defaultAppWidget);
-      bindSuccessful=true;
+    final int insertPageIndex=getInsertPageIndex();
+    final boolean userAddedWidgetsEnabled=!widgetsDisabledByDpm();
+    boolean addedDefaultAppWidget=false;
+    if (!mSafeModeEnabled) {
+      if (userAddedWidgetsEnabled) {
+        int appWidgetId=allocateIdForDefaultAppWidget();
+        if (appWidgetId != AppWidgetManager.INVALID_APPWIDGET_ID) {
+          addedDefaultAppWidget=addWidget(appWidgetId,insertPageIndex,true);
+        }
+      }
+ else {
+        int appWidgetId=mLockPatternUtils.getFallbackAppWidgetId();
+        if (appWidgetId == AppWidgetManager.INVALID_APPWIDGET_ID) {
+          appWidgetId=allocateIdForDefaultAppWidget();
+          if (appWidgetId != AppWidgetManager.INVALID_APPWIDGET_ID) {
+            mLockPatternUtils.writeFallbackAppWidgetId(appWidgetId);
+          }
+        }
+        if (appWidgetId != AppWidgetManager.INVALID_APPWIDGET_ID) {
+          addedDefaultAppWidget=addWidget(appWidgetId,insertPageIndex,false);
+          if (!addedDefaultAppWidget) {
+            mAppWidgetHost.deleteAppWidgetId(appWidgetId);
+            mLockPatternUtils.writeFallbackAppWidgetId(AppWidgetManager.INVALID_APPWIDGET_ID);
+          }
+        }
+      }
     }
- catch (    IllegalArgumentException e) {
-      Log.e(TAG,"Error when trying to bind default AppWidget: " + e);
+    if (!addedDefaultAppWidget) {
+      addDefaultStatusWidget(insertPageIndex);
     }
-    if (!(bindSuccessful && addWidget(appWidgetId,addPageIndex + 1))) {
-      addDefaultStatusWidget(addPageIndex + 1);
+    if (!mSafeModeEnabled && userAddedWidgetsEnabled) {
+      mAppWidgetContainer.onAddView(mAppWidgetContainer.getChildAt(insertPageIndex),insertPageIndex);
     }
-    mAppWidgetContainer.onAddView(mAppWidgetContainer.getChildAt(addPageIndex + 1),addPageIndex + 1);
   }
 }
