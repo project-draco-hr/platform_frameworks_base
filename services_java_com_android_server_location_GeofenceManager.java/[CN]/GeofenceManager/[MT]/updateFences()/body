@@ -1,0 +1,67 @@
+{
+  List<PendingIntent> enterIntents=new LinkedList<PendingIntent>();
+  List<PendingIntent> exitIntents=new LinkedList<PendingIntent>();
+synchronized (mLock) {
+    mPendingUpdate=false;
+    removeExpiredFencesLocked();
+    Location location=getFreshLocationLocked();
+    double minFenceDistance=Double.MAX_VALUE;
+    boolean needUpdates=false;
+    for (    GeofenceState state : mFences) {
+      if (mBlacklist.isBlacklisted(state.mPackageName)) {
+        if (D) {
+          Slog.d(TAG,"skipping geofence processing for blacklisted app: " + state.mPackageName);
+        }
+        continue;
+      }
+      needUpdates=true;
+      if (location != null) {
+        int event=state.processLocation(location);
+        if ((event & GeofenceState.FLAG_ENTER) != 0) {
+          enterIntents.add(state.mIntent);
+        }
+        if ((event & GeofenceState.FLAG_EXIT) != 0) {
+          exitIntents.add(state.mIntent);
+        }
+        double fenceDistance=state.getDistanceToBoundary();
+        if (fenceDistance < minFenceDistance) {
+          minFenceDistance=fenceDistance;
+        }
+      }
+    }
+    if (needUpdates) {
+      long intervalMs;
+      if (location != null && Double.compare(minFenceDistance,Double.MAX_VALUE) != 0) {
+        intervalMs=(long)Math.min(MAX_INTERVAL_MS,Math.max(MIN_INTERVAL_MS,minFenceDistance * 1000 / MAX_SPEED_M_S));
+      }
+ else {
+        intervalMs=MIN_INTERVAL_MS;
+      }
+      if (!mReceivingLocationUpdates || mLocationUpdateInterval != intervalMs) {
+        mReceivingLocationUpdates=true;
+        mLocationUpdateInterval=intervalMs;
+        mLastLocationUpdate=location;
+        LocationRequest request=new LocationRequest();
+        request.setInterval(intervalMs).setFastestInterval(0);
+        mLocationManager.requestLocationUpdates(request,this,mHandler.getLooper());
+      }
+    }
+ else {
+      if (mReceivingLocationUpdates) {
+        mReceivingLocationUpdates=false;
+        mLocationUpdateInterval=0;
+        mLastLocationUpdate=null;
+        mLocationManager.removeUpdates(this);
+      }
+    }
+    if (D) {
+      Slog.d(TAG,"updateFences: location=" + location + ", mFences.size()="+ mFences.size()+ ", mReceivingLocationUpdates="+ mReceivingLocationUpdates+ ", mLocationUpdateInterval="+ mLocationUpdateInterval+ ", mLastLocationUpdate="+ mLastLocationUpdate);
+    }
+  }
+  for (  PendingIntent intent : exitIntents) {
+    sendIntentExit(intent);
+  }
+  for (  PendingIntent intent : enterIntents) {
+    sendIntentEnter(intent);
+  }
+}
