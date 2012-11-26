@@ -3,8 +3,8 @@
   int i;
   int NN=mOpeningApps.size();
   boolean goodToGo=true;
-  if (DEBUG_APP_TRANSITIONS)   Slog.v(TAG,"Checking " + NN + " opening apps (frozen="+ mDisplayFrozen+ " timeout="+ mAppTransitionTimeout+ ")...");
-  if (!mDisplayFrozen && !mAppTransitionTimeout) {
+  if (DEBUG_APP_TRANSITIONS)   Slog.v(TAG,"Checking " + NN + " opening apps (frozen="+ mDisplayFrozen+ " timeout="+ mAppTransition.isTimeout()+ ")...");
+  if (!mDisplayFrozen && !mAppTransition.isTimeout()) {
     for (i=0; i < NN && goodToGo; i++) {
       AppWindowToken wtoken=mOpeningApps.get(i);
       if (DEBUG_APP_TRANSITIONS)       Slog.v(TAG,"Check opening app=" + wtoken + ": allDrawn="+ wtoken.allDrawn+ " startingDisplayed="+ wtoken.startingDisplayed+ " startingMoved="+ wtoken.startingMoved);
@@ -15,14 +15,11 @@
   }
   if (goodToGo) {
     if (DEBUG_APP_TRANSITIONS)     Slog.v(TAG,"**** GOOD TO GO");
-    int transit=mNextAppTransition;
+    int transit=mAppTransition.getAppTransition();
     if (mSkipAppTransitionAnimation) {
       transit=WindowManagerPolicy.TRANSIT_UNSET;
     }
-    mNextAppTransition=WindowManagerPolicy.TRANSIT_UNSET;
-    mAppTransitionReady=false;
-    mAppTransitionRunning=true;
-    mAppTransitionTimeout=false;
+    mAppTransition.goodToGo();
     mStartingIconInTransition=false;
     mSkipAppTransitionAnimation=false;
     mH.removeMessages(H.APP_TRANSITION_TIMEOUT);
@@ -145,39 +142,41 @@ wtoken.waitingToHide=false;
 wtoken.allDrawn=true;
 wtoken.deferClearAllDrawn=false;
 }
-if (mNextAppTransitionThumbnail != null && topOpeningApp != null && topOpeningApp.mAppAnimator.animation != null) {
-Rect dirty=new Rect(0,0,mNextAppTransitionThumbnail.getWidth(),mNextAppTransitionThumbnail.getHeight());
+AppWindowAnimator appAnimator=topOpeningApp == null ? null : topOpeningApp.mAppAnimator;
+Bitmap nextAppTransitionThumbnail=mAppTransition.getNextAppTransitionThumbnail();
+if (nextAppTransitionThumbnail != null && appAnimator != null && appAnimator.animation != null) {
+Rect dirty=new Rect(0,0,nextAppTransitionThumbnail.getWidth(),nextAppTransitionThumbnail.getHeight());
 try {
 final DisplayContent displayContent=getDefaultDisplayContentLocked();
 final Display display=displayContent.getDisplay();
 Surface surface=new Surface(mFxSession,"thumbnail anim",dirty.width(),dirty.height(),PixelFormat.TRANSLUCENT,Surface.HIDDEN);
 surface.setLayerStack(display.getLayerStack());
-topOpeningApp.mAppAnimator.thumbnail=surface;
+appAnimator.thumbnail=surface;
 if (SHOW_TRANSACTIONS) Slog.i(TAG,"  THUMBNAIL " + surface + ": CREATE");
 Surface drawSurface=new Surface();
 drawSurface.copyFrom(surface);
 Canvas c=drawSurface.lockCanvas(dirty);
-c.drawBitmap(mNextAppTransitionThumbnail,0,0,null);
+c.drawBitmap(nextAppTransitionThumbnail,0,0,null);
 drawSurface.unlockCanvasAndPost(c);
 drawSurface.release();
-topOpeningApp.mAppAnimator.thumbnailLayer=topOpeningLayer;
-Animation anim=createThumbnailAnimationLocked(transit,true,true,mNextAppTransitionScaleUp);
-topOpeningApp.mAppAnimator.thumbnailAnimation=anim;
+appAnimator.thumbnailLayer=topOpeningLayer;
+DisplayInfo displayInfo=getDefaultDisplayInfoLocked();
+Animation anim=mAppTransition.createThumbnailAnimationLocked(transit,true,true,displayInfo.appWidth,displayInfo.appHeight);
+appAnimator.thumbnailAnimation=anim;
 anim.restrictDuration(MAX_ANIMATION_DURATION);
 anim.scaleCurrentDuration(mTransitionAnimationScale);
-topOpeningApp.mAppAnimator.thumbnailX=mNextAppTransitionStartX;
-topOpeningApp.mAppAnimator.thumbnailY=mNextAppTransitionStartY;
+Point p=new Point();
+mAppTransition.getStartingPoint(p);
+appAnimator.thumbnailX=p.x;
+appAnimator.thumbnailY=p.y;
 }
  catch (Surface.OutOfResourcesException e) {
 Slog.e(TAG,"Can't allocate thumbnail surface w=" + dirty.width() + " h="+ dirty.height(),e);
-topOpeningApp.mAppAnimator.clearThumbnail();
+appAnimator.clearThumbnail();
 }
 }
-mNextAppTransitionType=ActivityOptions.ANIM_NONE;
-mNextAppTransitionPackage=null;
-mNextAppTransitionThumbnail=null;
-scheduleAnimationCallback(mNextAppTransitionCallback);
-mNextAppTransitionCallback=null;
+mAppTransition.postAnimationCallback();
+mAppTransition.clear();
 mOpeningApps.clear();
 mClosingApps.clear();
 changes|=WindowManagerPolicy.FINISH_LAYOUT_REDO_LAYOUT | WindowManagerPolicy.FINISH_LAYOUT_REDO_CONFIG;
