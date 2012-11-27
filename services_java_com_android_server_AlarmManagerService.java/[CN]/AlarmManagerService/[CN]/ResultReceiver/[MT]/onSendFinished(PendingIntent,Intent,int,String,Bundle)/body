@@ -1,32 +1,47 @@
 {
 synchronized (mLock) {
-    BroadcastStats bs=getStatsLocked(pi);
-    if (bs != null) {
+    InFlight inflight=null;
+    for (int i=0; i < mInFlight.size(); i++) {
+      if (mInFlight.get(i).mPendingIntent == pi) {
+        inflight=mInFlight.remove(i);
+        break;
+      }
+    }
+    if (inflight != null) {
+      final long nowELAPSED=SystemClock.elapsedRealtime();
+      BroadcastStats bs=inflight.mBroadcastStats;
       bs.nesting--;
       if (bs.nesting <= 0) {
         bs.nesting=0;
-        bs.aggregateTime+=SystemClock.elapsedRealtime() - bs.startTime;
-        Intent.FilterComparison fc=new Intent.FilterComparison(intent);
-        FilterStats fs=bs.filterStats.get(fc);
-        if (fs == null) {
-          fs=new FilterStats();
-          bs.filterStats.put(fc,fs);
-        }
-        fs.count++;
+        bs.aggregateTime+=nowELAPSED - bs.startTime;
+      }
+      FilterStats fs=inflight.mFilterStats;
+      fs.nesting--;
+      if (fs.nesting <= 0) {
+        fs.nesting=0;
+        fs.aggregateTime+=nowELAPSED - fs.startTime;
       }
     }
-    mInFlight.removeFirst();
+ else {
+      mLog.w("No in-flight alarm for " + pi + " "+ intent);
+    }
     mBroadcastRefCount--;
     if (mBroadcastRefCount == 0) {
       mWakeLock.release();
+      if (mInFlight.size() > 0) {
+        mLog.w("Finished all broadcasts with " + mInFlight.size() + " remaining inflights");
+        for (int i=0; i < mInFlight.size(); i++) {
+          mLog.w("  Remaining #" + i + ": "+ mInFlight.get(i));
+        }
+        mInFlight.clear();
+      }
     }
  else {
-      final PendingIntent nowInFlight=mInFlight.peekFirst();
-      if (nowInFlight != null) {
-        setWakelockWorkSource(nowInFlight);
+      if (mInFlight.size() > 0) {
+        setWakelockWorkSource(mInFlight.get(0).mPendingIntent);
       }
  else {
-        Slog.e(TAG,"Alarm wakelock still held but sent queue empty");
+        mLog.w("Alarm wakelock still held but sent queue empty");
         mWakeLock.setWorkSource(null);
       }
     }
