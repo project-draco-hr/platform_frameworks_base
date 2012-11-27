@@ -73,16 +73,40 @@
   long txTotal=0;
   long fullWakeLockTimeTotalMicros=0;
   long partialWakeLockTimeTotalMicros=0;
+  final Comparator<TimerEntry> timerComparator=new Comparator<TimerEntry>(){
+    @Override public int compare(    TimerEntry lhs,    TimerEntry rhs){
+      long lhsTime=lhs.mTime;
+      long rhsTime=rhs.mTime;
+      if (lhsTime < rhsTime) {
+        return 1;
+      }
+      if (lhsTime > rhsTime) {
+        return -1;
+      }
+      return 0;
+    }
+  }
+;
   if (reqUid < 0) {
     Map<String,? extends BatteryStats.Timer> kernelWakelocks=getKernelWakelockStats();
     if (kernelWakelocks.size() > 0) {
+      final ArrayList<TimerEntry> timers=new ArrayList<TimerEntry>();
       for (      Map.Entry<String,? extends BatteryStats.Timer> ent : kernelWakelocks.entrySet()) {
+        BatteryStats.Timer timer=ent.getValue();
+        long totalTimeMillis=computeWakeLock(timer,batteryRealtime,which);
+        if (totalTimeMillis > 0) {
+          timers.add(new TimerEntry(ent.getKey(),0,timer,totalTimeMillis));
+        }
+      }
+      Collections.sort(timers,timerComparator);
+      for (int i=0; i < timers.size(); i++) {
+        TimerEntry timer=timers.get(i);
         String linePrefix=": ";
         sb.setLength(0);
         sb.append(prefix);
         sb.append("  Kernel Wake lock ");
-        sb.append(ent.getKey());
-        linePrefix=printWakeLock(sb,ent.getValue(),batteryRealtime,null,which,linePrefix);
+        sb.append(timer.mName);
+        linePrefix=printWakeLock(sb,timer.mTimer,batteryRealtime,null,which,linePrefix);
         if (!linePrefix.equals(": ")) {
           sb.append(" realtime");
           pw.println(sb.toString());
@@ -90,6 +114,7 @@
       }
     }
   }
+  final ArrayList<TimerEntry> timers=new ArrayList<TimerEntry>();
   for (int iu=0; iu < NU; iu++) {
     Uid u=uidStats.valueAt(iu);
     rxTotal+=u.getTcpBytesReceived(which);
@@ -104,7 +129,13 @@
         }
         Timer partialWakeTimer=wl.getWakeTime(WAKE_TYPE_PARTIAL);
         if (partialWakeTimer != null) {
-          partialWakeLockTimeTotalMicros+=partialWakeTimer.getTotalTimeLocked(batteryRealtime,which);
+          long totalTimeMicros=partialWakeTimer.getTotalTimeLocked(batteryRealtime,which);
+          if (totalTimeMicros > 0) {
+            if (reqUid < 0) {
+              timers.add(new TimerEntry(ent.getKey(),u.getUid(),partialWakeTimer,totalTimeMicros));
+            }
+            partialWakeLockTimeTotalMicros+=totalTimeMicros;
+          }
         }
       }
     }
@@ -118,7 +149,7 @@
   sb.append(prefix);
   sb.append("  Total full wakelock time: ");
   formatTimeMs(sb,(fullWakeLockTimeTotalMicros + 500) / 1000);
-  sb.append(", Total partial waklock time: ");
+  sb.append(", Total partial wakelock time: ");
   formatTimeMs(sb,(partialWakeLockTimeTotalMicros + 500) / 1000);
   pw.println(sb.toString());
   sb.setLength(0);
@@ -237,7 +268,25 @@
     pw.print(prefix);
     pw.print("    Amount discharged while screen off: ");
     pw.println(getDischargeAmountScreenOffSinceCharge());
-    pw.println(" ");
+    pw.println();
+  }
+  if (timers.size() > 0) {
+    Collections.sort(timers,timerComparator);
+    pw.print(prefix);
+    pw.println("  All partial wake locks:");
+    for (int i=0; i < timers.size(); i++) {
+      TimerEntry timer=timers.get(i);
+      sb.setLength(0);
+      sb.append("  Wake lock #");
+      sb.append(timer.mId);
+      sb.append(" ");
+      sb.append(timer.mName);
+      printWakeLock(sb,timer.mTimer,batteryRealtime,null,which,": ");
+      sb.append(" realtime");
+      pw.println(sb.toString());
+    }
+    timers.clear();
+    pw.println();
   }
   for (int iu=0; iu < NU; iu++) {
     final int uid=uidStats.keyAt(iu);
