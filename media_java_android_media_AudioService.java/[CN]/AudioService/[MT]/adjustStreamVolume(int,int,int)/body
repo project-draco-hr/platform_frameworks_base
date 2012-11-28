@@ -5,47 +5,55 @@
   int streamTypeAlias=mStreamVolumeAlias[streamType];
   VolumeStreamState streamState=mStreamStates[streamTypeAlias];
   final int device=getDeviceForStream(streamTypeAlias);
-  final int aliasIndex=streamState.getIndex(device,(streamState.muteCount() != 0));
+  int aliasIndex=streamState.getIndex(device,(streamState.muteCount() != 0));
   boolean adjustVolume=true;
-  int step=rescaleIndex(10,streamType,streamTypeAlias);
+  int step;
   int index;
   int oldIndex;
+  flags&=~AudioManager.FLAG_FIXED_VOLUME;
+  if ((streamTypeAlias == AudioSystem.STREAM_MUSIC) && ((device & mFixedVolumeDevices) != 0)) {
+    flags|=AudioManager.FLAG_FIXED_VOLUME;
+    if (mSafeMediaVolumeState == SAFE_MEDIA_VOLUME_ACTIVE && (device & mSafeMediaVolumeDevices) != 0) {
+      step=mSafeMediaVolumeIndex;
+    }
+ else {
+      step=streamState.getMaxIndex();
+    }
+    if (aliasIndex != 0) {
+      aliasIndex=step;
+    }
+  }
+ else {
+    step=rescaleIndex(10,streamType,streamTypeAlias);
+  }
   if ((direction == AudioManager.ADJUST_RAISE) && !checkSafeMediaVolume(streamTypeAlias,aliasIndex + step,device)) {
     index=mStreamStates[streamType].getIndex(device,(streamState.muteCount() != 0));
     oldIndex=index;
   }
  else {
-    flags&=~AudioManager.FLAG_FIXED_VOLUME;
-    if ((streamTypeAlias == AudioSystem.STREAM_MUSIC) && ((device & mFixedVolumeDevices) != 0)) {
-      flags|=AudioManager.FLAG_FIXED_VOLUME;
-      index=mStreamStates[streamType].getMaxIndex();
-      oldIndex=index;
+    if (((flags & AudioManager.FLAG_ALLOW_RINGER_MODES) != 0) || (streamTypeAlias == getMasterStreamType())) {
+      int ringerMode=getRingerMode();
+      if (ringerMode == AudioManager.RINGER_MODE_VIBRATE) {
+        flags&=~AudioManager.FLAG_VIBRATE;
+      }
+      adjustVolume=checkForRingerModeChange(aliasIndex,direction,step);
+      if ((streamTypeAlias == getMasterStreamType()) && (mRingerMode == AudioManager.RINGER_MODE_SILENT)) {
+        streamState.setLastAudibleIndex(0,device);
+      }
+    }
+    oldIndex=mStreamStates[streamType].getIndex(device,(mStreamStates[streamType].muteCount() != 0));
+    if (streamState.muteCount() != 0) {
+      if (adjustVolume) {
+        streamState.adjustLastAudibleIndex(direction * step,device);
+        sendMsg(mAudioHandler,MSG_PERSIST_VOLUME,SENDMSG_QUEUE,PERSIST_LAST_AUDIBLE,device,streamState,PERSIST_DELAY);
+      }
+      index=mStreamStates[streamType].getIndex(device,true);
     }
  else {
-      if (((flags & AudioManager.FLAG_ALLOW_RINGER_MODES) != 0) || (streamTypeAlias == getMasterStreamType())) {
-        int ringerMode=getRingerMode();
-        if (ringerMode == AudioManager.RINGER_MODE_VIBRATE) {
-          flags&=~AudioManager.FLAG_VIBRATE;
-        }
-        adjustVolume=checkForRingerModeChange(aliasIndex,direction,step);
-        if ((streamTypeAlias == getMasterStreamType()) && (mRingerMode == AudioManager.RINGER_MODE_SILENT)) {
-          streamState.setLastAudibleIndex(0,device);
-        }
+      if (adjustVolume && streamState.adjustIndex(direction * step,device)) {
+        sendMsg(mAudioHandler,MSG_SET_DEVICE_VOLUME,SENDMSG_QUEUE,device,0,streamState,0);
       }
-      oldIndex=mStreamStates[streamType].getIndex(device,(mStreamStates[streamType].muteCount() != 0));
-      if (streamState.muteCount() != 0) {
-        if (adjustVolume) {
-          streamState.adjustLastAudibleIndex(direction * step,device);
-          sendMsg(mAudioHandler,MSG_PERSIST_VOLUME,SENDMSG_QUEUE,PERSIST_LAST_AUDIBLE,device,streamState,PERSIST_DELAY);
-        }
-        index=mStreamStates[streamType].getIndex(device,true);
-      }
- else {
-        if (adjustVolume && streamState.adjustIndex(direction * step,device)) {
-          sendMsg(mAudioHandler,MSG_SET_DEVICE_VOLUME,SENDMSG_QUEUE,device,0,streamState,0);
-        }
-        index=mStreamStates[streamType].getIndex(device,false);
-      }
+      index=mStreamStates[streamType].getIndex(device,false);
     }
   }
   sendVolumeUpdate(streamType,oldIndex,index,flags);
