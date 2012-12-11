@@ -2,7 +2,6 @@
   if (!mInitialized) {
     return;
   }
-  mPendingLayoutChanges.clear();
   mCurrentTime=SystemClock.uptimeMillis();
   mBulkUpdateParams=SET_ORIENTATION_CHANGE_COMPLETE;
   boolean wasAnimating=mAnimating;
@@ -65,15 +64,24 @@
     Surface.closeTransaction();
     if (WindowManagerService.SHOW_TRANSACTIONS)     Slog.i(TAG,"<<< CLOSE TRANSACTION animateLocked");
   }
-  for (int i=mPendingLayoutChanges.size() - 1; i >= 0; i--) {
-    if ((mPendingLayoutChanges.valueAt(i) & WindowManagerPolicy.FINISH_LAYOUT_REDO_WALLPAPER) != 0) {
+  boolean hasPendingLayoutChanges=false;
+  DisplayContentsIterator iterator=mService.new DisplayContentsIterator();
+  while (iterator.hasNext()) {
+    final DisplayContent displayContent=iterator.next();
+    final int pendingChanges=getPendingLayoutChanges(displayContent.getDisplayId());
+    if ((pendingChanges & WindowManagerPolicy.FINISH_LAYOUT_REDO_WALLPAPER) != 0) {
       mBulkUpdateParams|=SET_WALLPAPER_ACTION_PENDING;
     }
-  }
-  if (mBulkUpdateParams != 0 || mPendingLayoutChanges.size() > 0) {
-    if (mService.copyAnimToLayoutParamsLocked()) {
-      mService.requestTraversalLocked();
+    if (pendingChanges != 0) {
+      hasPendingLayoutChanges=true;
     }
+  }
+  boolean doRequest=false;
+  if (mBulkUpdateParams != 0) {
+    doRequest=mService.copyAnimToLayoutParamsLocked();
+  }
+  if (hasPendingLayoutChanges || doRequest) {
+    mService.requestTraversalLocked();
   }
   if (mAnimating) {
     mService.scheduleAnimationLocked();
@@ -82,6 +90,6 @@
     mService.requestTraversalLocked();
   }
   if (WindowManagerService.DEBUG_WINDOW_TRACE) {
-    Slog.i(TAG,"!!! animate: exit mAnimating=" + mAnimating + " mBulkUpdateParams="+ Integer.toHexString(mBulkUpdateParams)+ " mPendingLayoutChanges(DEFAULT_DISPLAY)="+ Integer.toHexString(mPendingLayoutChanges.get(Display.DEFAULT_DISPLAY)));
+    Slog.i(TAG,"!!! animate: exit mAnimating=" + mAnimating + " mBulkUpdateParams="+ Integer.toHexString(mBulkUpdateParams)+ " mPendingLayoutChanges(DEFAULT_DISPLAY)="+ Integer.toHexString(getPendingLayoutChanges(Display.DEFAULT_DISPLAY)));
   }
 }
