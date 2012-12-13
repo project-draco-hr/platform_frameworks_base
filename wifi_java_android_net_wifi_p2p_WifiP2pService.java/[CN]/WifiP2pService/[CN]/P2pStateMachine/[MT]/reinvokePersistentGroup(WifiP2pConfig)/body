@@ -1,15 +1,5 @@
 {
-  if (config == null) {
-    loge("config is null");
-    return CONNECT_FAILURE;
-  }
-  boolean isResp=(mSavedPeerConfig != null && config.deviceAddress.equals(mSavedPeerConfig.deviceAddress));
-  mSavedPeerConfig=config;
-  WifiP2pDevice dev=mPeers.get(config.deviceAddress);
-  if (dev == null) {
-    loge("target device not found " + config.deviceAddress);
-    return CONNECT_FAILURE;
-  }
+  WifiP2pDevice dev=fetchCurrentDeviceDetails(config);
   boolean join=dev.isGroupOwner();
   String ssid=mWifiNative.p2pGetSsid(dev.deviceAddress);
   if (DBG)   logd("target ssid is " + ssid + " join:"+ join);
@@ -21,16 +11,16 @@
     int netId=mGroups.getNetworkId(dev.deviceAddress,ssid);
     if (netId >= 0) {
       if (!mWifiNative.p2pGroupAdd(netId)) {
-        return CONNECT_FAILURE;
+        return false;
       }
-      return CONNECT_SUCCESS;
+      return true;
     }
   }
   if (!join && dev.isDeviceLimit()) {
     loge("target device reaches the device limit.");
-    return CONNECT_FAILURE;
+    return false;
   }
-  if (!join && tryInvocation && dev.isInvitationCapable()) {
+  if (!join && dev.isInvitationCapable()) {
     int netId=WifiP2pGroup.PERSISTENT_NET_ID;
     if (config.netId >= 0) {
       if (config.deviceAddress.equals(mGroups.getOwnerAddr(config.netId))) {
@@ -46,19 +36,15 @@
     if (DBG)     logd("netId related with " + dev.deviceAddress + " = "+ netId);
     if (netId >= 0) {
       if (mWifiNative.p2pReinvoke(netId,dev.deviceAddress)) {
-        mSavedPeerConfig.netId=netId;
-        return CONNECT_SUCCESS;
+        config.netId=netId;
+        return true;
       }
  else {
         loge("p2pReinvoke() failed, update networks");
         updatePersistentNetworks(RELOAD);
+        return false;
       }
     }
   }
-  mWifiNative.p2pStopFind();
-  if (!isResp) {
-    return NEEDS_PROVISION_REQ;
-  }
-  p2pConnectWithPinDisplay(config);
-  return CONNECT_SUCCESS;
+  return false;
 }

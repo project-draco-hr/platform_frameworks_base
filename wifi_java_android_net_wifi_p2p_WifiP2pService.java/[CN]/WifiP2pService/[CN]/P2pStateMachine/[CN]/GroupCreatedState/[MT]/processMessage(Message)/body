@@ -28,7 +28,7 @@ mPeers.updateStatus(deviceAddress,WifiP2pDevice.AVAILABLE);
 if (mGroup.removeClient(deviceAddress)) {
 if (DBG) logd("Removed client " + deviceAddress);
 if (!mAutonomousGroup && mGroup.isClientListEmpty()) {
-Slog.d(TAG,"Client list empty, remove non-persistent p2p group");
+logd("Client list empty, remove non-persistent p2p group");
 mWifiNative.p2pGroupRemove(mGroup.getInterface());
 }
  else {
@@ -90,29 +90,40 @@ case WifiStateMachine.CMD_DISABLE_P2P_REQ:
 sendMessage(WifiP2pManager.REMOVE_GROUP);
 deferMessage(message);
 break;
-case WifiP2pManager.CONNECT:
-WifiP2pConfig config=(WifiP2pConfig)message.obj;
-if (config.deviceAddress == null) {
-if (config.wps.setup == WpsInfo.PBC) {
-mWifiNative.startWpsPbc(mGroup.getInterface(),null);
+case WifiP2pManager.START_WPS:
+WpsInfo wps=(WpsInfo)message.obj;
+if (wps == null) {
+replyToMessage(message,WifiP2pManager.START_WPS_FAILED);
+break;
+}
+boolean ret=true;
+if (wps.setup == WpsInfo.PBC) {
+ret=mWifiNative.startWpsPbc(mGroup.getInterface(),null);
 }
  else {
-if (config.wps.pin == null) {
+if (wps.pin == null) {
 String pin=mWifiNative.startWpsPinDisplay(mGroup.getInterface());
 try {
 Integer.parseInt(pin);
-notifyInvitationSent(pin,config.deviceAddress != null ? config.deviceAddress : "any");
+notifyInvitationSent(pin,"any");
 }
  catch (NumberFormatException ignore) {
+ret=false;
 }
 }
  else {
-mWifiNative.startWpsPinKeypad(mGroup.getInterface(),config.wps.pin);
+ret=mWifiNative.startWpsPinKeypad(mGroup.getInterface(),wps.pin);
 }
 }
-replyToMessage(message,WifiP2pManager.CONNECT_SUCCEEDED);
+replyToMessage(message,ret ? WifiP2pManager.START_WPS_SUCCEEDED : WifiP2pManager.START_WPS_FAILED);
+break;
+case WifiP2pManager.CONNECT:
+WifiP2pConfig config=(WifiP2pConfig)message.obj;
+if (isConfigInvalid(config)) {
+loge("Dropping connect requeset " + config);
+replyToMessage(message,WifiP2pManager.CONNECT_FAILED);
+break;
 }
- else {
 logd("Inviting device : " + config.deviceAddress);
 mSavedPeerConfig=config;
 if (mWifiNative.p2pInvite(mGroup,config.deviceAddress)) {
@@ -123,20 +134,19 @@ replyToMessage(message,WifiP2pManager.CONNECT_SUCCEEDED);
  else {
 replyToMessage(message,WifiP2pManager.CONNECT_FAILED,WifiP2pManager.ERROR);
 }
-}
 break;
 case WifiMonitor.P2P_INVITATION_RESULT_EVENT:
 P2pStatus status=(P2pStatus)message.obj;
-logd("===> INVITATION RESULT EVENT : " + status);
 if (status == P2pStatus.SUCCESS) {
 break;
 }
- else if (status == P2pStatus.UNKNOWN_P2P_GROUP) {
+loge("Invitation result " + status);
+if (status == P2pStatus.UNKNOWN_P2P_GROUP) {
 int netId=mGroup.getNetworkId();
 if (netId >= 0) {
 if (DBG) logd("Remove unknown client from the list");
 if (!removeClientFromList(netId,mSavedPeerConfig.deviceAddress,false)) {
-Slog.e(TAG,"Already removed the client, ignore");
+loge("Already removed the client, ignore");
 break;
 }
 sendMessage(WifiP2pManager.CONNECT,mSavedPeerConfig);
@@ -162,7 +172,7 @@ mSavedPeerConfig.wps.setup=WpsInfo.PBC;
 transitionTo(mUserAuthorizingJoinState);
 break;
 case WifiMonitor.P2P_GROUP_STARTED_EVENT:
-Slog.e(TAG,"Duplicate group creation event notice, ignore");
+loge("Duplicate group creation event notice, ignore");
 break;
 default :
 return NOT_HANDLED;
