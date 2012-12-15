@@ -4,23 +4,23 @@ switch (message.what) {
 case WifiP2pManager.CONNECT:
     if (DBG)     logd(getName() + " sending connect");
   WifiP2pConfig config=(WifiP2pConfig)message.obj;
-mAutonomousGroup=false;
-int gc=mWifiNative.getGroupCapability(config.deviceAddress);
-mPeers.updateGroupCapability(config.deviceAddress,gc);
-int connectRet=connect(config,TRY_REINVOCATION);
-if (connectRet == CONNECT_FAILURE) {
-replyToMessage(message,WifiP2pManager.CONNECT_FAILED);
-break;
+if (isConfigInvalid(config)) {
+  loge("Dropping connect requeset " + config);
+  replyToMessage(message,WifiP2pManager.CONNECT_FAILED);
+  break;
 }
+mAutonomousGroup=false;
+mWifiNative.p2pStopFind();
+if (reinvokePersistentGroup(config)) {
+transitionTo(mGroupNegotiationState);
+}
+ else {
+transitionTo(mProvisionDiscoveryState);
+}
+mSavedPeerConfig=config;
 mPeers.updateStatus(mSavedPeerConfig.deviceAddress,WifiP2pDevice.INVITED);
 sendPeersChangedBroadcast();
 replyToMessage(message,WifiP2pManager.CONNECT_SUCCEEDED);
-if (connectRet == NEEDS_PROVISION_REQ) {
-if (DBG) logd("Sending prov disc");
-transitionTo(mProvisionDiscoveryState);
-break;
-}
-transitionTo(mGroupNegotiationState);
 break;
 case WifiP2pManager.STOP_DISCOVERY:
 if (mWifiNative.p2pStopFind()) {
@@ -33,20 +33,30 @@ replyToMessage(message,WifiP2pManager.STOP_DISCOVERY_FAILED,WifiP2pManager.ERROR
 }
 break;
 case WifiMonitor.P2P_GO_NEGOTIATION_REQUEST_EVENT:
-mSavedPeerConfig=(WifiP2pConfig)message.obj;
+config=(WifiP2pConfig)message.obj;
+if (isConfigInvalid(config)) {
+loge("Dropping GO neg request " + config);
+break;
+}
+mSavedPeerConfig=config;
 mAutonomousGroup=false;
 mJoinExistingGroup=false;
-transitionTo(mUserAuthorizingInvitationState);
+transitionTo(mUserAuthorizingNegotiationRequestState);
 break;
 case WifiMonitor.P2P_INVITATION_RECEIVED_EVENT:
 WifiP2pGroup group=(WifiP2pGroup)message.obj;
 WifiP2pDevice owner=group.getOwner();
 if (owner == null) {
-if (DBG) loge("Ignored invitation from null owner");
+loge("Ignored invitation from null owner");
 break;
 }
-mSavedPeerConfig=new WifiP2pConfig();
-mSavedPeerConfig.deviceAddress=group.getOwner().deviceAddress;
+config=new WifiP2pConfig();
+config.deviceAddress=group.getOwner().deviceAddress;
+if (isConfigInvalid(config)) {
+loge("Dropping invitation request " + config);
+break;
+}
+mSavedPeerConfig=config;
 if ((owner=mPeers.get(owner.deviceAddress)) != null) {
 if (owner.wpsPbcSupported()) {
 mSavedPeerConfig.wps.setup=WpsInfo.PBC;
@@ -60,7 +70,7 @@ mSavedPeerConfig.wps.setup=WpsInfo.DISPLAY;
 }
 mAutonomousGroup=false;
 mJoinExistingGroup=true;
-transitionTo(mUserAuthorizingInvitationState);
+transitionTo(mUserAuthorizingInviteRequestState);
 break;
 case WifiMonitor.P2P_PROV_DISC_PBC_REQ_EVENT:
 case WifiMonitor.P2P_PROV_DISC_ENTER_PIN_EVENT:
