@@ -1,0 +1,80 @@
+{
+  mWindowManager.getDefaultDisplay().getRealSize(mTempPoint);
+  final int screenWidth=mTempPoint.x;
+  final int screenHeight=mTempPoint.y;
+  Region magnifiedBounds=mMagnifiedBounds;
+  magnifiedBounds.set(0,0,0,0);
+  Region availableBounds=mTempRegion1;
+  availableBounds.set(0,0,screenWidth,screenHeight);
+  Region nonMagnifiedBounds=mTempRegion4;
+  nonMagnifiedBounds.set(0,0,0,0);
+  SparseArray<WindowStateInfo> visibleWindows=mTempWindowStateInfos;
+  visibleWindows.clear();
+  getWindowsOnScreenLocked(visibleWindows);
+  final int visibleWindowCount=visibleWindows.size();
+  for (int i=visibleWindowCount - 1; i >= 0; i--) {
+    WindowStateInfo info=visibleWindows.valueAt(i);
+    if (info.mWindowState.mAttrs.type == WindowManager.LayoutParams.TYPE_MAGNIFICATION_OVERLAY) {
+      continue;
+    }
+    Region windowBounds=mTempRegion2;
+    Matrix matrix=mTempMatrix;
+    populateTransformationMatrix(info.mWindowState,matrix);
+    RectF windowFrame=mTempRectF;
+    if (mWindowManagerService.mPolicy.canMagnifyWindow(info.mWindowState.mAttrs.type)) {
+      windowFrame.set(info.mWindowState.mFrame);
+      windowFrame.offset(-windowFrame.left,-windowFrame.top);
+      matrix.mapRect(windowFrame);
+      windowBounds.set((int)windowFrame.left,(int)windowFrame.top,(int)windowFrame.right,(int)windowFrame.bottom);
+      magnifiedBounds.op(windowBounds,Region.Op.UNION);
+      magnifiedBounds.op(availableBounds,Region.Op.INTERSECT);
+    }
+ else {
+      windowFrame.set(info.mTouchableRegion);
+      windowFrame.offset(-info.mWindowState.mFrame.left,-info.mWindowState.mFrame.top);
+      matrix.mapRect(windowFrame);
+      windowBounds.set((int)windowFrame.left,(int)windowFrame.top,(int)windowFrame.right,(int)windowFrame.bottom);
+      nonMagnifiedBounds.op(windowBounds,Region.Op.UNION);
+      windowBounds.op(magnifiedBounds,Region.Op.DIFFERENCE);
+      availableBounds.op(windowBounds,Region.Op.DIFFERENCE);
+    }
+    Region accountedBounds=mTempRegion2;
+    accountedBounds.set(magnifiedBounds);
+    accountedBounds.op(nonMagnifiedBounds,Region.Op.UNION);
+    accountedBounds.op(0,0,screenWidth,screenHeight,Region.Op.INTERSECT);
+    if (accountedBounds.isRect()) {
+      Rect accountedFrame=mTempRect1;
+      accountedBounds.getBounds(accountedFrame);
+      if (accountedFrame.width() == screenWidth && accountedFrame.height() == screenHeight) {
+        break;
+      }
+    }
+  }
+  for (int i=visibleWindowCount - 1; i >= 0; i--) {
+    WindowStateInfo info=visibleWindows.valueAt(i);
+    info.recycle();
+    visibleWindows.removeAt(i);
+  }
+  magnifiedBounds.op(mHalfBorderWidth,mHalfBorderWidth,screenWidth - mHalfBorderWidth,screenHeight - mHalfBorderWidth,Region.Op.INTERSECT);
+  if (!mOldMagnifiedBounds.equals(magnifiedBounds)) {
+    Region bounds=Region.obtain();
+    bounds.set(magnifiedBounds);
+    mHandler.obtainMessage(MyHandler.MESSAGE_NOTIFY_MAGNIFIED_BOUNDS_CHANGED,bounds).sendToTarget();
+    mWindow.setBounds(magnifiedBounds);
+    Rect dirtyRect=mTempRect1;
+    if (mFullRedrawNeeded) {
+      mFullRedrawNeeded=false;
+      dirtyRect.set(mHalfBorderWidth,mHalfBorderWidth,screenWidth - mHalfBorderWidth,screenHeight - mHalfBorderWidth);
+      mWindow.invalidate(dirtyRect);
+    }
+ else {
+      Region dirtyRegion=mTempRegion3;
+      dirtyRegion.set(magnifiedBounds);
+      dirtyRegion.op(mOldMagnifiedBounds,Region.Op.UNION);
+      dirtyRegion.op(nonMagnifiedBounds,Region.Op.INTERSECT);
+      dirtyRegion.getBounds(dirtyRect);
+      mWindow.invalidate(dirtyRect);
+    }
+    mOldMagnifiedBounds.set(magnifiedBounds);
+  }
+}
