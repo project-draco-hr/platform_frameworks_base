@@ -12,14 +12,51 @@
     mInLayout=false;
     int numViewsRequestingLayout=mLayoutRequesters.size();
     if (numViewsRequestingLayout > 0) {
-      mHandlingLayoutInLayoutRequest=true;
+      ArrayList<View> mValidLayoutRequesters=null;
       for (int i=0; i < numViewsRequestingLayout; ++i) {
-        mLayoutRequesters.get(i).requestLayout();
+        View view=mLayoutRequesters.get(i);
+        if ((view.mPrivateFlags & View.PFLAG_FORCE_LAYOUT) == View.PFLAG_FORCE_LAYOUT) {
+          while (view != null && view.mAttachInfo != null && view.mParent != null && (view.mPrivateFlags & View.PFLAG_FORCE_LAYOUT) != 0) {
+            if ((view.mViewFlags & View.VISIBILITY_MASK) != View.GONE) {
+              Log.w(TAG,"requestLayout() improperly called during " + "layout: running second layout pass for " + view);
+              if (mValidLayoutRequesters == null) {
+                mValidLayoutRequesters=new ArrayList<View>();
+              }
+              mValidLayoutRequesters.add(view);
+              break;
+            }
+            if (view.mParent instanceof View) {
+              view=(View)view.mParent;
+            }
+ else {
+              view=null;
+            }
+          }
+        }
       }
-      measureHierarchy(host,lp,mView.getContext().getResources(),desiredWindowWidth,desiredWindowHeight);
-      mInLayout=true;
-      host.layout(0,0,host.getMeasuredWidth(),host.getMeasuredHeight());
-      mHandlingLayoutInLayoutRequest=false;
+      if (mValidLayoutRequesters != null) {
+        for (int i=0; i < numViewsRequestingLayout; ++i) {
+          View view=mLayoutRequesters.get(i);
+          while (view != null && (view.mPrivateFlags & View.PFLAG_FORCE_LAYOUT) != 0) {
+            view.mPrivateFlags&=~View.PFLAG_FORCE_LAYOUT;
+            if (view.mParent instanceof View) {
+              view=(View)view.mParent;
+            }
+ else {
+              view=null;
+            }
+          }
+        }
+        mHandlingLayoutInLayoutRequest=true;
+        int numValidRequests=mValidLayoutRequesters.size();
+        for (int i=0; i < numValidRequests; ++i) {
+          mValidLayoutRequesters.get(i).requestLayout();
+        }
+        measureHierarchy(host,lp,mView.getContext().getResources(),desiredWindowWidth,desiredWindowHeight);
+        mInLayout=true;
+        host.layout(0,0,host.getMeasuredWidth(),host.getMeasuredHeight());
+        mHandlingLayoutInLayoutRequest=false;
+      }
       mLayoutRequesters.clear();
     }
   }
