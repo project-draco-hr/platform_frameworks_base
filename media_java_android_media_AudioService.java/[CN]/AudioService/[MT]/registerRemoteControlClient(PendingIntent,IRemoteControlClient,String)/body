@@ -3,42 +3,45 @@
   int rccId=RemoteControlClient.RCSE_ID_UNREGISTERED;
 synchronized (mAudioFocusLock) {
 synchronized (mRCStack) {
-      Iterator<RemoteControlStackEntry> stackIterator=mRCStack.iterator();
-      while (stackIterator.hasNext()) {
-        RemoteControlStackEntry rcse=stackIterator.next();
-        if (rcse.mMediaIntent.equals(mediaIntent)) {
-          if (rcse.mRcClientDeathHandler != null) {
-            rcse.unlinkToRcClientDeath();
-          }
-          rcse.mRcClient=rcClient;
-          rcse.mCallingPackageName=callingPackageName;
-          rcse.mCallingUid=Binder.getCallingUid();
-          if (rcClient == null) {
-            rcse.resetPlaybackInfo();
-            break;
-          }
-          rccId=rcse.mRccId;
-          if (mRcDisplay != null) {
+      try {
+        for (int index=mRCStack.size() - 1; index >= 0; index--) {
+          final RemoteControlStackEntry rcse=mRCStack.elementAt(index);
+          if (rcse.mMediaIntent.equals(mediaIntent)) {
+            if (rcse.mRcClientDeathHandler != null) {
+              rcse.unlinkToRcClientDeath();
+            }
+            rcse.mRcClient=rcClient;
+            rcse.mCallingPackageName=callingPackageName;
+            rcse.mCallingUid=Binder.getCallingUid();
+            if (rcClient == null) {
+              rcse.resetPlaybackInfo();
+              break;
+            }
+            rccId=rcse.mRccId;
+            if (mRcDisplay != null) {
+              try {
+                rcse.mRcClient.plugRemoteControlDisplay(mRcDisplay);
+              }
+ catch (              RemoteException e) {
+                Log.e(TAG,"Error connecting RCD to RCC in RCC registration",e);
+              }
+            }
+            IBinder b=rcse.mRcClient.asBinder();
+            RcClientDeathHandler rcdh=new RcClientDeathHandler(b,rcse.mMediaIntent);
             try {
-              rcse.mRcClient.plugRemoteControlDisplay(mRcDisplay);
+              b.linkToDeath(rcdh,0);
             }
  catch (            RemoteException e) {
-              Log.e(TAG,"Error connecting remote control display to client: " + e);
-              e.printStackTrace();
+              Log.w(TAG,"registerRemoteControlClient() has a dead client " + b);
+              rcse.mRcClient=null;
             }
+            rcse.mRcClientDeathHandler=rcdh;
+            break;
           }
-          IBinder b=rcse.mRcClient.asBinder();
-          RcClientDeathHandler rcdh=new RcClientDeathHandler(b,rcse.mMediaIntent);
-          try {
-            b.linkToDeath(rcdh,0);
-          }
- catch (          RemoteException e) {
-            Log.w(TAG,"registerRemoteControlClient() has a dead client " + b);
-            rcse.mRcClient=null;
-          }
-          rcse.mRcClientDeathHandler=rcdh;
-          break;
         }
+      }
+ catch (      ArrayIndexOutOfBoundsException e) {
+        Log.e(TAG,"Wrong index accessing RC stack, lock error? ",e);
       }
       if (isCurrentRcController(mediaIntent)) {
         checkUpdateRemoteControlDisplay_syncAfRcs(RC_INFO_ALL);
