@@ -1,4 +1,37 @@
 {
-  Thread thread=new Thread(null,this,THREAD_NAME);
-  thread.start();
+synchronized (mLock) {
+    if (D)     Log.d(TAG,"systemReady()");
+    mPackageManager=mContext.getPackageManager();
+    PowerManager powerManager=(PowerManager)mContext.getSystemService(Context.POWER_SERVICE);
+    mWakeLock=powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,WAKELOCK_KEY);
+    mHandlerThread=new HandlerThread(THREAD_NAME,Process.THREAD_PRIORITY_BACKGROUND);
+    mHandlerThread.start();
+    mLocationHandler=new LocationWorkerHandler(mHandlerThread.getLooper());
+    mLocationFudger=new LocationFudger(mContext,mLocationHandler);
+    mBlacklist=new LocationBlacklist(mContext,mLocationHandler);
+    mBlacklist.init();
+    mGeofenceManager=new GeofenceManager(mContext,mBlacklist);
+    loadProvidersLocked();
+    updateProvidersLocked();
+  }
+  mContext.getContentResolver().registerContentObserver(Settings.Secure.getUriFor(Settings.Secure.LOCATION_PROVIDERS_ALLOWED),true,new ContentObserver(mLocationHandler){
+    @Override public void onChange(    boolean selfChange){
+synchronized (mLock) {
+        updateProvidersLocked();
+      }
+    }
+  }
+,UserHandle.USER_ALL);
+  mPackageMonitor.register(mContext,mLocationHandler.getLooper(),true);
+  IntentFilter intentFilter=new IntentFilter();
+  intentFilter.addAction(Intent.ACTION_USER_SWITCHED);
+  mContext.registerReceiverAsUser(new BroadcastReceiver(){
+    @Override public void onReceive(    Context context,    Intent intent){
+      String action=intent.getAction();
+      if (Intent.ACTION_USER_SWITCHED.equals(action)) {
+        switchUser(intent.getIntExtra(Intent.EXTRA_USER_HANDLE,0));
+      }
+    }
+  }
+,UserHandle.ALL,intentFilter,null,mLocationHandler);
 }
