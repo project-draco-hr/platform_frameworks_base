@@ -1,0 +1,39 @@
+{
+synchronized (mLock) {
+    throwIfNotConnectedLocked();
+    mEventQueue.clear();
+    mWaitingForEventDelivery=true;
+    final long executionStartTimeMillis=SystemClock.uptimeMillis();
+    command.run();
+    try {
+      final long startTimeMillis=SystemClock.uptimeMillis();
+      while (true) {
+        while (!mEventQueue.isEmpty()) {
+          AccessibilityEvent event=mEventQueue.remove(0);
+          if (event.getEventTime() <= executionStartTimeMillis) {
+            continue;
+          }
+          if (filter.apply(event)) {
+            return event;
+          }
+          event.recycle();
+        }
+        final long elapsedTimeMillis=SystemClock.uptimeMillis() - startTimeMillis;
+        final long remainingTimeMillis=timeoutMillis - elapsedTimeMillis;
+        if (remainingTimeMillis <= 0) {
+          throw new TimeoutException("Expected event not received within: " + timeoutMillis + " ms.");
+        }
+        try {
+          mLock.wait(remainingTimeMillis);
+        }
+ catch (        InterruptedException ie) {
+        }
+      }
+    }
+  finally {
+      mWaitingForEventDelivery=false;
+      mEventQueue.clear();
+      mLock.notifyAll();
+    }
+  }
+}
