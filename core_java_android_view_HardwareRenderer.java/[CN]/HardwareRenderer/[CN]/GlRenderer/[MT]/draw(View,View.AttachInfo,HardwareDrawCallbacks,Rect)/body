@@ -13,74 +13,21 @@
       if (mProfileEnabled) {
         mProfileLock.lock();
       }
-      if (surfaceState == SURFACE_STATE_UPDATED) {
-        dirty=null;
-        beginFrame(null);
-      }
- else {
-        int[] size=mSurfaceSize;
-        beginFrame(size);
-        if (size[1] != mHeight || size[0] != mWidth) {
-          mWidth=size[0];
-          mHeight=size[1];
-          canvas.setViewport(mWidth,mHeight);
-          dirty=null;
-        }
-      }
+      dirty=beginFrame(canvas,dirty,surfaceState);
       int saveCount=0;
       int status=DisplayList.STATUS_DONE;
       try {
         view.mRecreateDisplayList=(view.mPrivateFlags & View.PFLAG_INVALIDATED) == View.PFLAG_INVALIDATED;
         view.mPrivateFlags&=~View.PFLAG_INVALIDATED;
-        long getDisplayListStartTime=0;
-        if (mProfileEnabled) {
-          mProfileCurrentFrame+=PROFILE_FRAME_DATA_COUNT;
-          if (mProfileCurrentFrame >= mProfileData.length) {
-            mProfileCurrentFrame=0;
-          }
-          getDisplayListStartTime=System.nanoTime();
-        }
+        long buildDisplayListStartTime=startBuildDisplayListProfiling();
         canvas.clearLayerUpdates();
-        DisplayList displayList;
-        Trace.traceBegin(Trace.TRACE_TAG_VIEW,"getDisplayList");
-        try {
-          displayList=view.getDisplayList();
-        }
-  finally {
-          Trace.traceEnd(Trace.TRACE_TAG_VIEW);
-        }
-        Trace.traceBegin(Trace.TRACE_TAG_VIEW,"prepareFrame");
-        try {
-          status=onPreDraw(dirty);
-        }
-  finally {
-          Trace.traceEnd(Trace.TRACE_TAG_VIEW);
-        }
+        DisplayList displayList=buildDisplayList(view);
+        status=prepareFrame(dirty);
         saveCount=canvas.save();
         callbacks.onHardwarePreDraw(canvas);
-        if (mProfileEnabled) {
-          long now=System.nanoTime();
-          float total=(now - getDisplayListStartTime) * 0.000001f;
-          mProfileData[mProfileCurrentFrame]=total;
-        }
+        endBuildDisplayListProfiling(buildDisplayListStartTime);
         if (displayList != null) {
-          long drawDisplayListStartTime=0;
-          if (mProfileEnabled) {
-            drawDisplayListStartTime=System.nanoTime();
-          }
-          Trace.traceBegin(Trace.TRACE_TAG_VIEW,"drawDisplayList");
-          try {
-            status|=canvas.drawDisplayList(displayList,mRedrawClip,DisplayList.FLAG_CLIP_CHILDREN);
-          }
-  finally {
-            Trace.traceEnd(Trace.TRACE_TAG_VIEW);
-          }
-          if (mProfileEnabled) {
-            long now=System.nanoTime();
-            float total=(now - drawDisplayListStartTime) * 0.000001f;
-            mProfileData[mProfileCurrentFrame + 1]=total;
-          }
-          handleFunctorStatus(attachInfo,status);
+          status=drawDisplayList(attachInfo,canvas,displayList,status);
         }
  else {
           view.draw(canvas);
@@ -91,34 +38,15 @@
         canvas.restoreToCount(saveCount);
         view.mRecreateDisplayList=false;
         mFrameCount++;
-        if (mDebugDirtyRegions) {
-          if (mDebugPaint == null) {
-            mDebugPaint=new Paint();
-            mDebugPaint.setColor(0x7fff0000);
-          }
-          if (dirty != null && (mFrameCount & 1) == 0) {
-            canvas.drawRect(dirty,mDebugPaint);
-          }
-        }
+        debugDirtyRegions(dirty,canvas);
+        drawProfileData();
       }
       onPostDraw();
-      attachInfo.mIgnoreDirtyState=false;
-      if ((status & DisplayList.STATUS_DREW) == DisplayList.STATUS_DREW) {
-        long eglSwapBuffersStartTime=0;
-        if (mProfileEnabled) {
-          eglSwapBuffersStartTime=System.nanoTime();
-        }
-        sEgl.eglSwapBuffers(sEglDisplay,mEglSurface);
-        if (mProfileEnabled) {
-          long now=System.nanoTime();
-          float total=(now - eglSwapBuffersStartTime) * 0.000001f;
-          mProfileData[mProfileCurrentFrame + 2]=total;
-        }
-        checkEglErrors();
-      }
+      swapBuffers(status);
       if (mProfileEnabled) {
         mProfileLock.unlock();
       }
+      attachInfo.mIgnoreDirtyState=false;
       return dirty == null;
     }
   }
