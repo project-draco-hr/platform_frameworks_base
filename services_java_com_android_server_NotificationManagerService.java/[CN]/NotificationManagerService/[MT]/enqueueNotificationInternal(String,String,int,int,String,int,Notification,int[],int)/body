@@ -12,7 +12,7 @@ synchronized (mNotificationList) {
       final int N=mNotificationList.size();
       for (int i=0; i < N; i++) {
         final NotificationRecord r=mNotificationList.get(i);
-        if (r.pkg.equals(pkg) && r.userId == userId) {
+        if (r.sbn.pkg.equals(pkg) && r.sbn.getUserId() == userId) {
           count++;
           if (count >= MAX_PACKAGE_NOTIFICATIONS) {
             Slog.e(TAG,"Package has already posted " + count + " notifications.  Not showing more.  package="+ pkg);
@@ -55,7 +55,8 @@ synchronized (mNotificationList) {
   }
   final boolean canInterrupt=(score >= SCORE_INTERRUPTION_THRESHOLD);
 synchronized (mNotificationList) {
-    NotificationRecord r=new NotificationRecord(pkg,basePkg,tag,id,callingUid,callingPid,userId,score,notification);
+    final StatusBarNotification n=new StatusBarNotification(pkg,id,tag,callingUid,callingPid,score,notification,user);
+    NotificationRecord r=new NotificationRecord(n);
     NotificationRecord old=null;
     int index=indexOfNotificationLocked(pkg,tag,id,userId);
     if (index < 0) {
@@ -65,7 +66,7 @@ synchronized (mNotificationList) {
       old=mNotificationList.remove(index);
       mNotificationList.add(index,r);
       if (old != null) {
-        notification.flags|=old.notification.flags & Notification.FLAG_FOREGROUND_SERVICE;
+        notification.flags|=old.getNotification().flags & Notification.FLAG_FOREGROUND_SERVICE;
       }
     }
     if ((notification.flags & Notification.FLAG_FOREGROUND_SERVICE) != 0) {
@@ -80,7 +81,6 @@ synchronized (mNotificationList) {
       Binder.restoreCallingIdentity(token);
     }
     if (notification.icon != 0) {
-      final StatusBarNotification n=new StatusBarNotification(pkg,id,tag,r.uid,r.initialPid,score,notification,user);
       if (old != null && old.statusBarKey != null) {
         r.statusBarKey=old.statusBarKey;
         long identity=Binder.clearCallingIdentity();
@@ -106,6 +106,7 @@ synchronized (mNotificationList) {
       if (currentUser == userId) {
         sendAccessibilityEvent(notification,pkg);
       }
+      mArchive.record(n);
     }
  else {
       Slog.e(TAG,"Ignoring notification with icon==0: " + notification);
@@ -118,8 +119,9 @@ synchronized (mNotificationList) {
           Binder.restoreCallingIdentity(identity);
         }
       }
+      return;
     }
-    if (((mDisabledNotifications & StatusBarManager.DISABLE_NOTIFICATION_ALERTS) == 0) && (!(old != null && (notification.flags & Notification.FLAG_ONLY_ALERT_ONCE) != 0)) && (r.userId == UserHandle.USER_ALL || (r.userId == userId && r.userId == currentUser))&& canInterrupt&& mSystemReady) {
+    if (((mDisabledNotifications & StatusBarManager.DISABLE_NOTIFICATION_ALERTS) == 0) && (!(old != null && (notification.flags & Notification.FLAG_ONLY_ALERT_ONCE) != 0)) && (r.getUserId() == UserHandle.USER_ALL || (r.getUserId() == userId && r.getUserId() == currentUser))&& canInterrupt&& mSystemReady) {
       final AudioManager audioManager=(AudioManager)mContext.getSystemService(Context.AUDIO_SERVICE);
       final boolean useDefaultSound=(notification.defaults & Notification.DEFAULT_SOUND) != 0;
       Uri soundUri=null;
@@ -166,14 +168,14 @@ synchronized (mNotificationList) {
         if (useDefaultVibrate || convertSoundToVibration) {
           long identity=Binder.clearCallingIdentity();
           try {
-            mVibrator.vibrate(r.uid,r.basePkg,useDefaultVibrate ? mDefaultVibrationPattern : mFallbackVibrationPattern,((notification.flags & Notification.FLAG_INSISTENT) != 0) ? 0 : -1);
+            mVibrator.vibrate(r.sbn.uid,r.sbn.basePkg,useDefaultVibrate ? mDefaultVibrationPattern : mFallbackVibrationPattern,((notification.flags & Notification.FLAG_INSISTENT) != 0) ? 0 : -1);
           }
   finally {
             Binder.restoreCallingIdentity(identity);
           }
         }
  else         if (notification.vibrate.length > 1) {
-          mVibrator.vibrate(r.uid,r.basePkg,notification.vibrate,((notification.flags & Notification.FLAG_INSISTENT) != 0) ? 0 : -1);
+          mVibrator.vibrate(r.sbn.uid,r.sbn.basePkg,notification.vibrate,((notification.flags & Notification.FLAG_INSISTENT) != 0) ? 0 : -1);
         }
       }
     }
@@ -186,7 +188,7 @@ synchronized (mNotificationList) {
       updateLightsLocked();
     }
  else {
-      if (old != null && ((old.notification.flags & Notification.FLAG_SHOW_LIGHTS) != 0)) {
+      if (old != null && ((old.getFlags() & Notification.FLAG_SHOW_LIGHTS) != 0)) {
         updateLightsLocked();
       }
     }
