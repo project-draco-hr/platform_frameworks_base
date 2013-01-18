@@ -1,12 +1,42 @@
 {
-  dest.writeInt(mNumItems);
-  dest.writeInt(mIsLastSlice ? 1 : 0);
-  if (mNumItems > 0) {
-    final int parcelSize=mParcel.dataSize();
-    dest.writeInt(parcelSize);
-    dest.appendFrom(mParcel,0,parcelSize);
+  final int N=mList.size();
+  final int callFlags=flags;
+  dest.writeInt(N);
+  if (DEBUG)   Log.d(TAG,"Writing " + N + " items");
+  if (N > 0) {
+    dest.writeParcelableCreator(mList.get(0));
+    int i=0;
+    while (i < N && dest.dataSize() < MAX_FIRST_IPC_SIZE) {
+      dest.writeInt(1);
+      mList.get(i).writeToParcel(dest,callFlags);
+      if (DEBUG)       Log.d(TAG,"Wrote inline #" + i + ": "+ mList.get(i));
+      i++;
+    }
+    if (i < N) {
+      dest.writeInt(0);
+      Binder retriever=new Binder(){
+        @Override protected boolean onTransact(        int code,        Parcel data,        Parcel reply,        int flags) throws RemoteException {
+          if (code != FIRST_CALL_TRANSACTION) {
+            return super.onTransact(code,data,reply,flags);
+          }
+          int i=data.readInt();
+          if (DEBUG)           Log.d(TAG,"Writing more @" + i + " of "+ N);
+          while (i < N && reply.dataSize() < MAX_IPC_SIZE) {
+            reply.writeInt(1);
+            mList.get(i).writeToParcel(reply,callFlags);
+            if (DEBUG)             Log.d(TAG,"Wrote extra #" + i + ": "+ mList.get(i));
+            i++;
+          }
+          if (i < N) {
+            if (DEBUG)             Log.d(TAG,"Breaking @" + i + " of "+ N);
+            reply.writeInt(0);
+          }
+          return true;
+        }
+      }
+;
+      if (DEBUG)       Log.d(TAG,"Breaking @" + i + " of "+ N+ ": retriever="+ retriever);
+      dest.writeStrongBinder(retriever);
+    }
   }
-  mNumItems=0;
-  mParcel.recycle();
-  mParcel=null;
 }
