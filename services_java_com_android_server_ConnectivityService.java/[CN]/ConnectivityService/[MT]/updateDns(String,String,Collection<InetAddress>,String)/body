@@ -1,17 +1,51 @@
 {
+  boolean changed=false;
   int last=0;
   if (dnses.size() == 0 && mDefaultDns != null) {
-    dnses=new ArrayList();
-    dnses.add(mDefaultDns);
-    if (DBG) {
-      loge("no dns provided for " + network + " - using "+ mDefaultDns.getHostAddress());
+    ++last;
+    String value=mDefaultDns.getHostAddress();
+    if (!value.equals(SystemProperties.get("net.dns1"))) {
+      if (DBG) {
+        loge("no dns provided for " + network + " - using "+ value);
+      }
+      changed=true;
+      SystemProperties.set("net.dns1",value);
     }
   }
-  try {
-    mNetd.setDnsServersForInterface(iface,NetworkUtils.makeStrings(dnses),domains);
-    mNetd.setDefaultInterfaceForDns(iface);
+ else {
+    for (    InetAddress dns : dnses) {
+      ++last;
+      String key="net.dns" + last;
+      String value=dns.getHostAddress();
+      if (!changed && value.equals(SystemProperties.get(key))) {
+        continue;
+      }
+      if (VDBG) {
+        log("adding dns " + value + " for "+ network);
+      }
+      changed=true;
+      SystemProperties.set(key,value);
+    }
   }
- catch (  Exception e) {
-    if (DBG)     loge("exception setting default dns interface: " + e);
+  for (int i=last + 1; i <= mNumDnsEntries; ++i) {
+    String key="net.dns" + i;
+    if (VDBG)     log("erasing " + key);
+    changed=true;
+    SystemProperties.set(key,"");
   }
+  mNumDnsEntries=last;
+  if (SystemProperties.get("net.dns.search").equals(domains) == false) {
+    SystemProperties.set("net.dns.search",domains);
+    changed=true;
+  }
+  if (changed) {
+    try {
+      mNetd.setDnsServersForInterface(iface,NetworkUtils.makeStrings(dnses),domains);
+      mNetd.setDefaultInterfaceForDns(iface);
+    }
+ catch (    Exception e) {
+      if (DBG)       loge("exception setting default dns interface: " + e);
+    }
+  }
+  return changed;
 }
