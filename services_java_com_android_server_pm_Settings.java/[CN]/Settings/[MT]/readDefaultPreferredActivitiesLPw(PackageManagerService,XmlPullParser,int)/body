@@ -1,0 +1,89 @@
+{
+  int outerDepth=parser.getDepth();
+  int type;
+  while ((type=parser.next()) != XmlPullParser.END_DOCUMENT && (type != XmlPullParser.END_TAG || parser.getDepth() > outerDepth)) {
+    if (type == XmlPullParser.END_TAG || type == XmlPullParser.TEXT) {
+      continue;
+    }
+    String tagName=parser.getName();
+    if (tagName.equals(TAG_ITEM)) {
+      PreferredActivity tmpPa=new PreferredActivity(parser);
+      if (tmpPa.mPref.getParseError() == null) {
+        if (PackageManagerService.DEBUG_PREFERRED) {
+          Log.d(TAG,"Processing preferred:");
+          tmpPa.dump(new LogPrinter(Log.DEBUG,TAG),"  ");
+        }
+        final ComponentName cn=tmpPa.mPref.mComponent;
+        Intent intent=new Intent();
+        int flags=0;
+        intent.setAction(tmpPa.getAction(0));
+        for (int i=0; i < tmpPa.countCategories(); i++) {
+          String cat=tmpPa.getCategory(i);
+          if (cat.equals(Intent.CATEGORY_DEFAULT)) {
+            flags|=PackageManager.MATCH_DEFAULT_ONLY;
+          }
+ else {
+            intent.addCategory(cat);
+          }
+        }
+        if (tmpPa.countDataSchemes() > 0) {
+          Uri.Builder builder=new Uri.Builder();
+          builder.scheme(tmpPa.getDataScheme(0));
+          if (tmpPa.countDataAuthorities() > 0) {
+            IntentFilter.AuthorityEntry auth=tmpPa.getDataAuthority(0);
+            if (auth.getHost() != null) {
+              builder.authority(auth.getHost());
+            }
+          }
+          if (tmpPa.countDataPaths() > 0) {
+            PatternMatcher path=tmpPa.getDataPath(0);
+            builder.path(path.getPath());
+          }
+          intent.setData(builder.build());
+        }
+ else         if (tmpPa.countDataTypes() > 0) {
+          intent.setType(tmpPa.getDataType(0));
+        }
+        List<ResolveInfo> ri=service.mActivities.queryIntent(intent,intent.getType(),flags,0);
+        if (PackageManagerService.DEBUG_PREFERRED)         Log.d(TAG,"Queried " + intent + " results: "+ ri);
+        int match=0;
+        if (ri != null && ri.size() > 1) {
+          boolean haveAct=false;
+          boolean haveNonSys=false;
+          ComponentName[] set=new ComponentName[ri.size()];
+          for (int i=0; i < ri.size(); i++) {
+            ActivityInfo ai=ri.get(i).activityInfo;
+            set[i]=new ComponentName(ai.packageName,ai.name);
+            if ((ai.applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) == 0) {
+              if (PackageManagerService.DEBUG_PREFERRED)               Log.d(TAG,"Result " + ai.packageName + "/"+ ai.name+ ": non-system!");
+              haveNonSys=true;
+              break;
+            }
+ else             if (cn.getPackageName().equals(ai.packageName) && cn.getClassName().equals(ai.name)) {
+              if (PackageManagerService.DEBUG_PREFERRED)               Log.d(TAG,"Result " + ai.packageName + "/"+ ai.name+ ": default!");
+              haveAct=true;
+              match=ri.get(i).match;
+            }
+ else {
+              if (PackageManagerService.DEBUG_PREFERRED)               Log.d(TAG,"Result " + ai.packageName + "/"+ ai.name+ ": skipped");
+            }
+          }
+          if (haveAct && !haveNonSys) {
+            PreferredActivity pa=new PreferredActivity(tmpPa,match,set,tmpPa.mPref.mComponent);
+            editPreferredActivitiesLPw(userId).addFilter(pa);
+          }
+ else           if (!haveNonSys) {
+            Slog.w(TAG,"No component found for default preferred activity " + tmpPa.mPref.mComponent);
+          }
+        }
+      }
+ else {
+        PackageManagerService.reportSettingsProblem(Log.WARN,"Error in package manager settings: <preferred-activity> " + tmpPa.mPref.getParseError() + " at "+ parser.getPositionDescription());
+      }
+    }
+ else {
+      PackageManagerService.reportSettingsProblem(Log.WARN,"Unknown element under <preferred-activities>: " + parser.getName());
+      XmlUtils.skipCurrentTag(parser);
+    }
+  }
+}
