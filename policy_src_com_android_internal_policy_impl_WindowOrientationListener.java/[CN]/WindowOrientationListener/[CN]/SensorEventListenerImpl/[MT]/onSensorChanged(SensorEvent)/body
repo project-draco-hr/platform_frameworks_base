@@ -1,0 +1,107 @@
+{
+  int proposedRotation;
+  int oldProposedRotation;
+synchronized (mLock) {
+    float x=event.values[ACCELEROMETER_DATA_X];
+    float y=event.values[ACCELEROMETER_DATA_Y];
+    float z=event.values[ACCELEROMETER_DATA_Z];
+    if (LOG) {
+      Slog.v(TAG,"Raw acceleration vector: " + "x=" + x + ", y="+ y+ ", z="+ z+ ", magnitude="+ FloatMath.sqrt(x * x + y * y + z * z));
+    }
+    final long now=event.timestamp;
+    final long then=mLastFilteredTimestampNanos;
+    final float timeDeltaMS=(now - then) * 0.000001f;
+    final boolean skipSample;
+    if (now < then || now > then + MAX_FILTER_DELTA_TIME_NANOS || (x == 0 && y == 0 && z == 0)) {
+      if (LOG) {
+        Slog.v(TAG,"Resetting orientation listener.");
+      }
+      resetLocked();
+      skipSample=true;
+    }
+ else {
+      final float alpha=timeDeltaMS / (FILTER_TIME_CONSTANT_MS + timeDeltaMS);
+      x=alpha * (x - mLastFilteredX) + mLastFilteredX;
+      y=alpha * (y - mLastFilteredY) + mLastFilteredY;
+      z=alpha * (z - mLastFilteredZ) + mLastFilteredZ;
+      if (LOG) {
+        Slog.v(TAG,"Filtered acceleration vector: " + "x=" + x + ", y="+ y+ ", z="+ z+ ", magnitude="+ FloatMath.sqrt(x * x + y * y + z * z));
+      }
+      skipSample=false;
+    }
+    mLastFilteredTimestampNanos=now;
+    mLastFilteredX=x;
+    mLastFilteredY=y;
+    mLastFilteredZ=z;
+    boolean isAccelerating=false;
+    boolean isFlat=false;
+    boolean isSwinging=false;
+    if (!skipSample) {
+      final float magnitude=FloatMath.sqrt(x * x + y * y + z * z);
+      if (magnitude < NEAR_ZERO_MAGNITUDE) {
+        if (LOG) {
+          Slog.v(TAG,"Ignoring sensor data, magnitude too close to zero.");
+        }
+        clearPredictedRotationLocked();
+      }
+ else {
+        if (isAcceleratingLocked(magnitude)) {
+          isAccelerating=true;
+          mAccelerationTimestampNanos=now;
+        }
+        final int tiltAngle=(int)Math.round(Math.asin(z / magnitude) * RADIANS_TO_DEGREES);
+        addTiltHistoryEntryLocked(now,tiltAngle);
+        if (isFlatLocked(now)) {
+          isFlat=true;
+          mFlatTimestampNanos=now;
+        }
+        if (isSwingingLocked(now,tiltAngle)) {
+          isSwinging=true;
+          mSwingTimestampNanos=now;
+        }
+        if (Math.abs(tiltAngle) > MAX_TILT) {
+          if (LOG) {
+            Slog.v(TAG,"Ignoring sensor data, tilt angle too high: " + "tiltAngle=" + tiltAngle);
+          }
+          clearPredictedRotationLocked();
+        }
+ else {
+          int orientationAngle=(int)Math.round(-Math.atan2(-x,y) * RADIANS_TO_DEGREES);
+          if (orientationAngle < 0) {
+            orientationAngle+=360;
+          }
+          int nearestRotation=(orientationAngle + 45) / 90;
+          if (nearestRotation == 4) {
+            nearestRotation=0;
+          }
+          if (isTiltAngleAcceptableLocked(nearestRotation,tiltAngle) && isOrientationAngleAcceptableLocked(nearestRotation,orientationAngle)) {
+            updatePredictedRotationLocked(now,nearestRotation);
+            if (LOG) {
+              Slog.v(TAG,"Predicted: " + "tiltAngle=" + tiltAngle + ", orientationAngle="+ orientationAngle+ ", predictedRotation="+ mPredictedRotation+ ", predictedRotationAgeMS="+ ((now - mPredictedRotationTimestampNanos) * 0.000001f));
+            }
+          }
+ else {
+            if (LOG) {
+              Slog.v(TAG,"Ignoring sensor data, no predicted rotation: " + "tiltAngle=" + tiltAngle + ", orientationAngle="+ orientationAngle);
+            }
+            clearPredictedRotationLocked();
+          }
+        }
+      }
+    }
+    oldProposedRotation=mProposedRotation;
+    if (mPredictedRotation < 0 || isPredictedRotationAcceptableLocked(now)) {
+      mProposedRotation=mPredictedRotation;
+    }
+    proposedRotation=mProposedRotation;
+    if (LOG) {
+      Slog.v(TAG,"Result: currentRotation=" + mCurrentRotation + ", proposedRotation="+ proposedRotation+ ", predictedRotation="+ mPredictedRotation+ ", timeDeltaMS="+ timeDeltaMS+ ", isAccelerating="+ isAccelerating+ ", isFlat="+ isFlat+ ", isSwinging="+ isSwinging+ ", timeUntilSettledMS="+ remainingMS(now,mPredictedRotationTimestampNanos + PROPOSAL_SETTLE_TIME_NANOS)+ ", timeUntilAccelerationDelayExpiredMS="+ remainingMS(now,mAccelerationTimestampNanos + PROPOSAL_MIN_TIME_SINCE_ACCELERATION_ENDED_NANOS)+ ", timeUntilFlatDelayExpiredMS="+ remainingMS(now,mFlatTimestampNanos + PROPOSAL_MIN_TIME_SINCE_FLAT_ENDED_NANOS)+ ", timeUntilSwingDelayExpiredMS="+ remainingMS(now,mSwingTimestampNanos + PROPOSAL_MIN_TIME_SINCE_SWING_ENDED_NANOS));
+    }
+  }
+  if (proposedRotation != oldProposedRotation && proposedRotation >= 0) {
+    if (LOG) {
+      Slog.v(TAG,"Proposed rotation changed!  proposedRotation=" + proposedRotation + ", oldProposedRotation="+ oldProposedRotation);
+    }
+    onProposedRotationChanged(proposedRotation);
+  }
+}
