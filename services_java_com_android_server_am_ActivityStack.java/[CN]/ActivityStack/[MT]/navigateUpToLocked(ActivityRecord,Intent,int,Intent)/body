@@ -1,0 +1,70 @@
+{
+  final int start=mHistory.indexOf(srec);
+  if (start < 0) {
+    return false;
+  }
+  int finishTo=start - 1;
+  ActivityRecord parent=null;
+  boolean foundParentInTask=false;
+  ComponentName dest=destIntent.getComponent();
+  if (dest != null) {
+    TaskRecord tr=srec.task;
+    for (int i=start - 1; i >= 0; i--) {
+      ActivityRecord r=mHistory.get(i);
+      if (tr != r.task) {
+        finishTo=Math.min(start - 1,i + 1);
+        parent=mHistory.get(finishTo);
+        break;
+      }
+ else       if (r.info.packageName.equals(dest.getPackageName()) && r.info.name.equals(dest.getClassName())) {
+        finishTo=i;
+        parent=r;
+        foundParentInTask=true;
+        break;
+      }
+    }
+  }
+  IActivityController controller=mService.mController;
+  if (controller != null) {
+    ActivityRecord next=topRunningActivityLocked(srec.appToken,0);
+    if (next != null) {
+      boolean resumeOK=true;
+      try {
+        resumeOK=controller.activityResuming(next.packageName);
+      }
+ catch (      RemoteException e) {
+        mService.mController=null;
+      }
+      if (!resumeOK) {
+        return false;
+      }
+    }
+  }
+  final long origId=Binder.clearCallingIdentity();
+  for (int i=start; i > finishTo; i--) {
+    ActivityRecord r=mHistory.get(i);
+    requestFinishActivityLocked(r.appToken,resultCode,resultData,"navigate-up",true);
+    resultCode=Activity.RESULT_CANCELED;
+    resultData=null;
+  }
+  if (parent != null && foundParentInTask) {
+    final int parentLaunchMode=parent.info.launchMode;
+    final int destIntentFlags=destIntent.getFlags();
+    if (parentLaunchMode == ActivityInfo.LAUNCH_SINGLE_INSTANCE || parentLaunchMode == ActivityInfo.LAUNCH_SINGLE_TASK || parentLaunchMode == ActivityInfo.LAUNCH_SINGLE_TOP || (destIntentFlags & Intent.FLAG_ACTIVITY_CLEAR_TOP) != 0) {
+      parent.deliverNewIntentLocked(srec.info.applicationInfo.uid,destIntent);
+    }
+ else {
+      try {
+        ActivityInfo aInfo=AppGlobals.getPackageManager().getActivityInfo(destIntent.getComponent(),0,srec.userId);
+        int res=startActivityLocked(srec.app.thread,destIntent,null,aInfo,parent.appToken,null,0,-1,parent.launchedFromUid,parent.launchedFromPackage,0,null,true,null);
+        foundParentInTask=res == ActivityManager.START_SUCCESS;
+      }
+ catch (      RemoteException e) {
+        foundParentInTask=false;
+      }
+      requestFinishActivityLocked(parent.appToken,resultCode,resultData,"navigate-up",true);
+    }
+  }
+  Binder.restoreCallingIdentity(origId);
+  return foundParentInTask;
+}
