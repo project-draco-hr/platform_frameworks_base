@@ -80,20 +80,32 @@
       loge(config.SSID + ": failed to set hiddenSSID: " + config.hiddenSSID);
       break setVariables;
     }
-    for (    WifiConfiguration.EnterpriseField field : config.enterpriseFields) {
-      String varName=field.varName();
-      String value=field.value();
-      if (value != null) {
-        if (field == config.engine) {
-          if (value.length() == 0) {
-            value="0";
+    if (config.enterpriseConfig != null) {
+      WifiEnterpriseConfig enterpriseConfig=config.enterpriseConfig;
+      if (enterpriseConfig.needsKeyStore()) {
+        if (mKeyStore.state() != KeyStore.State.UNLOCKED) {
+          loge(config.SSID + ": key store is locked");
+          break setVariables;
+        }
+        try {
+          WifiConfiguration currentConfig=mConfiguredNetworks.get(netId);
+          String keyId=config.getKeyIdForCredentials(currentConfig);
+          if (!enterpriseConfig.installKeys(mKeyStore,keyId)) {
+            loge(config.SSID + ": failed to install keys");
+            break setVariables;
           }
         }
- else         if (field != config.eap) {
-          value=(value.length() == 0) ? "NULL" : convertToQuotedString(value);
+ catch (        IllegalStateException e) {
+          loge(config.SSID + " invalid config for key installation");
+          break setVariables;
         }
-        if (!mWifiNative.setNetworkVariable(netId,varName,value)) {
-          loge(config.SSID + ": failed to set " + varName+ ": "+ value);
+      }
+      HashMap<String,String> enterpriseFields=enterpriseConfig.getFields();
+      for (      String key : enterpriseFields.keySet()) {
+        String value=enterpriseFields.get(key);
+        if (!mWifiNative.setNetworkVariable(netId,key,value)) {
+          enterpriseConfig.removeKeys(mKeyStore);
+          loge(config.SSID + ": failed to set " + key+ ": "+ value);
           break setVariables;
         }
       }
