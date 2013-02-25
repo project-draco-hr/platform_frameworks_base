@@ -1,0 +1,109 @@
+{
+  ActivityOptions topOptions=null;
+  int replyChainEnd=-1;
+  boolean canMoveOptions=true;
+  final ArrayList<ActivityRecord> activities=task.mActivities;
+  final int numActivities=activities.size();
+  for (int i=numActivities - 1; i > 0; --i) {
+    ActivityRecord target=activities.get(i);
+    final int flags=target.info.flags;
+    final boolean finishOnTaskLaunch=(flags & ActivityInfo.FLAG_FINISH_ON_TASK_LAUNCH) != 0;
+    final boolean allowTaskReparenting=(flags & ActivityInfo.FLAG_ALLOW_TASK_REPARENTING) != 0;
+    final boolean clearWhenTaskReset=(target.intent.getFlags() & Intent.FLAG_ACTIVITY_CLEAR_WHEN_TASK_RESET) != 0;
+    if (!finishOnTaskLaunch && !clearWhenTaskReset && target.resultTo != null) {
+      if (replyChainEnd < 0) {
+        replyChainEnd=i;
+      }
+    }
+ else     if (!finishOnTaskLaunch && !clearWhenTaskReset && allowTaskReparenting&& target.taskAffinity != null && !target.taskAffinity.equals(task.affinity)) {
+      TaskRecord bottomTask=mTaskHistory.get(0);
+      ActivityRecord p=bottomTask.mActivities.get(0);
+      if (target.taskAffinity != null && target.taskAffinity.equals(p.task.affinity)) {
+        if (VALIDATE_TASK_REPLACE)         Slog.w(TAG,"resetTaskFoundIntended: would reparenting " + target + " to bottom "+ p.task);
+        target.setTask(p.task,p.thumbHolder,false);
+        if (DEBUG_TASKS)         Slog.v(TAG,"Start pushing activity " + target + " out to bottom task "+ p.task);
+      }
+ else {
+        do {
+          mService.mCurTask++;
+          if (mService.mCurTask <= 0) {
+            mService.mCurTask=1;
+          }
+        }
+ while (mTaskIdToTaskRecord.get(mService.mCurTask) != null);
+        target.setTask(createTaskRecord(mService.mCurTask,target.info,null,false),null,false);
+        target.task.affinityIntent=target.intent;
+        if (DEBUG_TASKS)         Slog.v(TAG,"Start pushing activity " + target + " out to new task "+ target.task);
+      }
+      final TaskRecord targetTask=target.task;
+      final int targetTaskId=targetTask.taskId;
+      mService.mWindowManager.setAppGroupId(target.appToken,targetTaskId);
+      ThumbnailHolder curThumbHolder=target.thumbHolder;
+      boolean gotOptions=!canMoveOptions;
+      final int start=replyChainEnd < 0 ? i : replyChainEnd;
+      for (int srcPos=start; srcPos >= i; --srcPos) {
+        p=activities.get(srcPos);
+        if (p.finishing) {
+          continue;
+        }
+        curThumbHolder=p.thumbHolder;
+        canMoveOptions=false;
+        if (!gotOptions && topOptions == null) {
+          topOptions=p.takeOptionsLocked();
+          if (topOptions != null) {
+            gotOptions=true;
+          }
+        }
+        if (DEBUG_ADD_REMOVE)         Slog.i(TAG,"Removing activity " + p + " from task="+ task+ " adding to task="+ targetTask,new RuntimeException("here").fillInStackTrace());
+        if (DEBUG_TASKS)         Slog.v(TAG,"Pushing next activity " + p + " out to target's task "+ target.task);
+        p.setTask(targetTask,curThumbHolder,false);
+        targetTask.addActivityAtBottom(p);
+        mHistory.remove(p);
+        mHistory.add(0,p);
+        mService.mWindowManager.setAppGroupId(p.appToken,targetTaskId);
+      }
+      mService.mWindowManager.moveTaskToBottom(targetTaskId);
+      if (VALIDATE_TOKENS) {
+        validateAppTokensLocked();
+      }
+      replyChainEnd=-1;
+    }
+ else     if (forceReset || finishOnTaskLaunch || clearWhenTaskReset) {
+      int end;
+      if (clearWhenTaskReset) {
+        end=numActivities - 1;
+      }
+ else       if (replyChainEnd < 0) {
+        end=i;
+      }
+ else {
+        end=replyChainEnd;
+      }
+      ActivityRecord p=null;
+      boolean gotOptions=!canMoveOptions;
+      for (int srcPos=i; srcPos <= end; srcPos++) {
+        p=activities.get(srcPos);
+        if (p.finishing) {
+          continue;
+        }
+        canMoveOptions=false;
+        if (!gotOptions && topOptions == null) {
+          topOptions=p.takeOptionsLocked();
+          if (topOptions != null) {
+            gotOptions=true;
+          }
+        }
+        if (DEBUG_TASKS || VALIDATE_TASK_REPLACE)         Slog.w(TAG,"resetTaskIntendedTask: would call finishActivity on " + p);
+        if (finishActivityLocked(p,-1,Activity.RESULT_CANCELED,null,"reset",false)) {
+          end--;
+          srcPos--;
+        }
+      }
+      replyChainEnd=-1;
+    }
+ else {
+      replyChainEnd=-1;
+    }
+  }
+  return topOptions;
+}
