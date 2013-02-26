@@ -1,10 +1,76 @@
 {
+  ComponentName dest=destIntent.getComponent();
 synchronized (this) {
     ActivityRecord srec=ActivityRecord.forToken(token);
     if (srec == null) {
       return false;
     }
-    ActivityStack stack=srec.stack;
-    return stack.navigateUpToLocked(srec,destIntent,resultCode,resultData);
+    ArrayList<ActivityRecord> history=srec.stack.mHistory;
+    final int start=history.indexOf(srec);
+    if (start < 0) {
+      return false;
+    }
+    int finishTo=start - 1;
+    ActivityRecord parent=null;
+    boolean foundParentInTask=false;
+    if (dest != null) {
+      TaskRecord tr=srec.task;
+      for (int i=start - 1; i >= 0; i--) {
+        ActivityRecord r=history.get(i);
+        if (tr != r.task) {
+          finishTo=Math.min(start - 1,i + 1);
+          parent=history.get(finishTo);
+          break;
+        }
+ else         if (r.info.packageName.equals(dest.getPackageName()) && r.info.name.equals(dest.getClassName())) {
+          finishTo=i;
+          parent=r;
+          foundParentInTask=true;
+          break;
+        }
+      }
+    }
+    if (mController != null) {
+      ActivityRecord next=mMainStack.topRunningActivityLocked(token,0);
+      if (next != null) {
+        boolean resumeOK=true;
+        try {
+          resumeOK=mController.activityResuming(next.packageName);
+        }
+ catch (        RemoteException e) {
+          mController=null;
+        }
+        if (!resumeOK) {
+          return false;
+        }
+      }
+    }
+    final long origId=Binder.clearCallingIdentity();
+    for (int i=start; i > finishTo; i--) {
+      ActivityRecord r=history.get(i);
+      mMainStack.requestFinishActivityLocked(r.appToken,resultCode,resultData,"navigate-up",true);
+      resultCode=Activity.RESULT_CANCELED;
+      resultData=null;
+    }
+    if (parent != null && foundParentInTask) {
+      final int parentLaunchMode=parent.info.launchMode;
+      final int destIntentFlags=destIntent.getFlags();
+      if (parentLaunchMode == ActivityInfo.LAUNCH_SINGLE_INSTANCE || parentLaunchMode == ActivityInfo.LAUNCH_SINGLE_TASK || parentLaunchMode == ActivityInfo.LAUNCH_SINGLE_TOP || (destIntentFlags & Intent.FLAG_ACTIVITY_CLEAR_TOP) != 0) {
+        parent.deliverNewIntentLocked(srec.info.applicationInfo.uid,destIntent);
+      }
+ else {
+        try {
+          ActivityInfo aInfo=AppGlobals.getPackageManager().getActivityInfo(destIntent.getComponent(),0,srec.userId);
+          int res=mMainStack.startActivityLocked(srec.app.thread,destIntent,null,aInfo,parent.appToken,null,0,-1,parent.launchedFromUid,parent.launchedFromPackage,0,null,true,null);
+          foundParentInTask=res == ActivityManager.START_SUCCESS;
+        }
+ catch (        RemoteException e) {
+          foundParentInTask=false;
+        }
+        mMainStack.requestFinishActivityLocked(parent.appToken,resultCode,resultData,"navigate-up",true);
+      }
+    }
+    Binder.restoreCallingIdentity(origId);
+    return foundParentInTask;
   }
 }

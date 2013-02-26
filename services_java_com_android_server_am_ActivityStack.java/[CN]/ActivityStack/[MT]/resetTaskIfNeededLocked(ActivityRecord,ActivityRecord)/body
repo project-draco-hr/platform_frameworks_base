@@ -1,5 +1,4 @@
 {
-  mLastHistoryModifier="resetTaskIfNeededLocked";
   boolean forceReset=(newActivity.info.flags & ActivityInfo.FLAG_CLEAR_TASK_ON_LAUNCH) != 0;
   if (ACTIVITY_INACTIVE_RESET_TIME > 0 && taskTop.task.getInactiveDuration() > ACTIVITY_INACTIVE_RESET_TIME) {
     if ((newActivity.info.flags & ActivityInfo.FLAG_ALWAYS_RETAIN_TASK_STATE) == 0) {
@@ -53,18 +52,17 @@
             if (mService.mCurTask <= 0) {
               mService.mCurTask=1;
             }
-            target.setTask(createTaskRecord(mService.mCurTask,target.info,null,false),null,false);
+            target.setTask(new TaskRecord(mService.mCurTask,target.info,null),null,false);
             target.task.affinityIntent=target.intent;
             if (DEBUG_TASKS)             Slog.v(TAG,"Start pushing activity " + target + " out to new task "+ target.task);
           }
-          mService.mWindowManager.setAppGroupId(target.appToken,target.task.taskId);
+          mService.mWindowManager.setAppGroupId(target.appToken,task.taskId);
           if (replyChainEnd < 0) {
             replyChainEnd=targetI;
           }
           int dstPos=0;
           ThumbnailHolder curThumbHolder=target.thumbHolder;
           boolean gotOptions=!canMoveOptions;
-          final int taskId=target.task.taskId;
           for (int srcPos=targetI; srcPos <= replyChainEnd; srcPos++) {
             p=mHistory.get(srcPos);
             if (p.finishing) {
@@ -87,14 +85,13 @@
             }
             mHistory.remove(srcPos);
             mHistory.add(dstPos,p);
-            mService.mWindowManager.setAppGroupId(p.appToken,taskId);
+            mService.mWindowManager.moveAppToken(dstPos,p.appToken);
+            mService.mWindowManager.setAppGroupId(p.appToken,p.task.taskId);
             dstPos++;
+            if (VALIDATE_TOKENS) {
+              validateAppTokensLocked();
+            }
             i++;
-          }
-          rebuildTaskHistory();
-          mService.mWindowManager.moveTaskToBottom(taskId);
-          if (VALIDATE_TOKENS) {
-            validateAppTokensLocked();
           }
           if (taskTop == p) {
             taskTop=below;
@@ -180,7 +177,6 @@
         if (replyChainEnd < 0) {
           replyChainEnd=targetI;
         }
-        final int taskId=task.taskId;
         if (DEBUG_TASKS)         Slog.v(TAG,"Reparenting task at index " + targetI + " to "+ replyChainEnd);
         for (int srcPos=replyChainEnd; srcPos >= targetI; srcPos--) {
           ActivityRecord p=mHistory.get(srcPos);
@@ -203,12 +199,11 @@
           p.setTask(task,null,false);
           mHistory.add(lastReparentPos,p);
           if (DEBUG_TASKS)           Slog.v(TAG,"Pulling activity " + p + " from "+ srcPos+ " to "+ lastReparentPos+ " in to resetting task "+ task);
-          mService.mWindowManager.setAppGroupId(p.appToken,taskId);
-        }
-        rebuildTaskHistory();
-        mService.mWindowManager.moveTaskToTop(taskId);
-        if (VALIDATE_TOKENS) {
-          validateAppTokensLocked();
+          mService.mWindowManager.moveAppToken(lastReparentPos,p.appToken);
+          mService.mWindowManager.setAppGroupId(p.appToken,p.task.taskId);
+          if (VALIDATE_TOKENS) {
+            validateAppTokensLocked();
+          }
         }
         replyChainEnd=-1;
         if (target.info.launchMode == ActivityInfo.LAUNCH_SINGLE_TOP) {
@@ -240,9 +235,6 @@
  else {
       topOptions.abort();
     }
-  }
-  if (VALIDATE_TASK_REPLACE) {
-    verifyActivityRecords(true);
   }
   return taskTop;
 }
