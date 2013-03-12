@@ -56,36 +56,9 @@ synchronized (mPackages) {
     pkg.mAdoptPermissions=null;
   }
 synchronized (mPackages) {
-    if (pkg.usesLibraries != null || pkg.usesOptionalLibraries != null) {
-      if (mTmpSharedLibraries == null || mTmpSharedLibraries.length < mSharedLibraries.size()) {
-        mTmpSharedLibraries=new String[mSharedLibraries.size()];
-      }
-      int num=0;
-      int N=pkg.usesLibraries != null ? pkg.usesLibraries.size() : 0;
-      for (int i=0; i < N; i++) {
-        final String file=mSharedLibraries.get(pkg.usesLibraries.get(i));
-        if (file == null) {
-          Slog.e(TAG,"Package " + pkg.packageName + " requires unavailable shared library "+ pkg.usesLibraries.get(i)+ "; failing!");
-          mLastScanError=PackageManager.INSTALL_FAILED_MISSING_SHARED_LIBRARY;
-          return null;
-        }
-        mTmpSharedLibraries[num]=file;
-        num++;
-      }
-      N=pkg.usesOptionalLibraries != null ? pkg.usesOptionalLibraries.size() : 0;
-      for (int i=0; i < N; i++) {
-        final String file=mSharedLibraries.get(pkg.usesOptionalLibraries.get(i));
-        if (file == null) {
-          Slog.w(TAG,"Package " + pkg.packageName + " desires unavailable shared library "+ pkg.usesOptionalLibraries.get(i)+ "; ignoring!");
-        }
- else {
-          mTmpSharedLibraries[num]=file;
-          num++;
-        }
-      }
-      if (num > 0) {
-        pkg.usesLibraryFiles=new String[num];
-        System.arraycopy(mTmpSharedLibraries,0,pkg.usesLibraryFiles,0,num);
+    if ((parseFlags & PackageParser.PARSE_IS_SYSTEM_DIR) == 0) {
+      if (!updateSharedLibrariesLPw(pkg,null)) {
+        return null;
       }
     }
     if (pkg.mSharedUserId != null) {
@@ -346,7 +319,7 @@ synchronized (mInstallLock) {
   }
   pkg.mScanPath=path;
   if ((scanMode & SCAN_NO_DEX) == 0) {
-    if (performDexOptLI(pkg,forceDex,(scanMode & SCAN_DEFER_DEX) != 0) == DEX_OPT_FAILED) {
+    if (performDexOptLI(pkg,forceDex,(scanMode & SCAN_DEFER_DEX) != 0,false) == DEX_OPT_FAILED) {
       mLastScanError=PackageManager.INSTALL_FAILED_DEXOPT;
       return null;
     }
@@ -354,8 +327,65 @@ synchronized (mInstallLock) {
   if (mFactoryTest && pkg.requestedPermissions.contains(android.Manifest.permission.FACTORY_TEST)) {
     pkg.applicationInfo.flags|=ApplicationInfo.FLAG_FACTORY_TEST;
   }
+  ArrayList<PackageParser.Package> clientLibPkgs=null;
+synchronized (mPackages) {
+    if ((pkg.applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) != 0) {
+      if (pkg.libraryNames != null) {
+        for (int i=0; i < pkg.libraryNames.size(); i++) {
+          String name=pkg.libraryNames.get(i);
+          boolean allowed=false;
+          if (isUpdatedSystemApp(pkg)) {
+            final PackageSetting sysPs=mSettings.getDisabledSystemPkgLPr(pkg.packageName);
+            if (sysPs.pkg != null && sysPs.pkg.libraryNames != null) {
+              for (int j=0; j < sysPs.pkg.libraryNames.size(); j++) {
+                if (name.equals(sysPs.pkg.libraryNames.get(j))) {
+                  allowed=true;
+                  allowed=true;
+                  break;
+                }
+              }
+            }
+          }
+ else {
+            allowed=true;
+          }
+          if (allowed) {
+            if (!mSharedLibraries.containsKey(name)) {
+              mSharedLibraries.put(name,new SharedLibraryEntry(null,pkg.packageName));
+            }
+ else             if (!name.equals(pkg.packageName)) {
+              Slog.w(TAG,"Package " + pkg.packageName + " library "+ name+ " already exists; skipping");
+            }
+          }
+ else {
+            Slog.w(TAG,"Package " + pkg.packageName + " declares lib "+ name+ " that is not declared on system image; skipping");
+          }
+        }
+        if ((scanMode & SCAN_BOOTING) == 0) {
+          clientLibPkgs=updateAllSharedLibrariesLPw(pkg);
+        }
+      }
+    }
+  }
+  if (clientLibPkgs != null) {
+    if ((scanMode & SCAN_NO_DEX) == 0) {
+      for (int i=0; i < clientLibPkgs.size(); i++) {
+        PackageParser.Package clientPkg=clientLibPkgs.get(i);
+        if (performDexOptLI(clientPkg,forceDex,(scanMode & SCAN_DEFER_DEX) != 0,false) == DEX_OPT_FAILED) {
+          mLastScanError=PackageManager.INSTALL_FAILED_DEXOPT;
+          return null;
+        }
+      }
+    }
+  }
   if ((parseFlags & PackageManager.INSTALL_REPLACE_EXISTING) != 0) {
     killApplication(pkg.applicationInfo.packageName,pkg.applicationInfo.uid);
+  }
+  if (clientLibPkgs != null) {
+    for (int i=0; i < clientLibPkgs.size(); i++) {
+      PackageParser.Package clientPkg=clientLibPkgs.get(i);
+      killApplication(clientPkg.applicationInfo.packageName,clientPkg.applicationInfo.uid);
+    }
   }
 synchronized (mPackages) {
     if ((scanMode & SCAN_MONITOR) != 0) {
