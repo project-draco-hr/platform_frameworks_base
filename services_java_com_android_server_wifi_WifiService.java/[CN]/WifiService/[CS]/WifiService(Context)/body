@@ -5,16 +5,20 @@
   mWifiStateMachine.enableRssiPolling(true);
   mBatteryStats=BatteryStatsService.getService();
   mAppOps=(AppOpsManager)context.getSystemService(Context.APP_OPS_SERVICE);
-  mAlarmManager=(AlarmManager)mContext.getSystemService(Context.ALARM_SERVICE);
-  Intent idleIntent=new Intent(ACTION_DEVICE_IDLE,null);
-  mIdleIntent=PendingIntent.getBroadcast(mContext,IDLE_REQUEST,idleIntent,0);
   mNotificationController=new WifiNotificationController(mContext,mWifiStateMachine);
   mTrafficPoller=new WifiTrafficPoller(mContext,mInterfaceName);
   mSettingsStore=new WifiSettingsStore(mContext);
+  HandlerThread wifiThread=new HandlerThread("WifiService");
+  wifiThread.start();
+  mClientHandler=new ClientHandler(wifiThread.getLooper());
+  mWifiStateMachineHandler=new WifiStateMachineHandler(wifiThread.getLooper());
+  mWifiController=new WifiController(mContext,this,wifiThread.getLooper());
+  mWifiController.start();
+  registerForScanModeChange();
   mContext.registerReceiver(new BroadcastReceiver(){
     @Override public void onReceive(    Context context,    Intent intent){
       if (mSettingsStore.handleAirplaneModeToggled()) {
-        updateWifiState();
+        mWifiController.sendMessage(CMD_AIRPLANE_TOGGLED);
       }
     }
   }
@@ -27,8 +31,4 @@
     }
   }
 ,new IntentFilter(WifiManager.SCAN_RESULTS_AVAILABLE_ACTION));
-  HandlerThread wifiThread=new HandlerThread("WifiService");
-  wifiThread.start();
-  mClientHandler=new ClientHandler(wifiThread.getLooper());
-  mWifiStateMachineHandler=new WifiStateMachineHandler(wifiThread.getLooper());
 }
