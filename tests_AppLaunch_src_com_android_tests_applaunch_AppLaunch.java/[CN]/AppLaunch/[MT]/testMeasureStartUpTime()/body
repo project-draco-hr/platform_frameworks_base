@@ -4,17 +4,40 @@
   mAm=ActivityManagerNative.getDefault();
   createMappings();
   parseArgs(args);
-  Bundle results=new Bundle();
   for (  String app : mNameToResultKey.keySet()) {
-    try {
-      startApp(app,results);
-      sleep(750);
-      closeApp(app);
-      sleep(2000);
+    long launchTime=startApp(app,false);
+    if (launchTime <= 0) {
+      mNameToLaunchTime.put(app,-1L);
+      continue;
     }
- catch (    NameNotFoundException e) {
-      Log.i(TAG,"Application " + app + " not found");
+    sleep(INITIAL_LAUNCH_IDLE_TIMEOUT);
+    closeApp(app,false);
+    sleep(BETWEEN_LAUNCH_SLEEP_TIMEOUT);
+  }
+  for (int i=0; i < mLaunchIterations; i++) {
+    for (    String app : mNameToResultKey.keySet()) {
+      long totalLaunchTime=mNameToLaunchTime.get(app);
+      long launchTime=0;
+      if (totalLaunchTime < 0) {
+        continue;
+      }
+      launchTime=startApp(app,true);
+      if (launchTime <= 0) {
+        mNameToLaunchTime.put(app,-1L);
+        continue;
+      }
+      totalLaunchTime+=launchTime;
+      mNameToLaunchTime.put(app,totalLaunchTime);
+      sleep(POST_LAUNCH_IDLE_TIMEOUT);
+      closeApp(app,true);
+      sleep(BETWEEN_LAUNCH_SLEEP_TIMEOUT);
     }
   }
-  instrumentation.sendStatus(0,results);
+  for (  String app : mNameToResultKey.keySet()) {
+    long totalLaunchTime=mNameToLaunchTime.get(app);
+    if (totalLaunchTime != -1) {
+      mResult.putDouble(mNameToResultKey.get(app),((double)totalLaunchTime) / mLaunchIterations);
+    }
+  }
+  instrumentation.sendStatus(0,mResult);
 }
