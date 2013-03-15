@@ -12,52 +12,35 @@
     mInLayout=false;
     int numViewsRequestingLayout=mLayoutRequesters.size();
     if (numViewsRequestingLayout > 0) {
-      ArrayList<View> mValidLayoutRequesters=null;
-      for (int i=0; i < numViewsRequestingLayout; ++i) {
-        View view=mLayoutRequesters.get(i);
-        if ((view.mPrivateFlags & View.PFLAG_FORCE_LAYOUT) == View.PFLAG_FORCE_LAYOUT) {
-          while (view != null && view.mAttachInfo != null && view.mParent != null && (view.mPrivateFlags & View.PFLAG_FORCE_LAYOUT) != 0) {
-            if ((view.mViewFlags & View.VISIBILITY_MASK) != View.GONE) {
-              Log.w(TAG,"requestLayout() improperly called during " + "layout: running second layout pass for " + view);
-              if (mValidLayoutRequesters == null) {
-                mValidLayoutRequesters=new ArrayList<View>();
-              }
-              mValidLayoutRequesters.add(view);
-              break;
-            }
-            if (view.mParent instanceof View) {
-              view=(View)view.mParent;
-            }
- else {
-              view=null;
-            }
-          }
-        }
-      }
-      if (mValidLayoutRequesters != null) {
-        for (int i=0; i < numViewsRequestingLayout; ++i) {
-          View view=mLayoutRequesters.get(i);
-          while (view != null && (view.mPrivateFlags & View.PFLAG_FORCE_LAYOUT) != 0) {
-            view.mPrivateFlags&=~View.PFLAG_FORCE_LAYOUT;
-            if (view.mParent instanceof View) {
-              view=(View)view.mParent;
-            }
- else {
-              view=null;
-            }
-          }
-        }
+      ArrayList<View> validLayoutRequesters=getValidLayoutRequesters(mLayoutRequesters,false);
+      if (validLayoutRequesters != null) {
         mHandlingLayoutInLayoutRequest=true;
-        int numValidRequests=mValidLayoutRequesters.size();
+        int numValidRequests=validLayoutRequesters.size();
         for (int i=0; i < numValidRequests; ++i) {
-          mValidLayoutRequesters.get(i).requestLayout();
+          final View view=validLayoutRequesters.get(i);
+          Log.w("View","requestLayout() improperly called by " + view + " during layout: running second layout pass");
+          view.requestLayout();
         }
         measureHierarchy(host,lp,mView.getContext().getResources(),desiredWindowWidth,desiredWindowHeight);
         mInLayout=true;
         host.layout(0,0,host.getMeasuredWidth(),host.getMeasuredHeight());
         mHandlingLayoutInLayoutRequest=false;
+        validLayoutRequesters=getValidLayoutRequesters(mLayoutRequesters,true);
+        if (validLayoutRequesters != null) {
+          final ArrayList<View> finalRequesters=validLayoutRequesters;
+          getRunQueue().post(new Runnable(){
+            @Override public void run(){
+              int numValidRequests=finalRequesters.size();
+              for (int i=0; i < numValidRequests; ++i) {
+                final View view=finalRequesters.get(i);
+                Log.w("View","requestLayout() improperly called by " + view + " during second layout pass: posting in next frame");
+                view.requestLayout();
+              }
+            }
+          }
+);
+        }
       }
-      mLayoutRequesters.clear();
     }
   }
   finally {
