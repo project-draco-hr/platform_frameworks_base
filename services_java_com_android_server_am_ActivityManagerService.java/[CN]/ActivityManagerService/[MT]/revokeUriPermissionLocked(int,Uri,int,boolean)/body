@@ -1,24 +1,8 @@
 {
-  modeFlags&=(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
-  if (modeFlags == 0) {
-    return;
-  }
   if (DEBUG_URI_PERMISSION)   Slog.v(TAG,"Revoking all granted permissions to " + uri);
   final IPackageManager pm=AppGlobals.getPackageManager();
   final String authority=uri.getAuthority();
-  ProviderInfo pi=null;
-  int userId=UserHandle.getUserId(callingUid);
-  ContentProviderRecord cpr=mProviderMap.getProviderByName(authority,userId);
-  if (cpr != null) {
-    pi=cpr.info;
-  }
- else {
-    try {
-      pi=pm.resolveContentProvider(authority,PackageManager.GET_URI_PERMISSION_PATTERNS,userId);
-    }
- catch (    RemoteException ex) {
-    }
-  }
+  final ProviderInfo pi=getProviderInfoLocked(authority,UserHandle.getUserId(callingUid));
   if (pi == null) {
     Slog.w(TAG,"No content provider found for permission revoke: " + uri.toSafeString());
     return;
@@ -26,6 +10,7 @@
   if (!checkHoldingPermissionsLocked(pm,pi,uri,callingUid,modeFlags)) {
     throw new SecurityException("Uid " + callingUid + " does not have permission to uri "+ uri);
   }
+  boolean persistChanged=false;
   final List<String> SEGMENTS=uri.getPathSegments();
   if (SEGMENTS != null) {
     final int NS=SEGMENTS.size();
@@ -51,8 +36,8 @@
             continue toploop;
           }
         }
-        if (DEBUG_URI_PERMISSION)         Slog.v(TAG,"Revoking " + perm.uid + " permission to "+ perm.uri);
-        perm.clearModes(modeFlags);
+        if (DEBUG_URI_PERMISSION)         Slog.v(TAG,"Revoking " + perm.targetUid + " permission to "+ perm.uri);
+        persistChanged|=perm.clearModes(modeFlags,persist);
         if (perm.modeFlags == 0) {
           it.remove();
         }
@@ -63,5 +48,9 @@
         i--;
       }
     }
+  }
+  if (persistChanged) {
+    mHandler.removeMessages(PERSIST_URI_GRANTS);
+    mHandler.obtainMessage(PERSIST_URI_GRANTS).sendToTarget();
   }
 }
