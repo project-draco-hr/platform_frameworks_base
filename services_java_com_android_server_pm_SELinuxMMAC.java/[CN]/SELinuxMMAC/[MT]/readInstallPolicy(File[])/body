@@ -1,0 +1,90 @@
+{
+  FileReader policyFile=null;
+  int i=0;
+  while (policyFile == null && policyFiles != null && policyFiles[i] != null) {
+    try {
+      policyFile=new FileReader(policyFiles[i]);
+      break;
+    }
+ catch (    FileNotFoundException e) {
+      Slog.d(TAG,"Couldn't find install policy " + policyFiles[i].getPath());
+    }
+    i++;
+  }
+  if (policyFile == null) {
+    Slog.d(TAG,"No policy file found. All seinfo values will be null.");
+    return false;
+  }
+  Slog.d(TAG,"Using install policy file " + policyFiles[i].getPath());
+  flushInstallPolicy();
+  try {
+    XmlPullParser parser=Xml.newPullParser();
+    parser.setInput(policyFile);
+    XmlUtils.beginDocument(parser,"policy");
+    while (true) {
+      XmlUtils.nextElement(parser);
+      if (parser.getEventType() == XmlPullParser.END_DOCUMENT) {
+        break;
+      }
+      String tagName=parser.getName();
+      if ("signer".equals(tagName)) {
+        String cert=parser.getAttributeValue(null,"signature");
+        if (cert == null) {
+          Slog.w(TAG,"<signer> without signature at " + parser.getPositionDescription());
+          XmlUtils.skipCurrentTag(parser);
+          continue;
+        }
+        Signature signature;
+        try {
+          signature=new Signature(cert);
+        }
+ catch (        IllegalArgumentException e) {
+          Slog.w(TAG,"<signer> with bad signature at " + parser.getPositionDescription(),e);
+          XmlUtils.skipCurrentTag(parser);
+          continue;
+        }
+        String seinfo=readSeinfoTag(parser);
+        if (seinfo != null) {
+          if (DEBUG_POLICY_INSTALL)           Slog.i(TAG,"<signer> tag: (" + cert + ") assigned seinfo="+ seinfo);
+          sSigSeinfo.put(signature,seinfo);
+        }
+      }
+ else       if ("default".equals(tagName)) {
+        String seinfo=readSeinfoTag(parser);
+        if (seinfo != null) {
+          if (DEBUG_POLICY_INSTALL)           Slog.i(TAG,"<default> tag assigned seinfo=" + seinfo);
+          sSigSeinfo.put(null,seinfo);
+        }
+      }
+ else       if ("package".equals(tagName)) {
+        String pkgName=parser.getAttributeValue(null,"name");
+        if (pkgName == null) {
+          Slog.w(TAG,"<package> without name at " + parser.getPositionDescription());
+          XmlUtils.skipCurrentTag(parser);
+          continue;
+        }
+        String seinfo=readSeinfoTag(parser);
+        if (seinfo != null) {
+          if (DEBUG_POLICY_INSTALL)           Slog.i(TAG,"<package> tag: (" + pkgName + ") assigned seinfo="+ seinfo);
+          sPackageSeinfo.put(pkgName,seinfo);
+        }
+      }
+ else {
+        XmlUtils.skipCurrentTag(parser);
+        continue;
+      }
+    }
+  }
+ catch (  XmlPullParserException e) {
+    Slog.w(TAG,"Got execption parsing ",e);
+  }
+catch (  IOException e) {
+    Slog.w(TAG,"Got execption parsing ",e);
+  }
+  try {
+    policyFile.close();
+  }
+ catch (  IOException e) {
+  }
+  return true;
+}
