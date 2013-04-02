@@ -1,0 +1,46 @@
+{
+  final byte[] ackSignal=new byte[1];
+  if (DEBUG)   Slog.i(TAG,"Starting up");
+{
+    File socketFile=new File(DEBUGGERD_SOCKET_PATH);
+    if (socketFile.exists()) {
+      socketFile.delete();
+    }
+  }
+  try {
+    FileDescriptor serverFd=Libcore.os.socket(AF_UNIX,SOCK_STREAM,0);
+    final InetUnixAddress sockAddr=new InetUnixAddress(DEBUGGERD_SOCKET_PATH);
+    Libcore.os.bind(serverFd,sockAddr,0);
+    Libcore.os.listen(serverFd,1);
+    while (true) {
+      InetSocketAddress peer=new InetSocketAddress();
+      FileDescriptor peerFd=null;
+      try {
+        if (DEBUG)         Slog.v(TAG,"Waiting for debuggerd connection");
+        peerFd=Libcore.os.accept(serverFd,peer);
+        if (DEBUG)         Slog.v(TAG,"Got debuggerd socket " + peerFd);
+        if (peerFd != null) {
+          StructUcred credentials=Libcore.os.getsockoptUcred(peerFd,SOL_SOCKET,SO_PEERCRED);
+          if (credentials.uid == 0) {
+            consumeNativeCrashData(peerFd);
+          }
+        }
+      }
+ catch (      Exception e) {
+        Slog.w(TAG,"Error handling connection",e);
+      }
+ finally {
+        if (peerFd != null) {
+          try {
+            Libcore.os.write(peerFd,ackSignal,0,1);
+          }
+ catch (          Exception e) {
+          }
+        }
+      }
+    }
+  }
+ catch (  Exception e) {
+    Slog.e(TAG,"Unable to init native debug socket!",e);
+  }
+}
