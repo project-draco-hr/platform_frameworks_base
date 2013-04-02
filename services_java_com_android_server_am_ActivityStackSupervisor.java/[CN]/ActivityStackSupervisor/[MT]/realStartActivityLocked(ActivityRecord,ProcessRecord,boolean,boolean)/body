@@ -16,6 +16,7 @@
     app.activities.add(r);
   }
   mService.updateLruProcessLocked(app,true);
+  final ActivityStack stack=r.task.stack;
   try {
     if (app.thread == null) {
       throw new RemoteException();
@@ -36,7 +37,7 @@
     mService.ensurePackageDexOpt(r.intent.getComponent().getPackageName());
     r.sleeping=false;
     r.forceNewConfig=false;
-    showAskCompatModeDialogLocked(r);
+    mService.showAskCompatModeDialogLocked(r);
     r.compat=mService.compatibilityInfoForPackageLocked(r.info.applicationInfo);
     String profileFile=null;
     ParcelFileDescriptor profileFd=null;
@@ -70,7 +71,7 @@
     if ((app.info.flags & ApplicationInfo.FLAG_CANT_SAVE_STATE) != 0) {
       if (app.processName.equals(app.info.packageName)) {
         if (mService.mHeavyWeightProcess != null && mService.mHeavyWeightProcess != app) {
-          Log.w(TAG,"Starting new heavy weight process " + app + " when already running "+ mService.mHeavyWeightProcess);
+          Slog.w(TAG,"Starting new heavy weight process " + app + " when already running "+ mService.mHeavyWeightProcess);
         }
         mService.mHeavyWeightProcess=app;
         Message msg=mService.mHandler.obtainMessage(ActivityManagerService.POST_HEAVY_NOTIFICATION_MSG);
@@ -83,33 +84,25 @@
     if (r.launchFailed) {
       Slog.e(TAG,"Second failure launching " + r.intent.getComponent().flattenToShortString() + ", giving up",e);
       mService.appDiedLocked(app,app.pid,app.thread);
-      requestFinishActivityLocked(r.appToken,Activity.RESULT_CANCELED,null,"2nd-crash",false);
+      stack.requestFinishActivityLocked(r.appToken,Activity.RESULT_CANCELED,null,"2nd-crash",false);
       return false;
     }
     app.activities.remove(r);
     throw e;
   }
   r.launchFailed=false;
-  if (updateLRUListLocked(r)) {
+  if (stack.updateLRUListLocked(r)) {
     Slog.w(TAG,"Activity " + r + " being launched, but already in LRU list");
   }
   if (andResume) {
-    r.state=ActivityState.RESUMED;
-    if (DEBUG_STATES)     Slog.v(TAG,"Moving to RESUMED: " + r + " (starting new instance)");
-    r.stopped=false;
-    mResumedActivity=r;
-    r.task.touchActiveTime();
-    mService.addRecentTaskLocked(r.task);
-    completeResumeLocked(r);
-    checkReadyForSleepLocked();
-    if (DEBUG_SAVED_STATE)     Slog.i(TAG,"Launch completed; removing icicle of " + r.icicle);
+    stack.minimalResumeActivityLocked(r);
   }
  else {
     if (DEBUG_STATES)     Slog.v(TAG,"Moving to STOPPED: " + r + " (starting in stopped state)");
     r.state=ActivityState.STOPPED;
     r.stopped=true;
   }
-  if (mStackSupervisor.isMainStack(this)) {
+  if (isMainStack(stack)) {
     mService.startSetupActivityLocked();
   }
   return true;
