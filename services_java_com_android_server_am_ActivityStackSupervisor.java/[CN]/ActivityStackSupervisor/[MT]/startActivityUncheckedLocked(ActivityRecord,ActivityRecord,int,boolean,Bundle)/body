@@ -2,8 +2,10 @@
   final Intent intent=r.intent;
   final int callingUid=r.launchedFromUid;
   int launchFlags=intent.getFlags();
-  mUserLeaving=(launchFlags & Intent.FLAG_ACTIVITY_NO_USER_ACTION) == 0;
-  if (DEBUG_USER_LEAVING)   Slog.v(TAG,"startActivity() => mUserLeaving=" + mUserLeaving);
+  final ActivityStack stack=mMainStack;
+  ActivityStack targetStack=mMainStack;
+  targetStack.mUserLeaving=(launchFlags & Intent.FLAG_ACTIVITY_NO_USER_ACTION) == 0;
+  if (DEBUG_USER_LEAVING)   Slog.v(TAG,"startActivity() => mUserLeaving=" + targetStack.mUserLeaving);
   if (!doResume) {
     r.delayedResume=true;
   }
@@ -11,7 +13,7 @@
   if ((startFlags & ActivityManager.START_FLAG_ONLY_IF_NEEDED) != 0) {
     ActivityRecord checkedCaller=sourceRecord;
     if (checkedCaller == null) {
-      checkedCaller=topRunningNonDelayedActivityLocked(notTop);
+      checkedCaller=targetStack.topRunningNonDelayedActivityLocked(notTop);
     }
     if (!checkedCaller.realActivity.equals(r.realActivity)) {
       startFlags&=~ActivityManager.START_FLAG_ONLY_IF_NEEDED;
@@ -31,7 +33,7 @@
   }
   if (r.resultTo != null && (launchFlags & Intent.FLAG_ACTIVITY_NEW_TASK) != 0) {
     Slog.w(TAG,"Activity is launching as a new task, so cancelling activity result.");
-    sendActivityResultLocked(-1,r.resultTo,r.resultWho,r.requestCode,Activity.RESULT_CANCELED,null);
+    r.resultTo.task.stack.sendActivityResultLocked(-1,r.resultTo,r.resultWho,r.requestCode,Activity.RESULT_CANCELED,null);
     r.resultTo=null;
   }
   boolean addingToTask=false;
@@ -39,28 +41,29 @@
   TaskRecord reuseTask=null;
   if (((launchFlags & Intent.FLAG_ACTIVITY_NEW_TASK) != 0 && (launchFlags & Intent.FLAG_ACTIVITY_MULTIPLE_TASK) == 0) || r.launchMode == ActivityInfo.LAUNCH_SINGLE_TASK || r.launchMode == ActivityInfo.LAUNCH_SINGLE_INSTANCE) {
     if (r.resultTo == null) {
-      ActivityRecord taskTop=r.launchMode != ActivityInfo.LAUNCH_SINGLE_INSTANCE ? findTaskLocked(intent,r.info) : findActivityLocked(intent,r.info);
-      if (taskTop != null) {
-        if (taskTop.task.intent == null) {
-          taskTop.task.setIntent(intent,r.info);
+      ActivityRecord intentActivity=r.launchMode != ActivityInfo.LAUNCH_SINGLE_INSTANCE ? findTaskLocked(intent,r.info) : findActivityLocked(intent,r.info);
+      if (intentActivity != null) {
+        targetStack=intentActivity.task.stack;
+        if (intentActivity.task.intent == null) {
+          intentActivity.task.setIntent(intent,r.info);
         }
-        ActivityRecord curTop=topRunningNonDelayedActivityLocked(notTop);
-        if (curTop != null && curTop.task != taskTop.task) {
+        ActivityRecord curTop=targetStack.topRunningNonDelayedActivityLocked(notTop);
+        if (curTop != null && curTop.task != intentActivity.task) {
           r.intent.addFlags(Intent.FLAG_ACTIVITY_BROUGHT_TO_FRONT);
           boolean callerAtFront=sourceRecord == null || curTop.task == sourceRecord.task;
           if (callerAtFront) {
             movedHome=true;
-            moveHomeToFrontFromLaunchLocked(launchFlags);
-            moveTaskToFrontLocked(taskTop.task,r,options);
+            targetStack.moveHomeToFrontFromLaunchLocked(launchFlags);
+            targetStack.moveTaskToFrontLocked(intentActivity.task,r,options);
             options=null;
           }
         }
         if ((launchFlags & Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED) != 0) {
-          taskTop=resetTaskIfNeededLocked(taskTop,r);
+          intentActivity=targetStack.resetTaskIfNeededLocked(intentActivity,r);
         }
         if ((startFlags & ActivityManager.START_FLAG_ONLY_IF_NEEDED) != 0) {
           if (doResume) {
-            resumeTopActivityLocked(null,options);
+            targetStack.resumeTopActivityLocked(null,options);
           }
  else {
             ActivityOptions.abort(options);
@@ -68,47 +71,47 @@
           return ActivityManager.START_RETURN_INTENT_TO_CALLER;
         }
         if ((launchFlags & (Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK)) == (Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK)) {
-          reuseTask=taskTop.task;
-          taskTop.task.performClearTaskLocked();
+          reuseTask=intentActivity.task;
+          reuseTask.performClearTaskLocked();
           reuseTask.setIntent(r.intent,r.info);
         }
  else         if ((launchFlags & Intent.FLAG_ACTIVITY_CLEAR_TOP) != 0 || r.launchMode == ActivityInfo.LAUNCH_SINGLE_TASK || r.launchMode == ActivityInfo.LAUNCH_SINGLE_INSTANCE) {
-          ActivityRecord top=taskTop.task.performClearTaskLocked(r,launchFlags);
+          ActivityRecord top=intentActivity.task.performClearTaskLocked(r,launchFlags);
           if (top != null) {
             if (top.frontOfTask) {
               top.task.setIntent(r.intent,r.info);
             }
-            logStartActivity(EventLogTags.AM_NEW_INTENT,r,top.task);
+            ActivityStack.logStartActivity(EventLogTags.AM_NEW_INTENT,r,top.task);
             top.deliverNewIntentLocked(callingUid,r.intent);
           }
  else {
             addingToTask=true;
-            sourceRecord=taskTop;
+            sourceRecord=intentActivity;
           }
         }
- else         if (r.realActivity.equals(taskTop.task.realActivity)) {
-          if (((launchFlags & Intent.FLAG_ACTIVITY_SINGLE_TOP) != 0 || r.launchMode == ActivityInfo.LAUNCH_SINGLE_TOP) && taskTop.realActivity.equals(r.realActivity)) {
-            logStartActivity(EventLogTags.AM_NEW_INTENT,r,taskTop.task);
-            if (taskTop.frontOfTask) {
-              taskTop.task.setIntent(r.intent,r.info);
+ else         if (r.realActivity.equals(intentActivity.task.realActivity)) {
+          if (((launchFlags & Intent.FLAG_ACTIVITY_SINGLE_TOP) != 0 || r.launchMode == ActivityInfo.LAUNCH_SINGLE_TOP) && intentActivity.realActivity.equals(r.realActivity)) {
+            ActivityStack.logStartActivity(EventLogTags.AM_NEW_INTENT,r,intentActivity.task);
+            if (intentActivity.frontOfTask) {
+              intentActivity.task.setIntent(r.intent,r.info);
             }
-            taskTop.deliverNewIntentLocked(callingUid,r.intent);
+            intentActivity.deliverNewIntentLocked(callingUid,r.intent);
           }
- else           if (!r.intent.filterEquals(taskTop.task.intent)) {
+ else           if (!r.intent.filterEquals(intentActivity.task.intent)) {
             addingToTask=true;
-            sourceRecord=taskTop;
+            sourceRecord=intentActivity;
           }
         }
  else         if ((launchFlags & Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED) == 0) {
           addingToTask=true;
-          sourceRecord=taskTop;
+          sourceRecord=intentActivity;
         }
- else         if (!taskTop.task.rootWasReset) {
-          taskTop.task.setIntent(r.intent,r.info);
+ else         if (!intentActivity.task.rootWasReset) {
+          intentActivity.task.setIntent(r.intent,r.info);
         }
         if (!addingToTask && reuseTask == null) {
           if (doResume) {
-            resumeTopActivityLocked(null,options);
+            stack.resumeTopActivityLocked(null,options);
           }
  else {
             ActivityOptions.abort(options);
@@ -119,14 +122,14 @@
     }
   }
   if (r.packageName != null) {
-    ActivityRecord top=topRunningNonDelayedActivityLocked(notTop);
+    ActivityRecord top=targetStack.topRunningNonDelayedActivityLocked(notTop);
     if (top != null && r.resultTo == null) {
       if (top.realActivity.equals(r.realActivity) && top.userId == r.userId) {
         if (top.app != null && top.app.thread != null) {
           if ((launchFlags & Intent.FLAG_ACTIVITY_SINGLE_TOP) != 0 || r.launchMode == ActivityInfo.LAUNCH_SINGLE_TOP || r.launchMode == ActivityInfo.LAUNCH_SINGLE_TASK) {
-            logStartActivity(EventLogTags.AM_NEW_INTENT,top,top.task);
+            ActivityStack.logStartActivity(EventLogTags.AM_NEW_INTENT,top,top.task);
             if (doResume) {
-              resumeTopActivityLocked(null);
+              targetStack.resumeTopActivityLocked(null);
             }
             ActivityOptions.abort(options);
             if ((startFlags & ActivityManager.START_FLAG_ONLY_IF_NEEDED) != 0) {
@@ -141,7 +144,7 @@
   }
  else {
     if (r.resultTo != null) {
-      sendActivityResultLocked(-1,r.resultTo,r.resultWho,r.requestCode,Activity.RESULT_CANCELED,null);
+      r.resultTo.task.stack.sendActivityResultLocked(-1,r.resultTo,r.resultWho,r.requestCode,Activity.RESULT_CANCELED,null);
     }
     ActivityOptions.abort(options);
     return ActivityManager.START_CLASS_NOT_FOUND;
@@ -150,15 +153,15 @@
   boolean keepCurTransition=false;
   if (r.resultTo == null && !addingToTask && (launchFlags & Intent.FLAG_ACTIVITY_NEW_TASK) != 0) {
     if (reuseTask == null) {
-      setTask(r,createTaskRecord(mStackSupervisor.getNextTaskId(),r.info,intent,true),null,true);
+      stack.setTask(r,targetStack.createTaskRecord(getNextTaskId(),r.info,intent,true),null,true);
       if (DEBUG_TASKS)       Slog.v(TAG,"Starting new activity " + r + " in new task "+ r.task);
     }
  else {
-      setTask(r,reuseTask,reuseTask,true);
+      stack.setTask(r,reuseTask,reuseTask,true);
     }
     newTask=true;
     if (!movedHome) {
-      moveHomeToFrontFromLaunchLocked(launchFlags);
+      stack.moveHomeToFrontFromLaunchLocked(launchFlags);
     }
   }
  else   if (sourceRecord != null) {
@@ -166,48 +169,41 @@
       ActivityRecord top=sourceRecord.task.performClearTaskLocked(r,launchFlags);
       keepCurTransition=true;
       if (top != null) {
-        logStartActivity(EventLogTags.AM_NEW_INTENT,r,top.task);
+        ActivityStack.logStartActivity(EventLogTags.AM_NEW_INTENT,r,top.task);
         top.deliverNewIntentLocked(callingUid,r.intent);
         if (doResume) {
-          resumeTopActivityLocked(null);
+          targetStack.resumeTopActivityLocked(null);
         }
         ActivityOptions.abort(options);
         return ActivityManager.START_DELIVERED_TO_TOP;
       }
     }
  else     if (!addingToTask && (launchFlags & Intent.FLAG_ACTIVITY_REORDER_TO_FRONT) != 0) {
-      final ActivityRecord top=findActivityInHistoryLocked(r,sourceRecord.task);
+      final ActivityRecord top=targetStack.findActivityInHistoryLocked(r,sourceRecord.task);
       if (top != null) {
-        moveActivityToFrontLocked(top);
-        logStartActivity(EventLogTags.AM_NEW_INTENT,r,top.task);
+        targetStack.moveActivityToFrontLocked(top);
+        ActivityStack.logStartActivity(EventLogTags.AM_NEW_INTENT,r,top.task);
         top.updateOptionsLocked(options);
         top.deliverNewIntentLocked(callingUid,r.intent);
         if (doResume) {
-          resumeTopActivityLocked(null);
+          targetStack.resumeTopActivityLocked(null);
         }
         return ActivityManager.START_DELIVERED_TO_TOP;
       }
     }
-    setTask(r,sourceRecord.task,sourceRecord.thumbHolder,false);
+    stack.setTask(r,sourceRecord.task,sourceRecord.thumbHolder,false);
     if (DEBUG_TASKS)     Slog.v(TAG,"Starting new activity " + r + " in existing task "+ r.task);
   }
  else {
-    ActivityRecord prev=null;
-    for (int taskNdx=mTaskHistory.size() - 1; taskNdx >= 0; --taskNdx) {
-      ArrayList<ActivityRecord> activities=mTaskHistory.get(taskNdx).mActivities;
-      for (int activityNdx=activities.size() - 1; activityNdx >= 0; --activityNdx) {
-        prev=activities.get(activityNdx);
-        break;
-      }
-    }
-    setTask(r,prev != null ? prev.task : createTaskRecord(mStackSupervisor.getNextTaskId(),r.info,intent,true),null,true);
+    ActivityRecord prev=stack.topActivity();
+    stack.setTask(r,prev != null ? prev.task : stack.createTaskRecord(getNextTaskId(),r.info,intent,true),null,true);
     if (DEBUG_TASKS)     Slog.v(TAG,"Starting new activity " + r + " in new guessed "+ r.task);
   }
   mService.grantUriPermissionFromIntentLocked(callingUid,r.packageName,intent,r.getUriPermissionsLocked());
   if (newTask) {
     EventLog.writeEvent(EventLogTags.AM_CREATE_TASK,r.userId,r.task.taskId);
   }
-  logStartActivity(EventLogTags.AM_CREATE_ACTIVITY,r,r.task);
-  startActivityLocked(r,newTask,doResume,keepCurTransition,options);
+  ActivityStack.logStartActivity(EventLogTags.AM_CREATE_ACTIVITY,r,r.task);
+  targetStack.startActivityLocked(r,newTask,doResume,keepCurTransition,options);
   return ActivityManager.START_SUCCESS;
 }
