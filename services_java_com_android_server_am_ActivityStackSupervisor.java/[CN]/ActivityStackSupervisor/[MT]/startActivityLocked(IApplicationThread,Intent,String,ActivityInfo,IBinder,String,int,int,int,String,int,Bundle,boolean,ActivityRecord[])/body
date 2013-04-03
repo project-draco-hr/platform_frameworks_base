@@ -19,7 +19,7 @@
   ActivityRecord sourceRecord=null;
   ActivityRecord resultRecord=null;
   if (resultTo != null) {
-    sourceRecord=isInStackLocked(resultTo);
+    sourceRecord=isInAnyStackLocked(resultTo);
     if (DEBUG_RESULTS)     Slog.v(TAG,"Will send result to " + resultTo + " "+ sourceRecord);
     if (sourceRecord != null) {
       if (requestCode >= 0 && !sourceRecord.finishing) {
@@ -27,6 +27,7 @@
       }
     }
   }
+  ActivityStack resultStack=resultRecord == null ? null : resultRecord.task.stack;
   int launchFlags=intent.getFlags();
   if ((launchFlags & Intent.FLAG_ACTIVITY_FORWARD_RESULT) != 0 && sourceRecord != null) {
     if (requestCode >= 0) {
@@ -49,9 +50,9 @@
   }
   if (err != ActivityManager.START_SUCCESS) {
     if (resultRecord != null) {
-      sendActivityResultLocked(-1,resultRecord,resultWho,requestCode,Activity.RESULT_CANCELED,null);
+      resultStack.sendActivityResultLocked(-1,resultRecord,resultWho,requestCode,Activity.RESULT_CANCELED,null);
     }
-    mStackSupervisor.setDismissKeyguard(false);
+    setDismissKeyguard(false);
     ActivityOptions.abort(options);
     return err;
   }
@@ -59,9 +60,9 @@
   final int componentPerm=mService.checkComponentPermission(aInfo.permission,callingPid,callingUid,aInfo.applicationInfo.uid,aInfo.exported);
   if (startAnyPerm != PERMISSION_GRANTED && componentPerm != PERMISSION_GRANTED) {
     if (resultRecord != null) {
-      sendActivityResultLocked(-1,resultRecord,resultWho,requestCode,Activity.RESULT_CANCELED,null);
+      resultStack.sendActivityResultLocked(-1,resultRecord,resultWho,requestCode,Activity.RESULT_CANCELED,null);
     }
-    mStackSupervisor.setDismissKeyguard(false);
+    setDismissKeyguard(false);
     String msg;
     if (!aInfo.exported) {
       msg="Permission Denial: starting " + intent.toString() + " from "+ callerApp+ " (pid="+ callingPid+ ", uid="+ callingUid+ ")"+ " not exported from uid "+ aInfo.applicationInfo.uid;
@@ -72,51 +73,47 @@
     Slog.w(TAG,msg);
     throw new SecurityException(msg);
   }
-  if (mStackSupervisor.isMainStack(this)) {
-    if (mService.mController != null) {
-      boolean abort=false;
-      try {
-        Intent watchIntent=intent.cloneFilter();
-        abort=!mService.mController.activityStarting(watchIntent,aInfo.applicationInfo.packageName);
+  if (mService.mController != null) {
+    boolean abort=false;
+    try {
+      Intent watchIntent=intent.cloneFilter();
+      abort=!mService.mController.activityStarting(watchIntent,aInfo.applicationInfo.packageName);
+    }
+ catch (    RemoteException e) {
+      mService.mController=null;
+    }
+    if (abort) {
+      if (resultRecord != null) {
+        resultStack.sendActivityResultLocked(-1,resultRecord,resultWho,requestCode,Activity.RESULT_CANCELED,null);
       }
- catch (      RemoteException e) {
-        mService.mController=null;
-      }
-      if (abort) {
-        if (resultRecord != null) {
-          sendActivityResultLocked(-1,resultRecord,resultWho,requestCode,Activity.RESULT_CANCELED,null);
-        }
-        mStackSupervisor.setDismissKeyguard(false);
-        ActivityOptions.abort(options);
-        return ActivityManager.START_SUCCESS;
-      }
+      setDismissKeyguard(false);
+      ActivityOptions.abort(options);
+      return ActivityManager.START_SUCCESS;
     }
   }
   ActivityRecord r=new ActivityRecord(mService,callerApp,callingUid,callingPackage,intent,resolvedType,aInfo,mService.mConfiguration,resultRecord,resultWho,requestCode,componentSpecified);
   if (outActivity != null) {
     outActivity[0]=r;
   }
-  if (mStackSupervisor.isMainStack(this)) {
-    if (mResumedActivity == null || mResumedActivity.info.applicationInfo.uid != callingUid) {
-      if (!mService.checkAppSwitchAllowedLocked(callingPid,callingUid,"Activity start")) {
-        PendingActivityLaunch pal=new PendingActivityLaunch(r,sourceRecord,startFlags,this);
-        mService.mPendingActivityLaunches.add(pal);
-        mStackSupervisor.setDismissKeyguard(false);
-        ActivityOptions.abort(options);
-        return ActivityManager.START_SWITCHES_CANCELED;
-      }
-    }
-    if (mService.mDidAppSwitch) {
-      mService.mAppSwitchesAllowedTime=0;
-    }
- else {
-      mService.mDidAppSwitch=true;
+  if (mMainStack.mResumedActivity == null || mMainStack.mResumedActivity.info.applicationInfo.uid != callingUid) {
+    if (!mService.checkAppSwitchAllowedLocked(callingPid,callingUid,"Activity start")) {
+      PendingActivityLaunch pal=new PendingActivityLaunch(r,sourceRecord,startFlags,mMainStack);
+      mService.mPendingActivityLaunches.add(pal);
+      setDismissKeyguard(false);
+      ActivityOptions.abort(options);
+      return ActivityManager.START_SWITCHES_CANCELED;
     }
   }
+  if (mService.mDidAppSwitch) {
+    mService.mAppSwitchesAllowedTime=0;
+  }
+ else {
+    mService.mDidAppSwitch=true;
+  }
   mService.doPendingActivityLaunchesLocked(false);
-  err=startActivityUncheckedLocked(r,sourceRecord,startFlags,true,options);
-  if (mPausingActivity == null) {
-    mStackSupervisor.dismissKeyguard();
+  err=mMainStack.startActivityUncheckedLocked(r,sourceRecord,startFlags,true,options);
+  if (mMainStack.mPausingActivity == null) {
+    dismissKeyguard();
   }
   return err;
 }
