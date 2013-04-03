@@ -3,11 +3,9 @@
   ActivityRecord res=null;
   ArrayList<ActivityRecord> stops=null;
   ArrayList<ActivityRecord> finishes=null;
-  ArrayList<ActivityRecord> thumbnails=null;
   ArrayList<UserStartedState> startingUsers=null;
   int NS=0;
   int NF=0;
-  int NT=0;
   IApplicationThread sendThumbnail=null;
   boolean booting=false;
   boolean enableScreen=false;
@@ -30,18 +28,18 @@
       mLaunchingActivity.release();
     }
     r.idle=true;
-    mService.scheduleAppGcsLocked();
+    if (mStackSupervisor.allResumedActivitiesIdle()) {
+      mService.scheduleAppGcsLocked();
+    }
     if (r.thumbnailNeeded && r.app != null && r.app.thread != null) {
       sendThumbnail=r.app.thread;
       r.thumbnailNeeded=false;
     }
     if (DEBUG_VISBILITY)     Slog.v(TAG,"Idle activity for " + r);
     ensureActivitiesVisibleLocked(null,0);
-    if (mStackSupervisor.isMainStack(this)) {
-      if (!mService.mBooted) {
-        mService.mBooted=true;
-        enableScreen=true;
-      }
+    if (!mService.mBooted && mStackSupervisor.isMainStack(this)) {
+      mService.mBooted=true;
+      enableScreen=true;
     }
   }
  else   if (fromTimeout) {
@@ -53,9 +51,14 @@
     finishes=new ArrayList<ActivityRecord>(mFinishingActivities);
     mFinishingActivities.clear();
   }
-  if ((NT=mCancelledThumbnails.size()) > 0) {
+  final ArrayList<ActivityRecord> thumbnails;
+  final int NT=mCancelledThumbnails.size();
+  if (NT > 0) {
     thumbnails=new ArrayList<ActivityRecord>(mCancelledThumbnails);
     mCancelledThumbnails.clear();
+  }
+ else {
+    thumbnails=null;
   }
   if (mStackSupervisor.isMainStack(this)) {
     booting=mService.mBooting;
@@ -65,42 +68,43 @@
     startingUsers=new ArrayList<UserStartedState>(mStartingUsers);
     mStartingUsers.clear();
   }
-  int i;
-  if (sendThumbnail != null) {
-    try {
-      sendThumbnail.requestThumbnail(token);
-    }
- catch (    Exception e) {
-      Slog.w(TAG,"Exception thrown when requesting thumbnail",e);
-      mService.sendPendingThumbnail(null,token,null,null,true);
+  final IApplicationThread thumbnailThread=sendThumbnail;
+  mHandler.post(new Runnable(){
+    @Override public void run(){
+      if (thumbnailThread != null) {
+        try {
+          thumbnailThread.requestThumbnail(token);
+        }
+ catch (        Exception e) {
+          Slog.w(TAG,"Exception thrown when requesting thumbnail",e);
+          mService.sendPendingThumbnail(null,token,null,null,true);
+        }
+      }
+      for (int i=0; i < NT; i++) {
+        ActivityRecord r=thumbnails.get(i);
+        mService.sendPendingThumbnail(r,null,null,null,true);
+      }
     }
   }
-  for (i=0; i < NS; i++) {
+);
+  for (int i=0; i < NS; i++) {
     r=stops.get(i);
-synchronized (mService) {
-      if (r.finishing) {
-        finishCurrentActivityLocked(r,FINISH_IMMEDIATELY,false);
-      }
+    if (r.finishing) {
+      finishCurrentActivityLocked(r,FINISH_IMMEDIATELY,false);
+    }
  else {
-        stopActivityLocked(r);
-      }
+      stopActivityLocked(r);
     }
   }
-  for (i=0; i < NF; i++) {
+  for (int i=0; i < NF; i++) {
     r=finishes.get(i);
-synchronized (mService) {
-      activityRemoved=destroyActivityLocked(r,true,false,"finish-idle");
-    }
-  }
-  for (i=0; i < NT; i++) {
-    r=thumbnails.get(i);
-    mService.sendPendingThumbnail(r,null,null,null,true);
+    activityRemoved|=destroyActivityLocked(r,true,false,"finish-idle");
   }
   if (booting) {
     mService.finishBooting();
   }
  else   if (startingUsers != null) {
-    for (i=0; i < startingUsers.size(); i++) {
+    for (int i=0; i < startingUsers.size(); i++) {
       mService.finishUserSwitch(startingUsers.get(i));
     }
   }
