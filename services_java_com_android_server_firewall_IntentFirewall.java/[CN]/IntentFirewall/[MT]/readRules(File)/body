@@ -1,4 +1,8 @@
 {
+  FirewallIntentResolver[] resolvers=new FirewallIntentResolver[3];
+  for (int i=0; i < resolvers.length; i++) {
+    resolvers[i]=new FirewallIntentResolver();
+  }
   FileInputStream fis;
   try {
     fis=new FileInputStream(rulesFile);
@@ -10,21 +14,23 @@
     XmlPullParser parser=Xml.newPullParser();
     parser.setInput(fis,null);
     XmlUtils.beginDocument(parser,TAG_RULES);
+    int[] numRules=new int[3];
     int outerDepth=parser.getDepth();
     while (XmlUtils.nextElementWithin(parser,outerDepth)) {
-      IntentResolver<FirewallIntentFilter,Rule> resolver=null;
+      int ruleType=-1;
       String tagName=parser.getName();
       if (tagName.equals(TAG_ACTIVITY)) {
-        resolver=mActivityResolver;
-      }
- else       if (tagName.equals(TAG_SERVICE)) {
-        resolver=mServiceResolver;
+        ruleType=TYPE_ACTIVITY;
       }
  else       if (tagName.equals(TAG_BROADCAST)) {
-        resolver=mBroadcastResolver;
+        ruleType=TYPE_BROADCAST;
       }
-      if (resolver != null) {
+ else       if (tagName.equals(TAG_SERVICE)) {
+        ruleType=TYPE_SERVICE;
+      }
+      if (ruleType != -1) {
         Rule rule=new Rule();
+        FirewallIntentResolver resolver=resolvers[ruleType];
         try {
           rule.readFromXml(parser);
         }
@@ -32,21 +38,26 @@
           Slog.e(TAG,"Error reading intent firewall rule",ex);
           continue;
         }
-catch (        IOException ex) {
-          Slog.e(TAG,"Error reading intent firewall rule",ex);
-          continue;
-        }
+        numRules[ruleType]++;
         for (int i=0; i < rule.getIntentFilterCount(); i++) {
           resolver.addFilter(rule.getIntentFilter(i));
         }
       }
     }
+    Slog.i(TAG,"Read new rules (A:" + numRules[TYPE_ACTIVITY] + " B:"+ numRules[TYPE_BROADCAST]+ " S:"+ numRules[TYPE_SERVICE]+ ")");
+synchronized (mAms.getAMSLock()) {
+      mActivityResolver=resolvers[TYPE_ACTIVITY];
+      mBroadcastResolver=resolvers[TYPE_BROADCAST];
+      mServiceResolver=resolvers[TYPE_SERVICE];
+    }
   }
  catch (  XmlPullParserException ex) {
     Slog.e(TAG,"Error reading intent firewall rules",ex);
+    clearRules();
   }
 catch (  IOException ex) {
     Slog.e(TAG,"Error reading intent firewall rules",ex);
+    clearRules();
   }
  finally {
     try {
