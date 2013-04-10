@@ -1,3 +1,106 @@
 {
-  update(event,true);
+  final long time=event.getEventTime();
+  final int deviceId=event.getDeviceId();
+  final int source=event.getSource();
+  if (mCurrentDeviceId != deviceId || mCurrentSource != source) {
+    finishKeys(time);
+    finishTracking(time);
+    mCurrentDeviceId=deviceId;
+    mCurrentSource=source;
+    mCurrentDeviceSupported=false;
+    InputDevice device=event.getDevice();
+    if (device != null) {
+      InputDevice.MotionRange xRange=device.getMotionRange(MotionEvent.AXIS_X);
+      InputDevice.MotionRange yRange=device.getMotionRange(MotionEvent.AXIS_Y);
+      if (xRange != null && yRange != null) {
+        mCurrentDeviceSupported=true;
+        float xRes=xRange.getResolution();
+        if (xRes <= 0) {
+          xRes=xRange.getRange() / DEFAULT_WIDTH_MILLIMETERS;
+        }
+        float yRes=yRange.getResolution();
+        if (yRes <= 0) {
+          yRes=yRange.getRange() / DEFAULT_HEIGHT_MILLIMETERS;
+        }
+        float nominalRes=(xRes + yRes) * 0.5f;
+        mConfigTapTimeout=TAP_TIMEOUT;
+        mConfigTapSlop=TAP_SLOP_MILLIMETERS * nominalRes;
+        mConfigTickDistance=TICK_DISTANCE_MILLIMETERS * nominalRes;
+        mConfigMinFlingVelocity=MIN_FLING_VELOCITY_TICKS_PER_SECOND * mConfigTickDistance;
+        mConfigMaxFlingVelocity=MAX_FLING_VELOCITY_TICKS_PER_SECOND * mConfigTickDistance;
+        if (LOCAL_DEBUG) {
+          Log.d(LOCAL_TAG,"Configured device " + mCurrentDeviceId + " ("+ Integer.toHexString(mCurrentSource)+ "): "+ "mConfigTapTimeout="+ mConfigTapTimeout+ ", mConfigTapSlop="+ mConfigTapSlop+ ", mConfigTickDistance="+ mConfigTickDistance+ ", mConfigMinFlingVelocity="+ mConfigMinFlingVelocity+ ", mConfigMaxFlingVelocity="+ mConfigMaxFlingVelocity);
+        }
+      }
+    }
+  }
+  if (!mCurrentDeviceSupported) {
+    return;
+  }
+  final int action=event.getActionMasked();
+switch (action) {
+case MotionEvent.ACTION_DOWN:
+{
+      boolean caughtFling=mFlinging;
+      finishKeys(time);
+      finishTracking(time);
+      mActivePointerId=event.getPointerId(0);
+      mVelocityTracker=VelocityTracker.obtain();
+      mVelocityTracker.addMovement(event);
+      mStartTime=time;
+      mStartX=event.getX();
+      mStartY=event.getY();
+      mLastX=mStartX;
+      mLastY=mStartY;
+      mAccumulatedX=0;
+      mAccumulatedY=0;
+      mConsumedMovement=caughtFling;
+      break;
+    }
+case MotionEvent.ACTION_MOVE:
+case MotionEvent.ACTION_UP:
+{
+    if (mActivePointerId < 0) {
+      break;
+    }
+    final int index=event.findPointerIndex(mActivePointerId);
+    if (index < 0) {
+      finishKeys(time);
+      finishTracking(time);
+      break;
+    }
+    mVelocityTracker.addMovement(event);
+    final float x=event.getX(index);
+    final float y=event.getY(index);
+    mAccumulatedX+=x - mLastX;
+    mAccumulatedY+=y - mLastY;
+    mLastX=x;
+    mLastY=y;
+    final int metaState=event.getMetaState();
+    consumeAccumulatedMovement(time,metaState);
+    if (action == MotionEvent.ACTION_UP) {
+      if (!mConsumedMovement && Math.hypot(mLastX - mStartX,mLastY - mStartY) < mConfigTapSlop && time <= mStartTime + mConfigTapTimeout) {
+        finishKeys(time);
+        sendKeyDownOrRepeat(time,KeyEvent.KEYCODE_DPAD_CENTER,metaState);
+        sendKeyUp(time);
+      }
+ else       if (mConsumedMovement && mPendingKeyCode != KeyEvent.KEYCODE_UNKNOWN) {
+        mVelocityTracker.computeCurrentVelocity(1000,mConfigMaxFlingVelocity);
+        final float vx=mVelocityTracker.getXVelocity(mActivePointerId);
+        final float vy=mVelocityTracker.getYVelocity(mActivePointerId);
+        if (!startFling(time,vx,vy)) {
+          finishKeys(time);
+        }
+      }
+      finishTracking(time);
+    }
+    break;
+  }
+case MotionEvent.ACTION_CANCEL:
+{
+  finishKeys(time);
+  finishTracking(time);
+  break;
+}
+}
 }
