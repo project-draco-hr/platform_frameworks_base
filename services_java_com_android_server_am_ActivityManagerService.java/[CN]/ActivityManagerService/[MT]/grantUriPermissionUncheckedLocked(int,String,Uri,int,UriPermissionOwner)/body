@@ -1,31 +1,20 @@
 {
+  final boolean persist=(modeFlags & Intent.FLAG_PERSIST_GRANT_URI_PERMISSION) != 0;
   modeFlags&=(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
   if (modeFlags == 0) {
     return;
   }
   if (DEBUG_URI_PERMISSION)   Slog.v(TAG,"Granting " + targetPkg + "/"+ targetUid+ " permission to "+ uri);
-  HashMap<Uri,UriPermission> targetUris=mGrantedUriPermissions.get(targetUid);
-  if (targetUris == null) {
-    targetUris=new HashMap<Uri,UriPermission>();
-    mGrantedUriPermissions.put(targetUid,targetUris);
+  final String authority=uri.getAuthority();
+  final ProviderInfo pi=getProviderInfoLocked(authority,UserHandle.getUserId(targetUid));
+  if (pi == null) {
+    Slog.w(TAG,"No content provider found for grant: " + uri.toSafeString());
+    return;
   }
-  UriPermission perm=targetUris.get(uri);
-  if (perm == null) {
-    perm=new UriPermission(targetUid,uri);
-    targetUris.put(uri,perm);
-  }
-  perm.modeFlags|=modeFlags;
-  if (owner == null) {
-    perm.globalModeFlags|=modeFlags;
-  }
- else {
-    if ((modeFlags & Intent.FLAG_GRANT_READ_URI_PERMISSION) != 0) {
-      perm.readOwners.add(owner);
-      owner.addReadPermission(perm);
-    }
-    if ((modeFlags & Intent.FLAG_GRANT_WRITE_URI_PERMISSION) != 0) {
-      perm.writeOwners.add(owner);
-      owner.addWritePermission(perm);
-    }
+  final UriPermission perm=findOrCreateUriPermissionLocked(pi.packageName,targetPkg,targetUid,uri);
+  final boolean persistChanged=perm.grantModes(modeFlags,persist,owner);
+  if (persistChanged) {
+    mHandler.removeMessages(PERSIST_URI_GRANTS);
+    mHandler.obtainMessage(PERSIST_URI_GRANTS).sendToTarget();
   }
 }
