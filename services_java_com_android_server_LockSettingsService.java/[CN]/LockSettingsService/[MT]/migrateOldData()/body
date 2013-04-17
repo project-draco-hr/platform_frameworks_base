@@ -1,19 +1,43 @@
 {
   try {
-    if (getString("migrated",null,0) != null) {
-      return;
-    }
-    final ContentResolver cr=mContext.getContentResolver();
-    for (    String validSetting : VALID_SETTINGS) {
-      String value=Settings.Secure.getString(cr,validSetting);
-      if (value != null) {
-        setString(validSetting,value,0);
+    if (getString("migrated",null,0) == null) {
+      final ContentResolver cr=mContext.getContentResolver();
+      for (      String validSetting : VALID_SETTINGS) {
+        String value=Settings.Secure.getString(cr,validSetting);
+        if (value != null) {
+          setString(validSetting,value,0);
+        }
       }
+      setString("migrated","true",0);
+      Slog.i(TAG,"Migrated lock settings to new location");
     }
-    setString("migrated","true",0);
-    Slog.i(TAG,"Migrated lock settings to new location");
+    if (getString("migrated_user_specific",null,0) == null) {
+      final UserManager um=(UserManager)mContext.getSystemService(USER_SERVICE);
+      final ContentResolver cr=mContext.getContentResolver();
+      List<UserInfo> users=um.getUsers();
+      for (int user=0; user < users.size(); user++) {
+        int userId=users.get(user).getUserHandle().getIdentifier();
+        for (        String perUserSetting : MIGRATE_SETTINGS_PER_USER) {
+          String value=Settings.Secure.getStringForUser(cr,perUserSetting,userId);
+          if (value != null) {
+            setString(perUserSetting,value,userId);
+            Settings.Secure.putStringForUser(cr,perUserSetting,"",userId);
+            continue;
+          }
+          try {
+            int ivalue=Settings.Secure.getIntForUser(cr,perUserSetting,userId);
+            setLong(perUserSetting,ivalue,userId);
+            Settings.Secure.putIntForUser(cr,perUserSetting,0,userId);
+          }
+ catch (          SettingNotFoundException e) {
+          }
+        }
+      }
+      setString("migrated_user_specific","true",0);
+      Slog.i(TAG,"Migrated per-user lock settings to new location");
+    }
   }
  catch (  RemoteException re) {
-    Slog.e(TAG,"Unable to migrate old data");
+    Slog.e(TAG,"Unable to migrate old data",re);
   }
 }
