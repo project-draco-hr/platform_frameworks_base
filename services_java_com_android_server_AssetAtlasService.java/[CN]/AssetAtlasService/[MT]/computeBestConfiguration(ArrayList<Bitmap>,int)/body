@@ -1,0 +1,40 @@
+{
+  if (DEBUG_ATLAS)   Log.d(LOG_TAG,"Computing best atlas configuration...");
+  long begin=System.nanoTime();
+  List<WorkerResult> results=Collections.synchronizedList(new ArrayList<WorkerResult>());
+  int cpuCount=Runtime.getRuntime().availableProcessors();
+  if (cpuCount == 1) {
+    new ComputeWorker(MIN_SIZE,MAX_SIZE,STEP,bitmaps,pixelCount,results,null).run();
+  }
+ else {
+    int start=MIN_SIZE;
+    int end=MAX_SIZE - (cpuCount - 1) * STEP;
+    int step=STEP * cpuCount;
+    final CountDownLatch signal=new CountDownLatch(cpuCount);
+    for (int i=0; i < cpuCount; i++, start+=STEP, end+=STEP) {
+      ComputeWorker worker=new ComputeWorker(start,end,step,bitmaps,pixelCount,results,signal);
+      new Thread(worker,"Atlas Worker #" + (i + 1)).start();
+    }
+    try {
+      signal.await(10,TimeUnit.SECONDS);
+    }
+ catch (    InterruptedException e) {
+      Log.w(LOG_TAG,"Could not complete configuration computation");
+      return null;
+    }
+  }
+  Collections.sort(results,new Comparator<WorkerResult>(){
+    @Override public int compare(    WorkerResult r1,    WorkerResult r2){
+      int delta=r2.count - r1.count;
+      if (delta != 0)       return delta;
+      return r1.width * r1.height - r2.width * r2.height;
+    }
+  }
+);
+  if (DEBUG_ATLAS) {
+    float delay=(System.nanoTime() - begin) / 1000.0f / 1000.0f/ 1000.0f;
+    Log.d(LOG_TAG,String.format("Found best atlas configuration in %.2fs",delay));
+  }
+  WorkerResult result=results.get(0);
+  return new Configuration(result.type,result.width,result.height,result.count);
+}
