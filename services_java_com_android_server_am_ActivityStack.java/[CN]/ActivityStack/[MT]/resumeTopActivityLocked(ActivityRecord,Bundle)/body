@@ -15,11 +15,24 @@
     if (DEBUG_STACK)     mStackSupervisor.validateTopActivitiesLocked();
     return false;
   }
-  if (prev != null && prev.mLaunchHomeTaskNext && prev.finishing && prev.frontOfTask) {
+  final TaskRecord nextTask=next.task;
+  final TaskRecord prevTask=prev != null ? prev.task : null;
+  if (prevTask != null && prev.mLaunchHomeTaskNext && prev.finishing && prev.frontOfTask) {
     if (DEBUG_STACK)     mStackSupervisor.validateTopActivitiesLocked();
-    final TaskRecord task=prev.task;
-    if (topTask() != task) {
-      final int taskNdx=mTaskHistory.indexOf(task) + 1;
+    if (prevTask == nextTask) {
+      ArrayList<ActivityRecord> activities=prevTask.mActivities;
+      final int numActivities=activities.size();
+      for (int activityNdx=0; activityNdx < numActivities; ++activityNdx) {
+        final ActivityRecord r=activities.get(activityNdx);
+        if (!r.finishing) {
+          r.mLaunchHomeTaskNext=true;
+          r.frontOfTask=true;
+          break;
+        }
+      }
+    }
+ else     if (prevTask != topTask()) {
+      final int taskNdx=mTaskHistory.indexOf(prevTask) + 1;
       mTaskHistory.get(taskNdx).mActivities.get(0).mLaunchHomeTaskNext=true;
     }
  else {
@@ -114,12 +127,12 @@
 catch (  IllegalArgumentException e) {
     Slog.w(TAG,"Failed trying to unstop package " + next.packageName + ": "+ e);
   }
-  boolean noAnim=false;
+  boolean anim=true;
   if (prev != null) {
     if (prev.finishing) {
       if (DEBUG_TRANSITION)       Slog.v(TAG,"Prepare close transition: prev=" + prev);
       if (mNoAnimActivities.contains(prev)) {
-        noAnim=true;
+        anim=false;
         mWindowManager.prepareAppTransition(AppTransition.TRANSIT_NONE,false);
       }
  else {
@@ -131,7 +144,7 @@ catch (  IllegalArgumentException e) {
  else {
       if (DEBUG_TRANSITION)       Slog.v(TAG,"Prepare open transition: prev=" + prev);
       if (mNoAnimActivities.contains(next)) {
-        noAnim=true;
+        anim=false;
         mWindowManager.prepareAppTransition(AppTransition.TRANSIT_NONE,false);
       }
  else {
@@ -146,14 +159,14 @@ catch (  IllegalArgumentException e) {
  else {
     if (DEBUG_TRANSITION)     Slog.v(TAG,"Prepare open transition: no previous");
     if (mNoAnimActivities.contains(next)) {
-      noAnim=true;
+      anim=false;
       mWindowManager.prepareAppTransition(AppTransition.TRANSIT_NONE,false);
     }
  else {
       mWindowManager.prepareAppTransition(AppTransition.TRANSIT_ACTIVITY_OPEN,false);
     }
   }
-  if (!noAnim) {
+  if (anim) {
     next.applyOptionsLocked();
   }
  else {
@@ -174,15 +187,15 @@ catch (  IllegalArgumentException e) {
     mService.addRecentTaskLocked(next.task);
     mService.updateLruProcessLocked(next.app,true);
     updateLRUListLocked(next);
-    boolean updated=false;
+    boolean notUpdated=true;
     if (mStackSupervisor.isFrontStack(this)) {
       Configuration config=mWindowManager.updateOrientationFromAppTokens(mService.mConfiguration,next.mayFreezeScreenLocked(next.app) ? next.appToken : null);
       if (config != null) {
         next.frozenBeforeDestroy=true;
       }
-      updated=mService.updateConfigurationLocked(config,next,false,false);
+      notUpdated=!mService.updateConfigurationLocked(config,next,false,false);
     }
-    if (!updated) {
+    if (notUpdated) {
       ActivityRecord nextNext=topRunningActivityLocked(null);
       if (DEBUG_SWITCH)       Slog.i(TAG,"Activity config changed during resume: " + next + ", new next: "+ nextNext);
       if (nextNext != next) {
