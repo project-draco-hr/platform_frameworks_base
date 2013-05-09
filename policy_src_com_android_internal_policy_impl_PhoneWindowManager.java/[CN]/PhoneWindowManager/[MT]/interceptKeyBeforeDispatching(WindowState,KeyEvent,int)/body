@@ -26,46 +26,34 @@
   }
   if (keyCode == KeyEvent.KEYCODE_HOME) {
     if (!down) {
-      final boolean homeWasLongPressed=mHomeLongPressed;
+      cancelPreloadRecentApps();
       mHomePressed=false;
-      mHomeLongPressed=false;
-      if (!homeWasLongPressed) {
-        if (mLongPressOnHomeBehavior != LONG_PRESS_HOME_NOTHING) {
-          try {
-            IStatusBarService statusbar=getStatusBarService();
-            if (statusbar != null) {
-              statusbar.cancelPreloadRecentApps();
-            }
-          }
- catch (          RemoteException e) {
-            Slog.e(TAG,"RemoteException when showing recent apps",e);
-            mStatusBarService=null;
-          }
-        }
-        mHomePressed=false;
-        if (!canceled) {
-          boolean incomingRinging=false;
-          try {
-            ITelephony telephonyService=getTelephonyService();
-            if (telephonyService != null) {
-              incomingRinging=telephonyService.isRinging();
-            }
-          }
- catch (          RemoteException ex) {
-            Log.w(TAG,"RemoteException from getPhoneInterface()",ex);
-          }
-          if (incomingRinging) {
-            Log.i(TAG,"Ignoring HOME; there's a ringing incoming call.");
-          }
- else {
-            launchHomeFromHotKey();
-          }
-        }
- else {
-          Log.i(TAG,"Ignoring HOME; event canceled.");
-        }
+      if (mHomeConsumed) {
+        mHomeConsumed=false;
         return -1;
       }
+      if (canceled) {
+        Log.i(TAG,"Ignoring HOME; event canceled.");
+        return -1;
+      }
+      try {
+        ITelephony telephonyService=getTelephonyService();
+        if (telephonyService != null && telephonyService.isRinging()) {
+          Log.i(TAG,"Ignoring HOME; there's a ringing incoming call.");
+          return -1;
+        }
+      }
+ catch (      RemoteException ex) {
+        Log.w(TAG,"RemoteException from getPhoneInterface()",ex);
+      }
+      if (mDoubleTapOnHomeBehavior != DOUBLE_TAP_HOME_NOTHING) {
+        mHandler.removeCallbacks(mHomeDoubleTapTimeoutRunnable);
+        mHomeDoubleTapPending=true;
+        mHandler.postDelayed(mHomeDoubleTapTimeoutRunnable,ViewConfiguration.getDoubleTapTimeout());
+        return -1;
+      }
+      launchHomeFromHotKey();
+      return -1;
     }
     WindowManager.LayoutParams attrs=win != null ? win.getAttrs() : null;
     if (attrs != null) {
@@ -80,26 +68,20 @@
         }
       }
     }
-    if (down) {
-      if (!mHomePressed && mLongPressOnHomeBehavior == LONG_PRESS_HOME_RECENT_SYSTEM_UI) {
-        try {
-          IStatusBarService statusbar=getStatusBarService();
-          if (statusbar != null) {
-            statusbar.preloadRecentApps();
-          }
-        }
- catch (        RemoteException e) {
-          Slog.e(TAG,"RemoteException when preloading recent apps",e);
-          mStatusBarService=null;
-        }
+    if (repeatCount == 0) {
+      mHomePressed=true;
+      if (mHomeDoubleTapPending) {
+        mHomeDoubleTapPending=false;
+        mHandler.removeCallbacks(mHomeDoubleTapTimeoutRunnable);
+        handleDoubleTapOnHome();
       }
-      if (repeatCount == 0) {
-        mHomePressed=true;
+ else       if (mLongPressOnHomeBehavior == LONG_PRESS_HOME_RECENT_SYSTEM_UI || mDoubleTapOnHomeBehavior == DOUBLE_TAP_HOME_RECENT_SYSTEM_UI) {
+        preloadRecentApps();
       }
- else       if ((event.getFlags() & KeyEvent.FLAG_LONG_PRESS) != 0) {
-        if (!keyguardOn) {
-          handleLongPressOnHome();
-        }
+    }
+ else     if ((event.getFlags() & KeyEvent.FLAG_LONG_PRESS) != 0) {
+      if (!keyguardOn) {
+        handleLongPressOnHome();
       }
     }
     return -1;
@@ -146,20 +128,11 @@
   }
  else   if (keyCode == KeyEvent.KEYCODE_APP_SWITCH) {
     if (!keyguardOn) {
-      try {
-        IStatusBarService statusbar=getStatusBarService();
-        if (statusbar != null) {
-          if (down && repeatCount == 0) {
-            statusbar.preloadRecentApps();
-          }
- else           if (!down) {
-            statusbar.toggleRecentApps();
-          }
-        }
+      if (down && repeatCount == 0) {
+        preloadRecentApps();
       }
- catch (      RemoteException e) {
-        Slog.e(TAG,"RemoteException when preloading recent apps",e);
-        mStatusBarService=null;
+ else       if (!down) {
+        toggleRecentApps();
       }
     }
     return -1;
