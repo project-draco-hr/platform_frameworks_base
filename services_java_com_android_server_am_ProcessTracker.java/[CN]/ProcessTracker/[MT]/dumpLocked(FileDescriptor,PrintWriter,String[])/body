@@ -1,30 +1,30 @@
 {
   final long now=SystemClock.uptimeMillis();
   ArrayMap<String,SparseArray<PackageState>> pmap=mState.mPackages.getMap();
-  pw.println("Process Stats:");
+  pw.println("Per-Package Process Stats:");
   for (int ip=0; ip < pmap.size(); ip++) {
     String procName=pmap.keyAt(ip);
     SparseArray<PackageState> procs=pmap.valueAt(ip);
     for (int iu=0; iu < procs.size(); iu++) {
       int uid=procs.keyAt(iu);
       PackageState state=procs.valueAt(iu);
-      pw.print("  ");
+      pw.print("  * ");
       pw.print(procName);
       pw.print(" / ");
-      pw.print(uid);
+      UserHandle.formatUid(pw,uid);
       pw.println(":");
       for (int iproc=0; iproc < state.mProcesses.size(); iproc++) {
-        pw.print("    Process ");
+        pw.print("      Process ");
         pw.print(state.mProcesses.keyAt(iproc));
         pw.println(":");
         long totalTime=0;
         ProcessState proc=state.mProcesses.valueAt(iproc);
         int printedScreen=-1;
-        for (int iscreen=0; iscreen < STATE_COUNT; iscreen+=STATE_SCREEN_ON_MOD) {
+        for (int iscreen=0; iscreen < ADJ_COUNT; iscreen+=ADJ_SCREEN_MOD) {
           int printedMem=-1;
-          for (int imem=0; imem < STATE_MEM_FACTOR_COUNT; imem+=STATE_MEM_FACTOR_MOD) {
+          for (int imem=0; imem < ADJ_MEM_FACTOR_COUNT; imem++) {
             for (int is=0; is < STATE_NAMES.length; is++) {
-              int bucket=is + imem + iscreen;
+              int bucket=is + (STATE_COUNT * (imem + iscreen));
               long time=proc.mDurations[bucket];
               String running="";
               if (proc.mCurState == bucket) {
@@ -32,7 +32,7 @@
                 running=" (running)";
               }
               if (time != 0) {
-                pw.print("      ");
+                pw.print("        ");
                 printScreenLabel(pw,printedScreen != iscreen ? iscreen : STATE_NOTHING);
                 printedScreen=iscreen;
                 printMemLabel(pw,printedMem != imem ? imem : STATE_NOTHING);
@@ -47,7 +47,7 @@
           }
         }
         if (totalTime != 0) {
-          pw.print("      ");
+          pw.print("        ");
           printScreenLabel(pw,STATE_NOTHING);
           printMemLabel(pw,STATE_NOTHING);
           pw.print("TOTAL      : ");
@@ -56,53 +56,34 @@
         }
       }
       for (int isvc=0; isvc < state.mServices.size(); isvc++) {
-        pw.print("    Service ");
+        pw.print("      Service ");
         pw.print(state.mServices.keyAt(isvc));
         pw.println(":");
         ServiceState svc=state.mServices.valueAt(isvc);
-        long time=svc.mStartedDuration;
-        if (svc.mStartedTime >= 0) {
-          time+=now - svc.mStartedTime;
+        if (svc.mStartedCount != 0) {
+          pw.print("        Started op count ");
+          pw.print(svc.mStartedCount);
+          pw.println(":");
+          dumpSingleTime(pw,"          ",svc.mStartedDurations,svc.mStartedState,svc.mStartedStartTime,now);
         }
-        if (time != 0) {
-          pw.print("    Started: ");
-          TimeUtils.formatDuration(time,pw);
-          pw.println();
+        if (svc.mBoundCount != 0) {
+          pw.print("        Bound op count ");
+          pw.print(svc.mBoundCount);
+          pw.println(":");
+          dumpSingleTime(pw,"          ",svc.mBoundDurations,svc.mBoundState,svc.mBoundStartTime,now);
+        }
+        if (svc.mExecCount != 0) {
+          pw.print("        Executing op count ");
+          pw.print(svc.mExecCount);
+          pw.println(":");
+          dumpSingleTime(pw,"          ",svc.mExecDurations,svc.mExecState,svc.mExecStartTime,now);
         }
       }
     }
   }
+  dumpFilteredProcesses(pw,"Processes running while critical mem:","  ",new int[]{ADJ_SCREEN_OFF,ADJ_SCREEN_ON},new int[]{ADJ_MEM_FACTOR_CRITICAL},new int[]{STATE_TOP,STATE_FOREGROUND,STATE_VISIBLE,STATE_PERCEPTIBLE,STATE_BACKUP,STATE_SERVICE,STATE_HOME,STATE_PREVIOUS},now);
+  dumpFilteredProcesses(pw,"Processes running while low mem:","  ",new int[]{ADJ_SCREEN_OFF,ADJ_SCREEN_ON},new int[]{ADJ_MEM_FACTOR_LOW},new int[]{STATE_TOP,STATE_FOREGROUND,STATE_VISIBLE,STATE_PERCEPTIBLE,STATE_BACKUP,STATE_SERVICE,STATE_HOME,STATE_PREVIOUS},now);
   pw.println();
   pw.println("Run time Stats:");
-  long totalTime=0;
-  int printedScreen=-1;
-  for (int iscreen=0; iscreen < STATE_COUNT; iscreen+=STATE_SCREEN_ON_MOD) {
-    int printedMem=-1;
-    for (int imem=0; imem < STATE_MEM_FACTOR_COUNT; imem+=STATE_MEM_FACTOR_MOD) {
-      int bucket=imem + iscreen;
-      long time=mState.mMemFactorDurations[bucket / STATE_MEM_FACTOR_MOD];
-      String running="";
-      if (mState.mMemFactor == bucket) {
-        time+=now - mState.mStartTime;
-        running=" (running)";
-      }
-      if (time != 0) {
-        pw.print("  ");
-        printScreenLabel(pw,printedScreen != iscreen ? iscreen : STATE_NOTHING);
-        printedScreen=iscreen;
-        printMemLabel(pw,printedMem != imem ? imem : STATE_NOTHING);
-        printedMem=imem;
-        TimeUtils.formatDuration(time,pw);
-        pw.println(running);
-        totalTime+=time;
-      }
-    }
-  }
-  if (totalTime != 0) {
-    pw.print("  ");
-    printScreenLabel(pw,STATE_NOTHING);
-    pw.print("TOTAL: ");
-    TimeUtils.formatDuration(totalTime,pw);
-    pw.println();
-  }
+  dumpSingleTime(pw,"  ",mState.mMemFactorDurations,mState.mMemFactor,mState.mStartTime,now);
 }
