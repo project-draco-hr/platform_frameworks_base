@@ -1,89 +1,233 @@
 {
   final long now=SystemClock.uptimeMillis();
-  ArrayMap<String,SparseArray<PackageState>> pmap=mState.mPackages.getMap();
-  pw.println("Per-Package Process Stats:");
-  for (int ip=0; ip < pmap.size(); ip++) {
-    String procName=pmap.keyAt(ip);
-    SparseArray<PackageState> procs=pmap.valueAt(ip);
-    for (int iu=0; iu < procs.size(); iu++) {
-      int uid=procs.keyAt(iu);
-      PackageState state=procs.valueAt(iu);
-      pw.print("  * ");
-      pw.print(procName);
-      pw.print(" / ");
-      UserHandle.formatUid(pw,uid);
-      pw.println(":");
-      for (int iproc=0; iproc < state.mProcesses.size(); iproc++) {
-        pw.print("      Process ");
-        pw.print(state.mProcesses.keyAt(iproc));
-        pw.println(":");
-        long totalTime=0;
-        ProcessState proc=state.mProcesses.valueAt(iproc);
-        int printedScreen=-1;
-        for (int iscreen=0; iscreen < ADJ_COUNT; iscreen+=ADJ_SCREEN_MOD) {
-          int printedMem=-1;
-          for (int imem=0; imem < ADJ_MEM_FACTOR_COUNT; imem++) {
-            for (int is=0; is < STATE_NAMES.length; is++) {
-              int bucket=is + (STATE_COUNT * (imem + iscreen));
-              long time=proc.mDurations[bucket];
-              String running="";
-              if (proc.mCurState == bucket) {
-                time+=now - proc.mStartTime;
-                running=" (running)";
-              }
-              if (time != 0) {
-                pw.print("        ");
-                printScreenLabel(pw,printedScreen != iscreen ? iscreen : STATE_NOTHING);
-                printedScreen=iscreen;
-                printMemLabel(pw,printedMem != imem ? imem : STATE_NOTHING);
-                printedMem=imem;
-                pw.print(STATE_NAMES[is]);
-                pw.print(": ");
-                TimeUtils.formatDuration(time,pw);
-                pw.println(running);
-                totalTime+=time;
-              }
-            }
-          }
-        }
-        if (totalTime != 0) {
-          pw.print("        ");
-          printScreenLabel(pw,STATE_NOTHING);
-          printMemLabel(pw,STATE_NOTHING);
-          pw.print("TOTAL      : ");
-          TimeUtils.formatDuration(totalTime,pw);
-          pw.println();
-        }
+  boolean isCheckin=false;
+  boolean isCsv=false;
+  String reqPackage=null;
+  boolean csvSepScreenStats=false;
+  int[] csvScreenStats=new int[]{ADJ_SCREEN_OFF,ADJ_SCREEN_ON};
+  boolean csvSepMemStats=false;
+  int[] csvMemStats=new int[]{ADJ_MEM_FACTOR_CRITICAL};
+  boolean csvSepProcStats=true;
+  int[] csvProcStats=new int[]{STATE_PERSISTENT,STATE_TOP,STATE_FOREGROUND,STATE_VISIBLE,STATE_PERCEPTIBLE,STATE_BACKUP,STATE_SERVICE,STATE_HOME,STATE_PREVIOUS,STATE_CACHED};
+  if (args != null) {
+    for (int i=0; i < args.length; i++) {
+      String arg=args[i];
+      if ("--checkin".equals(arg)) {
+        isCheckin=true;
       }
-      for (int isvc=0; isvc < state.mServices.size(); isvc++) {
-        pw.print("      Service ");
-        pw.print(state.mServices.keyAt(isvc));
-        pw.println(":");
-        ServiceState svc=state.mServices.valueAt(isvc);
-        if (svc.mStartedCount != 0) {
-          pw.print("        Started op count ");
-          pw.print(svc.mStartedCount);
-          pw.println(":");
-          dumpSingleTime(pw,"          ",svc.mStartedDurations,svc.mStartedState,svc.mStartedStartTime,now);
+ else       if ("--csv".equals(arg)) {
+        isCsv=true;
+      }
+ else       if ("--csv-screen".equals(arg)) {
+        i++;
+        if (i >= args.length) {
+          pw.println("Error: argument required for --csv-screen");
+          dumpHelp(pw);
+          return;
         }
-        if (svc.mBoundCount != 0) {
-          pw.print("        Bound op count ");
-          pw.print(svc.mBoundCount);
-          pw.println(":");
-          dumpSingleTime(pw,"          ",svc.mBoundDurations,svc.mBoundState,svc.mBoundStartTime,now);
+        boolean[] sep=new boolean[1];
+        String[] error=new String[1];
+        csvScreenStats=parseStateList(ADJ_SCREEN_NAMES_CSV,ADJ_SCREEN_MOD,args[i],sep,error);
+        if (csvScreenStats == null) {
+          pw.println("Error in \"" + args[i] + "\": "+ error[0]);
+          dumpHelp(pw);
+          return;
         }
-        if (svc.mExecCount != 0) {
-          pw.print("        Executing op count ");
-          pw.print(svc.mExecCount);
-          pw.println(":");
-          dumpSingleTime(pw,"          ",svc.mExecDurations,svc.mExecState,svc.mExecStartTime,now);
+        csvSepScreenStats=sep[0];
+      }
+ else       if ("--csv-mem".equals(arg)) {
+        i++;
+        if (i >= args.length) {
+          pw.println("Error: argument required for --csv-mem");
+          dumpHelp(pw);
+          return;
+        }
+        boolean[] sep=new boolean[1];
+        String[] error=new String[1];
+        csvMemStats=parseStateList(ADJ_MEM_NAMES_CSV,1,args[i],sep,error);
+        if (csvMemStats == null) {
+          pw.println("Error in \"" + args[i] + "\": "+ error[0]);
+          dumpHelp(pw);
+          return;
+        }
+        csvSepMemStats=sep[0];
+      }
+ else       if ("--csv-proc".equals(arg)) {
+        i++;
+        if (i >= args.length) {
+          pw.println("Error: argument required for --csv-proc");
+          dumpHelp(pw);
+          return;
+        }
+        boolean[] sep=new boolean[1];
+        String[] error=new String[1];
+        csvProcStats=parseStateList(STATE_NAMES_CSV,1,args[i],sep,error);
+        if (csvProcStats == null) {
+          pw.println("Error in \"" + args[i] + "\": "+ error[0]);
+          dumpHelp(pw);
+          return;
+        }
+        csvSepProcStats=sep[0];
+      }
+ else       if ("--reset".equals(arg)) {
+        mState.reset();
+        pw.println("Process stats reset.");
+        return;
+      }
+ else       if ("-h".equals(arg)) {
+        dumpHelp(pw);
+        return;
+      }
+ else       if ("-a".equals(arg)) {
+      }
+ else       if (arg.length() > 0 && arg.charAt(0) == '-') {
+        pw.println("Unknown option: " + arg);
+        dumpHelp(pw);
+        return;
+      }
+ else {
+        try {
+          mContext.getPackageManager().getPackageUid(arg,UserHandle.getCallingUserId());
+          reqPackage=arg;
+        }
+ catch (        PackageManager.NameNotFoundException e) {
+          pw.println("Unknown package: " + arg);
+          dumpHelp(pw);
+          return;
         }
       }
     }
   }
-  dumpFilteredProcesses(pw,"Processes running while critical mem:","  ",new int[]{ADJ_SCREEN_OFF,ADJ_SCREEN_ON},new int[]{ADJ_MEM_FACTOR_CRITICAL},new int[]{STATE_TOP,STATE_FOREGROUND,STATE_VISIBLE,STATE_PERCEPTIBLE,STATE_BACKUP,STATE_SERVICE,STATE_HOME,STATE_PREVIOUS},now);
-  dumpFilteredProcesses(pw,"Processes running while low mem:","  ",new int[]{ADJ_SCREEN_OFF,ADJ_SCREEN_ON},new int[]{ADJ_MEM_FACTOR_LOW},new int[]{STATE_TOP,STATE_FOREGROUND,STATE_VISIBLE,STATE_PERCEPTIBLE,STATE_BACKUP,STATE_SERVICE,STATE_HOME,STATE_PREVIOUS},now);
-  pw.println();
-  pw.println("Run time Stats:");
-  dumpSingleTime(pw,"  ",mState.mMemFactorDurations,mState.mMemFactor,mState.mStartTime,now);
+  if (isCsv) {
+    pw.print("Processes running summed over");
+    if (!csvSepScreenStats) {
+      for (int i=0; i < csvScreenStats.length; i++) {
+        pw.print(" ");
+        printScreenLabelCsv(pw,csvScreenStats[i]);
+      }
+    }
+    if (!csvSepMemStats) {
+      for (int i=0; i < csvMemStats.length; i++) {
+        pw.print(" ");
+        printMemLabelCsv(pw,csvMemStats[i]);
+      }
+    }
+    if (!csvSepProcStats) {
+      for (int i=0; i < csvProcStats.length; i++) {
+        pw.print(" ");
+        pw.print(STATE_NAMES_CSV[csvProcStats[i]]);
+      }
+    }
+    pw.println();
+    dumpFilteredProcessesCsv(pw,null,csvSepScreenStats,csvScreenStats,csvSepMemStats,csvMemStats,csvSepProcStats,csvProcStats,now,reqPackage);
+    return;
+  }
+  ArrayMap<String,SparseArray<PackageState>> pkgMap=mState.mPackages.getMap();
+  boolean printedHeader=false;
+  if (isCheckin) {
+    pw.println("vers,1");
+  }
+  for (int ip=0; ip < pkgMap.size(); ip++) {
+    String pkgName=pkgMap.keyAt(ip);
+    if (reqPackage != null && !reqPackage.equals(pkgName)) {
+      continue;
+    }
+    SparseArray<PackageState> uids=pkgMap.valueAt(ip);
+    for (int iu=0; iu < uids.size(); iu++) {
+      int uid=uids.keyAt(iu);
+      PackageState state=uids.valueAt(iu);
+      final int NPROCS=state.mProcesses.size();
+      final int NSRVS=state.mServices.size();
+      if (!isCheckin) {
+        if (NPROCS > 0 || NSRVS > 0) {
+          if (!printedHeader) {
+            pw.println("Per-Package Process Stats:");
+            printedHeader=true;
+          }
+          pw.print("  * ");
+          pw.print(pkgName);
+          pw.print(" / ");
+          UserHandle.formatUid(pw,uid);
+          pw.println(":");
+        }
+      }
+      for (int iproc=0; iproc < NPROCS; iproc++) {
+        if (!isCheckin) {
+          pw.print("      Process ");
+          pw.print(state.mProcesses.keyAt(iproc));
+          pw.println(":");
+        }
+ else {
+          pw.print("pkgproc,");
+          pw.print(pkgName);
+          pw.print(",");
+          pw.print(uid);
+          pw.print(",");
+          pw.print(state.mProcesses.keyAt(iproc));
+        }
+        dumpAllProcessState(pw,"        ",isCheckin,state.mProcesses.valueAt(iproc),now);
+      }
+      for (int isvc=0; isvc < NSRVS; isvc++) {
+        if (!isCheckin) {
+          pw.print("      Service ");
+          pw.print(state.mServices.keyAt(isvc));
+          pw.println(":");
+          ServiceState svc=state.mServices.valueAt(isvc);
+          if (svc.mStartedCount != 0) {
+            pw.print("        Started op count ");
+            pw.print(svc.mStartedCount);
+            pw.println(":");
+            dumpSingleTime(pw,"          ",svc.mStartedDurations,svc.mStartedState,svc.mStartedStartTime,now);
+          }
+          if (svc.mBoundCount != 0) {
+            pw.print("        Bound op count ");
+            pw.print(svc.mBoundCount);
+            pw.println(":");
+            dumpSingleTime(pw,"          ",svc.mBoundDurations,svc.mBoundState,svc.mBoundStartTime,now);
+          }
+          if (svc.mExecCount != 0) {
+            pw.print("        Executing op count ");
+            pw.print(svc.mExecCount);
+            pw.println(":");
+            dumpSingleTime(pw,"          ",svc.mExecDurations,svc.mExecState,svc.mExecStartTime,now);
+          }
+        }
+ else {
+          String serviceName=state.mServices.keyAt(isvc);
+          ServiceState svc=state.mServices.valueAt(isvc);
+          dumpServiceTimeCheckin(pw,"pkgsvc-start",pkgName,uid,serviceName,svc,svc.mStartedCount,svc.mStartedDurations,svc.mStartedState,svc.mStartedStartTime,now);
+          dumpServiceTimeCheckin(pw,"pkgsvc-bound",pkgName,uid,serviceName,svc,svc.mBoundCount,svc.mBoundDurations,svc.mBoundState,svc.mBoundStartTime,now);
+          dumpServiceTimeCheckin(pw,"pkgsvc-exec",pkgName,uid,serviceName,svc,svc.mExecCount,svc.mExecDurations,svc.mExecState,svc.mExecStartTime,now);
+        }
+      }
+    }
+  }
+  if (!isCheckin) {
+    dumpFilteredProcesses(pw,"Processes running while critical mem:","  ",new int[]{ADJ_SCREEN_OFF,ADJ_SCREEN_ON},new int[]{ADJ_MEM_FACTOR_CRITICAL},new int[]{STATE_PERSISTENT,STATE_TOP,STATE_FOREGROUND,STATE_VISIBLE,STATE_PERCEPTIBLE,STATE_BACKUP,STATE_SERVICE,STATE_HOME,STATE_PREVIOUS},now,reqPackage);
+    dumpFilteredProcesses(pw,"Processes running while low mem:","  ",new int[]{ADJ_SCREEN_OFF,ADJ_SCREEN_ON},new int[]{ADJ_MEM_FACTOR_LOW},new int[]{STATE_PERSISTENT,STATE_TOP,STATE_FOREGROUND,STATE_VISIBLE,STATE_PERCEPTIBLE,STATE_BACKUP,STATE_SERVICE,STATE_HOME,STATE_PREVIOUS},now,reqPackage);
+    dumpFilteredProcesses(pw,"Processes running while moderate mem:","  ",new int[]{ADJ_SCREEN_OFF,ADJ_SCREEN_ON},new int[]{ADJ_MEM_FACTOR_MODERATE},new int[]{STATE_PERSISTENT,STATE_TOP,STATE_FOREGROUND,STATE_VISIBLE,STATE_PERCEPTIBLE,STATE_BACKUP,STATE_SERVICE,STATE_HOME,STATE_PREVIOUS},now,reqPackage);
+    dumpFilteredProcesses(pw,"Processes running while normal mem:","  ",new int[]{ADJ_SCREEN_OFF,ADJ_SCREEN_ON},new int[]{ADJ_MEM_FACTOR_NORMAL},new int[]{STATE_PERSISTENT,STATE_TOP,STATE_FOREGROUND,STATE_VISIBLE,STATE_PERCEPTIBLE,STATE_BACKUP,STATE_SERVICE,STATE_HOME,STATE_PREVIOUS},now,reqPackage);
+    pw.println();
+    pw.println("Run time Stats:");
+    dumpSingleTime(pw,"  ",mState.mMemFactorDurations,mState.mMemFactor,mState.mStartTime,now);
+  }
+ else {
+    ArrayMap<String,SparseArray<ProcessState>> procMap=mState.mProcesses.getMap();
+    for (int ip=0; ip < procMap.size(); ip++) {
+      String procName=procMap.keyAt(ip);
+      SparseArray<ProcessState> uids=procMap.valueAt(ip);
+      for (int iu=0; iu < uids.size(); iu++) {
+        int uid=uids.keyAt(iu);
+        ProcessState state=uids.valueAt(iu);
+        pw.print("proc,");
+        pw.print(procName);
+        pw.print(",");
+        pw.print(uid);
+        dumpAllProcessState(pw,"        ",isCheckin,state,now);
+      }
+    }
+    pw.print("total,");
+    dumpSingleTimeCsv(pw,",",mState.mMemFactorDurations,mState.mMemFactor,mState.mStartTime,now);
+    pw.println();
+  }
 }
