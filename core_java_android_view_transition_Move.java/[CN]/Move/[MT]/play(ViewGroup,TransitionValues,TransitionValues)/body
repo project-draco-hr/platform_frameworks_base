@@ -2,15 +2,14 @@
   if (startValues == null || endValues == null) {
     return null;
   }
-  final View view=endValues.view;
-  if (view.getParent() == null) {
-    return null;
-  }
-  ViewGroup startParent=(ViewGroup)startValues.values.get(PROPNAME_PARENT);
-  ViewGroup endParent=(ViewGroup)endValues.values.get(PROPNAME_PARENT);
+  Map<String,Object> startParentVals=startValues.values;
+  Map<String,Object> endParentVals=endValues.values;
+  ViewGroup startParent=(ViewGroup)startParentVals.get(PROPNAME_PARENT);
+  ViewGroup endParent=(ViewGroup)endParentVals.get(PROPNAME_PARENT);
   if (startParent == null || endParent == null) {
     return null;
   }
+  final View view=endValues.view;
   boolean parentsEqual=(startParent == endParent) || (startParent.getId() == endParent.getId());
   if (!mReparent || parentsEqual) {
     Rect startBounds=(Rect)startValues.values.get(PROPNAME_BOUNDS);
@@ -29,11 +28,6 @@
     int endHeight=endBottom - endTop;
     int numChanges=0;
     if (startWidth != 0 && startHeight != 0 && endWidth != 0 && endHeight != 0) {
-      if (Transition.DBG) {
-        Log.v(LOG_TAG,"Target = " + endValues.view);
-        Log.v(LOG_TAG,"    start bounds: " + startLeft + ", "+ startTop+ ", "+ startRight+ ", "+ startBottom);
-        Log.v(LOG_TAG,"    end bounds: " + endLeft + ", "+ endTop+ ", "+ endRight+ ", "+ endBottom);
-      }
       if (startLeft != endLeft)       ++numChanges;
       if (startTop != endTop)       ++numChanges;
       if (startRight != endRight)       ++numChanges;
@@ -43,6 +37,10 @@
       if (!mResizeClip) {
         PropertyValuesHolder pvh[]=new PropertyValuesHolder[numChanges];
         int pvhIndex=0;
+        if (startLeft != endLeft)         view.setLeft(startLeft);
+        if (startTop != endTop)         view.setTop(startTop);
+        if (startRight != endRight)         view.setRight(startRight);
+        if (startBottom != endBottom)         view.setBottom(startBottom);
         if (startLeft != endLeft) {
           pvh[pvhIndex++]=PropertyValuesHolder.ofInt("left",startLeft,endLeft);
         }
@@ -69,6 +67,10 @@
         return anim;
       }
  else {
+        if (startWidth != endWidth)         view.setRight(endLeft + Math.max(startWidth,endWidth));
+        if (startHeight != endHeight)         view.setBottom(endTop + Math.max(startHeight,endHeight));
+        if (startLeft != endLeft)         view.setTranslationX(startLeft - endLeft);
+        if (startTop != endTop)         view.setTranslationY(startTop - endTop);
         float transXDelta=endLeft - startLeft;
         float transYDelta=endTop - startTop;
         int widthDelta=endWidth - startWidth;
@@ -112,7 +114,30 @@
     }
   }
  else {
-    return (ObjectAnimator)endValues.values.get("drawableAnim");
+    int startX=(Integer)startValues.values.get(PROPNAME_WINDOW_X);
+    int startY=(Integer)startValues.values.get(PROPNAME_WINDOW_Y);
+    int endX=(Integer)endValues.values.get(PROPNAME_WINDOW_X);
+    int endY=(Integer)endValues.values.get(PROPNAME_WINDOW_Y);
+    if (startX != endX || startY != endY) {
+      sceneRoot.getLocationInWindow(tempLocation);
+      Bitmap bitmap=Bitmap.createBitmap(view.getWidth(),view.getHeight(),Bitmap.Config.ARGB_8888);
+      Canvas canvas=new Canvas(bitmap);
+      view.draw(canvas);
+      final BitmapDrawable drawable=new BitmapDrawable(bitmap);
+      view.setVisibility(View.INVISIBLE);
+      sceneRoot.getOverlay().add(drawable);
+      Rect startBounds1=new Rect(startX - tempLocation[0],startY - tempLocation[1],startX - tempLocation[0] + view.getWidth(),startY - tempLocation[1] + view.getHeight());
+      Rect endBounds1=new Rect(endX - tempLocation[0],endY - tempLocation[1],endX - tempLocation[0] + view.getWidth(),endY - tempLocation[1] + view.getHeight());
+      ObjectAnimator anim=ObjectAnimator.ofObject(drawable,"bounds",sRectEvaluator,startBounds1,endBounds1);
+      anim.addListener(new AnimatorListenerAdapter(){
+        @Override public void onAnimationEnd(        Animator animation){
+          sceneRoot.getOverlay().remove(drawable);
+          view.setVisibility(View.VISIBLE);
+        }
+      }
+);
+      return anim;
+    }
   }
   return null;
 }
