@@ -1,7 +1,15 @@
 {
   boolean success=false;
+  boolean allPrintJobsHandled=false;
+  boolean allPrintJobsForServiceHandled=false;
+  IPrintSpoolerClient client=null;
   PrintJobInfo queuedPrintJob=null;
+  PrintJobInfo removedPrintJob=null;
 synchronized (mLock) {
+    if (mClient == null) {
+      throw new IllegalStateException("Client cannot be null.");
+    }
+    client=mClient;
     PrintJobInfo printJob=getPrintJob(printJobId,PrintManager.APP_ID_ANY);
     if (printJob != null && printJob.getState() < state) {
       success=true;
@@ -10,7 +18,14 @@ switch (state) {
 case PrintJobInfo.STATE_COMPLETED:
 case PrintJobInfo.STATE_CANCELED:
 {
+          removedPrintJob=printJob;
           removePrintJobLocked(printJob);
+          PrinterId printerId=printJob.getPrinterId();
+          if (printerId == null) {
+            return true;
+          }
+          allPrintJobsHandled=!hasActivePrintJobsLocked();
+          allPrintJobsForServiceHandled=!hasActivePrintJobsForServiceLocked(printerId.getService());
         }
       break;
 case PrintJobInfo.STATE_QUEUED:
@@ -26,11 +41,13 @@ mPersistanceManager.writeStateLocked();
 }
 }
 if (queuedPrintJob != null) {
-try {
-mPrintManager.onPrintJobQueued(queuedPrintJob.getPrinterId(),queuedPrintJob);
+callOnPrintJobQueuedQuietly(client,queuedPrintJob);
 }
- catch (RemoteException re) {
+if (allPrintJobsForServiceHandled) {
+callOnAllPrintJobsForServiceHandledQuietly(client,removedPrintJob.getPrinterId().getService());
 }
+if (allPrintJobsHandled) {
+callOnAllPrintJobsHandledQuietly(client);
 }
 return success;
 }
