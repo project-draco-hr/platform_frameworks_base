@@ -39,7 +39,7 @@
   final boolean isCheckinRequest=scanArgs(args,"--checkin");
   long uptime=SystemClock.uptimeMillis();
   long realtime=SystemClock.elapsedRealtime();
-  if (procs.size() == 1 || isCheckinRequest) {
+  if (!brief && !oomOnly && (procs.size() == 1 || isCheckinRequest)) {
     dumpDetails=true;
   }
   if (isCheckinRequest) {
@@ -58,17 +58,24 @@
   long oomPss[]=new long[DUMP_MEM_OOM_LABEL.length];
   ArrayList<MemItem>[] oomProcs=(ArrayList<MemItem>[])new ArrayList[DUMP_MEM_OOM_LABEL.length];
   long totalPss=0;
+  Debug.MemoryInfo mi=null;
   for (int i=procs.size() - 1; i >= 0; i--) {
     ProcessRecord r=procs.get(i);
-    if (r.thread != null) {
+    IApplicationThread thread;
+    int oomAdj;
+synchronized (this) {
+      thread=r.thread;
+      oomAdj=r.setAdj;
+    }
+    if (thread != null) {
       if (!isCheckinRequest && dumpDetails) {
         pw.println("\n** MEMINFO in pid " + r.pid + " ["+ r.processName+ "] **");
         pw.flush();
       }
-      Debug.MemoryInfo mi=null;
       if (dumpDetails) {
         try {
-          mi=r.thread.dumpMemInfo(fd,isCheckinRequest,true,dumpDalvik,innerArgs);
+          mi=null;
+          mi=thread.dumpMemInfo(fd,isCheckinRequest,true,dumpDalvik,innerArgs);
         }
  catch (        RemoteException e) {
           if (!isCheckinRequest) {
@@ -78,17 +85,26 @@
         }
       }
  else {
-        mi=new Debug.MemoryInfo();
-        Debug.getMemoryInfo(r.pid,mi);
+        if (mi == null) {
+          mi=new Debug.MemoryInfo();
+        }
+        if (!brief && !oomOnly) {
+          Debug.getMemoryInfo(r.pid,mi);
+        }
+ else {
+          mi.dalvikPss=(int)Debug.getPss(r.pid);
+        }
+      }
+      final long myTotalPss=mi.getTotalPss();
+synchronized (this) {
+        if (r.thread != null && oomAdj == r.setAdj) {
+          r.baseProcessTracker.addPss(myTotalPss,true);
+        }
       }
       if (!isCheckinRequest && mi != null) {
-        long myTotalPss=mi.getTotalPss();
         totalPss+=myTotalPss;
         MemItem pssItem=new MemItem(r.processName + " (pid " + r.pid+ ")",r.processName,myTotalPss,0);
         procMems.add(pssItem);
-synchronized (this) {
-          r.baseProcessTracker.addPss(myTotalPss);
-        }
         nativePss+=mi.nativePss;
         dalvikPss+=mi.dalvikPss;
         otherPss+=mi.otherPss;
@@ -158,7 +174,7 @@ synchronized (this) {
             }
           }
           for (int j=0; j < miCat.subitems.size(); j++) {
-            MemItem mi=miCat.subitems.get(j);
+            MemItem memi=miCat.subitems.get(j);
             if (j > 0) {
               if (outTag != null) {
                 outTag.append(" ");
@@ -168,10 +184,10 @@ synchronized (this) {
               }
             }
             if (outTag != null && miCat.id <= ProcessList.FOREGROUND_APP_ADJ) {
-              appendMemBucket(outTag,mi.pss,mi.shortLabel,false);
+              appendMemBucket(outTag,memi.pss,memi.shortLabel,false);
             }
             if (outStack != null) {
-              appendMemBucket(outStack,mi.pss,mi.shortLabel,true);
+              appendMemBucket(outStack,memi.pss,memi.shortLabel,true);
             }
           }
           if (outStack != null && miCat.id >= ProcessList.FOREGROUND_APP_ADJ) {
@@ -196,7 +212,7 @@ synchronized (this) {
     }
     pw.println("Total PSS by OOM adjustment:");
     dumpMemItems(pw,"  ",oomMems,false);
-    if (!oomOnly) {
+    if (!brief && !oomOnly) {
       PrintWriter out=categoryPw != null ? categoryPw : pw;
       out.println();
       out.println("Total PSS by category:");
@@ -206,28 +222,30 @@ synchronized (this) {
     pw.print("Total PSS: ");
     pw.print(totalPss);
     pw.println(" kB");
-    final int[] SINGLE_LONG_FORMAT=new int[]{Process.PROC_SPACE_TERM | Process.PROC_OUT_LONG};
-    long[] longOut=new long[1];
-    Process.readProcFile("/sys/kernel/mm/ksm/pages_shared",SINGLE_LONG_FORMAT,null,longOut,null);
-    long shared=longOut[0] * ProcessList.PAGE_SIZE / 1024;
-    longOut[0]=0;
-    Process.readProcFile("/sys/kernel/mm/ksm/pages_sharing",SINGLE_LONG_FORMAT,null,longOut,null);
-    long sharing=longOut[0] * ProcessList.PAGE_SIZE / 1024;
-    longOut[0]=0;
-    Process.readProcFile("/sys/kernel/mm/ksm/pages_unshared",SINGLE_LONG_FORMAT,null,longOut,null);
-    long unshared=longOut[0] * ProcessList.PAGE_SIZE / 1024;
-    longOut[0]=0;
-    Process.readProcFile("/sys/kernel/mm/ksm/pages_volatile",SINGLE_LONG_FORMAT,null,longOut,null);
-    long voltile=longOut[0] * ProcessList.PAGE_SIZE / 1024;
-    pw.print("      KSM: ");
-    pw.print(sharing);
-    pw.print(" kB saved from shared ");
-    pw.print(shared);
-    pw.println(" kB");
-    pw.print("           ");
-    pw.print(unshared);
-    pw.print(" kB unshared; ");
-    pw.print(voltile);
-    pw.println(" kB volatile");
+    if (!brief) {
+      final int[] SINGLE_LONG_FORMAT=new int[]{Process.PROC_SPACE_TERM | Process.PROC_OUT_LONG};
+      long[] longOut=new long[1];
+      Process.readProcFile("/sys/kernel/mm/ksm/pages_shared",SINGLE_LONG_FORMAT,null,longOut,null);
+      long shared=longOut[0] * ProcessList.PAGE_SIZE / 1024;
+      longOut[0]=0;
+      Process.readProcFile("/sys/kernel/mm/ksm/pages_sharing",SINGLE_LONG_FORMAT,null,longOut,null);
+      long sharing=longOut[0] * ProcessList.PAGE_SIZE / 1024;
+      longOut[0]=0;
+      Process.readProcFile("/sys/kernel/mm/ksm/pages_unshared",SINGLE_LONG_FORMAT,null,longOut,null);
+      long unshared=longOut[0] * ProcessList.PAGE_SIZE / 1024;
+      longOut[0]=0;
+      Process.readProcFile("/sys/kernel/mm/ksm/pages_volatile",SINGLE_LONG_FORMAT,null,longOut,null);
+      long voltile=longOut[0] * ProcessList.PAGE_SIZE / 1024;
+      pw.print("      KSM: ");
+      pw.print(sharing);
+      pw.print(" kB saved from shared ");
+      pw.print(shared);
+      pw.println(" kB");
+      pw.print("           ");
+      pw.print(unshared);
+      pw.print(" kB unshared; ");
+      pw.print(voltile);
+      pw.println(" kB volatile");
+    }
   }
 }
