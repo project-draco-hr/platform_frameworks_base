@@ -75,6 +75,11 @@
         pw.println("Process stats reset.");
         return;
       }
+ else       if ("--write".equals(arg)) {
+        writeStateSyncLocked();
+        pw.println("Process stats written.");
+        return;
+      }
  else       if ("-h".equals(arg)) {
         dumpHelp(pw);
         return;
@@ -89,10 +94,14 @@
       }
  else {
         try {
-          mContext.getPackageManager().getPackageUid(arg,UserHandle.getCallingUserId());
-          reqPackage=arg;
+          IPackageManager pm=AppGlobals.getPackageManager();
+          if (pm.getPackageUid(arg,UserHandle.getCallingUserId()) >= 0) {
+            reqPackage=arg;
+          }
         }
- catch (        PackageManager.NameNotFoundException e) {
+ catch (        RemoteException e) {
+        }
+        if (reqPackage == null) {
           pw.println("Unknown package: " + arg);
           dumpHelp(pw);
           return;
@@ -124,172 +133,10 @@
     dumpFilteredProcessesCsv(pw,null,csvSepScreenStats,csvScreenStats,csvSepMemStats,csvMemStats,csvSepProcStats,csvProcStats,now,reqPackage);
     return;
   }
-  ArrayMap<String,SparseArray<PackageState>> pkgMap=mState.mPackages.getMap();
-  boolean printedHeader=false;
   if (isCheckin) {
-    pw.println("vers,1");
-  }
-  for (int ip=0; ip < pkgMap.size(); ip++) {
-    String pkgName=pkgMap.keyAt(ip);
-    if (reqPackage != null && !reqPackage.equals(pkgName)) {
-      continue;
-    }
-    SparseArray<PackageState> uids=pkgMap.valueAt(ip);
-    for (int iu=0; iu < uids.size(); iu++) {
-      int uid=uids.keyAt(iu);
-      PackageState state=uids.valueAt(iu);
-      final int NPROCS=state.mProcesses.size();
-      final int NSRVS=state.mServices.size();
-      if (!isCheckin) {
-        if (NPROCS > 0 || NSRVS > 0) {
-          if (!printedHeader) {
-            pw.println("Per-Package Process Stats:");
-            printedHeader=true;
-          }
-          pw.print("  * ");
-          pw.print(pkgName);
-          pw.print(" / ");
-          UserHandle.formatUid(pw,uid);
-          pw.println(":");
-        }
-      }
-      for (int iproc=0; iproc < NPROCS; iproc++) {
-        ProcessState proc=state.mProcesses.valueAt(iproc);
-        if (!isCheckin) {
-          pw.print("      Process ");
-          pw.print(state.mProcesses.keyAt(iproc));
-          pw.print(" (");
-          pw.print(proc.mDurationsTableSize);
-          pw.print(" entries)");
-          pw.println(":");
-          dumpProcessState(pw,"        ",proc,ALL_SCREEN_ADJ,ALL_MEM_ADJ,ALL_PROC_STATES,now);
-          dumpProcessPss(pw,"        ",proc,ALL_SCREEN_ADJ,ALL_MEM_ADJ,ALL_PROC_STATES);
-        }
- else {
-          pw.print("pkgproc,");
-          pw.print(pkgName);
-          pw.print(",");
-          pw.print(uid);
-          pw.print(",");
-          pw.print(state.mProcesses.keyAt(iproc));
-          dumpAllProcessStateCheckin(pw,proc,now);
-          pw.println();
-          if (proc.mPssTableSize > 0) {
-            pw.print("pkgpss,");
-            pw.print(pkgName);
-            pw.print(",");
-            pw.print(uid);
-            pw.print(",");
-            pw.print(state.mProcesses.keyAt(iproc));
-            dumpAllProcessPssCheckin(pw,proc);
-            pw.println();
-          }
-          if (proc.mNumExcessiveWake > 0 || proc.mNumExcessiveCpu > 0) {
-            pw.print("pkgkills,");
-            pw.print(pkgName);
-            pw.print(",");
-            pw.print(uid);
-            pw.print(",");
-            pw.print(state.mProcesses.keyAt(iproc));
-            pw.print(",");
-            pw.print(proc.mNumExcessiveWake);
-            pw.print(",");
-            pw.print(proc.mNumExcessiveCpu);
-            pw.println();
-          }
-        }
-      }
-      for (int isvc=0; isvc < NSRVS; isvc++) {
-        if (!isCheckin) {
-          pw.print("      Service ");
-          pw.print(state.mServices.keyAt(isvc));
-          pw.println(":");
-          ServiceState svc=state.mServices.valueAt(isvc);
-          if (svc.mStartedCount != 0) {
-            pw.print("        Started op count ");
-            pw.print(svc.mStartedCount);
-            pw.println(":");
-            dumpSingleTime(pw,"          ",svc.mStartedDurations,svc.mStartedState,svc.mStartedStartTime,now);
-          }
-          if (svc.mBoundCount != 0) {
-            pw.print("        Bound op count ");
-            pw.print(svc.mBoundCount);
-            pw.println(":");
-            dumpSingleTime(pw,"          ",svc.mBoundDurations,svc.mBoundState,svc.mBoundStartTime,now);
-          }
-          if (svc.mExecCount != 0) {
-            pw.print("        Executing op count ");
-            pw.print(svc.mExecCount);
-            pw.println(":");
-            dumpSingleTime(pw,"          ",svc.mExecDurations,svc.mExecState,svc.mExecStartTime,now);
-          }
-        }
- else {
-          String serviceName=state.mServices.keyAt(isvc);
-          ServiceState svc=state.mServices.valueAt(isvc);
-          dumpServiceTimeCheckin(pw,"pkgsvc-start",pkgName,uid,serviceName,svc,svc.mStartedCount,svc.mStartedDurations,svc.mStartedState,svc.mStartedStartTime,now);
-          dumpServiceTimeCheckin(pw,"pkgsvc-bound",pkgName,uid,serviceName,svc,svc.mBoundCount,svc.mBoundDurations,svc.mBoundState,svc.mBoundStartTime,now);
-          dumpServiceTimeCheckin(pw,"pkgsvc-exec",pkgName,uid,serviceName,svc,svc.mExecCount,svc.mExecDurations,svc.mExecState,svc.mExecStartTime,now);
-        }
-      }
-    }
-  }
-  if (!isCheckin) {
-    dumpFilteredProcesses(pw,"Processes running while critical mem:","  ",new int[]{ADJ_SCREEN_OFF,ADJ_SCREEN_ON},new int[]{ADJ_MEM_FACTOR_CRITICAL},new int[]{STATE_PERSISTENT,STATE_TOP,STATE_FOREGROUND,STATE_VISIBLE,STATE_PERCEPTIBLE,STATE_BACKUP,STATE_SERVICE,STATE_HOME,STATE_PREVIOUS},now,reqPackage);
-    dumpFilteredProcesses(pw,"Processes running while low mem:","  ",new int[]{ADJ_SCREEN_OFF,ADJ_SCREEN_ON},new int[]{ADJ_MEM_FACTOR_LOW},new int[]{STATE_PERSISTENT,STATE_TOP,STATE_FOREGROUND,STATE_VISIBLE,STATE_PERCEPTIBLE,STATE_BACKUP,STATE_SERVICE,STATE_HOME,STATE_PREVIOUS},now,reqPackage);
-    dumpFilteredProcesses(pw,"Processes running while moderate mem:","  ",new int[]{ADJ_SCREEN_OFF,ADJ_SCREEN_ON},new int[]{ADJ_MEM_FACTOR_MODERATE},new int[]{STATE_PERSISTENT,STATE_TOP,STATE_FOREGROUND,STATE_VISIBLE,STATE_PERCEPTIBLE,STATE_BACKUP,STATE_SERVICE,STATE_HOME,STATE_PREVIOUS},now,reqPackage);
-    dumpFilteredProcesses(pw,"Processes running while normal mem:","  ",new int[]{ADJ_SCREEN_OFF,ADJ_SCREEN_ON},new int[]{ADJ_MEM_FACTOR_NORMAL},new int[]{STATE_PERSISTENT,STATE_TOP,STATE_FOREGROUND,STATE_VISIBLE,STATE_PERCEPTIBLE,STATE_BACKUP,STATE_SERVICE,STATE_HOME,STATE_PREVIOUS},now,reqPackage);
-    pw.println();
-    pw.println("Run time Stats:");
-    dumpSingleTime(pw,"  ",mState.mMemFactorDurations,mState.mMemFactor,mState.mStartTime,now);
-    if (dumpAll) {
-      pw.println();
-      pw.println("Internal state:");
-      pw.print("  Num long arrays: ");
-      pw.println(mState.mLongs.size());
-      pw.print("  Next long entry: ");
-      pw.println(mState.mNextLong);
-    }
+    mState.dumpCheckin(pw,reqPackage);
   }
  else {
-    ArrayMap<String,SparseArray<ProcessState>> procMap=mState.mProcesses.getMap();
-    for (int ip=0; ip < procMap.size(); ip++) {
-      String procName=procMap.keyAt(ip);
-      SparseArray<ProcessState> uids=procMap.valueAt(ip);
-      for (int iu=0; iu < uids.size(); iu++) {
-        int uid=uids.keyAt(iu);
-        ProcessState state=uids.valueAt(iu);
-        if (state.mDurationsTableSize > 0) {
-          pw.print("proc,");
-          pw.print(procName);
-          pw.print(",");
-          pw.print(uid);
-          dumpAllProcessStateCheckin(pw,state,now);
-          pw.println();
-        }
-        if (state.mPssTableSize > 0) {
-          pw.print("pss,");
-          pw.print(procName);
-          pw.print(",");
-          pw.print(uid);
-          dumpAllProcessPssCheckin(pw,state);
-          pw.println();
-        }
-        if (state.mNumExcessiveWake > 0 || state.mNumExcessiveCpu > 0) {
-          pw.print("kills,");
-          pw.print(uid);
-          pw.print(",");
-          pw.print(procName);
-          pw.print(",");
-          pw.print(state.mNumExcessiveWake);
-          pw.print(",");
-          pw.print(state.mNumExcessiveCpu);
-          pw.println();
-        }
-      }
-    }
-    pw.print("total");
-    dumpAdjTimesCheckin(pw,",",mState.mMemFactorDurations,mState.mMemFactor,mState.mStartTime,now);
-    pw.println();
+    mState.dump(pw,reqPackage,dumpAll);
   }
 }
