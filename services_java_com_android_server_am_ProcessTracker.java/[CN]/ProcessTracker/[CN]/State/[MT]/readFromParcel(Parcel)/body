@@ -1,5 +1,8 @@
 {
-  reset();
+  final boolean hadData=mPackages.getMap().size() > 0 || mProcesses.getMap().size() > 0;
+  if (hadData) {
+    resetSafely();
+  }
   if (!readCheckedInt(in,MAGIC,"magic number")) {
     return;
   }
@@ -64,13 +67,23 @@
         Slog.w(TAG,"Ignoring existing stats; bad process package name");
         return;
       }
-      ProcessState proc=new ProcessState(this,pkgName,uid,procName);
-      if (!proc.readFromParcel(in)) {
-        return;
+      ProcessState proc=hadData ? mProcesses.get(procName,uid) : null;
+      if (proc != null) {
+        if (!proc.readFromParcel(in,false)) {
+          return;
+        }
       }
+ else {
+        proc=new ProcessState(this,pkgName,uid,procName);
+        if (!proc.readFromParcel(in,true)) {
+          return;
+        }
+      }
+      if (DEBUG)       Slog.d(TAG,"Adding process: " + procName + " "+ uid+ " "+ proc);
       mProcesses.put(procName,uid,proc);
     }
   }
+  if (DEBUG)   Slog.d(TAG,"Read " + mProcesses.getMap().size() + " processes");
   int NPKG=in.readInt();
   if (NPKG < 0) {
     Slog.w(TAG,"Ignoring existing stats; bad package count: " + NPKG);
@@ -96,6 +109,7 @@
         return;
       }
       PackageState pkgState=new PackageState(uid);
+      mPackages.put(pkgName,uid,pkgState);
       int NPROCS=in.readInt();
       if (NPROCS < 0) {
         Slog.w(TAG,"Ignoring existing stats; bad package process count: " + NPROCS);
@@ -109,16 +123,27 @@
           return;
         }
         int hasProc=in.readInt();
+        if (DEBUG)         Slog.d(TAG,"Reading package " + pkgName + " "+ uid+ " process "+ procName+ " hasProc="+ hasProc);
         if (hasProc != 0) {
           ProcessState commonProc=mProcesses.get(procName,uid);
+          if (DEBUG)           Slog.d(TAG,"Got common proc " + procName + " "+ uid+ ": "+ commonProc);
           if (commonProc == null) {
             Slog.w(TAG,"Ignoring existing stats; no common proc: " + procName);
             return;
           }
-          ProcessState proc=new ProcessState(commonProc,pkgName,uid,procName,0);
-          if (!proc.readFromParcel(in)) {
-            return;
+          ProcessState proc=hadData ? pkgState.mProcesses.get(procName) : null;
+          if (proc != null) {
+            if (!proc.readFromParcel(in,false)) {
+              return;
+            }
           }
+ else {
+            proc=new ProcessState(commonProc,pkgName,uid,procName,0);
+            if (!proc.readFromParcel(in,true)) {
+              return;
+            }
+          }
+          if (DEBUG)           Slog.d(TAG,"Adding package " + pkgName + " process: "+ procName+ " "+ uid+ " "+ proc);
           pkgState.mProcesses.put(procName,proc);
         }
       }
@@ -134,12 +159,17 @@
           Slog.w(TAG,"Ignoring existing stats; bad package service name");
           return;
         }
-        ServiceState serv=new ServiceState();
+        ServiceState serv=hadData ? pkgState.mServices.get(serviceName) : null;
+        if (serv == null) {
+          serv=new ServiceState();
+        }
         if (!serv.readFromParcel(in)) {
           return;
         }
+        if (DEBUG)         Slog.d(TAG,"Adding package " + pkgName + " service: "+ serviceName+ " "+ uid+ " "+ serv);
         pkgState.mServices.put(serviceName,serv);
       }
     }
   }
+  if (DEBUG)   Slog.d(TAG,"Successfully read procstats!");
 }
