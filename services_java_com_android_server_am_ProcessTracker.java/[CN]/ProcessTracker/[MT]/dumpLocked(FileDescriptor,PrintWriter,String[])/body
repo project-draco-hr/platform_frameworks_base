@@ -1,7 +1,9 @@
 {
   final long now=SystemClock.uptimeMillis();
   boolean isCheckin=false;
+  boolean isCompact=false;
   boolean isCsv=false;
+  boolean includeCommitted=false;
   boolean dumpAll=false;
   String reqPackage=null;
   boolean csvSepScreenStats=false;
@@ -15,6 +17,9 @@
       String arg=args[i];
       if ("--checkin".equals(arg)) {
         isCheckin=true;
+      }
+ else       if ("-c".equals(arg)) {
+        isCompact=true;
       }
  else       if ("--csv".equals(arg)) {
         isCsv=true;
@@ -70,9 +75,12 @@
         }
         csvSepProcStats=sep[0];
       }
- else       if ("--reset".equals(arg)) {
-        mState.resetSafely();
-        pw.println("Process stats reset.");
+ else       if ("--include-committed".equals(arg)) {
+        includeCommitted=true;
+      }
+ else       if ("--commit".equals(arg)) {
+        mState.writeStateLocked(true,true);
+        pw.println("Process stats committed.");
         return;
       }
  else       if ("--write".equals(arg)) {
@@ -91,6 +99,7 @@
       }
  else       if ("-a".equals(arg)) {
         dumpAll=true;
+        includeCommitted=true;
       }
  else       if (arg.length() > 0 && arg.charAt(0) == '-') {
         pw.println("Unknown option: " + arg);
@@ -102,6 +111,7 @@
           IPackageManager pm=AppGlobals.getPackageManager();
           if (pm.getPackageUid(arg,UserHandle.getCallingUserId()) >= 0) {
             reqPackage=arg;
+            includeCommitted=true;
           }
         }
  catch (        RemoteException e) {
@@ -138,10 +148,52 @@
     dumpFilteredProcessesCsvLocked(pw,null,csvSepScreenStats,csvScreenStats,csvSepMemStats,csvMemStats,csvSepProcStats,csvProcStats,now,reqPackage);
     return;
   }
-  if (isCheckin) {
-    mState.dumpCheckinLocked(pw,reqPackage);
-  }
+  boolean sepNeeded=false;
+  if (includeCommitted || isCheckin) {
+    ArrayList<String> files=getCommittedFiles(0);
+    if (files != null) {
+      for (int i=0; i < files.size(); i++) {
+        if (DEBUG)         Slog.d(TAG,"Retrieving state: " + files.get(i));
+        try {
+          State state=new State(files.get(i));
+          if (isCheckin || isCompact) {
+            state.dumpCheckinLocked(pw,reqPackage);
+          }
  else {
-    mState.dumpLocked(pw,reqPackage,dumpAll);
+            if (sepNeeded) {
+              pw.println();
+            }
+ else {
+              sepNeeded=true;
+            }
+            pw.print("COMMITTED STATS FROM ");
+            pw.print(state.mTimePeriodStartClockStr);
+            pw.println(":");
+            state.dumpLocked(pw,reqPackage,dumpAll);
+          }
+          if (isCheckin) {
+            state.mFile.delete();
+          }
+        }
+ catch (        Throwable e) {
+          pw.print("**** FAILURE DUMPING STATE: ");
+          pw.println(files.get(i));
+          e.printStackTrace(pw);
+        }
+        if (DEBUG)         Slog.d(TAG,"Deleting state: " + files.get(i));
+      }
+    }
+  }
+  if (!isCheckin) {
+    if (isCompact) {
+      mState.dumpCheckinLocked(pw,reqPackage);
+    }
+ else {
+      if (sepNeeded) {
+        pw.println();
+        pw.println("CURRENT STATS:");
+      }
+      mState.dumpLocked(pw,reqPackage,dumpAll);
+    }
   }
 }
