@@ -21,10 +21,13 @@
   if (!readCheckedInt(in,LONGS_SIZE,"longs size")) {
     return;
   }
-  mTimePeriodStart=in.readLong();
-  mTimePeriodEnd=in.readLong();
-  int NLONGS=in.readInt();
-  int NEXTLONG=in.readInt();
+  mTimePeriodStartClock=in.readLong();
+  buildTimePeriodStartClockStr();
+  mTimePeriodStartRealtime=in.readLong();
+  mTimePeriodEndRealtime=in.readLong();
+  final int NLONGS=in.readInt();
+  final int NEXTLONG=in.readInt();
+  mLongs.clear();
   for (int i=0; i < (NLONGS - 1); i++) {
     while (i >= mLongs.size()) {
       mLongs.add(new long[LONGS_SIZE]);
@@ -35,36 +38,37 @@
   mNextLong=NEXTLONG;
   for (int i=0; i < NEXTLONG; i++) {
     longs[i]=in.readLong();
+    if (DEBUG)     Slog.d(TAG,"Reading last long #" + i + ": "+ longs[i]);
   }
   mLongs.add(longs);
   in.readLongArray(mMemFactorDurations);
   int NPROC=in.readInt();
   if (NPROC < 0) {
-    Slog.w(TAG,"Ignoring existing stats; bad process count: " + NPROC);
+    mReadError="bad process count: " + NPROC;
     return;
   }
   while (NPROC > 0) {
     NPROC--;
     String procName=in.readString();
     if (procName == null) {
-      Slog.w(TAG,"Ignoring existing stats; bad process name");
+      mReadError="bad process name";
       return;
     }
     int NUID=in.readInt();
     if (NUID < 0) {
-      Slog.w(TAG,"Ignoring existing stats; bad uid count: " + NUID);
+      mReadError="bad uid count: " + NUID;
       return;
     }
     while (NUID > 0) {
       NUID--;
       int uid=in.readInt();
       if (uid < 0) {
-        Slog.w(TAG,"Ignoring existing stats; bad uid: " + uid);
+        mReadError="bad uid: " + uid;
         return;
       }
       String pkgName=in.readString();
       if (pkgName == null) {
-        Slog.w(TAG,"Ignoring existing stats; bad process package name");
+        mReadError="bad process package name";
         return;
       }
       ProcessState proc=hadData ? mProcesses.get(procName,uid) : null;
@@ -86,51 +90,51 @@
   if (DEBUG)   Slog.d(TAG,"Read " + mProcesses.getMap().size() + " processes");
   int NPKG=in.readInt();
   if (NPKG < 0) {
-    Slog.w(TAG,"Ignoring existing stats; bad package count: " + NPKG);
+    mReadError="bad package count: " + NPKG;
     return;
   }
   while (NPKG > 0) {
     NPKG--;
     String pkgName=in.readString();
     if (pkgName == null) {
-      Slog.w(TAG,"Ignoring existing stats; bad package name");
+      mReadError="bad package name";
       return;
     }
     int NUID=in.readInt();
     if (NUID < 0) {
-      Slog.w(TAG,"Ignoring existing stats; bad uid count: " + NUID);
+      mReadError="bad uid count: " + NUID;
       return;
     }
     while (NUID > 0) {
       NUID--;
       int uid=in.readInt();
       if (uid < 0) {
-        Slog.w(TAG,"Ignoring existing stats; bad uid: " + uid);
+        mReadError="bad uid: " + uid;
         return;
       }
       PackageState pkgState=new PackageState(uid);
       mPackages.put(pkgName,uid,pkgState);
       int NPROCS=in.readInt();
       if (NPROCS < 0) {
-        Slog.w(TAG,"Ignoring existing stats; bad package process count: " + NPROCS);
+        mReadError="bad package process count: " + NPROCS;
         return;
       }
       while (NPROCS > 0) {
         NPROCS--;
         String procName=in.readString();
         if (procName == null) {
-          Slog.w(TAG,"Ignoring existing stats; bad package process name");
+          mReadError="bad package process name";
           return;
         }
         int hasProc=in.readInt();
         if (DEBUG)         Slog.d(TAG,"Reading package " + pkgName + " "+ uid+ " process "+ procName+ " hasProc="+ hasProc);
+        ProcessState commonProc=mProcesses.get(procName,uid);
+        if (DEBUG)         Slog.d(TAG,"Got common proc " + procName + " "+ uid+ ": "+ commonProc);
+        if (commonProc == null) {
+          mReadError="no common proc: " + procName;
+          return;
+        }
         if (hasProc != 0) {
-          ProcessState commonProc=mProcesses.get(procName,uid);
-          if (DEBUG)           Slog.d(TAG,"Got common proc " + procName + " "+ uid+ ": "+ commonProc);
-          if (commonProc == null) {
-            Slog.w(TAG,"Ignoring existing stats; no common proc: " + procName);
-            return;
-          }
           ProcessState proc=hadData ? pkgState.mProcesses.get(procName) : null;
           if (proc != null) {
             if (!proc.readFromParcel(in,false)) {
@@ -146,17 +150,21 @@
           if (DEBUG)           Slog.d(TAG,"Adding package " + pkgName + " process: "+ procName+ " "+ uid+ " "+ proc);
           pkgState.mProcesses.put(procName,proc);
         }
+ else {
+          if (DEBUG)           Slog.d(TAG,"Adding package " + pkgName + " process: "+ procName+ " "+ uid+ " "+ commonProc);
+          pkgState.mProcesses.put(procName,commonProc);
+        }
       }
       int NSRVS=in.readInt();
       if (NSRVS < 0) {
-        Slog.w(TAG,"Ignoring existing stats; bad package service count: " + NSRVS);
+        mReadError="bad package service count: " + NSRVS;
         return;
       }
       while (NSRVS > 0) {
         NSRVS--;
         String serviceName=in.readString();
         if (serviceName == null) {
-          Slog.w(TAG,"Ignoring existing stats; bad package service name");
+          mReadError="bad package service name";
           return;
         }
         ServiceState serv=hadData ? pkgState.mServices.get(serviceName) : null;
