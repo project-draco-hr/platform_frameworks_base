@@ -1,6 +1,5 @@
 {
   if (localLOGV)   Slog.v(TAG,"Activity idle: " + token);
-  ActivityRecord res=null;
   ArrayList<ActivityRecord> stops=null;
   ArrayList<ActivityRecord> finishes=null;
   ArrayList<UserStartedState> startingUsers=null;
@@ -15,31 +14,35 @@
     if (DEBUG_IDLE)     Slog.d(TAG,"activityIdleInternalLocked: Callers=" + Debug.getCallers(4));
     mHandler.removeMessages(IDLE_TIMEOUT_MSG,r);
     r.finishLaunchTickingLocked();
-    res=r.task.stack.activityIdleInternalLocked(token);
-    if (res != null) {
-      if (fromTimeout) {
-        reportActivityLaunchedLocked(fromTimeout,r,-1,-1);
-      }
-      if (config != null) {
-        r.configuration=config;
-      }
-      r.idle=true;
-      if (allResumedActivitiesIdle()) {
-        mService.scheduleAppGcsLocked();
-        mService.requestPssLocked(r.app,SystemClock.uptimeMillis(),false);
-      }
-      if (r.thumbnailNeeded && r.app != null && r.app.thread != null) {
-        sendThumbnail=r.app.thread;
-        r.thumbnailNeeded=false;
-      }
-      if (!mService.mBooted && isFrontStack(r.task.stack)) {
-        mService.mBooted=true;
-        enableScreen=true;
-      }
+    if (fromTimeout) {
+      reportActivityLaunchedLocked(fromTimeout,r,-1,-1);
     }
- else     if (fromTimeout) {
-      reportActivityLaunchedLocked(fromTimeout,null,-1,-1);
+    if (config != null) {
+      r.configuration=config;
     }
+    r.idle=true;
+    if (r.thumbnailNeeded && r.app != null && r.app.thread != null) {
+      sendThumbnail=r.app.thread;
+      r.thumbnailNeeded=false;
+    }
+    if (!mService.mBooted && isFrontStack(r.task.stack)) {
+      mService.mBooted=true;
+      enableScreen=true;
+    }
+  }
+  if (allResumedActivitiesIdle()) {
+    if (r != null) {
+      mService.scheduleAppGcsLocked();
+      mService.requestPssLocked(r.app,SystemClock.uptimeMillis(),false);
+    }
+    if (mLaunchingActivity.isHeld()) {
+      mHandler.removeMessages(LAUNCH_TIMEOUT_MSG);
+      if (VALIDATE_WAKE_LOCK_CALLER && Binder.getCallingUid() != Process.myUid()) {
+        throw new IllegalStateException("Calling must be system uid");
+      }
+      mLaunchingActivity.release();
+    }
+    ensureActivitiesVisibleLocked(null,0);
   }
   stops=processStoppingActivitiesLocked(true);
   NS=stops != null ? stops.size() : 0;
@@ -112,5 +115,5 @@
   if (activityRemoved) {
     resumeTopActivitiesLocked();
   }
-  return res;
+  return r;
 }
