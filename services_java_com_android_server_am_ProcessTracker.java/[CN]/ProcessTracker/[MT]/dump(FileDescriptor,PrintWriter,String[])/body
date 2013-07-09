@@ -3,7 +3,8 @@
   boolean isCheckin=false;
   boolean isCompact=false;
   boolean isCsv=false;
-  boolean includeCommitted=false;
+  boolean currentOnly=false;
+  boolean dumpDetails=false;
   boolean dumpAll=false;
   String reqPackage=null;
   boolean csvSepScreenStats=false;
@@ -75,8 +76,11 @@
         }
         csvSepProcStats=sep[0];
       }
- else       if ("--include-committed".equals(arg)) {
-        includeCommitted=true;
+ else       if ("--details".equals(arg)) {
+        dumpDetails=true;
+      }
+ else       if ("--current".equals(arg)) {
+        currentOnly=true;
       }
  else       if ("--commit".equals(arg)) {
         mState.writeStateLocked(true,true);
@@ -98,8 +102,8 @@
         return;
       }
  else       if ("-a".equals(arg)) {
+        dumpDetails=true;
         dumpAll=true;
-        includeCommitted=true;
       }
  else       if (arg.length() > 0 && arg.charAt(0) == '-') {
         pw.println("Unknown option: " + arg);
@@ -111,7 +115,7 @@
           IPackageManager pm=AppGlobals.getPackageManager();
           if (pm.getPackageUid(arg,UserHandle.getCallingUserId()) >= 0) {
             reqPackage=arg;
-            includeCommitted=true;
+            dumpDetails=true;
           }
         }
  catch (        RemoteException e) {
@@ -145,55 +149,78 @@
       }
     }
     pw.println();
-    dumpFilteredProcessesCsvLocked(pw,null,csvSepScreenStats,csvScreenStats,csvSepMemStats,csvMemStats,csvSepProcStats,csvProcStats,now,reqPackage);
+synchronized (mLock) {
+      dumpFilteredProcessesCsvLocked(pw,null,csvSepScreenStats,csvScreenStats,csvSepMemStats,csvMemStats,csvSepProcStats,csvProcStats,now,reqPackage);
+    }
     return;
   }
   boolean sepNeeded=false;
-  if (includeCommitted || isCheckin) {
-    ArrayList<String> files=getCommittedFiles(0);
-    if (files != null) {
-      for (int i=0; i < files.size(); i++) {
-        if (DEBUG)         Slog.d(TAG,"Retrieving state: " + files.get(i));
-        try {
-          State state=new State(files.get(i));
-          if (isCheckin || isCompact) {
-            state.dumpCheckinLocked(pw,reqPackage);
-          }
- else {
-            if (sepNeeded) {
-              pw.println();
+  if (!currentOnly || isCheckin) {
+    mWriteLock.lock();
+    try {
+      ArrayList<String> files=getCommittedFiles(0,!isCheckin);
+      if (files != null) {
+        for (int i=0; i < files.size(); i++) {
+          if (DEBUG)           Slog.d(TAG,"Retrieving state: " + files.get(i));
+          try {
+            State state=new State(files.get(i));
+            String fileStr=state.mFile.getBaseFile().getPath();
+            boolean checkedIn=fileStr.endsWith(STATE_FILE_CHECKIN_SUFFIX);
+            if (isCheckin || isCompact) {
+              state.dumpCheckinLocked(pw,reqPackage);
             }
  else {
-              sepNeeded=true;
+              if (sepNeeded) {
+                pw.println();
+              }
+ else {
+                sepNeeded=true;
+              }
+              pw.print("COMMITTED STATS FROM ");
+              pw.print(state.mTimePeriodStartClockStr);
+              if (checkedIn)               pw.print(" (checked in)");
+              pw.println(":");
+              if (dumpDetails) {
+                state.dumpLocked(pw,reqPackage,now,dumpAll);
+              }
+ else {
+                state.dumpSummaryLocked(pw,reqPackage,now);
+              }
             }
-            pw.print("COMMITTED STATS FROM ");
-            pw.print(state.mTimePeriodStartClockStr);
-            pw.println(":");
-            state.dumpLocked(pw,reqPackage,dumpAll);
+            if (isCheckin) {
+              state.mFile.getBaseFile().renameTo(new File(fileStr + STATE_FILE_CHECKIN_SUFFIX));
+            }
           }
-          if (isCheckin) {
-            state.mFile.delete();
+ catch (          Throwable e) {
+            pw.print("**** FAILURE DUMPING STATE: ");
+            pw.println(files.get(i));
+            e.printStackTrace(pw);
           }
+          if (DEBUG)           Slog.d(TAG,"Deleting state: " + files.get(i));
         }
- catch (        Throwable e) {
-          pw.print("**** FAILURE DUMPING STATE: ");
-          pw.println(files.get(i));
-          e.printStackTrace(pw);
-        }
-        if (DEBUG)         Slog.d(TAG,"Deleting state: " + files.get(i));
       }
+    }
+  finally {
+      mWriteLock.unlock();
     }
   }
   if (!isCheckin) {
-    if (isCompact) {
-      mState.dumpCheckinLocked(pw,reqPackage);
-    }
- else {
-      if (sepNeeded) {
-        pw.println();
-        pw.println("CURRENT STATS:");
+synchronized (mLock) {
+      if (isCompact) {
+        mState.dumpCheckinLocked(pw,reqPackage);
       }
-      mState.dumpLocked(pw,reqPackage,dumpAll);
+ else {
+        if (sepNeeded) {
+          pw.println();
+          pw.println("CURRENT STATS:");
+        }
+        if (dumpDetails) {
+          mState.dumpLocked(pw,reqPackage,now,dumpAll);
+        }
+ else {
+          mState.dumpSummaryLocked(pw,reqPackage,now);
+        }
+      }
     }
   }
 }
