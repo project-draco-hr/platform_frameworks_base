@@ -1,4 +1,5 @@
 {
+  UserManager mgr=UserManager.get(mContext);
   PackageManager pm=mContext.getPackageManager();
   ApplicationInfo app=null;
   try {
@@ -14,6 +15,10 @@
   intent.setClassName(mPackage,config.user);
   long token=Binder.clearCallingIdentity();
   try {
+    UserInfo user=mgr.getUserInfo(mUserId);
+    if (user.isRestricted()) {
+      throw new SecurityException("Restricted users cannot establish VPNs");
+    }
     ResolveInfo info=AppGlobals.getPackageManager().resolveService(intent,null,0,mUserId);
     if (info == null) {
       throw new SecurityException("Cannot find " + config.user);
@@ -27,18 +32,6 @@
   }
  finally {
     Binder.restoreCallingIdentity(token);
-  }
-  String label=app.loadLabel(pm).toString();
-  Drawable icon=app.loadIcon(pm);
-  Bitmap bitmap=null;
-  if (icon.getIntrinsicWidth() > 0 && icon.getIntrinsicHeight() > 0) {
-    int width=mContext.getResources().getDimensionPixelSize(android.R.dimen.notification_large_icon_width);
-    int height=mContext.getResources().getDimensionPixelSize(android.R.dimen.notification_large_icon_height);
-    icon.setBounds(0,0,width,height);
-    bitmap=Bitmap.createBitmap(width,height,Bitmap.Config.ARGB_8888);
-    Canvas c=new Canvas(bitmap);
-    icon.draw(c);
-    c.setBitmap(null);
   }
   ParcelFileDescriptor tun=ParcelFileDescriptor.adoptFd(jniCreate(config.mtu));
   try {
@@ -65,13 +58,15 @@
     mInterface=interfaze;
     config.user=mPackage;
     config.interfaze=mInterface;
+    config.startTime=SystemClock.elapsedRealtime();
+    mConfig=config;
+    mVpnUsers=new SparseBooleanArray();
     token=Binder.clearCallingIdentity();
     try {
       mCallback.setMarkedForwarding(mInterface);
       mCallback.setRoutes(interfaze,config.routes);
       mCallback.override(mInterface,config.dnsServers,config.searchDomains);
-      mCallback.addUserForwarding(mInterface,mUserId);
-      showNotification(config,label,bitmap);
+      addVpnUserLocked(mUserId);
     }
   finally {
       Binder.restoreCallingIdentity(token);
@@ -88,6 +83,24 @@
     throw e;
   }
   Log.i(TAG,"Established by " + config.user + " on "+ mInterface);
+  if (mUserId == UserHandle.USER_OWNER) {
+    token=Binder.clearCallingIdentity();
+    try {
+      for (      UserInfo user : mgr.getUsers()) {
+        if (user.isRestricted()) {
+          try {
+            addVpnUserLocked(user.id);
+          }
+ catch (          Exception e) {
+            Log.wtf(TAG,"Failed to add user " + user.id + " to owner's VPN");
+          }
+        }
+      }
+    }
+  finally {
+      Binder.restoreCallingIdentity(token);
+    }
+  }
   updateState(DetailedState.AUTHENTICATING,"establish");
   return tun;
 }
