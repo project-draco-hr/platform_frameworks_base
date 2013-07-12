@@ -38,7 +38,33 @@ replyToMessage(message,WifiP2pManager.SET_WFD_INFO_FAILED,WifiP2pManager.ERROR);
 }
 break;
 }
+case BLOCK_DISCOVERY:
+boolean blocked=(message.arg1 == ENABLED ? true : false);
+if (mDiscoveryBlocked == blocked) break;
+mDiscoveryBlocked=blocked;
+if (blocked && mDiscoveryStarted) {
+mWifiNative.p2pStopFind();
+mDiscoveryPostponed=true;
+}
+if (!blocked && mDiscoveryPostponed) {
+mDiscoveryPostponed=false;
+mWifiNative.p2pFind(DISCOVER_TIMEOUT_S);
+}
+if (blocked) {
+try {
+StateMachine m=(StateMachine)message.obj;
+m.sendMessage(message.arg2);
+}
+ catch (Exception e) {
+loge("unable to send BLOCK_DISCOVERY response: " + e);
+}
+}
+break;
 case WifiP2pManager.DISCOVER_PEERS:
+if (mDiscoveryBlocked) {
+replyToMessage(message,WifiP2pManager.DISCOVER_PEERS_FAILED,WifiP2pManager.BUSY);
+break;
+}
 clearSupplicantServiceRequest();
 if (mWifiNative.p2pFind(DISCOVER_TIMEOUT_S)) {
 replyToMessage(message,WifiP2pManager.DISCOVER_PEERS_SUCCEEDED);
@@ -60,6 +86,10 @@ replyToMessage(message,WifiP2pManager.STOP_DISCOVERY_FAILED,WifiP2pManager.ERROR
 }
 break;
 case WifiP2pManager.DISCOVER_SERVICES:
+if (mDiscoveryBlocked) {
+replyToMessage(message,WifiP2pManager.DISCOVER_SERVICES_FAILED,WifiP2pManager.BUSY);
+break;
+}
 if (DBG) logd(getName() + " discover services");
 if (!updateSupplicantServiceRequest()) {
 replyToMessage(message,WifiP2pManager.DISCOVER_SERVICES_FAILED,WifiP2pManager.NO_SERVICE_REQUESTS);
