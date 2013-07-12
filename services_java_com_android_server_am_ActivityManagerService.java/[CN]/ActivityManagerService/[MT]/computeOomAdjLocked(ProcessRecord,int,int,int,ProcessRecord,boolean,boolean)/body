@@ -16,6 +16,7 @@
   if (app.thread == null) {
     app.adjSeq=mAdjSeq;
     app.curSchedGroup=Process.THREAD_GROUP_BG_NONINTERACTIVE;
+    app.curProcState=ActivityManager.PROCESS_STATE_CACHED;
     return (app.curAdj=app.curRawAdj=ProcessList.CACHED_APP_MAX_ADJ);
   }
   app.adjTypeCode=ActivityManager.RunningAppProcessInfo.REASON_UNKNOWN;
@@ -33,6 +34,7 @@
     app.foregroundActivities=false;
     app.keeping=true;
     app.curSchedGroup=Process.THREAD_GROUP_DEFAULT;
+    app.curProcState=ActivityManager.PROCESS_STATE_PERSISTENT;
     app.systemNoUi=true;
     if (app == TOP_APP) {
       app.systemNoUi=false;
@@ -49,6 +51,9 @@
         }
       }
     }
+    if (!app.systemNoUi) {
+      app.curProcState=ActivityManager.PROCESS_STATE_PERSISTENT_UI;
+    }
     return (app.curAdj=app.maxAdj);
   }
   app.keeping=false;
@@ -56,6 +61,7 @@
   app.hasActivities=false;
   int adj;
   int schedGroup;
+  int procState;
   boolean foregroundActivities=false;
   boolean interesting=false;
   BroadcastQueue queue;
@@ -66,28 +72,33 @@
     foregroundActivities=true;
     interesting=true;
     app.hasActivities=true;
+    procState=ActivityManager.PROCESS_STATE_TOP;
   }
  else   if (app.instrumentationClass != null) {
     adj=ProcessList.FOREGROUND_APP_ADJ;
     schedGroup=Process.THREAD_GROUP_DEFAULT;
     app.adjType="instrumentation";
     interesting=true;
+    procState=ActivityManager.PROCESS_STATE_IMPORTANT_PERCEPTIBLE;
   }
  else   if ((queue=isReceivingBroadcast(app)) != null) {
     adj=ProcessList.FOREGROUND_APP_ADJ;
     schedGroup=(queue == mFgBroadcastQueue) ? Process.THREAD_GROUP_DEFAULT : Process.THREAD_GROUP_BG_NONINTERACTIVE;
     app.adjType="broadcast";
+    procState=ActivityManager.PROCESS_STATE_RECEIVER;
   }
  else   if (app.executingServices.size() > 0) {
     adj=ProcessList.FOREGROUND_APP_ADJ;
     schedGroup=Process.THREAD_GROUP_DEFAULT;
     app.adjType="exec-service";
+    procState=ActivityManager.PROCESS_STATE_SERVICE;
   }
  else {
     adj=cachedAdj;
     schedGroup=Process.THREAD_GROUP_BG_NONINTERACTIVE;
     app.cached=true;
     app.adjType="cch-act";
+    procState=ActivityManager.PROCESS_STATE_CACHED;
   }
   boolean hasStoppingActivities=false;
   if (!foregroundActivities && activitiesSize > 0) {
@@ -97,6 +108,9 @@
         if (adj > ProcessList.VISIBLE_APP_ADJ) {
           adj=ProcessList.VISIBLE_APP_ADJ;
           app.adjType="visible";
+        }
+        if (procState > ActivityManager.PROCESS_STATE_IMPORTANT_PERCEPTIBLE) {
+          procState=ActivityManager.PROCESS_STATE_IMPORTANT_PERCEPTIBLE;
         }
         schedGroup=Process.THREAD_GROUP_DEFAULT;
         app.cached=false;
@@ -109,10 +123,16 @@
           adj=ProcessList.PERCEPTIBLE_APP_ADJ;
           app.adjType="pausing";
         }
+        if (procState > ActivityManager.PROCESS_STATE_IMPORTANT_PERCEPTIBLE) {
+          procState=ActivityManager.PROCESS_STATE_IMPORTANT_PERCEPTIBLE;
+        }
         app.cached=false;
         foregroundActivities=true;
       }
  else       if (r.state == ActivityState.STOPPING) {
+        if (procState > ActivityManager.PROCESS_STATE_IMPORTANT_BACKGROUND) {
+          procState=ActivityManager.PROCESS_STATE_IMPORTANT_BACKGROUND;
+        }
         app.cached=false;
         foregroundActivities=true;
         hasStoppingActivities=true;
@@ -136,12 +156,14 @@
   if (adj > ProcessList.PERCEPTIBLE_APP_ADJ) {
     if (app.foregroundServices) {
       adj=ProcessList.PERCEPTIBLE_APP_ADJ;
+      procState=ActivityManager.PROCESS_STATE_IMPORTANT_PERCEPTIBLE;
       app.cached=false;
       app.adjType="fg-service";
       schedGroup=Process.THREAD_GROUP_DEFAULT;
     }
  else     if (app.forcingToForeground != null) {
       adj=ProcessList.PERCEPTIBLE_APP_ADJ;
+      procState=ActivityManager.PROCESS_STATE_IMPORTANT_PERCEPTIBLE;
       app.cached=false;
       app.adjType="force-fg";
       app.adjSource=app.forcingToForeground;
@@ -157,17 +179,27 @@
     app.cached=false;
     app.adjType="heavy";
   }
-  if (adj > ProcessList.HOME_APP_ADJ && app == mHomeProcess) {
-    adj=ProcessList.HOME_APP_ADJ;
-    schedGroup=Process.THREAD_GROUP_BG_NONINTERACTIVE;
-    app.cached=false;
-    app.adjType="home";
+  if (app == mHomeProcess) {
+    if (adj > ProcessList.HOME_APP_ADJ) {
+      adj=ProcessList.HOME_APP_ADJ;
+      schedGroup=Process.THREAD_GROUP_BG_NONINTERACTIVE;
+      app.cached=false;
+      app.adjType="home";
+    }
+    if (procState > ActivityManager.PROCESS_STATE_HOME) {
+      procState=ActivityManager.PROCESS_STATE_HOME;
+    }
   }
-  if (adj > ProcessList.PREVIOUS_APP_ADJ && app == mPreviousProcess && app.activities.size() > 0) {
-    adj=ProcessList.PREVIOUS_APP_ADJ;
-    schedGroup=Process.THREAD_GROUP_BG_NONINTERACTIVE;
-    app.cached=false;
-    app.adjType="previous";
+  if (app == mPreviousProcess && app.activities.size() > 0) {
+    if (adj > ProcessList.PREVIOUS_APP_ADJ) {
+      adj=ProcessList.PREVIOUS_APP_ADJ;
+      schedGroup=Process.THREAD_GROUP_BG_NONINTERACTIVE;
+      app.cached=false;
+      app.adjType="previous";
+    }
+    if (procState > ActivityManager.PROCESS_STATE_LAST_ACTIVITY) {
+      procState=ActivityManager.PROCESS_STATE_LAST_ACTIVITY;
+    }
   }
   if (false)   Slog.i(TAG,"OOM " + app + ": initial adj="+ adj+ " reason="+ app.adjType);
   app.adjSeq=mAdjSeq;
@@ -177,8 +209,14 @@
     if (adj > ProcessList.BACKUP_APP_ADJ) {
       if (DEBUG_BACKUP)       Slog.v(TAG,"oom BACKUP_APP_ADJ for " + app);
       adj=ProcessList.BACKUP_APP_ADJ;
+      if (procState > ActivityManager.PROCESS_STATE_IMPORTANT_BACKGROUND) {
+        procState=ActivityManager.PROCESS_STATE_IMPORTANT_BACKGROUND;
+      }
       app.adjType="backup";
       app.cached=false;
+    }
+    if (procState > ActivityManager.PROCESS_STATE_BACKUP) {
+      procState=ActivityManager.PROCESS_STATE_BACKUP;
     }
   }
   if (app.services.size() != 0 && (adj > ProcessList.FOREGROUND_APP_ADJ || schedGroup == Process.THREAD_GROUP_BG_NONINTERACTIVE)) {
@@ -188,6 +226,9 @@
       ServiceRecord s=jt.next();
       if (s.startRequested) {
         app.hasStartedServices=true;
+        if (procState > ActivityManager.PROCESS_STATE_SERVICE) {
+          procState=ActivityManager.PROCESS_STATE_SERVICE;
+        }
         if (app.hasShownUi && app != mHomeProcess) {
           if (adj > ProcessList.SERVICE_ADJ) {
             app.adjType="cch-started-ui-services";
@@ -216,7 +257,6 @@
           }
           if ((cr.flags & Context.BIND_WAIVE_PRIORITY) == 0) {
             ProcessRecord client=cr.binding.client;
-            int clientAdj=adj;
             int myCachedAdj=cachedAdj;
             if (myCachedAdj > client.cachedAdj) {
               if (client.cachedAdj >= ProcessList.VISIBLE_APP_ADJ) {
@@ -244,7 +284,8 @@
                 myEmptyAdj=ProcessList.VISIBLE_APP_ADJ;
               }
             }
-            clientAdj=computeOomAdjLocked(client,myCachedAdj,myClientCachedAdj,myEmptyAdj,TOP_APP,true,doingAll);
+            int clientAdj=computeOomAdjLocked(client,myCachedAdj,myClientCachedAdj,myEmptyAdj,TOP_APP,true,doingAll);
+            int clientProcState=client.curProcState;
             String adjType=null;
             if ((cr.flags & Context.BIND_ALLOW_OOM_MANAGEMENT) != 0) {
               if (app.hasShownUi && app != mHomeProcess) {
@@ -253,6 +294,7 @@
                 }
                 app.cached=false;
                 clientAdj=adj;
+                clientProcState=procState;
               }
  else {
                 if (now >= (s.lastActivity + ActiveServices.MAX_SERVICE_INACTIVITY)) {
@@ -297,17 +339,28 @@
                 adjType="service";
               }
             }
+            if ((cr.flags & Context.BIND_NOT_FOREGROUND) == 0) {
+              if (client.curSchedGroup == Process.THREAD_GROUP_DEFAULT) {
+                schedGroup=Process.THREAD_GROUP_DEFAULT;
+              }
+              if (clientProcState < ActivityManager.PROCESS_STATE_IMPORTANT_PERCEPTIBLE) {
+                clientProcState=ActivityManager.PROCESS_STATE_IMPORTANT_PERCEPTIBLE;
+              }
+            }
+ else {
+              if (clientProcState < ActivityManager.PROCESS_STATE_IMPORTANT_BACKGROUND) {
+                clientProcState=ActivityManager.PROCESS_STATE_IMPORTANT_BACKGROUND;
+              }
+            }
+            if (procState > clientProcState) {
+              procState=clientProcState;
+            }
             if (adjType != null) {
               app.adjType=adjType;
               app.adjTypeCode=ActivityManager.RunningAppProcessInfo.REASON_SERVICE_IN_USE;
               app.adjSource=cr.binding.client;
               app.adjSourceOom=clientAdj;
               app.adjTarget=s.name;
-            }
-            if ((cr.flags & Context.BIND_NOT_FOREGROUND) == 0) {
-              if (client.curSchedGroup == Process.THREAD_GROUP_DEFAULT) {
-                schedGroup=Process.THREAD_GROUP_DEFAULT;
-              }
             }
           }
           final ActivityRecord a=cr.activity;
@@ -389,6 +442,9 @@
         app.adjSourceOom=clientAdj;
         app.adjTarget=cpr.name;
       }
+      if (procState > client.curProcState) {
+        procState=client.curProcState;
+      }
       if (client.curSchedGroup == Process.THREAD_GROUP_DEFAULT) {
         schedGroup=Process.THREAD_GROUP_DEFAULT;
       }
@@ -401,6 +457,9 @@
         app.keeping=true;
         app.adjType="provider";
         app.adjTarget=cpr.name;
+      }
+      if (procState > ActivityManager.PROCESS_STATE_IMPORTANT_PERCEPTIBLE) {
+        procState=ActivityManager.PROCESS_STATE_IMPORTANT_PERCEPTIBLE;
       }
     }
   }
@@ -449,6 +508,7 @@
       adj++;
     }
   }
+  app.curProcState=procState;
   int importance=app.memImportance;
   if (importance == 0 || adj != app.curAdj || schedGroup != app.curSchedGroup) {
     app.curAdj=adj;
