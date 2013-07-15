@@ -85,9 +85,9 @@
       throw new IllegalStateException("Cannot parse the state");
     }
     mConfig.interfaze=parameters[0].trim();
-    mConfig.addresses=parameters[1].trim();
+    mConfig.addLegacyAddresses(parameters[1]);
     if (mConfig.routes == null || mConfig.routes.isEmpty()) {
-      mConfig.routes=parameters[2].trim();
+      mConfig.addLegacyRoutes(parameters[2]);
     }
     if (mConfig.dnsServers == null || mConfig.dnsServers.size() == 0) {
       String dnsServers=parameters[3].trim();
@@ -101,21 +101,40 @@
         mConfig.searchDomains=Arrays.asList(searchDomains.split(" "));
       }
     }
-    jniSetRoutes(mConfig.interfaze,mConfig.routes);
+    long token=Binder.clearCallingIdentity();
+    try {
+      mCallback.setMarkedForwarding(mConfig.interfaze);
+      mCallback.setRoutes(mConfig.interfaze,mConfig.routes);
+    }
+  finally {
+      Binder.restoreCallingIdentity(token);
+    }
 synchronized (Vpn.this) {
       checkpoint(false);
       if (jniCheck(mConfig.interfaze) == 0) {
         throw new IllegalStateException(mConfig.interfaze + " is gone");
       }
       mInterface=mConfig.interfaze;
-      mCallback.override(mConfig.dnsServers,mConfig.searchDomains);
-      showNotification(mConfig,null,null);
+      token=Binder.clearCallingIdentity();
+      try {
+        mCallback.override(mInterface,mConfig.dnsServers,mConfig.searchDomains);
+        mCallback.addUserForwarding(mInterface,mUserId);
+        showNotification(mConfig,null,null);
+      }
+  finally {
+        Binder.restoreCallingIdentity(token);
+      }
       Log.i(TAG,"Connected!");
       updateState(DetailedState.CONNECTED,"execute");
     }
   }
  catch (  Exception e) {
     Log.i(TAG,"Aborting",e);
+    try {
+      mCallback.clearMarkedForwarding(mConfig.interfaze);
+    }
+ catch (    Exception ignored) {
+    }
     exit();
   }
  finally {

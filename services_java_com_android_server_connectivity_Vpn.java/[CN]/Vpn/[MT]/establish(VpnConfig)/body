@@ -2,22 +2,31 @@
   PackageManager pm=mContext.getPackageManager();
   ApplicationInfo app=null;
   try {
-    app=pm.getApplicationInfo(mPackage,0);
+    app=AppGlobals.getPackageManager().getApplicationInfo(mPackage,0,mUserId);
+    if (Binder.getCallingUid() != app.uid) {
+      return null;
+    }
   }
  catch (  Exception e) {
     return null;
   }
-  if (Binder.getCallingUid() != app.uid) {
-    return null;
-  }
   Intent intent=new Intent(VpnConfig.SERVICE_INTERFACE);
   intent.setClassName(mPackage,config.user);
-  ResolveInfo info=pm.resolveService(intent,0);
-  if (info == null) {
+  long token=Binder.clearCallingIdentity();
+  try {
+    ResolveInfo info=AppGlobals.getPackageManager().resolveService(intent,null,0,mUserId);
+    if (info == null) {
+      throw new SecurityException("Cannot find " + config.user);
+    }
+    if (!BIND_VPN_SERVICE.equals(info.serviceInfo.permission)) {
+      throw new SecurityException(config.user + " does not require " + BIND_VPN_SERVICE);
+    }
+  }
+ catch (  RemoteException e) {
     throw new SecurityException("Cannot find " + config.user);
   }
-  if (!BIND_VPN_SERVICE.equals(info.serviceInfo.permission)) {
-    throw new SecurityException(config.user + " does not require " + BIND_VPN_SERVICE);
+ finally {
+    Binder.restoreCallingIdentity(token);
   }
   String label=app.loadLabel(pm).toString();
   Drawable icon=app.loadIcon(pm);
@@ -35,14 +44,15 @@
   try {
     updateState(DetailedState.CONNECTING,"establish");
     String interfaze=jniGetName(tun.getFd());
-    if (jniSetAddresses(interfaze,config.addresses) < 1) {
+    StringBuilder builder=new StringBuilder();
+    for (    LinkAddress address : config.addresses) {
+      builder.append(" " + address);
+    }
+    if (jniSetAddresses(interfaze,builder.toString()) < 1) {
       throw new IllegalArgumentException("At least one address must be specified");
     }
-    if (config.routes != null) {
-      jniSetRoutes(interfaze,config.routes);
-    }
     Connection connection=new Connection();
-    if (!mContext.bindService(intent,connection,Context.BIND_AUTO_CREATE)) {
+    if (!mContext.bindServiceAsUser(intent,connection,Context.BIND_AUTO_CREATE,new UserHandle(mUserId))) {
       throw new IllegalStateException("Cannot bind " + config.user);
     }
     if (mConnection != null) {
@@ -53,23 +63,31 @@
     }
     mConnection=connection;
     mInterface=interfaze;
+    config.user=mPackage;
+    config.interfaze=mInterface;
+    token=Binder.clearCallingIdentity();
+    try {
+      mCallback.setMarkedForwarding(mInterface);
+      mCallback.setRoutes(interfaze,config.routes);
+      mCallback.override(mInterface,config.dnsServers,config.searchDomains);
+      mCallback.addUserForwarding(mInterface,mUserId);
+      showNotification(config,label,bitmap);
+    }
+  finally {
+      Binder.restoreCallingIdentity(token);
+    }
   }
  catch (  RuntimeException e) {
     updateState(DetailedState.FAILED,"establish");
     IoUtils.closeQuietly(tun);
+    try {
+      mCallback.clearMarkedForwarding(mInterface);
+    }
+ catch (    Exception ingored) {
+    }
     throw e;
   }
   Log.i(TAG,"Established by " + config.user + " on "+ mInterface);
-  config.user=mPackage;
-  config.interfaze=mInterface;
-  final long token=Binder.clearCallingIdentity();
-  try {
-    mCallback.override(config.dnsServers,config.searchDomains);
-    showNotification(config,label,bitmap);
-  }
-  finally {
-    Binder.restoreCallingIdentity(token);
-  }
   updateState(DetailedState.AUTHENTICATING,"establish");
   return tun;
 }
