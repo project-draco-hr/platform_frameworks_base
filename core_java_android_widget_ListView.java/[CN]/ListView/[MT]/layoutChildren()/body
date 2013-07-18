@@ -1,11 +1,9 @@
 {
   final boolean blockLayoutRequests=mBlockLayoutRequests;
-  if (!blockLayoutRequests) {
-    mBlockLayoutRequests=true;
-  }
- else {
+  if (blockLayoutRequests) {
     return;
   }
+  mBlockLayoutRequests=true;
   try {
     super.layoutChildren();
     invalidate();
@@ -14,16 +12,15 @@
       invokeOnItemScrollListener();
       return;
     }
-    int childrenTop=mListPadding.top;
-    int childrenBottom=mBottom - mTop - mListPadding.bottom;
-    int childCount=getChildCount();
+    final int childrenTop=mListPadding.top;
+    final int childrenBottom=mBottom - mTop - mListPadding.bottom;
+    final int childCount=getChildCount();
     int index=0;
     int delta=0;
     View sel;
     View oldSel=null;
     View oldFirst=null;
     View newSel=null;
-    View focusLayoutRestoreView=null;
     AccessibilityNodeInfo accessibilityFocusLayoutRestoreNode=null;
     View accessibilityFocusLayoutRestoreView=null;
     int accessibilityFocusPosition=INVALID_POSITION;
@@ -80,9 +77,12 @@ accessibilityFocusPosition=getPositionForView(accessFocusedChild);
 }
 }
 }
+final View focusedChild=getFocusedChild();
+if (focusedChild != null) {
+focusedChild.setHasTransientState(true);
+}
 final int firstPosition=mFirstPosition;
 final RecycleBin recycleBin=mRecycler;
-View focusLayoutRestoreDirectChild=null;
 if (dataChanged) {
 for (int i=0; i < childCount; i++) {
 recycleBin.addScrapView(getChildAt(i),firstPosition + i);
@@ -90,17 +90,6 @@ recycleBin.addScrapView(getChildAt(i),firstPosition + i);
 }
  else {
 recycleBin.fillActiveViews(childCount,firstPosition);
-}
-final View focusedChild=getFocusedChild();
-if (focusedChild != null) {
-if (!dataChanged || isDirectChildHeaderOrFooter(focusedChild)) {
-focusLayoutRestoreDirectChild=focusedChild;
-focusLayoutRestoreView=findFocus();
-if (focusLayoutRestoreView != null) {
-focusLayoutRestoreView.onStartTemporaryDetach();
-}
-}
-requestFocus();
 }
 detachAllViewsFromParent();
 recycleBin.removeSkippedScrap();
@@ -159,18 +148,19 @@ break;
 }
 recycleBin.scrapActiveViews();
 if (sel != null) {
-if (mItemsCanFocus && hasFocus() && !sel.hasFocus()) {
-final boolean focusWasTaken=(sel == focusLayoutRestoreDirectChild && focusLayoutRestoreView != null && focusLayoutRestoreView.requestFocus()) || sel.requestFocus();
-if (!focusWasTaken) {
+final boolean shouldPlaceFocus=mItemsCanFocus && hasFocus();
+final boolean maintainedFocus=focusedChild != null && focusedChild.hasFocus();
+if (shouldPlaceFocus && !maintainedFocus && !sel.hasFocus()) {
+if (sel.requestFocus()) {
+sel.setSelected(false);
+mSelectorRect.setEmpty();
+}
+ else {
 final View focused=getFocusedChild();
 if (focused != null) {
 focused.clearFocus();
 }
 positionSelector(INVALID_POSITION,sel);
-}
- else {
-sel.setSelected(false);
-mSelectorRect.setEmpty();
 }
 }
  else {
@@ -179,16 +169,15 @@ positionSelector(INVALID_POSITION,sel);
 mSelectedTop=sel.getTop();
 }
  else {
-if (mTouchMode > TOUCH_MODE_DOWN && mTouchMode < TOUCH_MODE_SCROLL) {
-View child=getChildAt(mMotionPosition - mFirstPosition);
-if (child != null) positionSelector(mMotionPosition,child);
+if (mTouchMode == TOUCH_MODE_TAP || mTouchMode == TOUCH_MODE_DONE_WAITING) {
+final View child=getChildAt(mMotionPosition - mFirstPosition);
+if (child != null) {
+positionSelector(mMotionPosition,child);
+}
 }
  else {
 mSelectedTop=0;
 mSelectorRect.setEmpty();
-}
-if (hasFocus() && focusLayoutRestoreView != null) {
-focusLayoutRestoreView.requestFocus();
 }
 }
 if (accessibilityFocusLayoutRestoreView != null) {
@@ -208,8 +197,8 @@ if (restoreView != null) {
 restoreView.requestAccessibilityFocus();
 }
 }
-if (focusLayoutRestoreView != null && focusLayoutRestoreView.getWindowToken() != null) {
-focusLayoutRestoreView.onFinishTemporaryDetach();
+if (focusedChild != null) {
+focusedChild.setHasTransientState(false);
 }
 mLayoutMode=LAYOUT_NORMAL;
 mDataChanged=false;
