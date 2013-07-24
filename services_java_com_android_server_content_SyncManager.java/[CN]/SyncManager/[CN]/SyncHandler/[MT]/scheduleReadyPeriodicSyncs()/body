@@ -1,4 +1,8 @@
 {
+  final boolean isLoggable=Log.isLoggable(TAG,Log.VERBOSE);
+  if (isLoggable) {
+    Log.v(TAG,"scheduleReadyPeriodicSyncs");
+  }
   final boolean backgroundDataUsageAllowed=getConnectivityManager().getBackgroundDataSetting();
   long earliestFuturePollTime=Long.MAX_VALUE;
   if (!backgroundDataUsageAllowed) {
@@ -21,24 +25,38 @@
       continue;
     }
     for (int i=0, N=authorityInfo.periodicSyncs.size(); i < N; i++) {
-      final Bundle extras=authorityInfo.periodicSyncs.get(i).first;
-      final Long periodInMillis=authorityInfo.periodicSyncs.get(i).second * 1000;
+      final PeriodicSync sync=authorityInfo.periodicSyncs.get(i);
+      final Bundle extras=sync.extras;
+      final Long periodInMillis=sync.period * 1000;
+      final Long flexInMillis=sync.flexTime * 1000;
       if (periodInMillis <= 0) {
         continue;
       }
       final long lastPollTimeAbsolute=status.getPeriodicSyncTime(i);
+      final long shiftedLastPollTimeAbsolute=(0 < lastPollTimeAbsolute - mSyncRandomOffsetMillis) ? (lastPollTimeAbsolute - mSyncRandomOffsetMillis) : 0;
       long remainingMillis=periodInMillis - (shiftedNowAbsolute % periodInMillis);
-      if (remainingMillis == periodInMillis || lastPollTimeAbsolute > nowAbsolute || (nowAbsolute - lastPollTimeAbsolute >= periodInMillis)) {
+      long timeSinceLastRunMillis=(nowAbsolute - lastPollTimeAbsolute);
+      boolean runEarly=remainingMillis <= flexInMillis && timeSinceLastRunMillis > periodInMillis - flexInMillis;
+      if (isLoggable) {
+        Log.v(TAG,"sync: " + i + " for "+ authorityInfo.authority+ "."+ " period: "+ (periodInMillis)+ " flex: "+ (flexInMillis)+ " remaining: "+ (remainingMillis)+ " time_since_last: "+ timeSinceLastRunMillis+ " last poll absol: "+ lastPollTimeAbsolute+ " last poll shifed: "+ shiftedLastPollTimeAbsolute+ " shifted now: "+ shiftedNowAbsolute+ " run_early: "+ runEarly);
+      }
+      if (runEarly || remainingMillis == periodInMillis || lastPollTimeAbsolute > nowAbsolute || timeSinceLastRunMillis >= periodInMillis) {
         final Pair<Long,Long> backoff=mSyncStorageEngine.getBackoff(authorityInfo.account,authorityInfo.userId,authorityInfo.authority);
         final RegisteredServicesCache.ServiceInfo<SyncAdapterType> syncAdapterInfo;
         syncAdapterInfo=mSyncAdapters.getServiceInfo(SyncAdapterType.newKey(authorityInfo.authority,authorityInfo.account.type),authorityInfo.userId);
         if (syncAdapterInfo == null) {
           continue;
         }
-        scheduleSyncOperation(new SyncOperation(authorityInfo.account,authorityInfo.userId,SyncOperation.REASON_PERIODIC,SyncStorageEngine.SOURCE_PERIODIC,authorityInfo.authority,extras,0,backoff != null ? backoff.first : 0,mSyncStorageEngine.getDelayUntilTime(authorityInfo.account,authorityInfo.userId,authorityInfo.authority),syncAdapterInfo.type.allowParallelSyncs()));
         mSyncStorageEngine.setPeriodicSyncTime(authorityInfo.ident,authorityInfo.periodicSyncs.get(i),nowAbsolute);
+        scheduleSyncOperation(new SyncOperation(authorityInfo.account,authorityInfo.userId,SyncOperation.REASON_PERIODIC,SyncStorageEngine.SOURCE_PERIODIC,authorityInfo.authority,extras,0,0,backoff != null ? backoff.first : 0,mSyncStorageEngine.getDelayUntilTime(authorityInfo.account,authorityInfo.userId,authorityInfo.authority),syncAdapterInfo.type.allowParallelSyncs()));
       }
-      final long nextPollTimeAbsolute=nowAbsolute + remainingMillis;
+      long nextPollTimeAbsolute;
+      if (runEarly) {
+        nextPollTimeAbsolute=nowAbsolute + periodInMillis + remainingMillis;
+      }
+ else {
+        nextPollTimeAbsolute=nowAbsolute + remainingMillis;
+      }
       if (nextPollTimeAbsolute < earliestFuturePollTime) {
         earliestFuturePollTime=nextPollTimeAbsolute;
       }
