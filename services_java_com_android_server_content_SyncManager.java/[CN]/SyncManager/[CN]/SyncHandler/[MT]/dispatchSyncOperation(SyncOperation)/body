@@ -6,22 +6,40 @@
       Log.v(TAG,syncContext.toString());
     }
   }
-  SyncAdapterType syncAdapterType=SyncAdapterType.newKey(op.authority,op.account.type);
-  final RegisteredServicesCache.ServiceInfo<SyncAdapterType> syncAdapterInfo;
-  syncAdapterInfo=mSyncAdapters.getServiceInfo(syncAdapterType,op.userId);
-  if (syncAdapterInfo == null) {
-    Log.d(TAG,"can't find a sync adapter for " + syncAdapterType + ", removing settings for it");
-    mSyncStorageEngine.removeAuthority(op.account,op.userId,op.authority);
-    return false;
+  int targetUid;
+  ComponentName targetComponent;
+  final SyncStorageEngine.EndPoint info=op.target;
+  if (info.target_provider) {
+    SyncAdapterType syncAdapterType=SyncAdapterType.newKey(info.provider,info.account.type);
+    final RegisteredServicesCache.ServiceInfo<SyncAdapterType> syncAdapterInfo;
+    syncAdapterInfo=mSyncAdapters.getServiceInfo(syncAdapterType,info.userId);
+    if (syncAdapterInfo == null) {
+      Log.d(TAG,"can't find a sync adapter for " + syncAdapterType + ", removing settings for it");
+      mSyncStorageEngine.removeAuthority(info);
+      return false;
+    }
+    targetUid=syncAdapterInfo.uid;
+    targetComponent=syncAdapterInfo.componentName;
   }
-  ActiveSyncContext activeSyncContext=new ActiveSyncContext(op,insertStartSyncEvent(op),syncAdapterInfo.uid);
+ else {
+    try {
+      targetUid=mContext.getPackageManager().getServiceInfo(info.service,0).applicationInfo.uid;
+      targetComponent=info.service;
+    }
+ catch (    PackageManager.NameNotFoundException e) {
+      Log.d(TAG,"Can't find a service for " + info.service + ", removing settings for it");
+      mSyncStorageEngine.removeAuthority(info);
+      return false;
+    }
+  }
+  ActiveSyncContext activeSyncContext=new ActiveSyncContext(op,insertStartSyncEvent(op),targetUid);
   activeSyncContext.mSyncInfo=mSyncStorageEngine.addActiveSync(activeSyncContext);
   mActiveSyncContexts.add(activeSyncContext);
   if (Log.isLoggable(TAG,Log.VERBOSE)) {
     Log.v(TAG,"dispatchSyncOperation: starting " + activeSyncContext);
   }
-  if (!activeSyncContext.bindToSyncAdapter(syncAdapterInfo,op.userId)) {
-    Log.e(TAG,"Bind attempt failed to " + syncAdapterInfo);
+  if (!activeSyncContext.bindToSyncAdapter(targetComponent,info.userId)) {
+    Log.e(TAG,"Bind attempt failed - target: " + targetComponent);
     closeActiveSyncContext(activeSyncContext);
     return false;
   }
