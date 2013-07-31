@@ -1,0 +1,79 @@
+{
+  ServiceInfo si=info.serviceInfo;
+  XmlResourceParser parser=null;
+  try {
+    parser=si.loadXmlMetaData(pm,HostApduService.SERVICE_META_DATA);
+    if (parser == null) {
+      throw new XmlPullParserException("No " + HostApduService.SERVICE_META_DATA + " meta-data");
+    }
+    int eventType=parser.getEventType();
+    while (eventType != XmlPullParser.START_TAG && eventType != XmlPullParser.END_DOCUMENT) {
+      eventType=parser.next();
+    }
+    String tagName=parser.getName();
+    if (!"host-apdu-service".equals(tagName)) {
+      throw new XmlPullParserException("Meta-data does not start with <host-apdu-service> tag");
+    }
+    Resources res=pm.getResourcesForApplication(si.applicationInfo);
+    AttributeSet attrs=Xml.asAttributeSet(parser);
+    TypedArray sa=res.obtainAttributes(attrs,com.android.internal.R.styleable.HostApduService);
+    mService=info;
+    mDescription=sa.getString(com.android.internal.R.styleable.HostApduService_description);
+    mAidGroups=new ArrayList<AidGroup>();
+    mCategoryToGroup=new HashMap<String,AidGroup>();
+    mAids=new ArrayList<String>();
+    mOnHost=true;
+    final int depth=parser.getDepth();
+    AidGroup currentGroup=null;
+    while (((eventType=parser.next()) != XmlPullParser.END_TAG || parser.getDepth() > depth) && eventType != XmlPullParser.END_DOCUMENT) {
+      tagName=parser.getName();
+      if (eventType == XmlPullParser.START_TAG && "aid-group".equals(tagName) && currentGroup == null) {
+        final TypedArray groupAttrs=res.obtainAttributes(attrs,com.android.internal.R.styleable.AidGroup);
+        String groupDescription=groupAttrs.getString(com.android.internal.R.styleable.AidGroup_description);
+        String groupCategory=groupAttrs.getString(com.android.internal.R.styleable.AidGroup_category);
+        if (!CardEmulationManager.CATEGORY_PAYMENT.equals(groupCategory)) {
+          groupCategory=CardEmulationManager.CATEGORY_OTHER;
+        }
+        currentGroup=mCategoryToGroup.get(groupCategory);
+        if (currentGroup != null) {
+          if (!CardEmulationManager.CATEGORY_OTHER.equals(groupCategory)) {
+            Log.e(TAG,"Not allowing multiple aid-groups in the " + groupCategory + " category");
+            currentGroup=null;
+          }
+        }
+ else {
+          currentGroup=new AidGroup(groupCategory,groupDescription);
+        }
+      }
+ else       if (eventType == XmlPullParser.END_TAG && "aid-group".equals(tagName) && currentGroup != null) {
+        if (currentGroup.aids.size() > 0) {
+          if (!mCategoryToGroup.containsKey(currentGroup.category)) {
+            mAidGroups.add(currentGroup);
+            mCategoryToGroup.put(currentGroup.category,currentGroup);
+          }
+        }
+ else {
+          Log.e(TAG,"Not adding <aid-group> with empty or invalid AIDs");
+        }
+        currentGroup=null;
+      }
+ else       if (eventType == XmlPullParser.START_TAG && "aid-filter".equals(tagName) && currentGroup != null) {
+        final TypedArray a=res.obtainAttributes(attrs,com.android.internal.R.styleable.AidFilter);
+        String aid=a.getString(com.android.internal.R.styleable.AidFilter_name);
+        if (isValidAid(aid) && !currentGroup.aids.contains(aid)) {
+          currentGroup.aids.add(aid);
+          mAids.add(aid);
+        }
+ else {
+          Log.e(TAG,"Ignoring invalid or duplicate aid: " + aid);
+        }
+      }
+    }
+  }
+ catch (  NameNotFoundException e) {
+    throw new XmlPullParserException("Unable to create context for: " + si.packageName);
+  }
+ finally {
+    if (parser != null)     parser.close();
+  }
+}
