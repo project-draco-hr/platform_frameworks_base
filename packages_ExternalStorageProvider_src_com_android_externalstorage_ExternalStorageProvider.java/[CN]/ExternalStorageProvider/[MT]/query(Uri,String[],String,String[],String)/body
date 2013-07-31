@@ -1,31 +1,58 @@
 {
+  final int match=sMatcher.match(uri);
+  if (match == URI_ROOTS) {
+    projection=new String[]{RootColumns.ROOT_TYPE,RootColumns.GUID,RootColumns.ICON,RootColumns.TITLE,RootColumns.SUMMARY,RootColumns.AVAILABLE_BYTES};
+    final MatrixCursor cursor=new MatrixCursor(projection);
+    for (    Root root : mRoots.values()) {
+      final String guid=fileToGuid(root.path);
+      cursor.addRow(new Object[]{root.rootType,guid,root.icon,root.title,root.summary,root.path.getFreeSpace()});
+    }
+    return cursor;
+  }
   projection=new String[]{BaseColumns._ID,DocumentColumns.DISPLAY_NAME,DocumentColumns.SIZE,DocumentColumns.GUID,DocumentColumns.MIME_TYPE,DocumentColumns.LAST_MODIFIED,DocumentColumns.FLAGS};
   final MatrixCursor cursor=new MatrixCursor(projection);
-switch (sMatcher.match(uri)) {
+switch (match) {
 case URI_DOCS_ID:
 {
-      final int id=Integer.parseInt(uri.getPathSegments().get(1));
-synchronized (mFiles) {
-        includeFileLocked(cursor,id);
-      }
+      final String guid=uri.getPathSegments().get(1);
+      includeFile(cursor,guid);
       break;
     }
 case URI_DOCS_ID_CONTENTS:
 {
-    final int parentId=Integer.parseInt(uri.getPathSegments().get(1));
-synchronized (mFiles) {
-      final File parent=mFiles.get(parentId);
-      for (      File file : parent.listFiles()) {
-        final int id=findOrCreateFileLocked(file);
-        includeFileLocked(cursor,id);
-      }
+    final String guid=uri.getPathSegments().get(1);
+    final File parent=guidToFile(guid);
+    for (    File file : parent.listFiles()) {
+      includeFile(cursor,fileToGuid(file));
     }
     break;
   }
+case URI_DOCS_ID_SEARCH:
+{
+  final String guid=uri.getPathSegments().get(1);
+  final File parent=guidToFile(guid);
+  final String query=uri.getQueryParameter(DocumentsContract.PARAM_QUERY).toLowerCase();
+  final LinkedList<File> pending=new LinkedList<File>();
+  pending.add(parent);
+  while (!pending.isEmpty() && cursor.getCount() < 20) {
+    final File file=pending.removeFirst();
+    if (file.isDirectory()) {
+      for (      File child : file.listFiles()) {
+        pending.add(child);
+      }
+    }
+ else {
+      if (file.getName().toLowerCase().contains(query)) {
+        includeFile(cursor,fileToGuid(file));
+      }
+    }
+  }
+  break;
+}
 default :
 {
-  cursor.close();
-  throw new UnsupportedOperationException("Unsupported Uri " + uri);
+cursor.close();
+throw new UnsupportedOperationException("Unsupported Uri " + uri);
 }
 }
 return cursor;
