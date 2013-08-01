@@ -1,53 +1,50 @@
 {
   boolean success=false;
-  boolean allPrintJobsHandled=false;
-  boolean allPrintJobsForServiceHandled=false;
-  IPrintSpoolerClient client=null;
-  PrintJobInfo queuedPrintJob=null;
-  PrintJobInfo removedPrintJob=null;
 synchronized (mLock) {
     if (mClient == null) {
       throw new IllegalStateException("Client cannot be null.");
     }
-    client=mClient;
     PrintJobInfo printJob=getPrintJobInfo(printJobId,PrintManager.APP_ID_ANY);
     if (printJob != null && printJob.getState() < state) {
       success=true;
       printJob.setState(state);
+      if (DEBUG_PRINT_JOB_LIFECYCLE) {
+        Slog.i(LOG_TAG,"[STATE CHANGED] " + printJob);
+      }
 switch (state) {
 case PrintJobInfo.STATE_COMPLETED:
 case PrintJobInfo.STATE_CANCELED:
 {
-          removedPrintJob=printJob;
           removePrintJobLocked(printJob);
           PrinterId printerId=printJob.getPrinterId();
           if (printerId == null) {
             return true;
           }
-          allPrintJobsHandled=!hasActivePrintJobsLocked();
-          allPrintJobsForServiceHandled=!hasActivePrintJobsForServiceLocked(printerId.getService());
+          ComponentName service=printerId.getService();
+          if (!hasActivePrintJobsForServiceLocked(service)) {
+            SomeArgs args=SomeArgs.obtain();
+            args.arg1=mClient;
+            args.arg2=service;
+            mHandler.obtainMessage(MyHandler.MSG_ON_ALL_PRINT_JOBS_FOR_SERIVICE_HANDLED,args).sendToTarget();
+          }
+          if (!hasActivePrintJobsLocked()) {
+            mHandler.obtainMessage(MyHandler.MSG_ON_ALL_PRINT_JOBS_HANDLED,mClient).sendToTarget();
+          }
         }
       break;
 case PrintJobInfo.STATE_QUEUED:
 {
-      queuedPrintJob=new PrintJobInfo(printJob);
+      SomeArgs args=SomeArgs.obtain();
+      args.arg1=mClient;
+      args.arg2=new PrintJobInfo(printJob);
+      mHandler.obtainMessage(MyHandler.MSG_ON_PRINT_JOB_QUEUED,args).sendToTarget();
     }
   break;
 }
-if (DEBUG_PRINT_JOB_LIFECYCLE) {
-Slog.i(LOG_TAG,"[STATUS CHANGED] " + printJob);
-}
+if (shouldPersistPrintJob(printJob)) {
 mPersistanceManager.writeStateLocked();
 }
 }
-if (queuedPrintJob != null) {
-callOnPrintJobQueuedQuietly(client,queuedPrintJob);
-}
-if (allPrintJobsForServiceHandled) {
-callOnAllPrintJobsForServiceHandledQuietly(client,removedPrintJob.getPrinterId().getService());
-}
-if (allPrintJobsHandled) {
-callOnAllPrintJobsHandledQuietly(client);
 }
 return success;
 }
