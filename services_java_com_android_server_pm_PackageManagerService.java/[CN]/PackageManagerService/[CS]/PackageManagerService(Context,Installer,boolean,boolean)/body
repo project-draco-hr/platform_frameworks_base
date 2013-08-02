@@ -59,32 +59,18 @@ synchronized (mPackages) {
         Slog.w(TAG,"Running ENG build: no pre-dexopt!");
         scanMode|=SCAN_NO_DEX;
       }
-      final HashSet<String> libFiles=new HashSet<String>();
-      mFrameworkDir=new File(Environment.getRootDirectory(),"framework");
-      mDalvikCacheDir=new File(dataDir,"dalvik-cache");
-      boolean didDexOpt=false;
+      final HashSet<String> alreadyDexOpted=new HashSet<String>();
       String bootClassPath=System.getProperty("java.boot.class.path");
       if (bootClassPath != null) {
         String[] paths=splitString(bootClassPath,':');
         for (int i=0; i < paths.length; i++) {
-          try {
-            if (dalvik.system.DexFile.isDexOptNeeded(paths[i])) {
-              libFiles.add(paths[i]);
-              mInstaller.dexopt(paths[i],Process.SYSTEM_UID,true);
-              didDexOpt=true;
-            }
-          }
- catch (          FileNotFoundException e) {
-            Slog.w(TAG,"Boot class path not found: " + paths[i]);
-          }
-catch (          IOException e) {
-            Slog.w(TAG,"Cannot dexopt " + paths[i] + "; is it an APK or JAR? "+ e.getMessage());
-          }
+          alreadyDexOpted.add(paths[i]);
         }
       }
  else {
         Slog.w(TAG,"No BOOTCLASSPATH found!");
       }
+      boolean didDexOpt=false;
       if (mSharedLibraries.size() > 0) {
         Iterator<SharedLibraryEntry> libs=mSharedLibraries.values().iterator();
         while (libs.hasNext()) {
@@ -94,7 +80,7 @@ catch (          IOException e) {
           }
           try {
             if (dalvik.system.DexFile.isDexOptNeeded(lib)) {
-              libFiles.add(lib);
+              alreadyDexOpted.add(lib);
               mInstaller.dexopt(lib,Process.SYSTEM_UID,true);
               didDexOpt=true;
             }
@@ -107,13 +93,15 @@ catch (          IOException e) {
           }
         }
       }
-      libFiles.add(mFrameworkDir.getPath() + "/framework-res.apk");
-      String[] frameworkFiles=mFrameworkDir.list();
+      File frameworkDir=new File(Environment.getRootDirectory(),"framework");
+      alreadyDexOpted.add(frameworkDir.getPath() + "/framework-res.apk");
+      alreadyDexOpted.add(frameworkDir.getPath() + "/core-libart.jar");
+      String[] frameworkFiles=frameworkDir.list();
       if (frameworkFiles != null) {
         for (int i=0; i < frameworkFiles.length; i++) {
-          File libPath=new File(mFrameworkDir,frameworkFiles[i]);
+          File libPath=new File(frameworkDir,frameworkFiles[i]);
           String path=libPath.getPath();
-          if (libFiles.contains(path)) {
+          if (alreadyDexOpted.contains(path)) {
             continue;
           }
           if (!path.endsWith(".apk") && !path.endsWith(".jar")) {
@@ -134,29 +122,30 @@ catch (          IOException e) {
         }
       }
       if (didDexOpt) {
-        String[] files=mDalvikCacheDir.list();
+        File dalvikCacheDir=new File(dataDir,"dalvik-cache");
+        String[] files=dalvikCacheDir.list();
         if (files != null) {
           for (int i=0; i < files.length; i++) {
             String fn=files[i];
             if (fn.startsWith("data@app@") || fn.startsWith("data@app-private@")) {
               Slog.i(TAG,"Pruning dalvik file: " + fn);
-              (new File(mDalvikCacheDir,fn)).delete();
+              (new File(dalvikCacheDir,fn)).delete();
             }
           }
         }
       }
-      mFrameworkInstallObserver=new AppDirObserver(mFrameworkDir.getPath(),OBSERVER_EVENTS,true,false);
+      mFrameworkInstallObserver=new AppDirObserver(frameworkDir.getPath(),OBSERVER_EVENTS,true,false);
       mFrameworkInstallObserver.startWatching();
-      scanDirLI(mFrameworkDir,PackageParser.PARSE_IS_SYSTEM | PackageParser.PARSE_IS_SYSTEM_DIR,scanMode | SCAN_NO_DEX,0);
-      mPrivilegedAppDir=new File(Environment.getRootDirectory(),"priv-app");
+      scanDirLI(frameworkDir,PackageParser.PARSE_IS_SYSTEM | PackageParser.PARSE_IS_SYSTEM_DIR,scanMode | SCAN_NO_DEX,0);
+      File mPrivilegedAppDir=new File(Environment.getRootDirectory(),"priv-app");
       mPrivilegedInstallObserver=new AppDirObserver(mPrivilegedAppDir.getPath(),OBSERVER_EVENTS,true,true);
       mPrivilegedInstallObserver.startWatching();
       scanDirLI(mPrivilegedAppDir,PackageParser.PARSE_IS_SYSTEM | PackageParser.PARSE_IS_SYSTEM_DIR | PackageParser.PARSE_IS_PRIVILEGED,scanMode,0);
-      mSystemAppDir=new File(Environment.getRootDirectory(),"app");
+      File mSystemAppDir=new File(Environment.getRootDirectory(),"app");
       mSystemInstallObserver=new AppDirObserver(mSystemAppDir.getPath(),OBSERVER_EVENTS,true,false);
       mSystemInstallObserver.startWatching();
       scanDirLI(mSystemAppDir,PackageParser.PARSE_IS_SYSTEM | PackageParser.PARSE_IS_SYSTEM_DIR,scanMode,0);
-      mVendorAppDir=new File("/vendor/app");
+      File mVendorAppDir=new File("/vendor/app");
       mVendorInstallObserver=new AppDirObserver(mVendorAppDir.getPath(),OBSERVER_EVENTS,true,false);
       mVendorInstallObserver.startWatching();
       scanDirLI(mVendorAppDir,PackageParser.PARSE_IS_SYSTEM | PackageParser.PARSE_IS_SYSTEM_DIR,scanMode,0);
