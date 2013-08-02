@@ -1,59 +1,69 @@
 {
-  final int match=sMatcher.match(uri);
-  if (match == URI_ROOTS) {
-    projection=new String[]{RootColumns.ROOT_TYPE,RootColumns.GUID,RootColumns.ICON,RootColumns.TITLE,RootColumns.SUMMARY,RootColumns.AVAILABLE_BYTES};
-    final MatrixCursor cursor=new MatrixCursor(projection);
-    for (    Root root : mRoots.values()) {
-      final String guid=fileToGuid(root.path);
-      cursor.addRow(new Object[]{root.rootType,guid,root.icon,root.title,root.summary,root.path.getFreeSpace()});
+  final String[] rootsProjection=new String[]{BaseColumns._ID,RootColumns.ROOT_ID,RootColumns.ROOT_TYPE,RootColumns.ICON,RootColumns.TITLE,RootColumns.SUMMARY,RootColumns.AVAILABLE_BYTES};
+  final String[] docsProjection=new String[]{BaseColumns._ID,DocumentColumns.DISPLAY_NAME,DocumentColumns.SIZE,DocumentColumns.DOC_ID,DocumentColumns.MIME_TYPE,DocumentColumns.LAST_MODIFIED,DocumentColumns.FLAGS};
+switch (sMatcher.match(uri)) {
+case URI_ROOTS:
+{
+      final MatrixCursor cursor=new MatrixCursor(rootsProjection);
+      for (      Root root : mRoots.values()) {
+        includeRoot(cursor,root);
+      }
+      return cursor;
     }
+case URI_ROOTS_ID:
+{
+    final String root=uri.getPathSegments().get(1);
+    final MatrixCursor cursor=new MatrixCursor(rootsProjection);
+    includeRoot(cursor,mRoots.get(root));
     return cursor;
   }
-  projection=new String[]{BaseColumns._ID,DocumentColumns.DISPLAY_NAME,DocumentColumns.SIZE,DocumentColumns.GUID,DocumentColumns.MIME_TYPE,DocumentColumns.LAST_MODIFIED,DocumentColumns.FLAGS};
-  final MatrixCursor cursor=new MatrixCursor(projection);
-switch (match) {
 case URI_DOCS_ID:
 {
-      final String guid=uri.getPathSegments().get(1);
-      includeFile(cursor,guid);
-      break;
-    }
+  final Root root=mRoots.get(uri.getPathSegments().get(1));
+  final String docId=uri.getPathSegments().get(3);
+  final MatrixCursor cursor=new MatrixCursor(docsProjection);
+  final File file=docIdToFile(root,docId);
+  includeFile(cursor,root,file);
+  return cursor;
+}
 case URI_DOCS_ID_CONTENTS:
 {
-    final String guid=uri.getPathSegments().get(1);
-    final File parent=guidToFile(guid);
-    for (    File file : parent.listFiles()) {
-      includeFile(cursor,fileToGuid(file));
-    }
-    break;
-  }
+final Root root=mRoots.get(uri.getPathSegments().get(1));
+final String docId=uri.getPathSegments().get(3);
+final MatrixCursor cursor=new MatrixCursor(docsProjection);
+final File parent=docIdToFile(root,docId);
+for (File file : parent.listFiles()) {
+  includeFile(cursor,root,file);
+}
+return cursor;
+}
 case URI_DOCS_ID_SEARCH:
 {
-  final String guid=uri.getPathSegments().get(1);
-  final File parent=guidToFile(guid);
-  final String query=uri.getQueryParameter(DocumentsContract.PARAM_QUERY).toLowerCase();
-  final LinkedList<File> pending=new LinkedList<File>();
-  pending.add(parent);
-  while (!pending.isEmpty() && cursor.getCount() < 20) {
-    final File file=pending.removeFirst();
-    if (file.isDirectory()) {
-      for (      File child : file.listFiles()) {
-        pending.add(child);
-      }
-    }
- else {
-      if (file.getName().toLowerCase().contains(query)) {
-        includeFile(cursor,fileToGuid(file));
-      }
-    }
+final Root root=mRoots.get(uri.getPathSegments().get(1));
+final String docId=uri.getPathSegments().get(3);
+final String query=uri.getQueryParameter(DocumentsContract.PARAM_QUERY).toLowerCase();
+final MatrixCursor cursor=new MatrixCursor(docsProjection);
+final File parent=docIdToFile(root,docId);
+final LinkedList<File> pending=new LinkedList<File>();
+pending.add(parent);
+while (!pending.isEmpty() && cursor.getCount() < 20) {
+final File file=pending.removeFirst();
+if (file.isDirectory()) {
+  for (  File child : file.listFiles()) {
+    pending.add(child);
   }
-  break;
 }
-default :
-{
-cursor.close();
-throw new UnsupportedOperationException("Unsupported Uri " + uri);
+ else {
+  if (file.getName().toLowerCase().contains(query)) {
+    includeFile(cursor,root,file);
+  }
 }
 }
 return cursor;
+}
+default :
+{
+throw new UnsupportedOperationException("Unsupported Uri " + uri);
+}
+}
 }
