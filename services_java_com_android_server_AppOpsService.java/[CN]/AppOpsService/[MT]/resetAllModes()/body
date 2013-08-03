@@ -1,0 +1,41 @@
+{
+  mContext.enforcePermission(android.Manifest.permission.UPDATE_APP_OPS_STATS,Binder.getCallingPid(),Binder.getCallingUid(),null);
+  HashMap<Callback,ArrayList<Pair<String,Integer>>> callbacks=null;
+synchronized (this) {
+    boolean changed=false;
+    for (int i=0; i < mUidOps.size(); i++) {
+      HashMap<String,Ops> packages=mUidOps.valueAt(i);
+      for (      Map.Entry<String,Ops> ent : packages.entrySet()) {
+        String packageName=ent.getKey();
+        Ops pkgOps=ent.getValue();
+        for (int j=0; j < pkgOps.size(); j++) {
+          Op curOp=pkgOps.valueAt(j);
+          if (curOp.mode != AppOpsManager.MODE_ALLOWED) {
+            curOp.mode=AppOpsManager.MODE_ALLOWED;
+            changed=true;
+            callbacks=addCallbacks(callbacks,packageName,curOp.op,mOpModeWatchers.get(curOp.op));
+            callbacks=addCallbacks(callbacks,packageName,curOp.op,mPackageModeWatchers.get(packageName));
+            pruneOp(curOp,mUidOps.keyAt(i),packageName);
+          }
+        }
+      }
+    }
+    if (changed) {
+      scheduleWriteNowLocked();
+    }
+  }
+  if (callbacks != null) {
+    for (    Map.Entry<Callback,ArrayList<Pair<String,Integer>>> ent : callbacks.entrySet()) {
+      Callback cb=ent.getKey();
+      ArrayList<Pair<String,Integer>> reports=ent.getValue();
+      for (int i=0; i < reports.size(); i++) {
+        Pair<String,Integer> rep=reports.get(i);
+        try {
+          cb.mCallback.opChanged(rep.second,rep.first);
+        }
+ catch (        RemoteException e) {
+        }
+      }
+    }
+  }
+}
