@@ -1,51 +1,41 @@
 {
   boolean success=false;
 synchronized (mLock) {
-    if (mClient == null) {
-      throw new IllegalStateException("Client cannot be null.");
-    }
     PrintJobInfo printJob=getPrintJobInfo(printJobId,PrintManager.APP_ID_ANY);
     if (printJob != null) {
       success=true;
-      final int oldState=printJob.getState();
       printJob.setState(state);
       printJob.setFailureReason(error);
-      mNotificationController.onPrintJobStateChanged(printJob,oldState);
+      mNotificationController.onPrintJobStateChanged(printJob);
       if (DEBUG_PRINT_JOB_LIFECYCLE) {
         Slog.i(LOG_TAG,"[STATE CHANGED] " + printJob);
       }
 switch (state) {
 case PrintJobInfo.STATE_COMPLETED:
 case PrintJobInfo.STATE_CANCELED:
+        removePrintJobLocked(printJob);
+case PrintJobInfo.STATE_FAILED:
 {
-          removePrintJobLocked(printJob);
-          PrinterId printerId=printJob.getPrinterId();
-          if (printerId == null) {
-            return true;
-          }
+        PrinterId printerId=printJob.getPrinterId();
+        if (printerId != null) {
           ComponentName service=printerId.getServiceName();
           if (!hasActivePrintJobsForServiceLocked(service)) {
-            SomeArgs args=SomeArgs.obtain();
-            args.arg1=mClient;
-            args.arg2=service;
-            mHandler.obtainMessage(MyHandler.MSG_ON_ALL_PRINT_JOBS_FOR_SERIVICE_HANDLED,args).sendToTarget();
-          }
-          if (!hasActivePrintJobsLocked()) {
-            mHandler.obtainMessage(MyHandler.MSG_ON_ALL_PRINT_JOBS_HANDLED,mClient).sendToTarget();
+            mService.onAllPrintJobsForServiceHandled(service);
           }
         }
-      break;
+      }
+    break;
 case PrintJobInfo.STATE_QUEUED:
 {
-      SomeArgs args=SomeArgs.obtain();
-      args.arg1=mClient;
-      args.arg2=new PrintJobInfo(printJob);
-      mHandler.obtainMessage(MyHandler.MSG_ON_PRINT_JOB_QUEUED,args).sendToTarget();
-    }
-  break;
+    mService.onPrintJobQueued(new PrintJobInfo(printJob));
+  }
+break;
 }
 if (shouldPersistPrintJob(printJob)) {
 mPersistanceManager.writeStateLocked();
+}
+if (!hasActivePrintJobsLocked()) {
+notifyOnAllPrintJobsHandled();
 }
 }
 }
