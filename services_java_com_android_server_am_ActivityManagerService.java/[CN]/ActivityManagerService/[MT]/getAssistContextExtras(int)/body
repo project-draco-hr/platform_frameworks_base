@@ -1,0 +1,85 @@
+{
+  enforceCallingPermission(android.Manifest.permission.GET_TOP_ACTIVITY_INFO,"getAssistContextExtras()");
+  PendingAssistExtras pae;
+  Bundle extras=new Bundle();
+  List<ServiceRecord> foregroundServices;
+synchronized (this) {
+    Collection<ServiceRecord> allServices=mServices.mServiceMap.getAllServices(Binder.getCallingUid());
+    foregroundServices=new ArrayList<ServiceRecord>();
+    for (    ServiceRecord record : allServices) {
+      if ((record.serviceInfo.flags & ServiceInfo.FLAG_PROVIDE_ASSIST_DATA) > 0 && record.isForeground) {
+        if (record.app == null || record.app.thread == null) {
+          Slog.w(TAG,"getAssistContextExtras error: no process for " + record);
+          continue;
+        }
+        if (record.app.pid == Binder.getCallingPid()) {
+          Slog.w(TAG,"getAssistContextExtras error: request process same as " + record);
+          continue;
+        }
+        foregroundServices.add(record);
+      }
+    }
+    ActivityRecord activity=getFocusedStack().mResumedActivity;
+    boolean validActivity=true;
+    if (activity == null) {
+      Slog.w(TAG,"getAssistContextExtras error: no resumed activity");
+      validActivity=false;
+    }
+    if (activity.app == null || activity.app.thread == null) {
+      Slog.w(TAG,"getAssistContextExtras error: no process for " + activity);
+      validActivity=false;
+    }
+    if (activity.app.pid == Binder.getCallingPid()) {
+      Slog.w(TAG,"getAssistContextExtras error: request process same as " + activity);
+      validActivity=false;
+    }
+    pae=new PendingAssistExtras(activity,foregroundServices);
+    try {
+      if (validActivity) {
+        activity.app.thread.requestAssistContextExtras(activity.appToken,pae,requestType,-1);
+      }
+      for (int i=0; i < foregroundServices.size(); i++) {
+        ServiceRecord record=foregroundServices.get(i);
+        record.app.thread.requestAssistContextExtras(record,pae,requestType,i);
+      }
+      mPendingAssistExtras.add(pae);
+      mHandler.postDelayed(pae,PENDING_ASSIST_EXTRAS_TIMEOUT);
+    }
+ catch (    RemoteException e) {
+      Slog.w(TAG,"getAssistContextExtras failed: crash fetching extras.",e);
+    }
+  }
+synchronized (pae) {
+    while (pae.numPending > 0) {
+      try {
+        pae.wait();
+      }
+ catch (      InterruptedException e) {
+      }
+    }
+    if (pae.activityExtras != null) {
+      extras.putBundle(Intent.EXTRA_ASSIST_CONTEXT,pae.activityExtras);
+      extras.putString(Intent.EXTRA_ASSIST_PACKAGE,pae.activity.packageName);
+    }
+    if (pae.numRespondedServices > 0) {
+      Bundle[] servicesExtras=new Bundle[pae.numRespondedServices];
+      String[] servicesPackages=new String[pae.numRespondedServices];
+      int extrasIndex=0;
+      for (int i=0; i < foregroundServices.size(); i++) {
+        if (pae.servicesExtras[i] != null) {
+          servicesExtras[extrasIndex]=pae.servicesExtras[i];
+          ServiceRecord record=foregroundServices.get(i);
+          servicesPackages[extrasIndex]=record.packageName;
+          extrasIndex++;
+        }
+      }
+      extras.putParcelableArray(Intent.EXTRA_ASSIST_SERVICES_CONTEXTS,servicesExtras);
+      extras.putStringArray(Intent.EXTRA_ASSIST_SERVICES_PACKAGES,servicesPackages);
+    }
+  }
+synchronized (this) {
+    mPendingAssistExtras.remove(pae);
+    mHandler.removeCallbacks(pae);
+  }
+  return extras;
+}
