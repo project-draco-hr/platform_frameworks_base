@@ -1,0 +1,103 @@
+{
+  long now=SystemClock.uptimeMillis();
+  out.writeInt(MAGIC);
+  out.writeInt(PARCEL_VERSION);
+  out.writeInt(STATE_COUNT);
+  out.writeInt(ADJ_COUNT);
+  out.writeInt(PSS_COUNT);
+  out.writeInt(LONGS_SIZE);
+  ArrayMap<String,SparseArray<ProcessState>> procMap=mProcesses.getMap();
+  final int NPROC=procMap.size();
+  for (int ip=0; ip < NPROC; ip++) {
+    SparseArray<ProcessState> uids=procMap.valueAt(ip);
+    final int NUID=uids.size();
+    for (int iu=0; iu < NUID; iu++) {
+      uids.valueAt(iu).commitStateTime(now);
+    }
+  }
+  ArrayMap<String,SparseArray<PackageState>> pkgMap=mPackages.getMap();
+  final int NPKG=pkgMap.size();
+  for (int ip=0; ip < NPKG; ip++) {
+    SparseArray<PackageState> uids=pkgMap.valueAt(ip);
+    final int NUID=uids.size();
+    for (int iu=0; iu < NUID; iu++) {
+      PackageState pkgState=uids.valueAt(iu);
+      final int NPROCS=pkgState.mProcesses.size();
+      for (int iproc=0; iproc < NPROCS; iproc++) {
+        ProcessState proc=pkgState.mProcesses.valueAt(iproc);
+        if (proc.mCommonProcess != proc) {
+          proc.commitStateTime(now);
+        }
+      }
+      final int NSRVS=pkgState.mServices.size();
+      for (int isvc=0; isvc < NSRVS; isvc++) {
+        pkgState.mServices.valueAt(isvc).commitStateTime(now);
+      }
+    }
+  }
+  out.writeLong(mTimePeriodStartClock);
+  out.writeLong(mTimePeriodStartRealtime);
+  out.writeLong(mTimePeriodEndRealtime);
+  out.writeString(mRuntime);
+  out.writeString(mWebView);
+  out.writeInt(mFlags);
+  out.writeInt(mLongs.size());
+  out.writeInt(mNextLong);
+  for (int i=0; i < (mLongs.size() - 1); i++) {
+    out.writeLongArray(mLongs.get(i));
+  }
+  long[] lastLongs=mLongs.get(mLongs.size() - 1);
+  for (int i=0; i < mNextLong; i++) {
+    out.writeLong(lastLongs[i]);
+    if (DEBUG)     Slog.d(TAG,"Writing last long #" + i + ": "+ lastLongs[i]);
+  }
+  if (mMemFactor != STATE_NOTHING) {
+    mMemFactorDurations[mMemFactor]+=now - mStartTime;
+    mStartTime=now;
+  }
+  out.writeLongArray(mMemFactorDurations);
+  out.writeInt(NPROC);
+  for (int ip=0; ip < NPROC; ip++) {
+    out.writeString(procMap.keyAt(ip));
+    SparseArray<ProcessState> uids=procMap.valueAt(ip);
+    final int NUID=uids.size();
+    out.writeInt(NUID);
+    for (int iu=0; iu < NUID; iu++) {
+      out.writeInt(uids.keyAt(iu));
+      ProcessState proc=uids.valueAt(iu);
+      out.writeString(proc.mPackage);
+      proc.writeToParcel(out,now);
+    }
+  }
+  out.writeInt(NPKG);
+  for (int ip=0; ip < NPKG; ip++) {
+    out.writeString(pkgMap.keyAt(ip));
+    SparseArray<PackageState> uids=pkgMap.valueAt(ip);
+    final int NUID=uids.size();
+    out.writeInt(NUID);
+    for (int iu=0; iu < NUID; iu++) {
+      out.writeInt(uids.keyAt(iu));
+      PackageState pkgState=uids.valueAt(iu);
+      final int NPROCS=pkgState.mProcesses.size();
+      out.writeInt(NPROCS);
+      for (int iproc=0; iproc < NPROCS; iproc++) {
+        out.writeString(pkgState.mProcesses.keyAt(iproc));
+        ProcessState proc=pkgState.mProcesses.valueAt(iproc);
+        if (proc.mCommonProcess == proc) {
+          out.writeInt(0);
+        }
+ else {
+          out.writeInt(1);
+          proc.writeToParcel(out,now);
+        }
+      }
+      final int NSRVS=pkgState.mServices.size();
+      out.writeInt(NSRVS);
+      for (int isvc=0; isvc < NSRVS; isvc++) {
+        out.writeString(pkgState.mServices.keyAt(isvc));
+        ServiceState svc=pkgState.mServices.valueAt(isvc);
+        svc.writeToParcel(out,now);
+      }
+    }
+  }
+}
