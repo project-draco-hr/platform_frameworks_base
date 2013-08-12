@@ -13,12 +13,14 @@
     }
     return Long.MAX_VALUE;
   }
-  if (mRunningAccounts == INITIAL_ACCOUNTS_ARRAY) {
+  AccountAndUser[] accounts=mRunningAccounts;
+  if (accounts == INITIAL_ACCOUNTS_ARRAY) {
     if (isLoggable) {
       Log.v(TAG,"maybeStartNextSync: accounts not known, skipping");
     }
     return Long.MAX_VALUE;
   }
+  final boolean backgroundDataUsageAllowed=getConnectivityManager().getBackgroundDataSetting();
   final long now=SystemClock.elapsedRealtime();
   long nextReadyToRunTime=Long.MAX_VALUE;
   ArrayList<SyncOperation> operations=new ArrayList<SyncOperation>();
@@ -31,19 +33,31 @@ synchronized (mSyncQueue) {
     final Set<Integer> removedUsers=Sets.newHashSet();
     while (operationIterator.hasNext()) {
       final SyncOperation op=operationIterator.next();
-      if (!activityManager.isUserRunning(op.target.userId)) {
-        final UserInfo userInfo=mUserManager.getUserInfo(op.target.userId);
-        if (userInfo == null) {
-          removedUsers.add(op.target.userId);
-        }
+      if (!containsAccountAndUser(accounts,op.account,op.userId)) {
+        operationIterator.remove();
+        mSyncStorageEngine.deleteFromPending(op.pendingOperation);
         if (isLoggable) {
-          Log.v(TAG,"    Dropping all sync operations for + " + op.target.userId + ": user not running.");
+          Log.v(TAG,"    Dropping sync operation: account doesn't exist.");
         }
         continue;
       }
-      if (!isOperationValidLocked(op)) {
+      int syncableState=getIsSyncable(op.account,op.userId,op.authority);
+      if (syncableState == 0) {
         operationIterator.remove();
         mSyncStorageEngine.deleteFromPending(op.pendingOperation);
+        if (isLoggable) {
+          Log.v(TAG,"    Dropping sync operation: isSyncable == 0.");
+        }
+        continue;
+      }
+      if (!activityManager.isUserRunning(op.userId)) {
+        final UserInfo userInfo=mUserManager.getUserInfo(op.userId);
+        if (userInfo == null) {
+          removedUsers.add(op.userId);
+        }
+        if (isLoggable) {
+          Log.v(TAG,"    Dropping sync operation: user not running.");
+        }
         continue;
       }
       if (op.effectiveRunTime - op.flexTime > now) {
@@ -51,8 +65,23 @@ synchronized (mSyncQueue) {
           nextReadyToRunTime=op.effectiveRunTime;
         }
         if (isLoggable) {
-          Log.v(TAG,"    Not running sync operation: Sync too far in future." + "effective: " + op.effectiveRunTime + " flex: "+ op.flexTime+ " now: "+ now);
+          Log.v(TAG,"    Dropping sync operation: Sync too far in future.");
         }
+        continue;
+      }
+      final RegisteredServicesCache.ServiceInfo<SyncAdapterType> syncAdapterInfo;
+      syncAdapterInfo=mSyncAdapters.getServiceInfo(SyncAdapterType.newKey(op.authority,op.account.type),op.userId);
+      final boolean uidNetworkConnected;
+      if (syncAdapterInfo != null) {
+        final NetworkInfo networkInfo=getConnectivityManager().getActiveNetworkInfoForUid(syncAdapterInfo.uid);
+        uidNetworkConnected=networkInfo != null && networkInfo.isConnected();
+      }
+ else {
+        uidNetworkConnected=false;
+      }
+      if (!op.extras.getBoolean(ContentResolver.SYNC_EXTRAS_IGNORE_SETTINGS,false) && (syncableState > 0) && (!mSyncStorageEngine.getMasterSyncAutomatically(op.userId) || !backgroundDataUsageAllowed || !uidNetworkConnected|| !mSyncStorageEngine.getSyncAutomatically(op.account,op.userId,op.authority))) {
+        operationIterator.remove();
+        mSyncStorageEngine.deleteFromPending(op.pendingOperation);
         continue;
       }
       operations.add(op);
@@ -88,7 +117,7 @@ synchronized (mSyncQueue) {
           }
         }
       }
-      if (activeOp.isConflict(candidate)) {
+      if (activeOp.account.type.equals(candidate.account.type) && activeOp.authority.equals(candidate.authority) && activeOp.userId == candidate.userId && (!activeOp.allowParallelSyncs || activeOp.account.name.equals(candidate.account.name))) {
         conflict=activeSyncContext;
       }
  else {
@@ -127,7 +156,7 @@ synchronized (mSyncQueue) {
  else     if (candidate.isExpedited() && oldestNonExpeditedRegular != null && !candidateIsInitialization) {
       toReschedule=oldestNonExpeditedRegular;
       if (Log.isLoggable(TAG,Log.VERBOSE)) {
-        Log.v(TAG,"canceling and rescheduling sync since an expedited is ready to" + " run, " + oldestNonExpeditedRegular);
+        Log.v(TAG,"canceling and rescheduling sync since an expedited is ready to run, " + oldestNonExpeditedRegular);
       }
     }
  else     if (longRunning != null && (candidateIsInitialization == longRunning.mSyncOperation.isInitialization())) {

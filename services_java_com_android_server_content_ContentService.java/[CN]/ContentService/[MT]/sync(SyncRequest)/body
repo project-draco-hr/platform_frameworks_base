@@ -1,38 +1,43 @@
 {
   Bundle extras=request.getBundle();
   ContentResolver.validateSyncExtrasBundle(extras);
+  long flextime=request.getSyncFlexTime();
+  long runAtTime=request.getSyncRunTime();
   int userId=UserHandle.getCallingUserId();
-  int callerUid=Binder.getCallingUid();
+  int uId=Binder.getCallingUid();
   long identityToken=clearCallingIdentity();
   try {
     SyncManager syncManager=getSyncManager();
-    if (syncManager == null)     return;
-    long flextime=request.getSyncFlexTime();
-    long runAtTime=request.getSyncRunTime();
-    if (request.isPeriodic()) {
-      mContext.enforceCallingOrSelfPermission(Manifest.permission.WRITE_SYNC_SETTINGS,"no permission to write the sync settings");
-      SyncStorageEngine.EndPoint info;
-      if (!request.hasAuthority()) {
-        verifySignatureForPackage(callerUid,request.getService().getPackageName(),"sync");
-        info=new SyncStorageEngine.EndPoint(request.getService(),userId);
-      }
- else {
-        info=new SyncStorageEngine.EndPoint(request.getAccount(),request.getProvider(),userId);
-      }
-      if (runAtTime < 60) {
-        Slog.w(TAG,"Requested poll frequency of " + runAtTime + " seconds being rounded up to 60 seconds.");
-        runAtTime=60;
-      }
-      getSyncManager().getSyncStorageEngine().updateOrAddPeriodicSync(info,runAtTime,flextime,extras);
-    }
- else {
-      long beforeRuntimeMillis=(flextime) * 1000;
-      long runtimeMillis=runAtTime * 1000;
+    if (syncManager != null) {
       if (request.hasAuthority()) {
-        syncManager.scheduleSync(request.getAccount(),userId,callerUid,request.getProvider(),extras,beforeRuntimeMillis,runtimeMillis,false);
+        final Account account=request.getProviderInfo().first;
+        final String provider=request.getProviderInfo().second;
+        if (request.isPeriodic()) {
+          mContext.enforceCallingOrSelfPermission(Manifest.permission.WRITE_SYNC_SETTINGS,"no permission to write the sync settings");
+          if (runAtTime < 60) {
+            Slog.w(TAG,"Requested poll frequency of " + runAtTime + " seconds being rounded up to 60 seconds.");
+            runAtTime=60;
+          }
+          PeriodicSync syncToAdd=new PeriodicSync(account,provider,extras,runAtTime,flextime);
+          getSyncManager().getSyncStorageEngine().addPeriodicSync(syncToAdd,userId);
+        }
+ else {
+          long beforeRuntimeMillis=(flextime) * 1000;
+          long runtimeMillis=runAtTime * 1000;
+          syncManager.scheduleSync(account,userId,uId,provider,extras,beforeRuntimeMillis,runtimeMillis,false);
+        }
       }
  else {
-        syncManager.scheduleSync(request.getService(),userId,callerUid,extras,beforeRuntimeMillis,runtimeMillis);
+        final ComponentName syncService=request.getService();
+        if (request.isPeriodic()) {
+          throw new RuntimeException("Periodic anonymous syncs not implemented yet.");
+        }
+ else {
+          long beforeRuntimeMillis=(flextime) * 1000;
+          long runtimeMillis=runAtTime * 1000;
+          syncManager.scheduleSync(syncService,userId,uId,extras,beforeRuntimeMillis,runtimeMillis,false);
+          throw new RuntimeException("One-off anonymous syncs not implemented yet.");
+        }
       }
     }
   }
