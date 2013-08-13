@@ -1,0 +1,157 @@
+{
+  String rawData=mWifiNative.getBatchedScanResults();
+  if (rawData == null) {
+    loge("Unexpected null BatchedScanResults");
+    return 0;
+  }
+  int nextCount=0;
+  int scanCount=0;
+  final String END_OF_SCAN="====";
+  final String END_OF_BATCH="%%%%";
+  final String END_OF_BATCHES="----";
+  final String SCANCOUNT="scancount=";
+  final String NEXTCOUNT="nextcount=";
+  final String TRUNCATED="trunc";
+  final String APCOUNT="apcount=";
+  final String AGE="age=";
+  final String DIST="dist=";
+  final String DISTSD="distsd=";
+  String splitData[]=rawData.split("\n");
+  int n=0;
+  if (splitData[n].startsWith(SCANCOUNT)) {
+    try {
+      scanCount=Integer.parseInt(splitData[n++].substring(SCANCOUNT.length()));
+    }
+ catch (    NumberFormatException e) {
+    }
+  }
+  if (scanCount == 0) {
+    loge("scanCount not found");
+    return 0;
+  }
+  if (splitData[n].startsWith(NEXTCOUNT)) {
+    try {
+      nextCount=Integer.parseInt(splitData[n++].substring(NEXTCOUNT.length()));
+    }
+ catch (    NumberFormatException e) {
+    }
+  }
+  if (nextCount == 0) {
+    loge("nextCount not found");
+    return 0;
+  }
+  final Intent intent=new Intent(WifiManager.BATCHED_SCAN_RESULTS_AVAILABLE_ACTION);
+  intent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY_BEFORE_BOOT);
+synchronized (mBatchedScanResults) {
+    mBatchedScanResults.clear();
+    BatchedScanResult batchedScanResult=new BatchedScanResult();
+    String bssid=null;
+    WifiSsid wifiSsid=null;
+    int level=0;
+    int freq=0;
+    int dist, distSd;
+    long tsf=0;
+    dist=distSd=ScanResult.UNSPECIFIED;
+    long now=System.currentTimeMillis();
+    while (true) {
+      while (n < splitData.length) {
+        if (splitData[n].equals(END_OF_BATCHES)) {
+          if (++n != splitData.length) {
+            loge("didn't consume " + (splitData.length - n));
+          }
+          if (mBatchedScanResults.size() > 0) {
+            mContext.sendStickyBroadcastAsUser(intent,UserHandle.ALL);
+          }
+          return nextCount;
+        }
+        if ((splitData[n].equals(END_OF_SCAN)) || splitData[n].equals(END_OF_BATCH)) {
+          if (bssid != null) {
+            batchedScanResult.scanResults.add(new ScanResult(wifiSsid,bssid,"",level,freq,tsf,dist,distSd));
+            wifiSsid=null;
+            bssid=null;
+            level=0;
+            freq=0;
+            tsf=0;
+            dist=distSd=ScanResult.UNSPECIFIED;
+          }
+          if (splitData[n].equals(END_OF_BATCH)) {
+            if (batchedScanResult.scanResults.size() != 0) {
+              mBatchedScanResults.add(batchedScanResult);
+              batchedScanResult=new BatchedScanResult();
+            }
+ else {
+              logd("Found empty batch");
+            }
+          }
+          n++;
+        }
+ else         if (splitData[n].equals(BSSID_STR)) {
+          bssid=splitData[n++].substring(BSSID_STR.length());
+        }
+ else         if (splitData[n].equals(FREQ_STR)) {
+          try {
+            freq=Integer.parseInt(splitData[n++].substring(FREQ_STR.length()));
+          }
+ catch (          NumberFormatException e) {
+            loge("Invalid freqency: " + splitData[n - 1]);
+            freq=0;
+          }
+        }
+ else         if (splitData[n].equals(AGE)) {
+          try {
+            tsf=now - Long.parseLong(splitData[n++].substring(AGE.length()));
+          }
+ catch (          NumberFormatException e) {
+            loge("Invalid timestamp: " + splitData[n - 1]);
+            tsf=0;
+          }
+        }
+ else         if (splitData[n].equals(SSID_STR)) {
+          wifiSsid=WifiSsid.createFromAsciiEncoded(splitData[n++].substring(SSID_STR.length()));
+        }
+ else         if (splitData[n].equals(LEVEL_STR)) {
+          try {
+            level=Integer.parseInt(splitData[n++].substring(LEVEL_STR.length()));
+            if (level > 0)             level-=256;
+          }
+ catch (          NumberFormatException e) {
+            loge("Invalid level: " + splitData[n - 1]);
+            level=0;
+          }
+        }
+ else         if (splitData[n].equals(DIST)) {
+          try {
+            dist=Integer.parseInt(splitData[n++].substring(DIST.length()));
+          }
+ catch (          NumberFormatException e) {
+            loge("Invalid distance: " + splitData[n - 1]);
+            dist=ScanResult.UNSPECIFIED;
+          }
+        }
+ else         if (splitData[n].equals(DISTSD)) {
+          try {
+            distSd=Integer.parseInt(splitData[n++].substring(DISTSD.length()));
+          }
+ catch (          NumberFormatException e) {
+            loge("Invalid distanceSd: " + splitData[n - 1]);
+            distSd=ScanResult.UNSPECIFIED;
+          }
+        }
+      }
+      rawData=mWifiNative.getBatchedScanResults();
+      if (rawData == null) {
+        loge("Unexpected null BatchedScanResults");
+        return nextCount;
+      }
+      splitData=rawData.split("\n");
+      if (splitData.length == 0 || splitData[0].equals("ok")) {
+        loge("batch scan results just ended!");
+        if (mBatchedScanResults.size() > 0) {
+          mContext.sendStickyBroadcastAsUser(intent,UserHandle.ALL);
+        }
+        return nextCount;
+      }
+      n=0;
+    }
+  }
+}
