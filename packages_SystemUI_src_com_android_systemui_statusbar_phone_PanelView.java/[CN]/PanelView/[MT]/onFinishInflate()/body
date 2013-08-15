@@ -6,11 +6,17 @@
   if (mHandleView != null) {
     mHandleView.setOnTouchListener(new View.OnTouchListener(){
       @Override public boolean onTouch(      View v,      MotionEvent event){
-        final float y=event.getY();
-        final float rawY=event.getRawY();
-        if (DEBUG)         logf("handle.onTouch: a=%s y=%.1f rawY=%.1f off=%.1f",MotionEvent.actionToString(event.getAction()),y,rawY,mTouchOffset);
+        int pointerIndex=event.findPointerIndex(mTrackingPointer);
+        if (pointerIndex < 0) {
+          pointerIndex=0;
+          mTrackingPointer=event.getPointerId(pointerIndex);
+        }
+        final float y=event.getY(pointerIndex);
+        final float rawDelta=event.getRawY() - event.getY();
+        final float rawY=y + rawDelta;
+        if (DEBUG)         logf("handle.onTouch: a=%s p=[%d,%d] y=%.1f rawY=%.1f off=%.1f",MotionEvent.actionToString(event.getAction()),mTrackingPointer,pointerIndex,y,rawY,mTouchOffset);
         PanelView.this.getLocationOnScreen(mAbsPos);
-switch (event.getAction()) {
+switch (event.getActionMasked()) {
 case MotionEvent.ACTION_DOWN:
           mTracking=true;
         mHandleView.setPressed(true);
@@ -20,10 +26,21 @@ case MotionEvent.ACTION_DOWN:
 trackMovement(event);
 mTimeAnimator.cancel();
 mBar.onTrackingStarted(PanelView.this);
-mTouchOffset=(rawY - mAbsPos[1]) - PanelView.this.getExpandedHeight();
+mTouchOffset=(rawY - mAbsPos[1]) - mExpandedHeight;
 if (mExpandedHeight == 0) {
 mJustPeeked=true;
 runPeekAnimation();
+}
+break;
+case MotionEvent.ACTION_POINTER_UP:
+final int upPointer=event.getPointerId(event.getActionIndex());
+if (mTrackingPointer == upPointer) {
+final int newIndex=event.getPointerId(0) != upPointer ? 0 : 1;
+final float newY=event.getY(newIndex);
+final float newRawY=newY + rawDelta;
+mTrackingPointer=event.getPointerId(newIndex);
+mTouchOffset=(newRawY - mAbsPos[1]) - mExpandedHeight;
+mInitialTouchY=newY;
 }
 break;
 case MotionEvent.ACTION_MOVE:
@@ -44,6 +61,7 @@ case MotionEvent.ACTION_UP:
 case MotionEvent.ACTION_CANCEL:
 mFinalTouchY=y;
 mTracking=false;
+mTrackingPointer=-1;
 mHandleView.setPressed(false);
 postInvalidate();
 mBar.onTrackingStopped(PanelView.this);
