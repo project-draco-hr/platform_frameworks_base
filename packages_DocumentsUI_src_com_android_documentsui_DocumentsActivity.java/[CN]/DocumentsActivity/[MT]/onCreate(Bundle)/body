@@ -11,10 +11,16 @@
  else   if (Intent.ACTION_GET_CONTENT.equals(action)) {
     mAction=ACTION_GET_CONTENT;
   }
+ else   if (Intent.ACTION_MANAGE_DOCUMENT.equals(action)) {
+    mAction=ACTION_MANAGE;
+  }
   if (mAction == ACTION_OPEN || mAction == ACTION_GET_CONTENT) {
     mDisplayState.allowMultiple=intent.getBooleanExtra(Intent.EXTRA_ALLOW_MULTIPLE,false);
   }
-  if (intent.hasExtra(Intent.EXTRA_MIME_TYPES)) {
+  if (mAction == ACTION_MANAGE) {
+    mDisplayState.acceptMimes=new String[]{"*/*"};
+  }
+ else   if (intent.hasExtra(Intent.EXTRA_MIME_TYPES)) {
     mDisplayState.acceptMimes=intent.getStringArrayExtra(Intent.EXTRA_MIME_TYPES);
   }
  else {
@@ -34,28 +40,47 @@
     moreApps.setPackage(null);
     RootsFragment.show(getFragmentManager(),moreApps);
   }
- else {
+ else   if (mAction == ACTION_OPEN || mAction == ACTION_CREATE) {
     RootsFragment.show(getFragmentManager(),null);
+  }
+  if (mAction == ACTION_MANAGE) {
+    mDisplayState.sortOrder=DisplayState.SORT_ORDER_DATE;
   }
   mRootsContainer=findViewById(R.id.container_roots);
   mDrawerLayout=(DrawerLayout)findViewById(R.id.drawer_layout);
   mDrawerToggle=new ActionBarDrawerToggle(this,mDrawerLayout,R.drawable.ic_drawer,R.string.drawer_open,R.string.drawer_close);
   mDrawerLayout.setDrawerListener(mDrawerListener);
   mDrawerLayout.setDrawerShadow(R.drawable.drawer_shadow,GravityCompat.START);
-  mDrawerLayout.openDrawer(mRootsContainer);
-  final String packageName=getCallingPackage();
-  final Cursor cursor=getContentResolver().query(RecentsProvider.buildResume(packageName),null,null,null,null);
-  try {
-    if (cursor.moveToFirst()) {
-      final String raw=cursor.getString(cursor.getColumnIndex(RecentsProvider.COL_PATH));
-      mStack=DocumentStack.deserialize(getContentResolver(),raw);
+  if (mAction == ACTION_MANAGE) {
+    mDrawerLayout.setDrawerLockMode(DrawerLayout.LOCK_MODE_LOCKED_CLOSED);
+    final Uri rootUri=intent.getData();
+    final String authority=rootUri.getAuthority();
+    final String rootId=DocumentsContract.getRootId(rootUri);
+    final Root root=RootsCache.findRoot(this,authority,rootId);
+    if (root != null) {
+      onRootPicked(root,true);
+    }
+ else {
+      Log.w(TAG,"Failed to find root: " + rootUri);
+      finish();
     }
   }
- catch (  FileNotFoundException e) {
-    Log.w(TAG,"Failed to resume",e);
-  }
+ else {
+    mDrawerLayout.openDrawer(mRootsContainer);
+    final String packageName=getCallingPackage();
+    final Cursor cursor=getContentResolver().query(RecentsProvider.buildResume(packageName),null,null,null,null);
+    try {
+      if (cursor.moveToFirst()) {
+        final String raw=cursor.getString(cursor.getColumnIndex(RecentsProvider.COL_PATH));
+        mStack=DocumentStack.deserialize(getContentResolver(),raw);
+      }
+    }
+ catch (    FileNotFoundException e) {
+      Log.w(TAG,"Failed to resume",e);
+    }
  finally {
-    cursor.close();
+      cursor.close();
+    }
+    onCurrentDirectoryChanged();
   }
-  onCurrentDirectoryChanged();
 }
