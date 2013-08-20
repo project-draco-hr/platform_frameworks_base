@@ -1,26 +1,55 @@
 {
   final int action=message.what;
 switch (action) {
-case MSG_ON_CREATE_PRINTER_DISCOVERY_SESSION:
+case MSG_CREATE_PRINTER_DISCOVERY_SESSION:
 {
-      IPrinterDiscoverySessionObserver observer=(IPrinterDiscoverySessionObserver)message.obj;
       PrinterDiscoverySession session=onCreatePrinterDiscoverySession();
       if (session == null) {
         throw new NullPointerException("session cannot be null");
       }
-synchronized (mLock) {
-        if (session.getId() == mLastSessionId) {
-          throw new IllegalStateException("cannot reuse sessions");
-        }
-        mLastSessionId=session.getId();
+      if (session.getId() == mLastSessionId) {
+        throw new IllegalStateException("cannot reuse session instances");
       }
-      session.setObserver(observer);
+      mDiscoverySession=session;
+      mLastSessionId=session.getId();
+      session.setObserver(mClient);
     }
   break;
+case MSG_DESTROY_PRINTER_DISCOVERY_SESSION:
+{
+  if (mDiscoverySession != null) {
+    mDiscoverySession.destroy();
+    mDiscoverySession=null;
+  }
+}
+break;
+case MSG_START_PRINTER_DISCOVERY:
+{
+if (mDiscoverySession != null) {
+List<PrinterId> priorityList=(ArrayList<PrinterId>)message.obj;
+mDiscoverySession.startPrinterDiscovery(priorityList);
+}
+}
+break;
+case MSG_STOP_PRINTER_DISCOVERY:
+{
+if (mDiscoverySession != null) {
+mDiscoverySession.stopPrinterDiscovery();
+}
+}
+break;
+case MSG_REQUEST_PRINTER_UPDATE:
+{
+if (mDiscoverySession != null) {
+PrinterId printerId=(PrinterId)message.obj;
+mDiscoverySession.requestPrinterUpdate(printerId);
+}
+}
+break;
 case MSG_ON_REQUEST_CANCEL_PRINTJOB:
 {
-  PrintJobInfo printJobInfo=(PrintJobInfo)message.obj;
-  onRequestCancelPrintJob(new PrintJob(printJobInfo,mClient));
+PrintJobInfo printJobInfo=(PrintJobInfo)message.obj;
+onRequestCancelPrintJob(new PrintJob(printJobInfo,mClient));
 }
 break;
 case MSG_ON_PRINTJOB_QUEUED:
@@ -31,11 +60,8 @@ onPrintJobQueued(new PrintJob(printJobInfo,mClient));
 break;
 case MSG_SET_CLEINT:
 {
-IPrintServiceClient client=(IPrintServiceClient)message.obj;
-synchronized (mLock) {
-mClient=client;
-}
-if (client != null) {
+mClient=(IPrintServiceClient)message.obj;
+if (mClient != null) {
 onConnected();
 }
  else {
