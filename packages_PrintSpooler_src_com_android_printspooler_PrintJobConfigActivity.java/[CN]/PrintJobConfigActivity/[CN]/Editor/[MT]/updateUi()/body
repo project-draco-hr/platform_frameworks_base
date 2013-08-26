@@ -1,6 +1,6 @@
 {
   if (mCurrentUi != UI_EDITING_PRINT_JOB) {
-    return;
+    return false;
   }
   if (isPrintConfirmed() || isPreviewConfirmed() || isCancelled()) {
     mDestinationSpinner.setEnabled(false);
@@ -9,9 +9,9 @@
     mColorModeSpinner.setEnabled(false);
     mOrientationSpinner.setEnabled(false);
     mRangeOptionsSpinner.setEnabled(false);
-    mRangeEditText.setEnabled(false);
+    mPageRangeEditText.setEnabled(false);
     mPrintButton.setEnabled(false);
-    return;
+    return false;
   }
   boolean allOptionsEnabled=false;
   final int selectedIndex=mDestinationSpinner.getSelectedItemPosition();
@@ -51,21 +51,23 @@
       mRangeOptionsSpinner.setSelection(0);
     }
     mRangeOptionsSpinner.setEnabled(false);
-    mRangeTitle.setText(getString(R.string.label_pages,getString(R.string.page_count_unknown)));
-    if (!TextUtils.equals(mRangeEditText.getText(),"")) {
+    mRangeOptionsTitle.setText(getString(R.string.label_pages,getString(R.string.page_count_unknown)));
+    if (!TextUtils.equals(mPageRangeEditText.getText(),"")) {
       mIgnoreNextRangeChange=true;
-      mRangeEditText.setText("");
+      mPageRangeEditText.setText("");
     }
-    mRangeEditText.setEnabled(false);
-    mRangeEditText.setVisibility(View.INVISIBLE);
+    mPageRangeEditText.setEnabled(false);
+    mPageRangeEditText.setVisibility(View.INVISIBLE);
+    mPageRangeTitle.setVisibility(View.INVISIBLE);
     mPrintButton.setEnabled(false);
+    return false;
   }
  else {
+    boolean someAttributeSelectionChanged=false;
     PrintAttributes defaultAttributes=mTempPrintAttributes;
     PrinterInfo printer=(PrinterInfo)mDestinationSpinner.getSelectedItem();
     PrinterCapabilitiesInfo capabilities=printer.getCapabilities();
     printer.getCapabilities().getDefaults(defaultAttributes);
-    mCopiesEditText.setEnabled(true);
     List<MediaSize> mediaSizes=capabilities.getMediaSizes();
     boolean mediaSizesChanged=false;
     final int mediaSizeCount=mediaSizes.size();
@@ -81,21 +83,28 @@
       }
     }
     if (mediaSizesChanged) {
+      int oldMediaSizeNewIndex=AdapterView.INVALID_POSITION;
+      MediaSize oldMediaSize=mCurrPrintAttributes.getMediaSize();
       mMediaSizeSpinnerAdapter.clear();
       for (int i=0; i < mediaSizeCount; i++) {
         MediaSize mediaSize=mediaSizes.get(i);
+        if (mediaSize.equals(oldMediaSize)) {
+          oldMediaSizeNewIndex=i;
+        }
         mMediaSizeSpinnerAdapter.add(new SpinnerItem<MediaSize>(mediaSize,mediaSize.getLabel()));
       }
       if (mediaSizeCount <= 0) {
         mMediaSizeSpinner.setEnabled(false);
-        mMediaSizeSpinner.setSelection(AdapterView.INVALID_POSITION);
+        someAttributeSelectionChanged=setMediaSizeSpinnerSelectionNoCallback(AdapterView.INVALID_POSITION);
       }
  else {
         mMediaSizeSpinner.setEnabled(true);
-        final int selectedMediaSizeIndex=Math.max(mediaSizes.indexOf(defaultAttributes.getMediaSize()),0);
-        if (mMediaSizeSpinner.getSelectedItemPosition() != selectedMediaSizeIndex) {
-          mIgnoreNextMediaSizeChange=true;
-          mMediaSizeSpinner.setSelection(selectedMediaSizeIndex);
+        if (oldMediaSizeNewIndex != AdapterView.INVALID_POSITION) {
+          setMediaSizeSpinnerSelectionNoCallback(oldMediaSizeNewIndex);
+        }
+ else {
+          final int mediaSizeIndex=Math.max(mediaSizes.indexOf(defaultAttributes.getMediaSize()),0);
+          someAttributeSelectionChanged=setMediaSizeSpinnerSelectionNoCallback(mediaSizeIndex);
         }
       }
     }
@@ -192,20 +201,22 @@
     if (info != null && (info.getPageCount() > 1 || info.getPageCount() == PrintDocumentInfo.PAGE_COUNT_UNKNOWN)) {
       mRangeOptionsSpinner.setEnabled(true);
       if (mRangeOptionsSpinner.getSelectedItemPosition() > 0) {
-        if (!mRangeEditText.isEnabled()) {
-          mRangeEditText.setEnabled(true);
-          mRangeEditText.setVisibility(View.VISIBLE);
-          mRangeEditText.requestFocus();
+        if (!mPageRangeEditText.isEnabled()) {
+          mPageRangeEditText.setEnabled(true);
+          mPageRangeEditText.setVisibility(View.VISIBLE);
+          mPageRangeTitle.setVisibility(View.VISIBLE);
+          mPageRangeEditText.requestFocus();
           InputMethodManager imm=(InputMethodManager)getSystemService(INPUT_METHOD_SERVICE);
-          imm.showSoftInput(mRangeEditText,0);
+          imm.showSoftInput(mPageRangeEditText,0);
         }
       }
  else {
-        mRangeEditText.setEnabled(false);
-        mRangeEditText.setVisibility(View.INVISIBLE);
+        mPageRangeEditText.setEnabled(false);
+        mPageRangeEditText.setVisibility(View.INVISIBLE);
+        mPageRangeTitle.setVisibility(View.INVISIBLE);
       }
       final int pageCount=mDocument.info.getPageCount();
-      mRangeTitle.setText(getString(R.string.label_pages,(pageCount == PrintDocumentInfo.PAGE_COUNT_UNKNOWN) ? getString(R.string.page_count_unknown) : String.valueOf(pageCount)));
+      mRangeOptionsTitle.setText(getString(R.string.label_pages,(pageCount == PrintDocumentInfo.PAGE_COUNT_UNKNOWN) ? getString(R.string.page_count_unknown) : String.valueOf(pageCount)));
     }
  else {
       if (mRangeOptionsSpinner.getSelectedItemPosition() != 0) {
@@ -213,16 +224,35 @@
         mRangeOptionsSpinner.setSelection(0);
       }
       mRangeOptionsSpinner.setEnabled(false);
-      mRangeTitle.setText(getString(R.string.label_pages,getString(R.string.page_count_unknown)));
-      mRangeEditText.setEnabled(false);
-      mRangeEditText.setVisibility(View.INVISIBLE);
+      mRangeOptionsTitle.setText(getString(R.string.label_pages,getString(R.string.page_count_unknown)));
+      mPageRangeEditText.setEnabled(false);
+      mPageRangeEditText.setVisibility(View.INVISIBLE);
+      mPageRangeTitle.setVisibility(View.INVISIBLE);
     }
     mRangeOptionsSpinner.setEnabled(true);
-    if ((mRangeOptionsSpinner.getSelectedItemPosition() == 1 && (TextUtils.isEmpty(mRangeEditText.getText()) || hasErrors())) || (mRangeOptionsSpinner.getSelectedItemPosition() == 0 && (!mController.hasPerformedLayout() || hasErrors()))) {
+    if (mDestinationSpinner.getSelectedItemId() != DEST_ADAPTER_ITEM_ID_SAVE_AS_PDF) {
+      String newText=getString(R.string.print_button);
+      if (!TextUtils.equals(newText,mPrintButton.getText())) {
+        mPrintButton.setText(R.string.print_button);
+      }
+    }
+ else {
+      String newText=getString(R.string.save_button);
+      if (!TextUtils.equals(newText,mPrintButton.getText())) {
+        mPrintButton.setText(R.string.save_button);
+      }
+    }
+    if ((mRangeOptionsSpinner.getSelectedItemPosition() == 1 && (TextUtils.isEmpty(mPageRangeEditText.getText()) || hasErrors())) || (mRangeOptionsSpinner.getSelectedItemPosition() == 0 && (!mController.hasPerformedLayout() || hasErrors()))) {
       mPrintButton.setEnabled(false);
     }
  else {
       mPrintButton.setEnabled(true);
+    }
+    if (mDestinationSpinner.getSelectedItemId() != DEST_ADAPTER_ITEM_ID_SAVE_AS_PDF) {
+      mCopiesEditText.setEnabled(true);
+    }
+ else {
+      mCopiesEditText.setEnabled(false);
     }
     if (mCopiesEditText.getError() == null && TextUtils.isEmpty(mCopiesEditText.getText())) {
       mIgnoreNextCopiesChange=true;
@@ -230,6 +260,6 @@
       mCopiesEditText.selectAll();
       mCopiesEditText.requestFocus();
     }
-    mCopiesEditText.setEnabled(true);
+    return someAttributeSelectionChanged;
   }
 }
