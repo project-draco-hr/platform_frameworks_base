@@ -1,0 +1,109 @@
+{
+  int timeOutMs=-1;
+  if (DBG)   log("checkMobileProvisioning: E suggestedTimeOutMs=" + suggestedTimeOutMs);
+  enforceConnectivityInternalPermission();
+  final long token=Binder.clearCallingIdentity();
+  try {
+    timeOutMs=suggestedTimeOutMs;
+    if (suggestedTimeOutMs > CheckMp.MAX_TIMEOUT_MS) {
+      timeOutMs=CheckMp.MAX_TIMEOUT_MS;
+    }
+    if (!isNetworkSupported(ConnectivityManager.TYPE_MOBILE) || !isNetworkSupported(ConnectivityManager.TYPE_MOBILE_HIPRI)) {
+      if (DBG)       log("checkMobileProvisioning: X no mobile network");
+      return timeOutMs;
+    }
+    if (mIsCheckingMobileProvisioning.getAndSet(true)) {
+      if (DBG)       log("checkMobileProvisioning: X already checking ignore for the moment");
+      return timeOutMs;
+    }
+    setProvNotificationVisible(false,ConnectivityManager.TYPE_NONE,null,null);
+    MobileDataStateTracker mdstDefault=(MobileDataStateTracker)mNetTrackers[ConnectivityManager.TYPE_MOBILE];
+    boolean isDefaultProvisioning=mdstDefault.isProvisioningNetwork();
+    MobileDataStateTracker mdstHipri=(MobileDataStateTracker)mNetTrackers[ConnectivityManager.TYPE_MOBILE_HIPRI];
+    boolean isHipriProvisioning=mdstHipri.isProvisioningNetwork();
+    if (isDefaultProvisioning || isHipriProvisioning) {
+      if (mIsNotificationVisible) {
+        if (DBG) {
+          log("checkMobileProvisioning: provisioning-ignore notification is visible");
+        }
+      }
+ else {
+        NetworkInfo ni=null;
+        if (isDefaultProvisioning) {
+          ni=mdstDefault.getNetworkInfo();
+        }
+        if (isHipriProvisioning) {
+          ni=mdstHipri.getNetworkInfo();
+        }
+        String url=getMobileProvisioningUrl();
+        if ((ni != null) && (!TextUtils.isEmpty(url))) {
+          setProvNotificationVisible(true,ni.getType(),ni.getExtraInfo(),url);
+        }
+ else {
+          if (DBG)           log("checkMobileProvisioning: provisioning but no url, ignore");
+        }
+      }
+      mIsCheckingMobileProvisioning.set(false);
+      return timeOutMs;
+    }
+    CheckMp checkMp=new CheckMp(mContext,this);
+    CheckMp.CallBack cb=new CheckMp.CallBack(){
+      @Override void onComplete(      Integer result){
+        if (DBG)         log("CheckMp.onComplete: result=" + result);
+        NetworkInfo ni=mNetTrackers[ConnectivityManager.TYPE_MOBILE_HIPRI].getNetworkInfo();
+switch (result) {
+case CMP_RESULT_CODE_CONNECTABLE:
+case CMP_RESULT_CODE_NO_CONNECTION:
+{
+            if (DBG)             log("CheckMp.onComplete: ignore, connected or no connection");
+            break;
+          }
+case CMP_RESULT_CODE_REDIRECTED:
+{
+          if (DBG)           log("CheckMp.onComplete: warm sim");
+          String url=getMobileProvisioningUrl();
+          if (TextUtils.isEmpty(url)) {
+            url=getMobileRedirectedProvisioningUrl();
+          }
+          if (TextUtils.isEmpty(url) == false) {
+            if (DBG)             log("CheckMp.onComplete: warm (redirected), url=" + url);
+            setProvNotificationVisible(true,ni.getType(),ni.getExtraInfo(),url);
+          }
+ else {
+            if (DBG)             log("CheckMp.onComplete: warm (redirected), no url");
+          }
+          break;
+        }
+case CMP_RESULT_CODE_NO_DNS:
+case CMP_RESULT_CODE_NO_TCP_CONNECTION:
+{
+        String url=getMobileProvisioningUrl();
+        if (TextUtils.isEmpty(url) == false) {
+          if (DBG)           log("CheckMp.onComplete: warm (no dns/tcp), url=" + url);
+          setProvNotificationVisible(true,ni.getType(),ni.getExtraInfo(),url);
+        }
+ else {
+          if (DBG)           log("CheckMp.onComplete: warm (no dns/tcp), no url");
+        }
+        break;
+      }
+default :
+{
+      loge("CheckMp.onComplete: ignore unexpected result=" + result);
+      break;
+    }
+}
+mIsCheckingMobileProvisioning.set(false);
+}
+}
+;
+CheckMp.Params params=new CheckMp.Params(checkMp.getDefaultUrl(),timeOutMs,cb);
+if (DBG) log("checkMobileProvisioning: params=" + params);
+checkMp.execute(params);
+}
+  finally {
+Binder.restoreCallingIdentity(token);
+if (DBG) log("checkMobileProvisioning: X");
+}
+return timeOutMs;
+}
