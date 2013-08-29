@@ -1,17 +1,27 @@
 {
-  Integer result=ConnectivityManager.CMP_RESULT_CODE_NO_CONNECTION;
+  Integer result=CMP_RESULT_CODE_NO_CONNECTION;
   Uri orgUri=Uri.parse(params.mUrl);
   Random rand=new Random();
   mParams=params;
   if (mCs.isNetworkSupported(ConnectivityManager.TYPE_MOBILE) == false) {
     log("isMobileOk: not mobile capable");
-    result=ConnectivityManager.CMP_RESULT_CODE_NO_CONNECTION;
+    result=CMP_RESULT_CODE_NO_CONNECTION;
     return result;
   }
   try {
-    log("isMobileOk: start hipri url=" + params.mUrl);
-    mCs.setEnableFailFastMobileData(DctConstants.ENABLED);
     long endTime=SystemClock.elapsedRealtime() + params.mTimeOutMs;
+    if (!mCs.isMobileDataStateTrackerReady()) {
+      if (DBG)       log("isMobileOk: mdst is not ready");
+      while (SystemClock.elapsedRealtime() < endTime) {
+        if (mCs.isMobileDataStateTrackerReady()) {
+          if (DBG)           log("isMobileOk: mdst ready, enable fail fast of mobile data");
+          mCs.setEnableFailFastMobileData(DctConstants.ENABLED);
+          break;
+        }
+        sleep(1);
+      }
+    }
+    log("isMobileOk: start hipri url=" + params.mUrl);
     Binder binder=new Binder();
     while (SystemClock.elapsedRealtime() < endTime) {
       int ret=mCs.startUsingNetworkFeature(ConnectivityManager.TYPE_MOBILE,Phone.FEATURE_ENABLE_HIPRI,binder);
@@ -20,19 +30,28 @@
         break;
       }
       if (VDBG)       log("isMobileOk: hipri not started yet");
-      result=ConnectivityManager.CMP_RESULT_CODE_NO_CONNECTION;
+      result=CMP_RESULT_CODE_NO_CONNECTION;
       sleep(1);
     }
     while (SystemClock.elapsedRealtime() < endTime) {
       try {
         NetworkInfo.State state=mCs.getNetworkInfo(ConnectivityManager.TYPE_MOBILE_HIPRI).getState();
         if (state != NetworkInfo.State.CONNECTED) {
-          if (VDBG) {
+          if (true) {
             log("isMobileOk: not connected ni=" + mCs.getNetworkInfo(ConnectivityManager.TYPE_MOBILE_HIPRI));
           }
           sleep(1);
-          result=ConnectivityManager.CMP_RESULT_CODE_NO_CONNECTION;
+          result=CMP_RESULT_CODE_NO_CONNECTION;
           continue;
+        }
+        MobileDataStateTracker mdst=(MobileDataStateTracker)mCs.mNetTrackers[ConnectivityManager.TYPE_MOBILE_HIPRI];
+        if (mdst.isProvisioningNetwork()) {
+          if (DBG)           log("isMobileOk: isProvisioningNetwork is true, no TCP conn");
+          result=CMP_RESULT_CODE_NO_TCP_CONNECTION;
+          return result;
+        }
+ else {
+          if (DBG)           log("isMobileOk: isProvisioningNetwork is false, continue");
         }
         InetAddress[] addresses;
         try {
@@ -40,7 +59,7 @@
         }
  catch (        UnknownHostException e) {
           log("isMobileOk: UnknownHostException");
-          result=ConnectivityManager.CMP_RESULT_CODE_NO_DNS;
+          result=CMP_RESULT_CODE_NO_DNS;
           return result;
         }
         log("isMobileOk: addresses=" + inetAddressesToString(addresses));
@@ -78,10 +97,10 @@
             urlConn.setRequestProperty("Connection","close");
             int responseCode=urlConn.getResponseCode();
             if (responseCode == 204) {
-              result=ConnectivityManager.CMP_RESULT_CODE_CONNECTABLE;
+              result=CMP_RESULT_CODE_CONNECTABLE;
             }
  else {
-              result=ConnectivityManager.CMP_RESULT_CODE_REDIRECTED;
+              result=CMP_RESULT_CODE_REDIRECTED;
             }
             log("isMobileOk: connected responseCode=" + responseCode);
             urlConn.disconnect();
@@ -96,7 +115,7 @@
             }
           }
         }
-        result=ConnectivityManager.CMP_RESULT_CODE_NO_TCP_CONNECTION;
+        result=CMP_RESULT_CODE_NO_TCP_CONNECTION;
         log("isMobileOk: loops|timed out");
         return result;
       }
@@ -111,6 +130,17 @@
     log("isMobileOk: F stop hipri");
     mCs.setEnableFailFastMobileData(DctConstants.DISABLED);
     mCs.stopUsingNetworkFeature(ConnectivityManager.TYPE_MOBILE,Phone.FEATURE_ENABLE_HIPRI);
+    long endTime=SystemClock.elapsedRealtime() + 5000;
+    while (SystemClock.elapsedRealtime() < endTime) {
+      NetworkInfo.State state=mCs.getNetworkInfo(ConnectivityManager.TYPE_MOBILE_HIPRI).getState();
+      if (state != NetworkInfo.State.DISCONNECTED) {
+        if (VDBG) {
+          log("isMobileOk: connected ni=" + mCs.getNetworkInfo(ConnectivityManager.TYPE_MOBILE_HIPRI));
+        }
+        sleep(1);
+        continue;
+      }
+    }
     log("isMobileOk: X result=" + result);
   }
   return result;
