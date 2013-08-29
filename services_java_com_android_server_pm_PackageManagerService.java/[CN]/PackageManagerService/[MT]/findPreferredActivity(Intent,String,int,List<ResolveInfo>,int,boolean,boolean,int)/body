@@ -29,7 +29,20 @@ synchronized (mPackages) {
       final int M=prefs.size();
       for (int i=0; i < M; i++) {
         final PreferredActivity pa=prefs.get(i);
+        if (DEBUG_PREFERRED) {
+          Log.v(TAG,"Checking PreferredActivity ds=" + (pa.countDataSchemes() > 0 ? pa.getDataScheme(0) : "<none>") + "\n  component="+ pa.mPref.mComponent);
+          pa.dump(new PrintStreamPrinter(System.out),"  ");
+        }
         if (pa.mPref.mMatch != match) {
+          if (DEBUG_PREFERRED) {
+            Log.v(TAG,"Skipping bad match " + Integer.toHexString(pa.mPref.mMatch));
+          }
+          continue;
+        }
+        if (always && !pa.mPref.mAlways) {
+          if (DEBUG_PREFERRED) {
+            Log.v(TAG,"Skipping lastChosen entry");
+          }
           continue;
         }
         final ActivityInfo ai=getActivityInfo(pa.mPref.mComponent,flags | PackageManager.GET_DISABLED_COMPONENTS,userId);
@@ -55,15 +68,30 @@ synchronized (mPackages) {
           if (!ri.activityInfo.name.equals(ai.name)) {
             continue;
           }
-          if (!pa.mPref.sameSet(query,priority)) {
-            Slog.i(TAG,"Result set changed, dropping preferred activity for " + intent + " type "+ resolvedType);
+          if (removeMatches) {
             pir.removeFilter(pa);
+            if (DEBUG_PREFERRED) {
+              Log.v(TAG,"Removing match " + pa.mPref.mComponent);
+            }
+            break;
+          }
+          if (always && !pa.mPref.sameSet(query,priority)) {
+            Slog.i(TAG,"Result set changed, dropping preferred activity for " + intent + " type "+ resolvedType);
+            if (DEBUG_PREFERRED) {
+              Log.v(TAG,"Removing preferred activity since set changed " + pa.mPref.mComponent);
+            }
+            pir.removeFilter(pa);
+            PreferredActivity lastChosen=new PreferredActivity(pa,pa.mPref.mMatch,null,pa.mPref.mComponent,false);
+            pir.addFilter(lastChosen);
+            mSettings.writePackageRestrictionsLPr(userId);
             return null;
           }
+          mSettings.writePackageRestrictionsLPr(userId);
           return ri;
         }
       }
     }
+    mSettings.writePackageRestrictionsLPr(userId);
   }
   return null;
 }
