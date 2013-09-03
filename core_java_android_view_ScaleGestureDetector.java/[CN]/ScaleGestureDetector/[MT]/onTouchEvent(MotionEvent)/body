@@ -4,12 +4,16 @@
   }
   mCurrTime=event.getEventTime();
   final int action=event.getActionMasked();
+  if (mDoubleTapScales) {
+    mGestureDetector.onTouchEvent(event);
+  }
   final boolean streamComplete=action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL;
   if (action == MotionEvent.ACTION_DOWN || streamComplete) {
     if (mInProgress) {
       mListener.onScaleEnd(this);
       mInProgress=false;
       mInitialSpan=0;
+      mDoubleTapMode=DOUBLE_TAP_MODE_NONE;
     }
     if (streamComplete) {
       clearTouchHistory();
@@ -21,14 +25,28 @@
   final int skipIndex=pointerUp ? event.getActionIndex() : -1;
   float sumX=0, sumY=0;
   final int count=event.getPointerCount();
-  for (int i=0; i < count; i++) {
-    if (skipIndex == i)     continue;
-    sumX+=event.getX(i);
-    sumY+=event.getY(i);
-  }
   final int div=pointerUp ? count - 1 : count;
-  final float focusX=sumX / div;
-  final float focusY=sumY / div;
+  final float focusX;
+  final float focusY;
+  if (mDoubleTapMode == DOUBLE_TAP_MODE_IN_PROGRESS) {
+    focusX=mDoubleTapEvent.getX();
+    focusY=mDoubleTapEvent.getY();
+    if (event.getY() < focusY) {
+      mEventBeforeOrAboveStartingGestureEvent=true;
+    }
+ else {
+      mEventBeforeOrAboveStartingGestureEvent=false;
+    }
+  }
+ else {
+    for (int i=0; i < count; i++) {
+      if (skipIndex == i)       continue;
+      sumX+=event.getX(i);
+      sumY+=event.getY(i);
+    }
+    focusX=sumX / div;
+    focusY=sumY / div;
+  }
   addTouchHistory(event);
   float devSumX=0, devSumY=0;
   for (int i=0; i < count; i++) {
@@ -41,14 +59,21 @@
   final float devY=devSumY / div;
   final float spanX=devX * 2;
   final float spanY=devY * 2;
-  final float span=FloatMath.sqrt(spanX * spanX + spanY * spanY);
+  final float span;
+  if (inDoubleTapMode()) {
+    span=spanY;
+  }
+ else {
+    span=FloatMath.sqrt(spanX * spanX + spanY * spanY);
+  }
   final boolean wasInProgress=mInProgress;
   mFocusX=focusX;
   mFocusY=focusY;
-  if (mInProgress && (span < mMinSpan || configChanged)) {
+  if (!inDoubleTapMode() && mInProgress && (span < mMinSpan || configChanged)) {
     mListener.onScaleEnd(this);
     mInProgress=false;
     mInitialSpan=span;
+    mDoubleTapMode=DOUBLE_TAP_MODE_NONE;
   }
   if (configChanged) {
     mPrevSpanX=mCurrSpanX=spanX;
