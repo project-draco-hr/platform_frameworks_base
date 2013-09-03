@@ -1,0 +1,49 @@
+{
+  final Bundle openOpts=new Bundle();
+  openOpts.putParcelable(DocumentsContract.EXTRA_THUMBNAIL_SIZE,size);
+  AssetFileDescriptor afd=null;
+  try {
+    afd=resolver.openTypedAssetFileDescriptor(documentUri,"image/*",openOpts,signal);
+    final FileDescriptor fd=afd.getFileDescriptor();
+    final long offset=afd.getStartOffset();
+    final long length=afd.getDeclaredLength();
+    byte[] region=null;
+    if (offset > 0 && length <= 64 * KB_IN_BYTES) {
+      region=new byte[(int)length];
+      Libcore.os.lseek(fd,offset,SEEK_SET);
+      if (IoBridge.read(fd,region,0,region.length) != region.length) {
+        region=null;
+      }
+    }
+    final BitmapFactory.Options opts=new BitmapFactory.Options();
+    opts.inJustDecodeBounds=true;
+    if (region != null) {
+      BitmapFactory.decodeByteArray(region,0,region.length,opts);
+    }
+ else {
+      BitmapFactory.decodeFileDescriptor(fd,null,opts);
+    }
+    final int widthSample=opts.outWidth / size.x;
+    final int heightSample=opts.outHeight / size.y;
+    opts.inJustDecodeBounds=false;
+    opts.inSampleSize=Math.min(widthSample,heightSample);
+    Log.d(TAG,"Decoding with sample size " + opts.inSampleSize);
+    if (region != null) {
+      return BitmapFactory.decodeByteArray(region,0,region.length,opts);
+    }
+ else {
+      return BitmapFactory.decodeFileDescriptor(fd,null,opts);
+    }
+  }
+ catch (  ErrnoException e) {
+    Log.w(TAG,"Failed to load thumbnail for " + documentUri + ": "+ e);
+    return null;
+  }
+catch (  IOException e) {
+    Log.w(TAG,"Failed to load thumbnail for " + documentUri + ": "+ e);
+    return null;
+  }
+ finally {
+    IoUtils.closeQuietly(afd);
+  }
+}
