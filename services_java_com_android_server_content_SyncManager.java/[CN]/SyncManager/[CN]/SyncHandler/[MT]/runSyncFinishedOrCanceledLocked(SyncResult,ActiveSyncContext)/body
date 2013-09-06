@@ -1,11 +1,17 @@
 {
   boolean isLoggable=Log.isLoggable(TAG,Log.VERBOSE);
+  final SyncOperation syncOperation=activeSyncContext.mSyncOperation;
+  final SyncStorageEngine.EndPoint info=syncOperation.target;
   if (activeSyncContext.mIsLinkedToDeath) {
-    activeSyncContext.mSyncAdapter.asBinder().unlinkToDeath(activeSyncContext,0);
+    if (info.target_provider) {
+      activeSyncContext.mSyncAdapter.asBinder().unlinkToDeath(activeSyncContext,0);
+    }
+ else {
+      activeSyncContext.mSyncServiceAdapter.asBinder().unlinkToDeath(activeSyncContext,0);
+    }
     activeSyncContext.mIsLinkedToDeath=false;
   }
   closeActiveSyncContext(activeSyncContext);
-  final SyncOperation syncOperation=activeSyncContext.mSyncOperation;
   final long elapsedTime=SystemClock.elapsedRealtime() - activeSyncContext.mStartTime;
   String historyMessage;
   int downstreamActivity;
@@ -43,18 +49,32 @@
  catch (      RemoteException e) {
       }
     }
+ else     if (activeSyncContext.mSyncServiceAdapter != null) {
+      try {
+        activeSyncContext.mSyncServiceAdapter.cancelSync(activeSyncContext);
+      }
+ catch (      RemoteException e) {
+      }
+    }
     historyMessage=SyncStorageEngine.MESG_CANCELED;
     downstreamActivity=0;
     upstreamActivity=0;
   }
   stopSyncEvent(activeSyncContext.mHistoryRowId,syncOperation,historyMessage,upstreamActivity,downstreamActivity,elapsedTime);
-  if (syncResult != null && syncResult.tooManyDeletions) {
-    installHandleTooManyDeletesNotification(syncOperation.account,syncOperation.authority,syncResult.stats.numDeletes,syncOperation.userId);
+  if (info.target_provider) {
+    if (syncResult != null && syncResult.tooManyDeletions) {
+      installHandleTooManyDeletesNotification(info.account,info.provider,syncResult.stats.numDeletes,info.userId);
+    }
+ else {
+      mNotificationMgr.cancelAsUser(null,info.account.hashCode() ^ info.provider.hashCode(),new UserHandle(info.userId));
+    }
+    if (syncResult != null && syncResult.fullSyncRequested) {
+      scheduleSyncOperation(new SyncOperation(info.account,info.userId,syncOperation.reason,syncOperation.syncSource,info.provider,new Bundle(),0,0,syncOperation.backoff,syncOperation.delayUntil,syncOperation.allowParallelSyncs));
+    }
   }
  else {
-    mNotificationMgr.cancelAsUser(null,syncOperation.account.hashCode() ^ syncOperation.authority.hashCode(),new UserHandle(syncOperation.userId));
-  }
-  if (syncResult != null && syncResult.fullSyncRequested) {
-    scheduleSyncOperation(new SyncOperation(syncOperation.account,syncOperation.userId,syncOperation.reason,syncOperation.syncSource,syncOperation.authority,new Bundle(),0,0,syncOperation.backoff,syncOperation.delayUntil,syncOperation.allowParallelSyncs));
+    if (syncResult != null && syncResult.fullSyncRequested) {
+      scheduleSyncOperation(new SyncOperation(info.service,info.userId,syncOperation.reason,syncOperation.syncSource,new Bundle(),0,0,syncOperation.backoff,syncOperation.delayUntil));
+    }
   }
 }
