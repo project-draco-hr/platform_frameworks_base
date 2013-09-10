@@ -26,48 +26,69 @@
   final int docFlags=getCursorInt(cursor,Document.COLUMN_FLAGS);
   final String docSummary=getCursorString(cursor,Document.COLUMN_SUMMARY);
   final long docSize=getCursorLong(cursor,Document.COLUMN_SIZE);
-  final ImageView icon=(ImageView)convertView.findViewById(android.R.id.icon);
+  final View icon=convertView.findViewById(android.R.id.icon);
+  final ImageView iconMime=(ImageView)convertView.findViewById(R.id.icon_mime);
+  final ImageView iconThumb=(ImageView)convertView.findViewById(R.id.icon_thumb);
   final TextView title=(TextView)convertView.findViewById(android.R.id.title);
   final View line2=convertView.findViewById(R.id.line2);
   final ImageView icon1=(ImageView)convertView.findViewById(android.R.id.icon1);
   final TextView summary=(TextView)convertView.findViewById(android.R.id.summary);
   final TextView date=(TextView)convertView.findViewById(R.id.date);
   final TextView size=(TextView)convertView.findViewById(R.id.size);
-  final ThumbnailAsyncTask oldTask=(ThumbnailAsyncTask)icon.getTag();
+  final ThumbnailAsyncTask oldTask=(ThumbnailAsyncTask)iconThumb.getTag();
   if (oldTask != null) {
-    oldTask.cancel(false);
+    oldTask.reallyCancel();
+    iconThumb.setTag(null);
   }
+  iconMime.animate().cancel();
+  iconThumb.animate().cancel();
   final boolean supportsThumbnail=(docFlags & Document.FLAG_SUPPORTS_THUMBNAIL) != 0;
   final boolean allowThumbnail=(state.derivedMode == MODE_GRID) || MimePredicate.mimeMatches(LIST_THUMBNAIL_MIMES,docMimeType);
+  boolean cacheHit=false;
   if (supportsThumbnail && allowThumbnail) {
     final Uri uri=DocumentsContract.buildDocumentUri(docAuthority,docId);
     final Bitmap cachedResult=thumbs.get(uri);
     if (cachedResult != null) {
-      icon.setImageBitmap(cachedResult);
+      iconThumb.setImageBitmap(cachedResult);
+      cacheHit=true;
     }
  else {
-      final ThumbnailAsyncTask task=new ThumbnailAsyncTask(icon,mThumbSize);
-      icon.setImageBitmap(null);
-      icon.setTag(task);
-      task.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR,uri);
+      iconThumb.setImageDrawable(null);
+      final ThumbnailAsyncTask task=new ThumbnailAsyncTask(uri,iconMime,iconThumb,mThumbSize);
+      iconThumb.setTag(task);
+      task.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
     }
   }
- else   if (docIcon != 0) {
-    icon.setImageDrawable(IconUtils.loadPackageIcon(context,docAuthority,docIcon));
+  if (cacheHit) {
+    iconMime.setAlpha(0f);
+    iconThumb.setAlpha(1f);
   }
  else {
-    icon.setImageDrawable(IconUtils.loadMimeIcon(context,docMimeType));
+    iconMime.setAlpha(1f);
+    iconThumb.setAlpha(0f);
+    if (docIcon != 0) {
+      iconMime.setImageDrawable(IconUtils.loadPackageIcon(context,docAuthority,docIcon));
+    }
+ else {
+      iconMime.setImageDrawable(IconUtils.loadMimeIcon(context,docMimeType));
+    }
   }
   title.setText(docDisplayName);
   boolean hasLine2=false;
   if (mType == TYPE_RECENT_OPEN) {
     final RootInfo root=roots.getRoot(docAuthority,docRootId);
+    final Drawable iconDrawable=root.loadIcon(context);
     icon1.setVisibility(View.VISIBLE);
-    icon1.setImageDrawable(root.loadIcon(context));
-    summary.setText(root.getDirectoryString());
-    summary.setVisibility(View.VISIBLE);
-    summary.setTextAlignment(TextView.TEXT_ALIGNMENT_TEXT_END);
-    hasLine2=true;
+    icon1.setImageDrawable(iconDrawable);
+    if (iconDrawable != null && roots.isIconUnique(root)) {
+      summary.setVisibility(View.INVISIBLE);
+    }
+ else {
+      summary.setText(root.getDirectoryString());
+      summary.setVisibility(View.VISIBLE);
+      summary.setTextAlignment(TextView.TEXT_ALIGNMENT_TEXT_END);
+      hasLine2=true;
+    }
   }
  else {
     icon1.setVisibility(View.GONE);
