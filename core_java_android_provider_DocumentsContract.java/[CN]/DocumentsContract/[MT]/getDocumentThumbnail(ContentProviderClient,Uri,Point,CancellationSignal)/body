@@ -1,0 +1,51 @@
+{
+  final Bundle openOpts=new Bundle();
+  openOpts.putParcelable(DocumentsContract.EXTRA_THUMBNAIL_SIZE,size);
+  AssetFileDescriptor afd=null;
+  try {
+    afd=client.openTypedAssetFileDescriptor(documentUri,"image/*",openOpts,signal);
+    final FileDescriptor fd=afd.getFileDescriptor();
+    final long offset=afd.getStartOffset();
+    BufferedInputStream is=null;
+    try {
+      Libcore.os.lseek(fd,offset,SEEK_SET);
+    }
+ catch (    ErrnoException e) {
+      is=new BufferedInputStream(new FileInputStream(fd),THUMBNAIL_BUFFER_SIZE);
+      is.mark(THUMBNAIL_BUFFER_SIZE);
+    }
+    final BitmapFactory.Options opts=new BitmapFactory.Options();
+    opts.inJustDecodeBounds=true;
+    if (is != null) {
+      BitmapFactory.decodeStream(is,null,opts);
+    }
+ else {
+      BitmapFactory.decodeFileDescriptor(fd,null,opts);
+    }
+    final int widthSample=opts.outWidth / size.x;
+    final int heightSample=opts.outHeight / size.y;
+    opts.inJustDecodeBounds=false;
+    opts.inSampleSize=Math.min(widthSample,heightSample);
+    Log.d(TAG,"Decoding with sample size " + opts.inSampleSize);
+    if (is != null) {
+      is.reset();
+      return BitmapFactory.decodeStream(is,null,opts);
+    }
+ else {
+      try {
+        Libcore.os.lseek(fd,offset,SEEK_SET);
+      }
+ catch (      ErrnoException e) {
+        e.rethrowAsIOException();
+      }
+      return BitmapFactory.decodeFileDescriptor(fd,null,opts);
+    }
+  }
+ catch (  IOException e) {
+    Log.w(TAG,"Failed to load thumbnail for " + documentUri + ": "+ e);
+    return null;
+  }
+ finally {
+    IoUtils.closeQuietly(afd);
+  }
+}
