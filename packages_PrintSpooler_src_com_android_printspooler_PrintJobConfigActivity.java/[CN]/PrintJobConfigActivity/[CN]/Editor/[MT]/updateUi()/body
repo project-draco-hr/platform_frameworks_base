@@ -19,7 +19,7 @@
     Object item=mDestinationSpinnerAdapter.getItem(selectedIndex);
     if (item instanceof PrinterInfo) {
       PrinterInfo printer=(PrinterInfo)item;
-      if (printer.getCapabilities() != null) {
+      if (printer.getCapabilities() != null && printer.getStatus() != PrinterInfo.STATUS_UNAVAILABLE) {
         allOptionsEnabled=true;
       }
     }
@@ -32,12 +32,12 @@
     }
     mCopiesEditText.setEnabled(false);
     if (mMediaSizeSpinner.getSelectedItemPosition() != AdapterView.INVALID_POSITION) {
-      mIgnoreNextMediaSizeChange=true;
+      mOldMediaSizeSelectionIndex=AdapterView.INVALID_POSITION;
       mMediaSizeSpinner.setSelection(AdapterView.INVALID_POSITION);
     }
     mMediaSizeSpinner.setEnabled(false);
     if (mColorModeSpinner.getSelectedItemPosition() != AdapterView.INVALID_POSITION) {
-      mIgnoreNextColorModeChange=true;
+      mOldColorModeSelectionIndex=AdapterView.INVALID_POSITION;
       mColorModeSpinner.setSelection(AdapterView.INVALID_POSITION);
     }
     mColorModeSpinner.setEnabled(false);
@@ -64,9 +64,9 @@
   }
  else {
     boolean someAttributeSelectionChanged=false;
-    PrintAttributes defaultAttributes=mTempPrintAttributes;
     PrinterInfo printer=(PrinterInfo)mDestinationSpinner.getSelectedItem();
     PrinterCapabilitiesInfo capabilities=printer.getCapabilities();
+    PrintAttributes defaultAttributes=mTempPrintAttributes;
     printer.getCapabilities().getDefaults(defaultAttributes);
     List<MediaSize> mediaSizes=capabilities.getMediaSizes();
     boolean mediaSizesChanged=false;
@@ -93,19 +93,15 @@
         }
         mMediaSizeSpinnerAdapter.add(new SpinnerItem<MediaSize>(mediaSize,mediaSize.getLabel(getPackageManager())));
       }
-      if (mediaSizeCount <= 0) {
-        mMediaSizeSpinner.setEnabled(false);
-        someAttributeSelectionChanged=setMediaSizeSpinnerSelectionNoCallback(AdapterView.INVALID_POSITION);
+      mMediaSizeSpinner.setEnabled(true);
+      if (oldMediaSizeNewIndex != AdapterView.INVALID_POSITION) {
+        setMediaSizeSpinnerSelectionNoCallback(oldMediaSizeNewIndex);
       }
  else {
-        mMediaSizeSpinner.setEnabled(true);
-        if (oldMediaSizeNewIndex != AdapterView.INVALID_POSITION) {
-          setMediaSizeSpinnerSelectionNoCallback(oldMediaSizeNewIndex);
-        }
- else {
-          final int mediaSizeIndex=Math.max(mediaSizes.indexOf(defaultAttributes.getMediaSize()),0);
-          someAttributeSelectionChanged=setMediaSizeSpinnerSelectionNoCallback(mediaSizeIndex);
-        }
+        final int mediaSizeIndex=Math.max(mediaSizes.indexOf(defaultAttributes.getMediaSize()),0);
+        setMediaSizeSpinnerSelectionNoCallback(mediaSizeIndex);
+        mCurrPrintAttributes.setMediaSize(mMediaSizeSpinnerAdapter.getItem(mediaSizeIndex).value);
+        someAttributeSelectionChanged=true;
       }
     }
     mMediaSizeSpinner.setEnabled(true);
@@ -143,23 +139,27 @@
         remainingColorModes&=~colorMode;
         mColorModeSpinnerAdapter.add(new SpinnerItem<Integer>(colorMode,colorModeLabels[colorBitOffset]));
       }
-      final int colorModeCount=Integer.bitCount(colorModes);
-      if (colorModeCount <= 0) {
-        mColorModeSpinner.setEnabled(false);
-        mColorModeSpinner.setSelection(AdapterView.INVALID_POSITION);
+      mColorModeSpinner.setEnabled(true);
+      if (oldColorModeNewIndex != AdapterView.INVALID_POSITION) {
+        setColorModeSpinnerSelectionNoCallback(oldColorModeNewIndex);
       }
  else {
-        mColorModeSpinner.setEnabled(true);
-        if (oldColorModeNewIndex != AdapterView.INVALID_POSITION) {
-          setColorModeSpinnerSelectionNoCallback(oldColorModeNewIndex);
-        }
- else {
-          final int selectedColorModeIndex=Integer.numberOfTrailingZeros((colorModes & defaultAttributes.getColorMode()));
-          someAttributeSelectionChanged=setColorModeSpinnerSelectionNoCallback(selectedColorModeIndex);
-        }
+        final int selectedColorModeIndex=Integer.numberOfTrailingZeros((colorModes & defaultAttributes.getColorMode()));
+        setColorModeSpinnerSelectionNoCallback(selectedColorModeIndex);
+        mCurrPrintAttributes.setColorMode(mColorModeSpinnerAdapter.getItem(selectedColorModeIndex).value);
+        someAttributeSelectionChanged=true;
       }
     }
     mColorModeSpinner.setEnabled(true);
+    MediaSize mediaSize=mCurrPrintAttributes.getMediaSize();
+    if (mediaSize.isPortrait() && mOrientationSpinner.getSelectedItemPosition() != 0) {
+      mIgnoreNextOrientationChange=true;
+      mOrientationSpinner.setSelection(0);
+    }
+ else     if (!mediaSize.isPortrait() && mOrientationSpinner.getSelectedItemPosition() != 1) {
+      mIgnoreNextOrientationChange=true;
+      mOrientationSpinner.setSelection(1);
+    }
     mOrientationSpinner.setEnabled(true);
     PrintDocumentInfo info=mDocument.info;
     if (info != null && (info.getPageCount() > 0 || info.getPageCount() == PrintDocumentInfo.PAGE_COUNT_UNKNOWN)) {
