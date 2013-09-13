@@ -1,5 +1,5 @@
 {
-  if (DEBUG_SERVICE)   Slog.v(TAG,"startService: " + service + " type="+ resolvedType+ " args="+ service.getExtras());
+  if (DEBUG_DELAYED_STATS)   Slog.v(TAG,"startService: " + service + " type="+ resolvedType+ " args="+ service.getExtras());
   final boolean callerFg;
   if (caller != null) {
     final ProcessRecord callerApp=mAm.getRecordForAppLocked(caller);
@@ -25,18 +25,45 @@
   }
   r.lastActivity=SystemClock.uptimeMillis();
   r.startRequested=true;
-  ProcessStats.ServiceState stracker=r.getTracker();
-  if (stracker != null) {
-    stracker.setStarted(true,mAm.mProcessStats.getMemFactorLocked(),r.lastActivity);
-  }
-  r.callStart=false;
+  r.delayedStop=false;
   r.pendingStarts.add(new ServiceRecord.StartItem(r,false,r.makeNextStartId(),service,neededGrants));
-synchronized (r.stats.getBatteryStats()) {
-    r.stats.startRunningLocked();
+  final ServiceMap smap=getServiceMap(r.userId);
+  boolean addToStarting=false;
+  if (!callerFg && r.app == null && mAm.mStartedUsers.get(r.userId) != null) {
+    ProcessRecord proc=mAm.getProcessRecordLocked(r.processName,r.appInfo.uid);
+    if (proc == null || proc.curProcState >= ActivityManager.PROCESS_STATE_RECEIVER) {
+      if (DEBUG_DELAYED_SERVICE)       Slog.v(TAG,"Potential start delay of " + r + " in "+ proc);
+      if (r.delayed) {
+        if (DEBUG_DELAYED_STATS)         Slog.v(TAG,"Continuing to delay: " + r);
+        return r.name;
+      }
+      if (smap.mStartingBackground.size() >= mMaxStartingBackground) {
+        Slog.i(TAG,"Delaying start of: " + r);
+        smap.mDelayedStartList.add(r);
+        r.delayed=true;
+        return r.name;
+      }
+      if (DEBUG_DELAYED_STATS)       Slog.v(TAG,"Not delaying: " + r);
+      addToStarting=true;
+    }
+ else     if (proc.curProcState >= ActivityManager.PROCESS_STATE_SERVICE) {
+      addToStarting=true;
+      if (DEBUG_DELAYED_STATS)       Slog.v(TAG,"Not delaying, but counting as bg: " + r);
+    }
+ else     if (DEBUG_DELAYED_STATS) {
+      Slog.v(TAG,"Not potential delay (state=" + proc.curProcState + " "+ proc.makeAdjReason()+ "): "+ r);
+    }
   }
-  String error=bringUpServiceLocked(r,service.getFlags(),callerFg,false);
-  if (error != null) {
-    return new ComponentName("!!",error);
+ else   if (DEBUG_DELAYED_STATS) {
+    if (callerFg) {
+      Slog.v(TAG,"Not potential delay (callerFg=" + callerFg + " uid="+ callingUid+ " pid="+ callingPid+ "): "+ r);
+    }
+ else     if (r.app != null) {
+      Slog.v(TAG,"Not potential delay (cur app=" + r.app + "): "+ r);
+    }
+ else {
+      Slog.v(TAG,"Not potential delay (user " + r.userId + " not started): "+ r);
+    }
   }
-  return r.name;
+  return startServiceInnerLocked(smap,service,r,callerFg,addToStarting);
 }
