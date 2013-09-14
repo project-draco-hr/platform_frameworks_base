@@ -60,6 +60,7 @@
   String[] innerArgs=new String[args.length - opti];
   System.arraycopy(args,opti,innerArgs,0,args.length - opti);
   ArrayList<MemItem> procMems=new ArrayList<MemItem>();
+  final SparseArray<MemItem> procMemsMap=new SparseArray<MemItem>();
   long nativePss=0, dalvikPss=0, otherPss=0;
   long[] miscPss=new long[Debug.MemoryInfo.NUM_OTHER_STATS];
   long oomPss[]=new long[DUMP_MEM_OOM_LABEL.length];
@@ -120,6 +121,7 @@ synchronized (this) {
         totalPss+=myTotalPss;
         MemItem pssItem=new MemItem(r.processName + " (pid " + pid+ (hasActivities ? " / activities)" : ")"),r.processName,myTotalPss,pid,hasActivities);
         procMems.add(pssItem);
+        procMemsMap.put(pid,pssItem);
         nativePss+=mi.nativePss;
         dalvikPss+=mi.dalvikPss;
         otherPss+=mi.otherPss;
@@ -145,6 +147,42 @@ synchronized (this) {
     }
   }
   if (!isCheckinRequest && procs.size() > 1) {
+    updateCpuStatsNow();
+synchronized (mProcessCpuThread) {
+      final int N=mProcessCpuTracker.countStats();
+      for (int i=0; i < N; i++) {
+        ProcessCpuTracker.Stats st=mProcessCpuTracker.getStats(i);
+        if (st.vsize > 0 && procMemsMap.indexOfKey(st.pid) < 0) {
+          if (mi == null) {
+            mi=new Debug.MemoryInfo();
+          }
+          if (!brief && !oomOnly) {
+            Debug.getMemoryInfo(st.pid,mi);
+          }
+ else {
+            mi.nativePss=(int)Debug.getPss(st.pid,tmpLong);
+            mi.nativePrivateDirty=(int)tmpLong[0];
+          }
+          final long myTotalPss=mi.getTotalPss();
+          totalPss+=myTotalPss;
+          MemItem pssItem=new MemItem(st.name + " (pid " + st.pid+ ")",st.name,myTotalPss,st.pid,false);
+          procMems.add(pssItem);
+          nativePss+=mi.nativePss;
+          dalvikPss+=mi.dalvikPss;
+          otherPss+=mi.otherPss;
+          for (int j=0; j < Debug.MemoryInfo.NUM_OTHER_STATS; j++) {
+            long mem=mi.getOtherPss(j);
+            miscPss[j]+=mem;
+            otherPss-=mem;
+          }
+          oomPss[0]+=myTotalPss;
+          if (oomProcs[0] == null) {
+            oomProcs[0]=new ArrayList<MemItem>();
+          }
+          oomProcs[0].add(pssItem);
+        }
+      }
+    }
     ArrayList<MemItem> catMems=new ArrayList<MemItem>();
     catMems.add(new MemItem("Native","Native",nativePss,-1));
     catMems.add(new MemItem("Dalvik","Dalvik",dalvikPss,-2));
@@ -160,66 +198,6 @@ synchronized (this) {
         MemItem item=new MemItem(label,label,oomPss[j],DUMP_MEM_OOM_ADJ[j]);
         item.subitems=oomProcs[j];
         oomMems.add(item);
-      }
-    }
-    if (outTag != null || outStack != null) {
-      if (outTag != null) {
-        appendMemBucket(outTag,totalPss,"total",false);
-      }
-      if (outStack != null) {
-        appendMemBucket(outStack,totalPss,"total",true);
-      }
-      boolean firstLine=true;
-      for (int i=0; i < oomMems.size(); i++) {
-        MemItem miCat=oomMems.get(i);
-        if (miCat.subitems == null || miCat.subitems.size() < 1) {
-          continue;
-        }
-        if (miCat.id < ProcessList.SERVICE_ADJ || miCat.id == ProcessList.HOME_APP_ADJ || miCat.id == ProcessList.PREVIOUS_APP_ADJ) {
-          if (outTag != null && miCat.id <= ProcessList.FOREGROUND_APP_ADJ) {
-            outTag.append(" / ");
-          }
-          if (outStack != null) {
-            if (miCat.id >= ProcessList.FOREGROUND_APP_ADJ) {
-              if (firstLine) {
-                outStack.append(":");
-                firstLine=false;
-              }
-              outStack.append("\n\t at ");
-            }
- else {
-              outStack.append("$");
-            }
-          }
-          for (int j=0; j < miCat.subitems.size(); j++) {
-            MemItem memi=miCat.subitems.get(j);
-            if (j > 0) {
-              if (outTag != null) {
-                outTag.append(" ");
-              }
-              if (outStack != null) {
-                outStack.append("$");
-              }
-            }
-            if (outTag != null && miCat.id <= ProcessList.FOREGROUND_APP_ADJ) {
-              appendMemBucket(outTag,memi.pss,memi.shortLabel,false);
-            }
-            if (outStack != null) {
-              appendMemBucket(outStack,memi.pss,memi.shortLabel,true);
-            }
-          }
-          if (outStack != null && miCat.id >= ProcessList.FOREGROUND_APP_ADJ) {
-            outStack.append("(");
-            for (int k=0; k < DUMP_MEM_OOM_ADJ.length; k++) {
-              if (DUMP_MEM_OOM_ADJ[k] == miCat.id) {
-                outStack.append(DUMP_MEM_OOM_LABEL[k]);
-                outStack.append(":");
-                outStack.append(DUMP_MEM_OOM_ADJ[k]);
-              }
-            }
-            outStack.append(")");
-          }
-        }
       }
     }
     if (!brief && !oomOnly && !isCompact) {
