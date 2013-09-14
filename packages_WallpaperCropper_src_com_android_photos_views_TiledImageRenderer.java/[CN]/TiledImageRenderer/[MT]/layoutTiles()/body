@@ -1,0 +1,56 @@
+{
+  if (mViewWidth == 0 || mViewHeight == 0 || !mLayoutTiles) {
+    return;
+  }
+  mLayoutTiles=false;
+  int fromLevel;
+  int endLevel;
+  mLevel=Utils.clamp(Utils.floorLog2(1f / mScale),0,mLevelCount);
+  if (mLevel != mLevelCount) {
+    Rect range=mTileRange;
+    getRange(range,mCenterX,mCenterY,mLevel,mScale,mRotation);
+    mOffsetX=Math.round(mViewWidth / 2f + (range.left - mCenterX) * mScale);
+    mOffsetY=Math.round(mViewHeight / 2f + (range.top - mCenterY) * mScale);
+    fromLevel=mScale * (1 << mLevel) > 0.75f ? mLevel - 1 : mLevel;
+  }
+ else {
+    fromLevel=mLevel - 2;
+    mOffsetX=Math.round(mViewWidth / 2f - mCenterX * mScale);
+    mOffsetY=Math.round(mViewHeight / 2f - mCenterY * mScale);
+  }
+  fromLevel=Math.max(0,Math.min(fromLevel,mLevelCount - 2));
+  endLevel=Math.min(fromLevel + 2,mLevelCount);
+  Rect range[]=mActiveRange;
+  for (int i=fromLevel; i < endLevel; ++i) {
+    getRange(range[i - fromLevel],mCenterX,mCenterY,i,mRotation);
+  }
+  if (mRotation % 90 != 0) {
+    return;
+  }
+synchronized (mQueueLock) {
+    mDecodeQueue.clean();
+    mUploadQueue.clean();
+    mBackgroundTileUploaded=false;
+    int n=mActiveTiles.size();
+    for (int i=0; i < n; i++) {
+      Tile tile=mActiveTiles.valueAt(i);
+      int level=tile.mTileLevel;
+      if (level < fromLevel || level >= endLevel || !range[level - fromLevel].contains(tile.mX,tile.mY)) {
+        mActiveTiles.removeAt(i);
+        i--;
+        n--;
+        recycleTile(tile);
+      }
+    }
+  }
+  for (int i=fromLevel; i < endLevel; ++i) {
+    int size=mTileSize << i;
+    Rect r=range[i - fromLevel];
+    for (int y=r.top, bottom=r.bottom; y < bottom; y+=size) {
+      for (int x=r.left, right=r.right; x < right; x+=size) {
+        activateTile(x,y,i);
+      }
+    }
+  }
+  invalidate();
+}
