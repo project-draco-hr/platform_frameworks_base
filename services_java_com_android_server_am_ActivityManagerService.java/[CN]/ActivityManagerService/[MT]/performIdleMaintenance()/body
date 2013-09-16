@@ -1,0 +1,38 @@
+{
+  if (checkCallingPermission(android.Manifest.permission.SET_ACTIVITY_WATCHER) != PackageManager.PERMISSION_GRANTED) {
+    throw new SecurityException("Requires permission " + android.Manifest.permission.SET_ACTIVITY_WATCHER);
+  }
+synchronized (this) {
+    final long now=SystemClock.uptimeMillis();
+    final long timeSinceLastIdle=now - mLastIdleTime;
+    final long lowRamSinceLastIdle=getLowRamTimeSinceIdle(now);
+    mLastIdleTime=now;
+    mLowRamTimeSinceLastIdle=0;
+    if (mLowRamStartTime != 0) {
+      mLowRamStartTime=now;
+    }
+    StringBuilder sb=new StringBuilder(128);
+    sb.append("Idle maintenance over ");
+    TimeUtils.formatDuration(timeSinceLastIdle,sb);
+    sb.append(" low RAM for ");
+    TimeUtils.formatDuration(lowRamSinceLastIdle,sb);
+    Slog.i(TAG,sb.toString());
+    boolean doKilling=lowRamSinceLastIdle > (timeSinceLastIdle / 3);
+    for (int i=mLruProcesses.size() - 1; i >= 0; i--) {
+      ProcessRecord proc=mLruProcesses.get(i);
+      if (proc.notCachedSinceIdle) {
+        if (proc.setProcState > ActivityManager.PROCESS_STATE_TOP && proc.setProcState <= ActivityManager.PROCESS_STATE_SERVICE) {
+          if (doKilling && proc.initialIdlePss != 0 && proc.lastPss > ((proc.initialIdlePss * 3) / 2)) {
+            killUnneededProcessLocked(proc,"idle maint (pss " + proc.lastPss + " from "+ proc.initialIdlePss+ ")");
+          }
+        }
+      }
+ else       if (proc.setProcState < ActivityManager.PROCESS_STATE_HOME) {
+        proc.notCachedSinceIdle=true;
+        proc.initialIdlePss=0;
+      }
+    }
+    mHandler.removeMessages(REQUEST_ALL_PSS_MSG);
+    mHandler.sendEmptyMessageDelayed(REQUEST_ALL_PSS_MSG,2 * 60 * 1000);
+  }
+}
