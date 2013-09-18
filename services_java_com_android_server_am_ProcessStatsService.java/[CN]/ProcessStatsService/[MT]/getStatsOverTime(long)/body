@@ -1,0 +1,68 @@
+{
+  mAm.mContext.enforceCallingOrSelfPermission(android.Manifest.permission.PACKAGE_USAGE_STATS,null);
+  mWriteLock.lock();
+  try {
+    Parcel current=Parcel.obtain();
+    long curTime;
+synchronized (mAm) {
+      mProcessStats.mTimePeriodEndRealtime=SystemClock.elapsedRealtime();
+      mProcessStats.writeToParcel(current,0);
+      curTime=mProcessStats.mTimePeriodEndRealtime - mProcessStats.mTimePeriodStartRealtime;
+    }
+    if (curTime < minTime) {
+      ArrayList<String> files=getCommittedFiles(0,false,true);
+      if (files.size() > 0) {
+        current.setDataPosition(0);
+        ProcessStats stats=ProcessStats.CREATOR.createFromParcel(current);
+        current.recycle();
+        int i=0;
+        while (i < files.size() && (stats.mTimePeriodEndRealtime - stats.mTimePeriodStartRealtime) < minTime) {
+          AtomicFile file=new AtomicFile(new File(files.get(i)));
+          i++;
+          ProcessStats moreStats=new ProcessStats(false);
+          readLocked(moreStats,file);
+          if (moreStats.mReadError == null) {
+            stats.add(moreStats);
+            StringBuilder sb=new StringBuilder();
+            sb.append("Added stats: ");
+            sb.append(moreStats.mTimePeriodStartClockStr);
+            sb.append(", over ");
+            TimeUtils.formatDuration(moreStats.mTimePeriodEndRealtime - moreStats.mTimePeriodStartRealtime,sb);
+            Slog.i(TAG,sb.toString());
+          }
+ else {
+            Slog.w(TAG,"Failure reading " + files.get(i) + "; "+ moreStats.mReadError);
+            continue;
+          }
+        }
+        current=Parcel.obtain();
+        stats.writeToParcel(current,0);
+      }
+    }
+    final byte[] outData=current.marshall();
+    current.recycle();
+    final ParcelFileDescriptor[] fds=ParcelFileDescriptor.createPipe();
+    Thread thr=new Thread("ProcessStats pipe output"){
+      public void run(){
+        FileOutputStream fout=new ParcelFileDescriptor.AutoCloseOutputStream(fds[1]);
+        try {
+          fout.write(outData);
+          fout.close();
+        }
+ catch (        IOException e) {
+          Slog.w(TAG,"Failure writing pipe",e);
+        }
+      }
+    }
+;
+    thr.start();
+    return fds[0];
+  }
+ catch (  IOException e) {
+    Slog.w(TAG,"Failed building output pipe",e);
+  }
+ finally {
+    mWriteLock.unlock();
+  }
+  return null;
+}
