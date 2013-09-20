@@ -1,0 +1,37 @@
+{
+  final long start=SystemClock.elapsedRealtime();
+  final Multimap<String,RootInfo> roots=ArrayListMultimap.create();
+  final HashSet<String> stoppedAuthorities=Sets.newHashSet();
+  final ContentResolver resolver=mContext.getContentResolver();
+  final PackageManager pm=mContext.getPackageManager();
+  final List<ProviderInfo> providers=pm.queryContentProviders(null,-1,PackageManager.GET_META_DATA);
+  for (  ProviderInfo info : providers) {
+    if (info.metaData != null && info.metaData.containsKey(DocumentsContract.META_DATA_DOCUMENT_PROVIDER)) {
+      if ((info.applicationInfo.flags & ApplicationInfo.FLAG_STOPPED) != 0) {
+        if (LOGD)         Log.d(TAG,"Ignoring stopped authority " + info.authority);
+        stoppedAuthorities.add(info.authority);
+        continue;
+      }
+      boolean cacheHit=false;
+      if (mFilterPackage != null && !mFilterPackage.equals(info.packageName)) {
+synchronized (mLock) {
+          if (roots.putAll(info.authority,mRoots.get(info.authority))) {
+            if (LOGD)             Log.d(TAG,"Used cached roots for " + info.authority);
+            cacheHit=true;
+          }
+        }
+      }
+      if (!cacheHit) {
+        roots.putAll(info.authority,loadRootsForAuthority(resolver,info.authority));
+      }
+    }
+  }
+  final long delta=SystemClock.elapsedRealtime() - start;
+  Log.d(TAG,"Update found " + roots.size() + " roots in "+ delta+ "ms");
+synchronized (mLock) {
+    mStoppedAuthorities=stoppedAuthorities;
+    mRoots=roots;
+  }
+  mFirstLoad.countDown();
+  return null;
+}
