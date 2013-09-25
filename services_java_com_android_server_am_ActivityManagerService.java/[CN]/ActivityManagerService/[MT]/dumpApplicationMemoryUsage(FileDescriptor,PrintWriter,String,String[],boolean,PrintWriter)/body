@@ -1,5 +1,6 @@
 {
   boolean dumpDetails=false;
+  boolean dumpFullDetails=false;
   boolean dumpDalvik=false;
   boolean oomOnly=false;
   boolean isCompact=false;
@@ -12,6 +13,7 @@
     opti++;
     if ("-a".equals(opt)) {
       dumpDetails=true;
+      dumpFullDetails=true;
       dumpDalvik=true;
     }
  else     if ("-d".equals(opt)) {
@@ -98,7 +100,7 @@ synchronized (this) {
       if (dumpDetails) {
         try {
           pw.flush();
-          thread.dumpMemInfo(fd,mi,isCheckinRequest,true,dumpDalvik,innerArgs);
+          thread.dumpMemInfo(fd,mi,isCheckinRequest,dumpFullDetails,dumpDalvik,innerArgs);
         }
  catch (        RemoteException e) {
           if (!isCheckinRequest) {
@@ -218,32 +220,68 @@ synchronized (mProcessCpuThread) {
     if (!isCompact) {
       pw.println();
     }
+    MemInfoReader memInfo=new MemInfoReader();
+    memInfo.readMemInfo();
     if (!brief) {
-      MemInfoReader memInfo=new MemInfoReader();
-      memInfo.readMemInfo();
       if (!isCompact) {
         pw.print("Total RAM: ");
-        pw.print(memInfo.getTotalSize() / 1024);
+        pw.print(memInfo.getTotalSizeKb());
         pw.println(" kB");
         pw.print(" Free RAM: ");
-        pw.print(cachedPss + (memInfo.getCachedSize() / 1024) + (memInfo.getFreeSize() / 1024));
-        pw.println(" kB");
+        pw.print(cachedPss + memInfo.getCachedSizeKb() + memInfo.getFreeSizeKb());
+        pw.print(" kB (");
+        pw.print(cachedPss);
+        pw.print(" cached pss + ");
+        pw.print(memInfo.getCachedSizeKb());
+        pw.print(" cached + ");
+        pw.print(memInfo.getFreeSizeKb());
+        pw.println(" free)");
       }
  else {
         pw.print("ram,");
-        pw.print(memInfo.getTotalSize() / 1024);
+        pw.print(memInfo.getTotalSizeKb());
         pw.print(",");
-        pw.print(cachedPss + (memInfo.getCachedSize() / 1024) + (memInfo.getFreeSize() / 1024));
+        pw.print(cachedPss + memInfo.getCachedSizeKb() + memInfo.getFreeSizeKb());
         pw.print(",");
         pw.println(totalPss - cachedPss);
       }
     }
     if (!isCompact) {
-      pw.print(" Used PSS: ");
+      pw.print(" Used RAM: ");
+      pw.print(totalPss - cachedPss + memInfo.getBuffersSizeKb() + memInfo.getShmemSizeKb() + memInfo.getSlabSizeKb());
+      pw.print(" kB (");
       pw.print(totalPss - cachedPss);
+      pw.print(" used pss + ");
+      pw.print(memInfo.getBuffersSizeKb());
+      pw.print(" buffers + ");
+      pw.print(memInfo.getShmemSizeKb());
+      pw.print(" shmem + ");
+      pw.print(memInfo.getSlabSizeKb());
+      pw.println(" slab)");
+      pw.print(" Lost RAM: ");
+      pw.print(memInfo.getTotalSizeKb() - totalPss - memInfo.getFreeSizeKb()- memInfo.getCachedSizeKb()- memInfo.getBuffersSizeKb()- memInfo.getShmemSizeKb()- memInfo.getSlabSizeKb());
       pw.println(" kB");
     }
     if (!brief) {
+      if (memInfo.getZramTotalSizeKb() != 0) {
+        if (!isCompact) {
+          pw.print("     ZRAM: ");
+          pw.print(memInfo.getZramTotalSizeKb());
+          pw.print(" kB used for ");
+          pw.print(memInfo.getSwapTotalSizeKb() - memInfo.getSwapFreeSizeKb());
+          pw.print(" kB in swap (");
+          pw.print(memInfo.getSwapTotalSizeKb());
+          pw.println(" kB total swap)");
+        }
+ else {
+          pw.print("zram,");
+          pw.print(memInfo.getZramTotalSizeKb());
+          pw.print(",");
+          pw.print(memInfo.getSwapTotalSizeKb());
+          pw.print(",");
+          pw.println(memInfo.getSwapFreeSizeKb());
+        }
+      }
       final int[] SINGLE_LONG_FORMAT=new int[]{Process.PROC_SPACE_TERM | Process.PROC_OUT_LONG};
       long[] longOut=new long[1];
       Process.readProcFile("/sys/kernel/mm/ksm/pages_shared",SINGLE_LONG_FORMAT,null,longOut,null);
@@ -276,6 +314,9 @@ synchronized (mProcessCpuThread) {
         pw.print(ActivityManager.staticGetLargeMemoryClass());
         pw.print("), oom ");
         pw.print(mProcessList.getMemLevel(ProcessList.CACHED_APP_MAX_ADJ) / 1024);
+        pw.print(" kB");
+        pw.print(", restore limit ");
+        pw.print(mProcessList.getCachedRestoreThresholdKb());
         pw.print(" kB");
         if (ActivityManager.isLowRamDeviceStatic()) {
           pw.print(" (low-ram)");
