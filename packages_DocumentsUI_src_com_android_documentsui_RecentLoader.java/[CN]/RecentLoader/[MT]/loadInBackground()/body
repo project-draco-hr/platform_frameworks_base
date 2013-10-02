@@ -1,4 +1,5 @@
 {
+  final ExecutorService executor=getExecutor(getContext());
   if (mFirstPassLatch == null) {
     final Collection<RootInfo> roots=mRoots.getMatchingRootsBlocking(mState);
     for (    RootInfo root : roots) {
@@ -9,7 +10,7 @@
     }
     mFirstPassLatch=new CountDownLatch(mTasks.size());
     for (    RecentTask task : mTasks.values()) {
-      sExecutor.execute(task);
+      executor.execute(task);
     }
     try {
       mFirstPassLatch.await(MAX_FIRST_PASS_WAIT_MILLIS,TimeUnit.MILLISECONDS);
@@ -20,11 +21,13 @@
     }
   }
   final long rejectBefore=System.currentTimeMillis() - REJECT_OLDER_THAN;
+  boolean allDone=true;
   List<Cursor> cursors=Lists.newArrayList();
   for (  RecentTask task : mTasks.values()) {
     if (task.isDone()) {
       try {
         final Cursor cursor=task.get();
+        if (cursor == null)         continue;
         final FilteringCursorWrapper filtered=new FilteringCursorWrapper(cursor,mState.acceptMimes,RECENT_REJECT_MIMES,rejectBefore){
           @Override public void close(){
           }
@@ -36,21 +39,29 @@
         throw new RuntimeException(e);
       }
 catch (      ExecutionException e) {
-        Log.w(TAG,"Failed to load " + task.authority + ", "+ task.rootId,e);
       }
+    }
+ else {
+      allDone=false;
     }
   }
   if (LOGD) {
     Log.d(TAG,"Found " + cursors.size() + " of "+ mTasks.size()+ " recent queries done");
-    Log.d(TAG,sExecutor.toString());
+    Log.d(TAG,executor.toString());
   }
   final DirectoryResult result=new DirectoryResult();
   result.sortOrder=SORT_ORDER_LAST_MODIFIED;
   final Bundle extras=new Bundle();
-  if (cursors.size() != mTasks.size()) {
+  if (!allDone) {
     extras.putBoolean(DocumentsContract.EXTRA_LOADING,true);
   }
-  final MergeCursor merged=new MergeCursor(cursors.toArray(new Cursor[cursors.size()]));
+  final Cursor merged;
+  if (cursors.size() > 0) {
+    merged=new MergeCursor(cursors.toArray(new Cursor[cursors.size()]));
+  }
+ else {
+    merged=new MatrixCursor(new String[0]);
+  }
   final SortingCursorWrapper sorted=new SortingCursorWrapper(merged,result.sortOrder){
     @Override public Bundle getExtras(){
       return extras;
