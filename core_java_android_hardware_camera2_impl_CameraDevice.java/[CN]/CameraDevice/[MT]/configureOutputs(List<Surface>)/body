@@ -1,5 +1,9 @@
 {
+  if (outputs == null) {
+    outputs=new ArrayList<Surface>();
+  }
 synchronized (mLock) {
+    checkIfCameraClosed();
     HashSet<Surface> addSet=new HashSet<Surface>(outputs);
     List<Integer> deleteList=new ArrayList<Integer>();
     for (int i=0; i < mConfiguredOutputs.size(); ++i) {
@@ -12,7 +16,10 @@ synchronized (mLock) {
         addSet.remove(s);
       }
     }
+    mDeviceHandler.post(mCallOnBusy);
+    stopRepeating();
     try {
+      mRemoteDevice.waitUntilIdle();
       for (      Integer streamId : deleteList) {
         mRemoteDevice.deleteStream(streamId);
         mConfiguredOutputs.delete(streamId);
@@ -24,12 +31,18 @@ synchronized (mLock) {
     }
  catch (    CameraRuntimeException e) {
       if (e.getReason() == CAMERA_IN_USE) {
-        throw new IllegalStateException("The camera is currently busy." + " You must call waitUntilIdle before trying to reconfigure.");
+        throw new IllegalStateException("The camera is currently busy." + " You must wait until the previous operation completes.");
       }
       throw e.asChecked();
     }
 catch (    RemoteException e) {
       return;
+    }
+    if (outputs.size() > 0) {
+      mDeviceHandler.post(mCallOnIdle);
+    }
+ else {
+      mDeviceHandler.post(mCallOnUnconfigured);
     }
   }
 }
