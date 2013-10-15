@@ -17,6 +17,23 @@
   }
   if (mInStream != null) {
     Rect roundedTrueCrop=new Rect();
+    Matrix rotateMatrix=new Matrix();
+    Matrix inverseRotateMatrix=new Matrix();
+    if (mRotation > 0) {
+      rotateMatrix.setRotate(mRotation);
+      inverseRotateMatrix.setRotate(-mRotation);
+      mCropBounds.roundOut(roundedTrueCrop);
+      mCropBounds=new RectF(roundedTrueCrop);
+      Point bounds=getImageBounds();
+      float[] rotatedBounds=new float[]{bounds.x,bounds.y};
+      rotateMatrix.mapPoints(rotatedBounds);
+      rotatedBounds[0]=Math.abs(rotatedBounds[0]);
+      rotatedBounds[1]=Math.abs(rotatedBounds[1]);
+      mCropBounds.offset(-rotatedBounds[0] / 2,-rotatedBounds[1] / 2);
+      inverseRotateMatrix.mapRect(mCropBounds);
+      mCropBounds.offset(bounds.x / 2,bounds.y / 2);
+      regenerateInputStream();
+    }
     mCropBounds.roundOut(roundedTrueCrop);
     if (roundedTrueCrop.width() <= 0 || roundedTrueCrop.height() <= 0) {
       Log.w(LOGTAG,"crop has bad values for full size image");
@@ -51,6 +68,11 @@
         fullSize=BitmapFactory.decodeStream(mInStream,null,options);
       }
       if (fullSize != null) {
+        mCropBounds.left/=scaleDownSampleSize;
+        mCropBounds.top/=scaleDownSampleSize;
+        mCropBounds.bottom/=scaleDownSampleSize;
+        mCropBounds.right/=scaleDownSampleSize;
+        mCropBounds.roundOut(roundedTrueCrop);
         crop=Bitmap.createBitmap(fullSize,roundedTrueCrop.left,roundedTrueCrop.top,roundedTrueCrop.width(),roundedTrueCrop.height());
       }
     }
@@ -59,30 +81,42 @@
       failure=true;
       return false;
     }
-    if (mOutWidth > 0 && mOutHeight > 0) {
-      Matrix m=new Matrix();
-      RectF cropRect=new RectF(0,0,crop.getWidth(),crop.getHeight());
-      if (mRotation > 0) {
-        m.setRotate(mRotation);
-        m.mapRect(cropRect);
+    if (mOutWidth > 0 && mOutHeight > 0 || mRotation > 0) {
+      float[] dimsAfter=new float[]{crop.getWidth(),crop.getHeight()};
+      rotateMatrix.mapPoints(dimsAfter);
+      dimsAfter[0]=Math.abs(dimsAfter[0]);
+      dimsAfter[1]=Math.abs(dimsAfter[1]);
+      if (!(mOutWidth > 0 && mOutHeight > 0)) {
+        mOutWidth=Math.round(dimsAfter[0]);
+        mOutHeight=Math.round(dimsAfter[1]);
       }
+      RectF cropRect=new RectF(0,0,dimsAfter[0],dimsAfter[1]);
       RectF returnRect=new RectF(0,0,mOutWidth,mOutHeight);
-      m.setRectToRect(cropRect,returnRect,Matrix.ScaleToFit.FILL);
-      m.preRotate(mRotation);
+      Matrix m=new Matrix();
+      if (mRotation == 0) {
+        m.setRectToRect(cropRect,returnRect,Matrix.ScaleToFit.FILL);
+      }
+ else {
+        Matrix m1=new Matrix();
+        m1.setTranslate(-crop.getWidth() / 2f,-crop.getHeight() / 2f);
+        Matrix m2=new Matrix();
+        m2.setRotate(mRotation);
+        Matrix m3=new Matrix();
+        m3.setTranslate(dimsAfter[0] / 2f,dimsAfter[1] / 2f);
+        Matrix m4=new Matrix();
+        m4.setRectToRect(cropRect,returnRect,Matrix.ScaleToFit.FILL);
+        Matrix c1=new Matrix();
+        c1.setConcat(m2,m1);
+        Matrix c2=new Matrix();
+        c2.setConcat(m4,m3);
+        m.setConcat(c2,c1);
+      }
       Bitmap tmp=Bitmap.createBitmap((int)returnRect.width(),(int)returnRect.height(),Bitmap.Config.ARGB_8888);
       if (tmp != null) {
         Canvas c=new Canvas(tmp);
         Paint p=new Paint();
         p.setFilterBitmap(true);
         c.drawBitmap(crop,m,p);
-        crop=tmp;
-      }
-    }
- else     if (mRotation > 0) {
-      Matrix m=new Matrix();
-      m.setRotate(mRotation);
-      Bitmap tmp=Bitmap.createBitmap(crop,0,0,crop.getWidth(),crop.getHeight(),m,true);
-      if (tmp != null) {
         crop=tmp;
       }
     }
