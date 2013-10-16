@@ -1,0 +1,33 @@
+{
+  OutputPort outPort=getConnectedOutputPort("image");
+  FrameImage2D inputImage=getConnectedInputPort("image").pullFrame().asFrameImage2D();
+  int[] dim=inputImage.getDimensions();
+  FrameBuffer2D outputFrame;
+  ByteBuffer grayBuffer;
+  if (isOpenGLSupported()) {
+    int modular=dim[0] % 4;
+    int[] outDim=new int[]{dim[0] - modular,dim[1]};
+    outputFrame=outPort.fetchAvailableFrame(outDim).asFrameBuffer2D();
+    grayBuffer=outputFrame.lockBytes(Frame.MODE_WRITE);
+    int[] targetDims=new int[]{outDim[0] / 4,outDim[1]};
+    FrameImage2D targetFrame=Frame.create(mImageInType,targetDims).asFrameImage2D();
+    mShader.setSourceQuad(Quad.fromRect(0f,0f,((float)outDim[0]) / dim[0],1f));
+    mShader.setUniformValue("pix_stride",1f / outDim[0]);
+    mShader.process(inputImage,targetFrame);
+    RenderTarget grayTarget=targetFrame.lockRenderTarget();
+    grayTarget.readPixelData(grayBuffer,targetDims[0],targetDims[1]);
+    targetFrame.unlock();
+    targetFrame.release();
+  }
+ else {
+    outputFrame=outPort.fetchAvailableFrame(dim).asFrameBuffer2D();
+    grayBuffer=outputFrame.lockBytes(Frame.MODE_WRITE);
+    ByteBuffer inputBuffer=inputImage.lockBytes(Frame.MODE_READ);
+    if (!toGrayValues(inputBuffer,grayBuffer)) {
+      throw new RuntimeException("Native implementation encountered an error during processing!");
+    }
+    inputImage.unlock();
+  }
+  outputFrame.unlock();
+  outPort.pushFrame(outputFrame);
+}
