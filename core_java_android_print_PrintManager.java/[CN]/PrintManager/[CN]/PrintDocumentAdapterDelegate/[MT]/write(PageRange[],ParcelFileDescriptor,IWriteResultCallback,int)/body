@@ -1,20 +1,29 @@
 {
+  final boolean destroyed;
 synchronized (mLock) {
-    if (!mStartReqeusted || mFinishRequested) {
-      return;
+    destroyed=mDestroyed;
+    if (mStartReqeusted && !mFinishRequested && !mDestroyed) {
+      if (mLastWriteSpec != null) {
+        IoUtils.closeQuietly(mLastWriteSpec.fd);
+        mLastWriteSpec=null;
+      }
+      mLastWriteSpec=new WriteSpec();
+      mLastWriteSpec.callback=callback;
+      mLastWriteSpec.pages=pages;
+      mLastWriteSpec.fd=fd;
+      mLastWriteSpec.sequence=sequence;
+      if (cancelPreviousCancellableOperationLocked()) {
+        return;
+      }
+      doPendingWorkLocked();
     }
-    if (mLastWriteSpec != null) {
-      IoUtils.closeQuietly(mLastWriteSpec.fd);
-      mLastWriteSpec=null;
+  }
+  if (destroyed) {
+    try {
+      callback.onWriteFailed(null,sequence);
     }
-    mLastWriteSpec=new WriteSpec();
-    mLastWriteSpec.callback=callback;
-    mLastWriteSpec.pages=pages;
-    mLastWriteSpec.fd=fd;
-    mLastWriteSpec.sequence=sequence;
-    if (cancelPreviousCancellableOperationLocked()) {
-      return;
+ catch (    RemoteException re) {
+      Log.i(LOG_TAG,"Error notifying for cancelled write",re);
     }
-    doPendingWorkLocked();
   }
 }
