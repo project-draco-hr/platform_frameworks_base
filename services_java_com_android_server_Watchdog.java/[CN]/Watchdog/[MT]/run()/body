@@ -5,12 +5,10 @@
     final String subject;
     final boolean allowRestart;
 synchronized (this) {
-      long timeout=TIME_TO_WAIT;
-      if (!waitedHalf) {
-        for (int i=0; i < mHandlerCheckers.size(); i++) {
-          HandlerChecker hc=mHandlerCheckers.get(i);
-          hc.scheduleCheckLocked();
-        }
+      long timeout=CHECK_INTERVAL;
+      for (int i=0; i < mHandlerCheckers.size(); i++) {
+        HandlerChecker hc=mHandlerCheckers.get(i);
+        hc.scheduleCheckLocked();
       }
       long start=SystemClock.uptimeMillis();
       while (timeout > 0) {
@@ -20,17 +18,23 @@ synchronized (this) {
  catch (        InterruptedException e) {
           Log.wtf(TAG,e);
         }
-        timeout=TIME_TO_WAIT - (SystemClock.uptimeMillis() - start);
+        timeout=CHECK_INTERVAL - (SystemClock.uptimeMillis() - start);
       }
-      if (haveAllCheckersCompletedLocked()) {
+      final int waitState=evaluateCheckerCompletionLocked();
+      if (waitState == COMPLETED) {
         waitedHalf=false;
         continue;
       }
-      if (!waitedHalf) {
-        ArrayList<Integer> pids=new ArrayList<Integer>();
-        pids.add(Process.myPid());
-        ActivityManagerService.dumpStackTraces(true,pids,null,null,NATIVE_STACKS_OF_INTEREST);
-        waitedHalf=true;
+ else       if (waitState == WAITING) {
+        continue;
+      }
+ else       if (waitState == WAITED_HALF) {
+        if (!waitedHalf) {
+          ArrayList<Integer> pids=new ArrayList<Integer>();
+          pids.add(Process.myPid());
+          ActivityManagerService.dumpStackTraces(true,pids,null,null,NATIVE_STACKS_OF_INTEREST);
+          waitedHalf=true;
+        }
         continue;
       }
       blockedCheckers=getBlockedCheckersLocked();
