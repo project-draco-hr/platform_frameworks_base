@@ -2,27 +2,39 @@
   if (DBG) {
     Log.d(TAG,"FileSynthesisRequest.start(" + sampleRateInHz + ","+ audioFormat+ ","+ channelCount+ ")");
   }
+  FileChannel fileChannel=null;
 synchronized (mStateLock) {
-    if (mStopped) {
+    if (mStatusCode == TextToSpeechClient.Status.STOPPED) {
       if (DBG)       Log.d(TAG,"Request has been aborted.");
+      return errorCodeOnStop();
+    }
+    if (mStatusCode != TextToSpeechClient.Status.SUCCESS) {
+      if (DBG)       Log.d(TAG,"Error was raised");
       return TextToSpeech.ERROR;
     }
     if (mStarted) {
-      cleanUp();
-      throw new IllegalArgumentException("FileSynthesisRequest.start() called twice");
+      Log.e(TAG,"Start called twice");
+      return TextToSpeech.ERROR;
     }
     mStarted=true;
     mSampleRateInHz=sampleRateInHz;
     mAudioFormat=audioFormat;
     mChannelCount=channelCount;
-    try {
-      mFileChannel.write(ByteBuffer.allocate(WAV_HEADER_LENGTH));
-      return TextToSpeech.SUCCESS;
+    if (mDispatcher != null) {
+      mDispatcher.dispatchOnStart();
     }
- catch (    IOException ex) {
-      Log.e(TAG,"Failed to write wav header to output file descriptor" + ex);
+    fileChannel=mFileChannel;
+  }
+  try {
+    fileChannel.write(ByteBuffer.allocate(WAV_HEADER_LENGTH));
+    return TextToSpeech.SUCCESS;
+  }
+ catch (  IOException ex) {
+    Log.e(TAG,"Failed to write wav header to output file descriptor",ex);
+synchronized (mStateLock) {
       cleanUp();
-      return TextToSpeech.ERROR;
+      mStatusCode=TextToSpeechClient.Status.ERROR_OUTPUT;
     }
+    return TextToSpeech.ERROR;
   }
 }

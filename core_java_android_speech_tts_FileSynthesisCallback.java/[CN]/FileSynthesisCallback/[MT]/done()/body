@@ -1,30 +1,49 @@
 {
   if (DBG)   Log.d(TAG,"FileSynthesisRequest.done()");
+  FileChannel fileChannel=null;
+  int sampleRateInHz=0;
+  int audioFormat=0;
+  int channelCount=0;
 synchronized (mStateLock) {
     if (mDone) {
-      if (DBG)       Log.d(TAG,"Duplicate call to done()");
+      Log.w(TAG,"Duplicate call to done()");
       return TextToSpeech.ERROR;
     }
-    if (mStopped) {
+    if (mStatusCode == TextToSpeechClient.Status.STOPPED) {
       if (DBG)       Log.d(TAG,"Request has been aborted.");
+      return errorCodeOnStop();
+    }
+    if (mDispatcher != null && mStatusCode != TextToSpeechClient.Status.SUCCESS && mStatusCode != TextToSpeechClient.Status.STOPPED) {
+      mDispatcher.dispatchOnError(mStatusCode);
       return TextToSpeech.ERROR;
     }
     if (mFileChannel == null) {
       Log.e(TAG,"File not open");
       return TextToSpeech.ERROR;
     }
-    try {
-      mFileChannel.position(0);
-      int dataLength=(int)(mFileChannel.size() - WAV_HEADER_LENGTH);
-      mFileChannel.write(makeWavHeader(mSampleRateInHz,mAudioFormat,mChannelCount,dataLength));
+    mDone=true;
+    fileChannel=mFileChannel;
+    sampleRateInHz=mSampleRateInHz;
+    audioFormat=mAudioFormat;
+    channelCount=mChannelCount;
+  }
+  try {
+    fileChannel.position(0);
+    int dataLength=(int)(fileChannel.size() - WAV_HEADER_LENGTH);
+    fileChannel.write(makeWavHeader(sampleRateInHz,audioFormat,channelCount,dataLength));
+synchronized (mStateLock) {
       closeFile();
-      mDone=true;
+      if (mDispatcher != null) {
+        mDispatcher.dispatchOnSuccess();
+      }
       return TextToSpeech.SUCCESS;
     }
- catch (    IOException ex) {
-      Log.e(TAG,"Failed to write to output file descriptor",ex);
+  }
+ catch (  IOException ex) {
+    Log.e(TAG,"Failed to write to output file descriptor",ex);
+synchronized (mStateLock) {
       cleanUp();
-      return TextToSpeech.ERROR;
     }
+    return TextToSpeech.ERROR;
   }
 }
