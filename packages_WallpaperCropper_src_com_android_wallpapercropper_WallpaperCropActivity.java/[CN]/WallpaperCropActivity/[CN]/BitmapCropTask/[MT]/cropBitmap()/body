@@ -1,13 +1,16 @@
 {
   boolean failure=false;
-  regenerateInputStream();
   WallpaperManager wallpaperManager=null;
   if (mSetWallpaper) {
     wallpaperManager=WallpaperManager.getInstance(mContext.getApplicationContext());
   }
-  if (mSetWallpaper && mNoCrop && mInStream != null) {
+  if (mSetWallpaper && mNoCrop) {
     try {
-      wallpaperManager.setStream(mInStream);
+      InputStream is=regenerateInputStream();
+      if (is != null) {
+        wallpaperManager.setStream(is);
+        Utils.closeSilently(is);
+      }
     }
  catch (    IOException e) {
       Log.w(LOGTAG,"cannot write stream to wallpaper",e);
@@ -15,7 +18,7 @@
     }
     return !failure;
   }
-  if (mInStream != null) {
+ else {
     Rect roundedTrueCrop=new Rect();
     Matrix rotateMatrix=new Matrix();
     Matrix inverseRotateMatrix=new Matrix();
@@ -25,6 +28,11 @@
       mCropBounds.roundOut(roundedTrueCrop);
       mCropBounds=new RectF(roundedTrueCrop);
       Point bounds=getImageBounds();
+      if (bounds == null) {
+        Log.w(LOGTAG,"cannot get bounds for image");
+        failure=true;
+        return false;
+      }
       float[] rotatedBounds=new float[]{bounds.x,bounds.y};
       rotateMatrix.mapPoints(rotatedBounds);
       rotatedBounds[0]=Math.abs(rotatedBounds[0]);
@@ -32,7 +40,6 @@
       mCropBounds.offset(-rotatedBounds[0] / 2,-rotatedBounds[1] / 2);
       inverseRotateMatrix.mapRect(mCropBounds);
       mCropBounds.offset(bounds.x / 2,bounds.y / 2);
-      regenerateInputStream();
     }
     mCropBounds.roundOut(roundedTrueCrop);
     if (roundedTrueCrop.width() <= 0 || roundedTrueCrop.height() <= 0) {
@@ -43,7 +50,14 @@
     int scaleDownSampleSize=Math.min(roundedTrueCrop.width() / mOutWidth,roundedTrueCrop.height() / mOutHeight);
     BitmapRegionDecoder decoder=null;
     try {
-      decoder=BitmapRegionDecoder.newInstance(mInStream,true);
+      InputStream is=regenerateInputStream();
+      if (is == null) {
+        Log.w(LOGTAG,"cannot get input stream for uri=" + mInUri.toString());
+        failure=true;
+        return false;
+      }
+      decoder=BitmapRegionDecoder.newInstance(is,false);
+      Utils.closeSilently(is);
     }
  catch (    IOException e) {
       Log.w(LOGTAG,"cannot open region decoder for file: " + mInUri.toString(),e);
@@ -58,14 +72,15 @@
       decoder.recycle();
     }
     if (crop == null) {
-      regenerateInputStream();
+      InputStream is=regenerateInputStream();
       Bitmap fullSize=null;
-      if (mInStream != null) {
+      if (is != null) {
         BitmapFactory.Options options=new BitmapFactory.Options();
         if (scaleDownSampleSize > 1) {
           options.inSampleSize=scaleDownSampleSize;
         }
-        fullSize=BitmapFactory.decodeStream(mInStream,null,options);
+        fullSize=BitmapFactory.decodeStream(is,null,options);
+        Utils.closeSilently(is);
       }
       if (fullSize != null) {
         mCropBounds.left/=scaleDownSampleSize;
