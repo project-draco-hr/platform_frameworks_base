@@ -29,7 +29,7 @@
           mCs.setEnableFailFastMobileData(DctConstants.ENABLED);
           break;
         }
-        sleep(1);
+        sleep(POLLING_SLEEP_SEC);
       }
     }
     log("isMobileOk: start hipri url=" + params.mUrl);
@@ -42,7 +42,7 @@
       }
       if (VDBG)       log("isMobileOk: hipri not started yet");
       result=CMP_RESULT_CODE_NO_CONNECTION;
-      sleep(1);
+      sleep(POLLING_SLEEP_SEC);
     }
     while (SystemClock.elapsedRealtime() < endTime) {
       try {
@@ -51,7 +51,7 @@
           if (true) {
             log("isMobileOk: not connected ni=" + mCs.getNetworkInfo(ConnectivityManager.TYPE_MOBILE_HIPRI));
           }
-          sleep(1);
+          sleep(POLLING_SLEEP_SEC);
           result=CMP_RESULT_CODE_NO_CONNECTION;
           continue;
         }
@@ -89,28 +89,34 @@
         }
         int addrTried=0;
         while (true) {
-          if (addrTried++ >= 3) {
-            log("too many loops tried - giving up");
+          if (addrTried++ >= MAX_LOOPS) {
+            log("isMobileOk: too many loops tried - giving up");
             break;
           }
           if (SystemClock.elapsedRealtime() >= endTime) {
-            log("spend too much time - giving up");
+            log("isMobileOk: spend too much time - giving up");
             break;
           }
           InetAddress hostAddr=validAddresses.get(rand.nextInt(validAddresses.size()));
           if (mCs.requestRouteToHostAddress(ConnectivityManager.TYPE_MOBILE_HIPRI,hostAddr.getAddress())) {
             log("isMobileOk:" + " wait to establish route to hostAddr=" + hostAddr);
-            sleep(3);
+            sleep(NET_ROUTE_ESTABLISHMENT_SLEEP_SEC);
           }
  else {
             log("isMobileOk:" + " could not establish route to hostAddr=" + hostAddr);
+            sleep(NET_ERROR_SLEEP_SEC);
             continue;
           }
-          URL newUrl=new URL(orgUri.getScheme(),hostAddr.getHostAddress(),orgUri.getPath() + "?q=" + rand.nextInt(Integer.MAX_VALUE));
+          URL newUrl;
+          String scheme=(addrTried <= (MAX_LOOPS / 2)) ? "https" : "http";
+          newUrl=new URL(scheme,hostAddr.getHostAddress(),orgUri.getPath());
           log("isMobileOk: newUrl=" + newUrl);
           HttpURLConnection urlConn=null;
           try {
             urlConn=(HttpURLConnection)newUrl.openConnection(java.net.Proxy.NO_PROXY);
+            if (scheme.equals("https")) {
+              ((HttpsURLConnection)urlConn).setHostnameVerifier(new CheckMpHostnameVerifier(orgUri));
+            }
             urlConn.setInstanceFollowRedirects(false);
             urlConn.setConnectTimeout(SOCKET_TIMEOUT_MS);
             urlConn.setReadTimeout(SOCKET_TIMEOUT_MS);
@@ -122,9 +128,14 @@
             log("isMobileOk: headers=" + headers);
             urlConn.disconnect();
             urlConn=null;
+            if (mTestingFailures) {
+              result=CMP_RESULT_CODE_NO_CONNECTION;
+              log("isMobileOk: TESTING_FAILURES, pretend no connction");
+              continue;
+            }
             if (responseCode == 204) {
               result=CMP_RESULT_CODE_CONNECTABLE;
-              log("isMobileOk: X expected responseCode=" + responseCode + " result="+ result);
+              log("isMobileOk: X got expected responseCode=" + responseCode + " result="+ result);
               return result;
             }
  else {
@@ -133,12 +144,14 @@
             }
           }
  catch (          Exception e) {
-            log("isMobileOk: HttpURLConnection Exception e=" + e);
+            log("isMobileOk: HttpURLConnection Exception" + e);
             result=CMP_RESULT_CODE_NO_TCP_CONNECTION;
             if (urlConn != null) {
               urlConn.disconnect();
               urlConn=null;
             }
+            sleep(NET_ERROR_SLEEP_SEC);
+            continue;
           }
         }
         log("isMobileOk: X loops|timed out result=" + result);
@@ -162,7 +175,7 @@
         if (VDBG) {
           log("isMobileOk: connected ni=" + mCs.getNetworkInfo(ConnectivityManager.TYPE_MOBILE_HIPRI));
         }
-        sleep(1);
+        sleep(POLLING_SLEEP_SEC);
         continue;
       }
     }
