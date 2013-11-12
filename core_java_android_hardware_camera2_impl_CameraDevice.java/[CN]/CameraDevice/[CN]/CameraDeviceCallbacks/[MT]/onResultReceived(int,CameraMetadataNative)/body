@@ -3,12 +3,14 @@
     Log.d(TAG,"Received result for id " + requestId);
   }
   final CaptureListenerHolder holder;
+  Boolean quirkPartial=result.get(CaptureResult.QUIRKS_PARTIAL_RESULT);
+  boolean quirkIsPartialResult=(quirkPartial != null && quirkPartial);
 synchronized (mLock) {
     holder=CameraDevice.this.mCaptureListenerMap.get(requestId);
-    if (holder != null && !holder.isRepeating()) {
+    if (holder != null && !holder.isRepeating() && !quirkIsPartialResult) {
       CameraDevice.this.mCaptureListenerMap.remove(requestId);
     }
-    if (holder != null && holder.isRepeating() && mRepeatingRequestIdDeletedList.size() > 0) {
+    if (holder != null && holder.isRepeating() && !quirkIsPartialResult && mRepeatingRequestIdDeletedList.size() > 0) {
       Iterator<Integer> iter=mRepeatingRequestIdDeletedList.iterator();
       while (iter.hasNext()) {
         int deletedRequestId=iter.next();
@@ -25,12 +27,26 @@ synchronized (mLock) {
   if (isClosed())   return;
   final CaptureRequest request=holder.getRequest();
   final CaptureResult resultAsCapture=new CaptureResult(result,request,requestId);
-  holder.getHandler().post(new Runnable(){
-    @Override public void run(){
-      if (!CameraDevice.this.isClosed()) {
-        holder.getListener().onCaptureCompleted(CameraDevice.this,request,resultAsCapture);
+  Runnable resultDispatch=null;
+  if (quirkIsPartialResult) {
+    resultDispatch=new Runnable(){
+      @Override public void run(){
+        if (!CameraDevice.this.isClosed()) {
+          holder.getListener().onCapturePartial(CameraDevice.this,request,resultAsCapture);
+        }
       }
     }
+;
   }
-);
+ else {
+    resultDispatch=new Runnable(){
+      @Override public void run(){
+        if (!CameraDevice.this.isClosed()) {
+          holder.getListener().onCaptureCompleted(CameraDevice.this,request,resultAsCapture);
+        }
+      }
+    }
+;
+  }
+  holder.getHandler().post(resultDispatch);
 }
