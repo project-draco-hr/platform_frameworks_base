@@ -69,29 +69,46 @@
 synchronized (mBackupParticipants) {
     addPackageParticipantsLocked(null);
   }
-  mLocalTransport=new LocalTransport(context);
-  ComponentName localName=new ComponentName(context,LocalTransport.class);
-  registerTransport(localName.flattenToShortString(),mLocalTransport);
-  mGoogleTransport=null;
   mCurrentTransport=Settings.Secure.getString(context.getContentResolver(),Settings.Secure.BACKUP_TRANSPORT);
   if ("".equals(mCurrentTransport)) {
     mCurrentTransport=null;
   }
   if (DEBUG)   Slog.v(TAG,"Starting with transport " + mCurrentTransport);
-  ComponentName transportComponent=new ComponentName("com.google.android.backup","com.google.android.backup.BackupTransportService");
-  try {
-    ApplicationInfo info=mPackageManager.getApplicationInfo(transportComponent.getPackageName(),0);
-    if ((info.flags & ApplicationInfo.FLAG_SYSTEM) != 0) {
-      if (DEBUG)       Slog.v(TAG,"Binding to Google transport");
-      Intent intent=new Intent().setComponent(transportComponent);
-      context.bindServiceAsUser(intent,mGoogleConnection,Context.BIND_AUTO_CREATE,UserHandle.OWNER);
-    }
- else {
-      Slog.w(TAG,"Possible Google transport spoof: ignoring " + info);
-    }
+  Intent transportServiceIntent=new Intent(SERVICE_ACTION_TRANSPORT_HOST);
+  List<ResolveInfo> hosts=mPackageManager.queryIntentServicesAsUser(transportServiceIntent,0,UserHandle.USER_OWNER);
+  if (DEBUG) {
+    Slog.v(TAG,"Found transports: " + ((hosts == null) ? "null" : hosts.size()));
   }
- catch (  PackageManager.NameNotFoundException nnf) {
-    if (DEBUG)     Slog.v(TAG,"Google transport not present");
+  if (hosts != null) {
+    if (MORE_DEBUG) {
+      for (int i=0; i < hosts.size(); i++) {
+        ServiceInfo info=hosts.get(i).serviceInfo;
+        Slog.v(TAG,"   " + info.packageName + "/"+ info.name);
+      }
+    }
+    for (int i=0; i < hosts.size(); i++) {
+      try {
+        ServiceInfo info=hosts.get(i).serviceInfo;
+        PackageInfo packInfo=mPackageManager.getPackageInfo(info.packageName,0);
+        if ((packInfo.applicationInfo.flags & ApplicationInfo.FLAG_PRIVILEGED) != 0) {
+          ComponentName svcName=new ComponentName(info.packageName,info.name);
+          if (DEBUG) {
+            Slog.i(TAG,"Binding to transport host " + svcName);
+          }
+          Intent intent=new Intent(transportServiceIntent);
+          intent.setComponent(svcName);
+          TransportConnection connection=new TransportConnection();
+          mTransportConnections.add(connection);
+          context.bindServiceAsUser(intent,connection,Context.BIND_AUTO_CREATE,UserHandle.OWNER);
+        }
+ else {
+          Slog.w(TAG,"Transport package not privileged: " + info.packageName);
+        }
+      }
+ catch (      Exception e) {
+        Slog.e(TAG,"Problem resolving transport service: " + e.getMessage());
+      }
+    }
   }
   parseLeftoverJournals();
   mWakelock=mPowerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,"*backup*");
