@@ -25,13 +25,24 @@ synchronized (mQueueLock) {
           mJournal=null;
         }
       }
+      boolean staged=true;
       if (queue.size() > 0) {
-        PerformBackupTask pbt=new PerformBackupTask(transport,queue,oldJournal);
-        Message pbtMessage=obtainMessage(MSG_BACKUP_RESTORE_STEP,pbt);
-        sendMessage(pbtMessage);
+        try {
+          String dirName=transport.transportDirName();
+          PerformBackupTask pbt=new PerformBackupTask(transport,dirName,queue,oldJournal);
+          Message pbtMessage=obtainMessage(MSG_BACKUP_RESTORE_STEP,pbt);
+          sendMessage(pbtMessage);
+        }
+ catch (        RemoteException e) {
+          Slog.e(TAG,"Transport became unavailable attempting backup");
+          staged=false;
+        }
       }
  else {
         Slog.v(TAG,"Backup requested but nothing pending");
+        staged=false;
+      }
+      if (!staged) {
 synchronized (mQueueLock) {
           mBackupRunning=false;
         }
@@ -73,7 +84,7 @@ case MSG_RUN_RESTORE:
 {
 RestoreParams params=(RestoreParams)msg.obj;
 Slog.d(TAG,"MSG_RUN_RESTORE observer=" + params.observer);
-PerformRestoreTask task=new PerformRestoreTask(params.transport,params.observer,params.token,params.pkgInfo,params.pmToken,params.needFullBackup,params.filterSet);
+PerformRestoreTask task=new PerformRestoreTask(params.transport,params.dirName,params.observer,params.token,params.pkgInfo,params.pmToken,params.needFullBackup,params.filterSet);
 Message restoreMsg=obtainMessage(MSG_BACKUP_RESTORE_STEP,task);
 sendMessage(restoreMsg);
 break;
@@ -91,6 +102,12 @@ ClearParams params=(ClearParams)msg.obj;
 (new PerformClearTask(params.transport,params.packageInfo)).run();
 break;
 }
+case MSG_RETRY_CLEAR:
+{
+ClearRetryParams params=(ClearRetryParams)msg.obj;
+clearBackupData(params.transportName,params.packageName);
+break;
+}
 case MSG_RUN_INITIALIZE:
 {
 HashSet<String> queue;
@@ -99,6 +116,14 @@ queue=new HashSet<String>(mPendingInits);
 mPendingInits.clear();
 }
 (new PerformInitializeTask(queue)).run();
+break;
+}
+case MSG_RETRY_INIT:
+{
+synchronized (mQueueLock) {
+recordInitPendingLocked(msg.arg1 != 0,(String)msg.obj);
+mAlarmManager.set(AlarmManager.RTC_WAKEUP,System.currentTimeMillis(),mRunInitIntent);
+}
 break;
 }
 case MSG_RUN_GET_RESTORE_SETS:
