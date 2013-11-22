@@ -57,24 +57,25 @@ synchronized (this) {
     info.append(" (").append(activity.shortComponentName).append(")");
   }
   info.append("\n");
+  info.append("PID: ").append(app.pid).append("\n");
   if (annotation != null) {
     info.append("Reason: ").append(annotation).append("\n");
   }
   if (parent != null && parent != activity) {
     info.append("Parent: ").append(parent.shortComponentName).append("\n");
   }
-  final ProcessStats processStats=new ProcessStats(true);
-  File tracesFile=dumpStackTraces(true,firstPids,processStats,lastPids,null);
+  final ProcessCpuTracker processCpuTracker=new ProcessCpuTracker(true);
+  File tracesFile=dumpStackTraces(true,firstPids,processCpuTracker,lastPids,null);
   String cpuInfo=null;
   if (MONITOR_CPU_USAGE) {
     updateCpuStatsNow();
-synchronized (mProcessStatsThread) {
-      cpuInfo=mProcessStats.printCurrentState(anrTime);
+synchronized (mProcessCpuThread) {
+      cpuInfo=mProcessCpuTracker.printCurrentState(anrTime);
     }
-    info.append(processStats.printCurrentLoad());
+    info.append(processCpuTracker.printCurrentLoad());
     info.append(cpuInfo);
   }
-  info.append(processStats.printCurrentState(anrTime));
+  info.append(processCpuTracker.printCurrentState(anrTime));
   Slog.e(TAG,info.toString());
   if (tracesFile == null) {
     Process.sendSignal(app.pid,Process.SIGNAL_QUIT);
@@ -84,7 +85,14 @@ synchronized (mProcessStatsThread) {
     try {
       int res=mController.appNotResponding(app.processName,app.pid,info.toString());
       if (res != 0) {
-        if (res < 0 && app.pid != MY_PID)         Process.killProcess(app.pid);
+        if (res < 0 && app.pid != MY_PID) {
+          Process.killProcess(app.pid);
+        }
+ else {
+synchronized (this) {
+            mServices.scheduleServiceTimeoutLocked(app);
+          }
+        }
         return;
       }
     }
@@ -96,14 +104,12 @@ synchronized (mProcessStatsThread) {
   boolean showBackground=Settings.Secure.getInt(mContext.getContentResolver(),Settings.Secure.ANR_SHOW_BACKGROUND,0) != 0;
 synchronized (this) {
     if (!showBackground && !app.isInterestingToUserLocked() && app.pid != MY_PID) {
-      Slog.w(TAG,"Killing " + app + ": background ANR");
-      EventLog.writeEvent(EventLogTags.AM_KILL,app.userId,app.pid,app.processName,app.setAdj,"background ANR");
-      Process.killProcessQuiet(app.pid);
+      killUnneededProcessLocked(app,"background ANR");
       return;
     }
     makeAppNotRespondingLocked(app,activity != null ? activity.shortComponentName : null,annotation != null ? "ANR " + annotation : "ANR",info.toString());
     Message msg=Message.obtain();
-    HashMap map=new HashMap();
+    HashMap<String,Object> map=new HashMap<String,Object>();
     msg.what=SHOW_NOT_RESPONDING_MSG;
     msg.obj=map;
     msg.arg1=aboveSystem ? 1 : 0;

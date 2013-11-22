@@ -64,7 +64,7 @@ synchronized (bs) {
           String list[]=intent.getStringArrayExtra(Intent.EXTRA_CHANGED_PACKAGE_LIST);
           if (list != null && (list.length > 0)) {
             for (            String pkg : list) {
-              forceStopPackageLocked(pkg,-1,false,true,true,false,userId);
+              forceStopPackageLocked(pkg,-1,false,true,true,false,userId,"storage unmount");
             }
             sendPackageBroadcastLocked(IApplicationThread.EXTERNAL_STORAGE_UNAVAILABLE,list,userId);
           }
@@ -73,13 +73,15 @@ synchronized (bs) {
           Uri data=intent.getData();
           String ssp;
           if (data != null && (ssp=data.getSchemeSpecificPart()) != null) {
+            boolean removed=Intent.ACTION_PACKAGE_REMOVED.equals(intent.getAction());
             if (!intent.getBooleanExtra(Intent.EXTRA_DONT_KILL_APP,false)) {
-              forceStopPackageLocked(ssp,intent.getIntExtra(Intent.EXTRA_UID,-1),false,true,true,false,userId);
+              forceStopPackageLocked(ssp,UserHandle.getAppId(intent.getIntExtra(Intent.EXTRA_UID,-1)),false,true,true,false,userId,removed ? "pkg removed" : "pkg changed");
             }
-            if (Intent.ACTION_PACKAGE_REMOVED.equals(intent.getAction())) {
+            if (removed) {
               sendPackageBroadcastLocked(IApplicationThread.PACKAGE_REMOVED,new String[]{ssp},userId);
               if (!intent.getBooleanExtra(Intent.EXTRA_REPLACING,false)) {
                 mAppOpsService.packageRemoved(intent.getIntExtra(Intent.EXTRA_UID,-1),ssp);
+                removeUriPermissionsForPackageLocked(ssp,userId,true);
               }
             }
           }
@@ -103,11 +105,11 @@ synchronized (bs) {
     mHandler.sendEmptyMessage(UPDATE_TIME_ZONE);
   }
   if (intent.ACTION_CLEAR_DNS_CACHE.equals(intent.getAction())) {
-    mHandler.sendEmptyMessage(CLEAR_DNS_CACHE);
+    mHandler.sendEmptyMessage(CLEAR_DNS_CACHE_MSG);
   }
   if (Proxy.PROXY_CHANGE_ACTION.equals(intent.getAction())) {
     ProxyProperties proxy=intent.getParcelableExtra("proxy");
-    mHandler.sendMessage(mHandler.obtainMessage(UPDATE_HTTP_PROXY,proxy));
+    mHandler.sendMessage(mHandler.obtainMessage(UPDATE_HTTP_PROXY_MSG,proxy));
   }
   if (sticky) {
     if (checkPermission(android.Manifest.permission.BROADCAST_STICKY,callingPid,callingUid) != PackageManager.PERMISSION_GRANTED) {
@@ -123,7 +125,7 @@ synchronized (bs) {
       throw new SecurityException("Sticky broadcasts can't target a specific component");
     }
     if (userId != UserHandle.USER_ALL) {
-      HashMap<String,ArrayList<Intent>> stickies=mStickyBroadcasts.get(UserHandle.USER_ALL);
+      ArrayMap<String,ArrayList<Intent>> stickies=mStickyBroadcasts.get(UserHandle.USER_ALL);
       if (stickies != null) {
         ArrayList<Intent> list=stickies.get(intent.getAction());
         if (list != null) {
@@ -137,9 +139,9 @@ synchronized (bs) {
         }
       }
     }
-    HashMap<String,ArrayList<Intent>> stickies=mStickyBroadcasts.get(userId);
+    ArrayMap<String,ArrayList<Intent>> stickies=mStickyBroadcasts.get(userId);
     if (stickies == null) {
-      stickies=new HashMap<String,ArrayList<Intent>>();
+      stickies=new ArrayMap<String,ArrayList<Intent>>();
       mStickyBroadcasts.put(userId,stickies);
     }
     ArrayList<Intent> list=stickies.get(intent.getAction());
@@ -179,7 +181,7 @@ synchronized (bs) {
   int NR=registeredReceivers != null ? registeredReceivers.size() : 0;
   if (!ordered && NR > 0) {
     final BroadcastQueue queue=broadcastQueueForIntent(intent);
-    BroadcastRecord r=new BroadcastRecord(queue,intent,callerApp,callerPackage,callingPid,callingUid,requiredPermission,appOp,registeredReceivers,resultTo,resultCode,resultData,map,ordered,sticky,false,userId);
+    BroadcastRecord r=new BroadcastRecord(queue,intent,callerApp,callerPackage,callingPid,callingUid,resolvedType,requiredPermission,appOp,registeredReceivers,resultTo,resultCode,resultData,map,ordered,sticky,false,userId);
     if (DEBUG_BROADCAST)     Slog.v(TAG,"Enqueueing parallel broadcast " + r);
     final boolean replaced=replacePending && queue.replaceParallelBroadcastLocked(r);
     if (!replaced) {
@@ -252,7 +254,7 @@ synchronized (bs) {
   }
   if ((receivers != null && receivers.size() > 0) || resultTo != null) {
     BroadcastQueue queue=broadcastQueueForIntent(intent);
-    BroadcastRecord r=new BroadcastRecord(queue,intent,callerApp,callerPackage,callingPid,callingUid,requiredPermission,appOp,receivers,resultTo,resultCode,resultData,map,ordered,sticky,false,userId);
+    BroadcastRecord r=new BroadcastRecord(queue,intent,callerApp,callerPackage,callingPid,callingUid,resolvedType,requiredPermission,appOp,receivers,resultTo,resultCode,resultData,map,ordered,sticky,false,userId);
     if (DEBUG_BROADCAST)     Slog.v(TAG,"Enqueueing ordered broadcast " + r + ": prev had "+ queue.mOrderedBroadcasts.size());
     if (DEBUG_BROADCAST) {
       int seq=r.intent.getIntExtra("seq",-1);

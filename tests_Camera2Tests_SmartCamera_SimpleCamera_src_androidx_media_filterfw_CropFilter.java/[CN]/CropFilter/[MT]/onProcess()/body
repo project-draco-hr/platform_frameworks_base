@@ -1,0 +1,48 @@
+{
+  OutputPort outPort=getConnectedOutputPort("image");
+  FrameImage2D inputImage=getConnectedInputPort("image").pullFrame().asFrameImage2D();
+  int[] inDims=inputImage.getDimensions();
+  int[] croppedDims={(int)FloatMath.ceil(mCropRect.xEdge().length() * inDims[0]),(int)FloatMath.ceil(mCropRect.yEdge().length() * inDims[1])};
+  int[] outDims={getOutputWidth(croppedDims[0],croppedDims[1]),getOutputHeight(croppedDims[0],croppedDims[1])};
+  FrameImage2D outputImage=outPort.fetchAvailableFrame(outDims).asFrameImage2D();
+  if (isOpenGLSupported()) {
+    FrameImage2D sourceFrame;
+    Quad sourceQuad=null;
+    boolean scaleDown=(outDims[0] < croppedDims[0]) || (outDims[1] < croppedDims[1]);
+    if (scaleDown && mUseMipmaps) {
+      mPow2Frame=TransformUtils.makeMipMappedFrame(mPow2Frame,croppedDims);
+      int[] extDims=mPow2Frame.getDimensions();
+      float targetWidth=croppedDims[0] / (float)extDims[0];
+      float targetHeight=croppedDims[1] / (float)extDims[1];
+      Quad targetQuad=Quad.fromRect(0f,0f,targetWidth,targetHeight);
+      mShader.setSourceQuad(mCropRect);
+      mShader.setTargetQuad(targetQuad);
+      mShader.process(inputImage,mPow2Frame);
+      TransformUtils.generateMipMaps(mPow2Frame);
+      sourceFrame=mPow2Frame;
+      sourceQuad=targetQuad;
+    }
+ else {
+      sourceFrame=inputImage;
+      sourceQuad=mCropRect;
+    }
+    mShader.setSourceQuad(sourceQuad);
+    mShader.setTargetRect(0f,0f,1f,1f);
+    mShader.process(sourceFrame,outputImage);
+  }
+ else {
+    Quad sourceQuad=mCropRect.scale2(inDims[0],inDims[1]);
+    Quad targetQuad=Quad.fromRect(0f,0f,inDims[0],inDims[1]);
+    Matrix transform=Quad.getTransform(sourceQuad,targetQuad);
+    transform.postScale(outDims[0] / (float)inDims[0],outDims[1] / (float)inDims[1]);
+    Bitmap.Config config=Bitmap.Config.ARGB_8888;
+    Bitmap cropped=Bitmap.createBitmap(outDims[0],outDims[1],config);
+    Canvas canvas=new Canvas(cropped);
+    Paint paint=new Paint();
+    paint.setFilterBitmap(true);
+    Bitmap sourceBitmap=inputImage.toBitmap();
+    canvas.drawBitmap(sourceBitmap,transform,paint);
+    outputImage.setBitmap(cropped);
+  }
+  outPort.pushFrame(outputImage);
+}

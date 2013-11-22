@@ -1,8 +1,9 @@
 {
   if (index >= 0) {
-    mLruProcesses.remove(index);
+    removeLruProcessLocked(app);
   }
   mProcessesToGc.remove(app);
+  mPendingPssProcesses.remove(app);
   if (app.crashDialog != null && !app.forceCrashReport) {
     app.crashDialog.dismiss();
     app.crashDialog=null;
@@ -17,9 +18,9 @@
   }
   app.crashing=false;
   app.notResponding=false;
-  app.resetPackageList();
+  app.resetPackageList(mProcessStats);
   app.unlinkDeathRecipient();
-  app.thread=null;
+  app.makeInactive(mProcessStats);
   app.forcingToForeground=null;
   app.foregroundServices=false;
   app.foregroundActivities=false;
@@ -27,19 +28,16 @@
   app.hasAboveClient=false;
   mServices.killServicesLocked(app,allowRestart);
   boolean restart=false;
-  if (!app.pubProviders.isEmpty()) {
-    Iterator<ContentProviderRecord> it=app.pubProviders.values().iterator();
-    while (it.hasNext()) {
-      ContentProviderRecord cpr=it.next();
-      final boolean always=app.bad || !allowRestart;
-      if (removeDyingProviderLocked(app,cpr,always) || always) {
-        restart=true;
-      }
-      cpr.provider=null;
-      cpr.proc=null;
+  for (int i=app.pubProviders.size() - 1; i >= 0; i--) {
+    ContentProviderRecord cpr=app.pubProviders.valueAt(i);
+    final boolean always=app.bad || !allowRestart;
+    if (removeDyingProviderLocked(app,cpr,always) || always) {
+      restart=true;
     }
-    app.pubProviders.clear();
+    cpr.provider=null;
+    cpr.proc=null;
   }
+  app.pubProviders.clear();
   if (checkAppInLaunchingProvidersLocked(app,false)) {
     restart=true;
   }
@@ -62,13 +60,10 @@ synchronized (cpr) {
     }
   }
   skipCurrentReceiverLocked(app);
-  if (app.receivers.size() > 0) {
-    Iterator<ReceiverList> it=app.receivers.iterator();
-    while (it.hasNext()) {
-      removeReceiverLocked(it.next());
-    }
-    app.receivers.clear();
+  for (int i=app.receivers.size() - 1; i >= 0; i--) {
+    removeReceiverLocked(app.receivers.valueAt(i));
   }
+  app.receivers.clear();
   if (mBackupTarget != null && app.pid == mBackupTarget.app.pid) {
     if (DEBUG_BACKUP || DEBUG_CLEANUP)     Slog.d(TAG,"App " + mBackupTarget.appInfo + " died during backup");
     try {

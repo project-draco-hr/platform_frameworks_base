@@ -1,0 +1,85 @@
+{
+  if (!mContainExifData) {
+    return EVENT_END;
+  }
+  int offset=mTiffStream.getReadByteCount();
+  int endOfTags=mIfdStartOffset + OFFSET_SIZE + TAG_SIZE * mNumOfTagInIfd;
+  if (offset < endOfTags) {
+    mTag=readTag();
+    if (mTag == null) {
+      return next();
+    }
+    if (mNeedToParseOffsetsInCurrentIfd) {
+      checkOffsetOrImageTag(mTag);
+    }
+    return EVENT_NEW_TAG;
+  }
+ else   if (offset == endOfTags) {
+    if (mIfdType == IfdId.TYPE_IFD_0) {
+      long ifdOffset=readUnsignedLong();
+      if (isIfdRequested(IfdId.TYPE_IFD_1) || isThumbnailRequested()) {
+        if (ifdOffset != 0) {
+          registerIfd(IfdId.TYPE_IFD_1,ifdOffset);
+        }
+      }
+    }
+ else {
+      int offsetSize=4;
+      if (mCorrespondingEvent.size() > 0) {
+        offsetSize=mCorrespondingEvent.firstEntry().getKey() - mTiffStream.getReadByteCount();
+      }
+      if (offsetSize < 4) {
+        Log.w(TAG,"Invalid size of link to next IFD: " + offsetSize);
+      }
+ else {
+        long ifdOffset=readUnsignedLong();
+        if (ifdOffset != 0) {
+          Log.w(TAG,"Invalid link to next IFD: " + ifdOffset);
+        }
+      }
+    }
+  }
+  while (mCorrespondingEvent.size() != 0) {
+    Entry<Integer,Object> entry=mCorrespondingEvent.pollFirstEntry();
+    Object event=entry.getValue();
+    try {
+      skipTo(entry.getKey());
+    }
+ catch (    IOException e) {
+      Log.w(TAG,"Failed to skip to data at: " + entry.getKey() + " for "+ event.getClass().getName()+ ", the file may be broken.");
+      continue;
+    }
+    if (event instanceof IfdEvent) {
+      mIfdType=((IfdEvent)event).ifd;
+      mNumOfTagInIfd=mTiffStream.readUnsignedShort();
+      mIfdStartOffset=entry.getKey();
+      if (mNumOfTagInIfd * TAG_SIZE + mIfdStartOffset + OFFSET_SIZE > mApp1End) {
+        Log.w(TAG,"Invalid size of IFD " + mIfdType);
+        return EVENT_END;
+      }
+      mNeedToParseOffsetsInCurrentIfd=needToParseOffsetsInCurrentIfd();
+      if (((IfdEvent)event).isRequested) {
+        return EVENT_START_OF_IFD;
+      }
+ else {
+        skipRemainingTagsInCurrentIfd();
+      }
+    }
+ else     if (event instanceof ImageEvent) {
+      mImageEvent=(ImageEvent)event;
+      return mImageEvent.type;
+    }
+ else {
+      ExifTagEvent tagEvent=(ExifTagEvent)event;
+      mTag=tagEvent.tag;
+      if (mTag.getDataType() != ExifTag.TYPE_UNDEFINED) {
+        readFullTagValue(mTag);
+        checkOffsetOrImageTag(mTag);
+      }
+      if (tagEvent.isRequested) {
+        return EVENT_VALUE_OF_REGISTERED_TAG;
+      }
+    }
+  }
+  return EVENT_END;
+}

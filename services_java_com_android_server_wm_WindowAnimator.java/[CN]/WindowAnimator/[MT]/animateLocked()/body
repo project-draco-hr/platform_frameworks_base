@@ -13,10 +13,10 @@
   SurfaceControl.openTransaction();
   SurfaceControl.setAnimationTransaction();
   try {
-    updateAppWindowsLocked();
     final int numDisplays=mDisplayContentsAnimators.size();
     for (int i=0; i < numDisplays; i++) {
       final int displayId=mDisplayContentsAnimators.keyAt(i);
+      updateAppWindowsLocked(displayId);
       DisplayContentsAnimator displayAnimator=mDisplayContentsAnimators.valueAt(i);
       final ScreenRotationAnimation screenRotationAnimation=displayAnimator.mScreenRotationAnimation;
       if (screenRotationAnimation != null && screenRotationAnimation.isAnimating()) {
@@ -36,54 +36,22 @@
         windows.get(j).mWinAnimator.prepareSurfaceLocked(true);
       }
     }
-    testTokenMayBeDrawnLocked();
     for (int i=0; i < numDisplays; i++) {
       final int displayId=mDisplayContentsAnimators.keyAt(i);
-      DisplayContentsAnimator displayAnimator=mDisplayContentsAnimators.valueAt(i);
-      final ScreenRotationAnimation screenRotationAnimation=displayAnimator.mScreenRotationAnimation;
+      testTokenMayBeDrawnLocked(displayId);
+      final ScreenRotationAnimation screenRotationAnimation=mDisplayContentsAnimators.valueAt(i).mScreenRotationAnimation;
       if (screenRotationAnimation != null) {
         screenRotationAnimation.updateSurfacesInTransaction();
       }
-      final DimLayer dimAnimator=displayAnimator.mDimAnimator;
-      final WindowStateAnimator winAnimator=displayAnimator.mDimWinAnimator;
-      final int dimLayer;
-      final float dimAmount;
-      if (winAnimator == null) {
-        dimLayer=dimAnimator.getLayer();
-        dimAmount=0;
-      }
- else {
-        dimLayer=winAnimator.mAnimLayer - WindowManagerService.LAYER_OFFSET_DIM;
-        dimAmount=winAnimator.mWin.mAttrs.dimAmount;
-      }
-      final float targetAlpha=dimAnimator.getTargetAlpha();
-      if (targetAlpha != dimAmount) {
-        if (winAnimator == null) {
-          dimAnimator.hide(DEFAULT_DIM_DURATION);
-        }
- else {
-          long duration=(winAnimator.mAnimating && winAnimator.mAnimation != null) ? winAnimator.mAnimation.computeDurationHint() : DEFAULT_DIM_DURATION;
-          if (targetAlpha > dimAmount) {
-            duration=getDimBehindFadeDuration(duration);
-          }
-          dimAnimator.show(dimLayer,dimAmount,duration);
-        }
-      }
- else       if (dimAnimator.getLayer() != dimLayer) {
-        dimAnimator.setLayer(dimLayer);
-      }
-      if (dimAnimator.isAnimating()) {
-        if (!mService.okToDisplay()) {
-          dimAnimator.show();
-        }
- else {
-          mAnimating|=dimAnimator.stepAnimation();
-        }
-      }
+      mAnimating|=mService.getDisplayContentLocked(displayId).animateDimLayers();
       if (mService.mDisplayMagnifier != null && displayId == Display.DEFAULT_DISPLAY) {
         mService.mDisplayMagnifier.drawMagnifiedRegionBorderIfNeededLocked();
       }
     }
+    if (mAnimating) {
+      mService.scheduleAnimationLocked();
+    }
+    mService.setFocusedStackLayer();
     if (mService.mWatermark != null) {
       mService.mWatermark.drawIfNeeded();
     }
@@ -114,10 +82,7 @@
   if (hasPendingLayoutChanges || doRequest) {
     mService.requestTraversalLocked();
   }
-  if (mAnimating) {
-    mService.scheduleAnimationLocked();
-  }
- else   if (wasAnimating) {
+  if (!mAnimating && wasAnimating) {
     mService.requestTraversalLocked();
   }
   if (WindowManagerService.DEBUG_WINDOW_TRACE) {

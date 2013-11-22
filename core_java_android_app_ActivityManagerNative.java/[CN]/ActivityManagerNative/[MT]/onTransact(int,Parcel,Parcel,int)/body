@@ -33,7 +33,7 @@ case START_ACTIVITY_AS_USER_TRANSACTION:
     int requestCode=data.readInt();
     int startFlags=data.readInt();
     String profileFile=data.readString();
-    ParcelFileDescriptor profileFd=data.readInt() != 0 ? data.readFileDescriptor() : null;
+    ParcelFileDescriptor profileFd=data.readInt() != 0 ? ParcelFileDescriptor.CREATOR.createFromParcel(data) : null;
     Bundle options=data.readInt() != 0 ? Bundle.CREATOR.createFromParcel(data) : null;
     int userId=data.readInt();
     int result=startActivityAsUser(app,callingPackage,intent,resolvedType,resultTo,resultWho,requestCode,startFlags,profileFile,profileFd,options,userId);
@@ -54,7 +54,7 @@ case START_ACTIVITY_AND_WAIT_TRANSACTION:
   int requestCode=data.readInt();
   int startFlags=data.readInt();
   String profileFile=data.readString();
-  ParcelFileDescriptor profileFd=data.readInt() != 0 ? data.readFileDescriptor() : null;
+  ParcelFileDescriptor profileFd=data.readInt() != 0 ? ParcelFileDescriptor.CREATOR.createFromParcel(data) : null;
   Bundle options=data.readInt() != 0 ? Bundle.CREATOR.createFromParcel(data) : null;
   int userId=data.readInt();
   WaitResult result=startActivityAndWait(app,callingPackage,intent,resolvedType,resultTo,resultWho,requestCode,startFlags,profileFile,profileFd,options,userId);
@@ -331,13 +331,13 @@ int maxNum=data.readInt();
 int fl=data.readInt();
 IBinder receiverBinder=data.readStrongBinder();
 IThumbnailReceiver receiver=receiverBinder != null ? IThumbnailReceiver.Stub.asInterface(receiverBinder) : null;
-List list=getTasks(maxNum,fl,receiver);
+List<ActivityManager.RunningTaskInfo> list=getTasks(maxNum,fl,receiver);
 reply.writeNoException();
 int N=list != null ? list.size() : -1;
 reply.writeInt(N);
 int i;
 for (i=0; i < N; i++) {
-ActivityManager.RunningTaskInfo info=(ActivityManager.RunningTaskInfo)list.get(i);
+ActivityManager.RunningTaskInfo info=list.get(i);
 info.writeToParcel(reply,0);
 }
 return true;
@@ -388,13 +388,13 @@ case GET_SERVICES_TRANSACTION:
 data.enforceInterface(IActivityManager.descriptor);
 int maxNum=data.readInt();
 int fl=data.readInt();
-List list=getServices(maxNum,fl);
+List<ActivityManager.RunningServiceInfo> list=getServices(maxNum,fl);
 reply.writeNoException();
 int N=list != null ? list.size() : -1;
 reply.writeInt(N);
 int i;
 for (i=0; i < N; i++) {
-ActivityManager.RunningServiceInfo info=(ActivityManager.RunningServiceInfo)list.get(i);
+ActivityManager.RunningServiceInfo info=list.get(i);
 info.writeToParcel(reply,0);
 }
 return true;
@@ -456,6 +456,68 @@ case MOVE_TASK_BACKWARDS_TRANSACTION:
 data.enforceInterface(IActivityManager.descriptor);
 int task=data.readInt();
 moveTaskBackwards(task);
+reply.writeNoException();
+return true;
+}
+case CREATE_STACK_TRANSACTION:
+{
+data.enforceInterface(IActivityManager.descriptor);
+int taskId=data.readInt();
+int relativeStackId=data.readInt();
+int position=data.readInt();
+float weight=data.readFloat();
+int res=createStack(taskId,relativeStackId,position,weight);
+reply.writeNoException();
+reply.writeInt(res);
+return true;
+}
+case MOVE_TASK_TO_STACK_TRANSACTION:
+{
+data.enforceInterface(IActivityManager.descriptor);
+int taskId=data.readInt();
+int stackId=data.readInt();
+boolean toTop=data.readInt() != 0;
+moveTaskToStack(taskId,stackId,toTop);
+reply.writeNoException();
+return true;
+}
+case RESIZE_STACK_TRANSACTION:
+{
+data.enforceInterface(IActivityManager.descriptor);
+int stackBoxId=data.readInt();
+float weight=data.readFloat();
+resizeStackBox(stackBoxId,weight);
+reply.writeNoException();
+return true;
+}
+case GET_STACK_BOXES_TRANSACTION:
+{
+data.enforceInterface(IActivityManager.descriptor);
+List<StackBoxInfo> list=getStackBoxes();
+reply.writeNoException();
+reply.writeTypedList(list);
+return true;
+}
+case GET_STACK_BOX_INFO_TRANSACTION:
+{
+data.enforceInterface(IActivityManager.descriptor);
+int stackBoxId=data.readInt();
+StackBoxInfo info=getStackBoxInfo(stackBoxId);
+reply.writeNoException();
+if (info != null) {
+reply.writeInt(1);
+info.writeToParcel(reply,0);
+}
+ else {
+reply.writeInt(0);
+}
+return true;
+}
+case SET_FOCUSED_STACK_TRANSACTION:
+{
+data.enforceInterface(IActivityManager.descriptor);
+int stackId=data.readInt();
+setFocusedStack(stackId);
 reply.writeNoException();
 return true;
 }
@@ -541,6 +603,14 @@ case UNSTABLE_PROVIDER_DIED_TRANSACTION:
 data.enforceInterface(IActivityManager.descriptor);
 IBinder b=data.readStrongBinder();
 unstableProviderDied(b);
+reply.writeNoException();
+return true;
+}
+case APP_NOT_RESPONDING_VIA_PROVIDER_TRANSACTION:
+{
+data.enforceInterface(IActivityManager.descriptor);
+IBinder b=data.readStrongBinder();
+appNotRespondingViaProvider(b);
 reply.writeNoException();
 return true;
 }
@@ -910,6 +980,34 @@ revokeUriPermission(app,uri,mode);
 reply.writeNoException();
 return true;
 }
+case TAKE_PERSISTABLE_URI_PERMISSION_TRANSACTION:
+{
+data.enforceInterface(IActivityManager.descriptor);
+Uri uri=Uri.CREATOR.createFromParcel(data);
+int mode=data.readInt();
+takePersistableUriPermission(uri,mode);
+reply.writeNoException();
+return true;
+}
+case RELEASE_PERSISTABLE_URI_PERMISSION_TRANSACTION:
+{
+data.enforceInterface(IActivityManager.descriptor);
+Uri uri=Uri.CREATOR.createFromParcel(data);
+int mode=data.readInt();
+releasePersistableUriPermission(uri,mode);
+reply.writeNoException();
+return true;
+}
+case GET_PERSISTED_URI_PERMISSIONS_TRANSACTION:
+{
+data.enforceInterface(IActivityManager.descriptor);
+final String packageName=data.readString();
+final boolean incoming=data.readInt() != 0;
+final ParceledListSlice<UriPermission> perms=getPersistedUriPermissions(packageName,incoming);
+reply.writeNoException();
+perms.writeToParcel(reply,Parcelable.PARCELABLE_WRITE_RETURN_VALUE);
+return true;
+}
 case SHOW_WAITING_FOR_DEBUGGER_TRANSACTION:
 {
 data.enforceInterface(IActivityManager.descriptor);
@@ -1132,7 +1230,7 @@ int userId=data.readInt();
 boolean start=data.readInt() != 0;
 int profileType=data.readInt();
 String path=data.readString();
-ParcelFileDescriptor fd=data.readInt() != 0 ? data.readFileDescriptor() : null;
+ParcelFileDescriptor fd=data.readInt() != 0 ? ParcelFileDescriptor.CREATOR.createFromParcel(data) : null;
 boolean res=profileControl(process,userId,start,path,fd,profileType);
 reply.writeNoException();
 reply.writeInt(res ? 1 : 0);
@@ -1202,7 +1300,8 @@ case KILL_APPLICATION_WITH_APPID_TRANSACTION:
 data.enforceInterface(IActivityManager.descriptor);
 String pkg=data.readString();
 int appid=data.readInt();
-killApplicationWithAppId(pkg,appid);
+String reason=data.readString();
+killApplicationWithAppId(pkg,appid,reason);
 reply.writeNoException();
 return true;
 }
@@ -1273,6 +1372,24 @@ IBinder token=data.readStrongBinder();
 boolean isit=isImmersive(token);
 reply.writeNoException();
 reply.writeInt(isit ? 1 : 0);
+return true;
+}
+case CONVERT_FROM_TRANSLUCENT_TRANSACTION:
+{
+data.enforceInterface(IActivityManager.descriptor);
+IBinder token=data.readStrongBinder();
+boolean converted=convertFromTranslucent(token);
+reply.writeNoException();
+reply.writeInt(converted ? 1 : 0);
+return true;
+}
+case CONVERT_TO_TRANSLUCENT_TRANSACTION:
+{
+data.enforceInterface(IActivityManager.descriptor);
+IBinder token=data.readStrongBinder();
+boolean converted=convertToTranslucent(token);
+reply.writeNoException();
+reply.writeInt(converted ? 1 : 0);
 return true;
 }
 case SET_IMMERSIVE_TRANSACTION:
@@ -1366,7 +1483,7 @@ String process=data.readString();
 int userId=data.readInt();
 boolean managed=data.readInt() != 0;
 String path=data.readString();
-ParcelFileDescriptor fd=data.readInt() != 0 ? data.readFileDescriptor() : null;
+ParcelFileDescriptor fd=data.readInt() != 0 ? ParcelFileDescriptor.CREATOR.createFromParcel(data) : null;
 boolean res=dumpHeap(process,userId,managed,path,fd);
 reply.writeNoException();
 reply.writeInt(res ? 1 : 0);
@@ -1657,26 +1774,27 @@ case INPUT_DISPATCHING_TIMED_OUT_TRANSACTION:
 data.enforceInterface(IActivityManager.descriptor);
 int pid=data.readInt();
 boolean aboveSystem=data.readInt() != 0;
-long res=inputDispatchingTimedOut(pid,aboveSystem);
+String reason=data.readString();
+long res=inputDispatchingTimedOut(pid,aboveSystem,reason);
 reply.writeNoException();
 reply.writeLong(res);
 return true;
 }
-case GET_TOP_ACTIVITY_EXTRAS_TRANSACTION:
+case GET_ASSIST_CONTEXT_EXTRAS_TRANSACTION:
 {
 data.enforceInterface(IActivityManager.descriptor);
 int requestType=data.readInt();
-Bundle res=getTopActivityExtras(requestType);
+Bundle res=getAssistContextExtras(requestType);
 reply.writeNoException();
 reply.writeBundle(res);
 return true;
 }
-case REPORT_TOP_ACTIVITY_EXTRAS_TRANSACTION:
+case REPORT_ASSIST_CONTEXT_EXTRAS_TRANSACTION:
 {
 data.enforceInterface(IActivityManager.descriptor);
 IBinder token=data.readStrongBinder();
 Bundle extras=data.readBundle();
-reportTopActivityExtras(token,extras);
+reportAssistContextExtras(token,extras);
 reply.writeNoException();
 return true;
 }
@@ -1695,6 +1813,36 @@ data.enforceInterface(IActivityManager.descriptor);
 IBinder who=data.readStrongBinder();
 boolean allowRestart=data.readInt() != 0;
 hang(who,allowRestart);
+reply.writeNoException();
+return true;
+}
+case REPORT_ACTIVITY_FULLY_DRAWN_TRANSACTION:
+{
+data.enforceInterface(IActivityManager.descriptor);
+IBinder token=data.readStrongBinder();
+reportActivityFullyDrawn(token);
+reply.writeNoException();
+return true;
+}
+case NOTIFY_ACTIVITY_DRAWN_TRANSACTION:
+{
+data.enforceInterface(IActivityManager.descriptor);
+IBinder token=data.readStrongBinder();
+notifyActivityDrawn(token);
+reply.writeNoException();
+return true;
+}
+case RESTART_TRANSACTION:
+{
+data.enforceInterface(IActivityManager.descriptor);
+restart();
+reply.writeNoException();
+return true;
+}
+case PERFORM_IDLE_MAINTENANCE_TRANSACTION:
+{
+data.enforceInterface(IActivityManager.descriptor);
+performIdleMaintenance();
 reply.writeNoException();
 return true;
 }

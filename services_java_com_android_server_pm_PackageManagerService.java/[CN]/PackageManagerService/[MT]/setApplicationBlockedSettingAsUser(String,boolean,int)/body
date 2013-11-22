@@ -1,0 +1,45 @@
+{
+  mContext.enforceCallingOrSelfPermission(android.Manifest.permission.MANAGE_USERS,null);
+  PackageSetting pkgSetting;
+  final int uid=Binder.getCallingUid();
+  if (UserHandle.getUserId(uid) != userId) {
+    mContext.enforceCallingOrSelfPermission(android.Manifest.permission.INTERACT_ACROSS_USERS_FULL,"setApplicationBlockedSetting for user " + userId);
+  }
+  if (blocked && isPackageDeviceAdmin(packageName,userId)) {
+    Slog.w(TAG,"Not blocking package " + packageName + ": has active device admin");
+    return false;
+  }
+  long callingId=Binder.clearCallingIdentity();
+  try {
+    boolean sendAdded=false;
+    boolean sendRemoved=false;
+synchronized (mPackages) {
+      pkgSetting=mSettings.mPackages.get(packageName);
+      if (pkgSetting == null) {
+        return false;
+      }
+      if (pkgSetting.getBlocked(userId) != blocked) {
+        pkgSetting.setBlocked(blocked,userId);
+        mSettings.writePackageRestrictionsLPr(userId);
+        if (blocked) {
+          sendRemoved=true;
+        }
+ else {
+          sendAdded=true;
+        }
+      }
+    }
+    if (sendAdded) {
+      sendPackageAddedForUser(packageName,pkgSetting,userId);
+      return true;
+    }
+    if (sendRemoved) {
+      killApplication(packageName,UserHandle.getUid(userId,pkgSetting.appId),"blocking pkg");
+      sendPackageBlockedForUser(packageName,pkgSetting,userId);
+    }
+  }
+  finally {
+    Binder.restoreCallingIdentity(callingId);
+  }
+  return false;
+}

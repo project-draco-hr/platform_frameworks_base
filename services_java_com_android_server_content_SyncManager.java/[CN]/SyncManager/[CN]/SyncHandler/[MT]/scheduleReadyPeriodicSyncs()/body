@@ -1,4 +1,8 @@
 {
+  final boolean isLoggable=Log.isLoggable(TAG,Log.VERBOSE);
+  if (isLoggable) {
+    Log.v(TAG,"scheduleReadyPeriodicSyncs");
+  }
   final boolean backgroundDataUsageAllowed=getConnectivityManager().getBackgroundDataSetting();
   long earliestFuturePollTime=Long.MAX_VALUE;
   if (!backgroundDataUsageAllowed) {
@@ -7,37 +11,55 @@
   AccountAndUser[] accounts=mRunningAccounts;
   final long nowAbsolute=System.currentTimeMillis();
   final long shiftedNowAbsolute=(0 < nowAbsolute - mSyncRandomOffsetMillis) ? (nowAbsolute - mSyncRandomOffsetMillis) : 0;
-  ArrayList<SyncStorageEngine.AuthorityInfo> infos=mSyncStorageEngine.getAuthorities();
-  for (  SyncStorageEngine.AuthorityInfo info : infos) {
-    if (!containsAccountAndUser(accounts,info.account,info.userId)) {
+  ArrayList<Pair<AuthorityInfo,SyncStatusInfo>> infos=mSyncStorageEngine.getCopyOfAllAuthoritiesWithSyncStatus();
+  for (  Pair<AuthorityInfo,SyncStatusInfo> info : infos) {
+    final AuthorityInfo authorityInfo=info.first;
+    final SyncStatusInfo status=info.second;
+    if (TextUtils.isEmpty(authorityInfo.authority)) {
+      Log.e(TAG,"Got an empty provider string. Skipping: " + authorityInfo);
       continue;
     }
-    if (!mSyncStorageEngine.getMasterSyncAutomatically(info.userId) || !mSyncStorageEngine.getSyncAutomatically(info.account,info.userId,info.authority)) {
+    if (!containsAccountAndUser(accounts,authorityInfo.account,authorityInfo.userId)) {
       continue;
     }
-    if (getIsSyncable(info.account,info.userId,info.authority) == 0) {
+    if (!mSyncStorageEngine.getMasterSyncAutomatically(authorityInfo.userId) || !mSyncStorageEngine.getSyncAutomatically(authorityInfo.account,authorityInfo.userId,authorityInfo.authority)) {
       continue;
     }
-    SyncStatusInfo status=mSyncStorageEngine.getOrCreateSyncStatus(info);
-    for (int i=0, N=info.periodicSyncs.size(); i < N; i++) {
-      final Bundle extras=info.periodicSyncs.get(i).first;
-      final Long periodInMillis=info.periodicSyncs.get(i).second * 1000;
+    if (getIsSyncable(authorityInfo.account,authorityInfo.userId,authorityInfo.authority) == 0) {
+      continue;
+    }
+    for (int i=0, N=authorityInfo.periodicSyncs.size(); i < N; i++) {
+      final PeriodicSync sync=authorityInfo.periodicSyncs.get(i);
+      final Bundle extras=sync.extras;
+      final long periodInMillis=sync.period * 1000;
+      final long flexInMillis=sync.flexTime * 1000;
       if (periodInMillis <= 0) {
         continue;
       }
       final long lastPollTimeAbsolute=status.getPeriodicSyncTime(i);
       long remainingMillis=periodInMillis - (shiftedNowAbsolute % periodInMillis);
-      if (remainingMillis == periodInMillis || lastPollTimeAbsolute > nowAbsolute || (nowAbsolute - lastPollTimeAbsolute >= periodInMillis)) {
-        final Pair<Long,Long> backoff=mSyncStorageEngine.getBackoff(info.account,info.userId,info.authority);
+      long timeSinceLastRunMillis=(nowAbsolute - lastPollTimeAbsolute);
+      boolean runEarly=remainingMillis <= flexInMillis && timeSinceLastRunMillis > periodInMillis - flexInMillis;
+      if (isLoggable) {
+        Log.v(TAG,"sync: " + i + " for "+ authorityInfo.authority+ "."+ " period: "+ (periodInMillis)+ " flex: "+ (flexInMillis)+ " remaining: "+ (remainingMillis)+ " time_since_last: "+ timeSinceLastRunMillis+ " last poll absol: "+ lastPollTimeAbsolute+ " shifted now: "+ shiftedNowAbsolute+ " run_early: "+ runEarly);
+      }
+      if (runEarly || remainingMillis == periodInMillis || lastPollTimeAbsolute > nowAbsolute || timeSinceLastRunMillis >= periodInMillis) {
+        final Pair<Long,Long> backoff=mSyncStorageEngine.getBackoff(authorityInfo.account,authorityInfo.userId,authorityInfo.authority);
         final RegisteredServicesCache.ServiceInfo<SyncAdapterType> syncAdapterInfo;
-        syncAdapterInfo=mSyncAdapters.getServiceInfo(SyncAdapterType.newKey(info.authority,info.account.type),info.userId);
+        syncAdapterInfo=mSyncAdapters.getServiceInfo(SyncAdapterType.newKey(authorityInfo.authority,authorityInfo.account.type),authorityInfo.userId);
         if (syncAdapterInfo == null) {
           continue;
         }
-        scheduleSyncOperation(new SyncOperation(info.account,info.userId,SyncOperation.REASON_PERIODIC,SyncStorageEngine.SOURCE_PERIODIC,info.authority,extras,0,backoff != null ? backoff.first : 0,mSyncStorageEngine.getDelayUntilTime(info.account,info.userId,info.authority),syncAdapterInfo.type.allowParallelSyncs()));
-        status.setPeriodicSyncTime(i,nowAbsolute);
+        mSyncStorageEngine.setPeriodicSyncTime(authorityInfo.ident,authorityInfo.periodicSyncs.get(i),nowAbsolute);
+        scheduleSyncOperation(new SyncOperation(authorityInfo.account,authorityInfo.userId,SyncOperation.REASON_PERIODIC,SyncStorageEngine.SOURCE_PERIODIC,authorityInfo.authority,extras,0,0,backoff != null ? backoff.first : 0,mSyncStorageEngine.getDelayUntilTime(authorityInfo.account,authorityInfo.userId,authorityInfo.authority),syncAdapterInfo.type.allowParallelSyncs()));
       }
-      final long nextPollTimeAbsolute=nowAbsolute + remainingMillis;
+      long nextPollTimeAbsolute;
+      if (runEarly) {
+        nextPollTimeAbsolute=nowAbsolute + periodInMillis + remainingMillis;
+      }
+ else {
+        nextPollTimeAbsolute=nowAbsolute + remainingMillis;
+      }
       if (nextPollTimeAbsolute < earliestFuturePollTime) {
         earliestFuturePollTime=nextPollTimeAbsolute;
       }

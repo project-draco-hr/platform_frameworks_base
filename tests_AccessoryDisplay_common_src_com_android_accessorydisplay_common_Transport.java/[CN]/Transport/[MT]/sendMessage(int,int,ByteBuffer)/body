@@ -1,0 +1,49 @@
+{
+  checkServiceId(service);
+  checkMessageId(what);
+  try {
+synchronized (mLock) {
+      if (mOutputBuffer == null) {
+        mLogger.logError("Send message failed because transport was closed.");
+        return false;
+      }
+      final byte[] outputArray=mOutputBuffer.array();
+      final int capacity=mOutputBuffer.capacity();
+      mOutputBuffer.clear();
+      mOutputBuffer.putShort((short)service);
+      mOutputBuffer.putShort((short)what);
+      if (content == null) {
+        mOutputBuffer.putInt(0);
+      }
+ else {
+        final int contentLimit=content.limit();
+        int contentPosition=content.position();
+        int contentRemaining=contentLimit - contentPosition;
+        if (contentRemaining > Protocol.MAX_CONTENT_SIZE) {
+          throw new IllegalArgumentException("Message content too large: " + contentRemaining + " > "+ Protocol.MAX_CONTENT_SIZE);
+        }
+        mOutputBuffer.putInt(contentRemaining);
+        while (contentRemaining != 0) {
+          final int outputAvailable=capacity - mOutputBuffer.position();
+          if (contentRemaining <= outputAvailable) {
+            mOutputBuffer.put(content);
+            break;
+          }
+          content.limit(contentPosition + outputAvailable);
+          mOutputBuffer.put(content);
+          content.limit(contentLimit);
+          ioWrite(outputArray,0,capacity);
+          contentPosition+=outputAvailable;
+          contentRemaining-=outputAvailable;
+          mOutputBuffer.clear();
+        }
+      }
+      ioWrite(outputArray,0,mOutputBuffer.position());
+      return true;
+    }
+  }
+ catch (  IOException ex) {
+    mLogger.logError("Send message failed: " + ex);
+    return false;
+  }
+}

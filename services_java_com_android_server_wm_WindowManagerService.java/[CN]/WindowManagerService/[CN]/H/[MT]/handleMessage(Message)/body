@@ -14,19 +14,20 @@ synchronized (mWindowMap) {
           return;
         }
         mLastFocus=newFocus;
+        if (DEBUG_FOCUS_LIGHT)         Slog.i(TAG,"Focus moving from " + lastFocus + " to "+ newFocus);
         if (newFocus != null && lastFocus != null && !newFocus.isDisplayedLw()) {
           mLosingFocus.add(lastFocus);
           lastFocus=null;
         }
       }
-      if (lastFocus != newFocus) {
-        if (newFocus != null) {
-          newFocus.reportFocusChangedSerialized(true,mInTouchMode);
-          notifyFocusChanged();
-        }
-        if (lastFocus != null) {
-          lastFocus.reportFocusChangedSerialized(false,mInTouchMode);
-        }
+      if (newFocus != null) {
+        if (DEBUG_FOCUS_LIGHT)         Slog.i(TAG,"Gaining focus: " + newFocus);
+        newFocus.reportFocusChangedSerialized(true,mInTouchMode);
+        notifyFocusChanged();
+      }
+      if (lastFocus != null) {
+        if (DEBUG_FOCUS_LIGHT)         Slog.i(TAG,"Losing focus: " + lastFocus);
+        lastFocus.reportFocusChangedSerialized(false,mInTouchMode);
       }
     }
   break;
@@ -39,6 +40,7 @@ synchronized (mWindowMap) {
   }
   final int N=losers.size();
   for (int i=0; i < N; i++) {
+    if (DEBUG_FOCUS_LIGHT)     Slog.i(TAG,"Losing delayed focus: " + losers.get(i));
     losers.get(i).reportFocusChangedSerialized(false,mInTouchMode);
   }
 }
@@ -61,7 +63,7 @@ return;
 if (DEBUG_STARTING_WINDOW) Slog.v(TAG,"Add starting " + wtoken + ": pkg="+ sd.pkg);
 View view=null;
 try {
-view=mPolicy.addStartingWindow(wtoken.token,sd.pkg,sd.theme,sd.compatInfo,sd.nonLocalizedLabel,sd.labelRes,sd.icon,sd.windowFlags);
+view=mPolicy.addStartingWindow(wtoken.token,sd.pkg,sd.theme,sd.compatInfo,sd.nonLocalizedLabel,sd.labelRes,sd.icon,sd.logo,sd.windowFlags);
 }
  catch (Exception e) {
 Slog.w(TAG,"Exception when adding starting window",e);
@@ -72,6 +74,7 @@ synchronized (mWindowMap) {
 if (wtoken.removed || wtoken.startingData == null) {
 if (wtoken.startingWindow != null) {
   if (DEBUG_STARTING_WINDOW)   Slog.v(TAG,"Aborted starting " + wtoken + ": removed="+ wtoken.removed+ " startingData="+ wtoken.startingData);
+  removeStartingWindowTimeout(wtoken);
   wtoken.startingWindow=null;
   wtoken.startingData=null;
   abort=true;
@@ -93,6 +96,11 @@ Slog.w(TAG,"Exception when removing starting window",e);
 }
 }
 break;
+case REMOVE_STARTING_TIMEOUT:
+{
+final AppWindowToken wtoken=(AppWindowToken)msg.obj;
+Slog.e(TAG,"Starting window " + wtoken + " timed out");
+}
 case REMOVE_STARTING:
 {
 final AppWindowToken wtoken=(AppWindowToken)msg.obj;
@@ -204,8 +212,6 @@ synchronized (mWindowMap) {
 if (mAppTransition.isTransitionSet()) {
 if (DEBUG_APP_TRANSITIONS) Slog.v(TAG,"*** APP TRANSITION TIMEOUT");
 mAppTransition.setTimeout();
-mAnimatingAppTokens.clear();
-mAnimatingAppTokens.addAll(mAppTokens);
 performLayoutAndPlaceSurfacesLocked();
 }
 }
@@ -241,13 +247,16 @@ case APP_FREEZE_TIMEOUT:
 {
 synchronized (mWindowMap) {
 Slog.w(TAG,"App freeze timeout expired.");
-int i=mAppTokens.size();
-while (i > 0) {
-i--;
-AppWindowToken tok=mAppTokens.get(i);
+DisplayContent displayContent=getDefaultDisplayContentLocked();
+final ArrayList<Task> tasks=displayContent.getTasks();
+for (int taskNdx=tasks.size() - 1; taskNdx >= 0; --taskNdx) {
+AppTokenList tokens=tasks.get(taskNdx).mAppTokens;
+for (int tokenNdx=tokens.size() - 1; tokenNdx >= 0; --tokenNdx) {
+AppWindowToken tok=tokens.get(tokenNdx);
 if (tok.mAppAnimator.freezingScreen) {
 Slog.w(TAG,"Force clearing freeze: " + tok);
 unsetAppFreezingScreenLocked(tok,true,true);
+}
 }
 }
 }
@@ -364,6 +373,28 @@ break;
 case DO_DISPLAY_CHANGED:
 synchronized (mWindowMap) {
 handleDisplayChangedLocked(msg.arg1);
+}
+break;
+case TAP_OUTSIDE_STACK:
+{
+int stackId;
+synchronized (mWindowMap) {
+stackId=((DisplayContent)msg.obj).stackIdFromPoint(msg.arg1,msg.arg2);
+}
+if (stackId >= 0) {
+try {
+mActivityManager.setFocusedStack(stackId);
+}
+ catch (RemoteException e) {
+}
+}
+}
+break;
+case NOTIFY_ACTIVITY_DRAWN:
+try {
+mActivityManager.notifyActivityDrawn((IBinder)msg.obj);
+}
+ catch (RemoteException e) {
 }
 break;
 }

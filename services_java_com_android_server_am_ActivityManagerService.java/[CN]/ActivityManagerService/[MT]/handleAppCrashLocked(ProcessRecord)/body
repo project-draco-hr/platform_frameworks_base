@@ -14,13 +14,7 @@
   if (crashTime != null && now < crashTime + ProcessList.MIN_CRASH_INTERVAL) {
     Slog.w(TAG,"Process " + app.info.processName + " has crashed too many times: killing!");
     EventLog.writeEvent(EventLogTags.AM_PROCESS_CRASHED_TOO_MUCH,app.userId,app.info.processName,app.uid);
-    for (int i=mMainStack.mHistory.size() - 1; i >= 0; i--) {
-      ActivityRecord r=(ActivityRecord)mMainStack.mHistory.get(i);
-      if (r.app == app) {
-        Slog.w(TAG,"  Force finishing activity " + r.intent.getComponent().flattenToShortString());
-        r.stack.finishActivityLocked(r,i,Activity.RESULT_CANCELED,null,"crashed",false);
-      }
-    }
+    mStackSupervisor.handleAppCrashLocked(app);
     if (!app.persistent) {
       EventLog.writeEvent(EventLogTags.AM_PROC_BAD,app.userId,app.uid,app.info.processName);
       if (!app.isolated) {
@@ -30,41 +24,23 @@
       app.bad=true;
       app.removed=true;
       removeProcessLocked(app,false,false,"crash");
-      mMainStack.resumeTopActivityLocked(null);
+      mStackSupervisor.resumeTopActivitiesLocked();
       return false;
     }
-    mMainStack.resumeTopActivityLocked(null);
+    mStackSupervisor.resumeTopActivitiesLocked();
   }
  else {
-    ActivityRecord r=mMainStack.topRunningActivityLocked(null);
-    if (r != null && r.app == app) {
-      Slog.w(TAG,"  Force finishing activity " + r.intent.getComponent().flattenToShortString());
-      int index=mMainStack.indexOfActivityLocked(r);
-      r.stack.finishActivityLocked(r,index,Activity.RESULT_CANCELED,null,"crashed",false);
-      index--;
-      if (index >= 0) {
-        r=(ActivityRecord)mMainStack.mHistory.get(index);
-        if (r.state == ActivityState.RESUMED || r.state == ActivityState.PAUSING || r.state == ActivityState.PAUSED) {
-          if (!r.isHomeActivity || mHomeProcess != r.app) {
-            Slog.w(TAG,"  Force finishing activity " + r.intent.getComponent().flattenToShortString());
-            r.stack.finishActivityLocked(r,index,Activity.RESULT_CANCELED,null,"crashed",false);
-          }
-        }
-      }
-    }
+    mStackSupervisor.finishTopRunningActivityLocked(app);
   }
-  if (app.services.size() != 0) {
-    Iterator<ServiceRecord> it=app.services.iterator();
-    while (it.hasNext()) {
-      ServiceRecord sr=it.next();
-      sr.crashCount++;
-    }
+  for (int i=app.services.size() - 1; i >= 0; i--) {
+    ServiceRecord sr=app.services.valueAt(i);
+    sr.crashCount++;
   }
-  if (app == mHomeProcess && mHomeProcess.activities.size() > 0 && (mHomeProcess.info.flags & ApplicationInfo.FLAG_SYSTEM) == 0) {
-    Iterator it=mHomeProcess.activities.iterator();
-    while (it.hasNext()) {
-      ActivityRecord r=(ActivityRecord)it.next();
-      if (r.isHomeActivity) {
+  final ArrayList<ActivityRecord> activities=app.activities;
+  if (app == mHomeProcess && activities.size() > 0 && (mHomeProcess.info.flags & ApplicationInfo.FLAG_SYSTEM) == 0) {
+    for (int activityNdx=activities.size() - 1; activityNdx >= 0; --activityNdx) {
+      final ActivityRecord r=activities.get(activityNdx);
+      if (r.isHomeActivity()) {
         Log.i(TAG,"Clearing package preferred activities from " + r.packageName);
         try {
           ActivityThread.getPackageManager().clearPackagePreferredActivities(r.packageName);

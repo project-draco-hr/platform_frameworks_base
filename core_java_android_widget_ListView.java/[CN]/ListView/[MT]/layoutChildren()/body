@@ -1,11 +1,9 @@
 {
   final boolean blockLayoutRequests=mBlockLayoutRequests;
-  if (!blockLayoutRequests) {
-    mBlockLayoutRequests=true;
-  }
- else {
+  if (blockLayoutRequests) {
     return;
   }
+  mBlockLayoutRequests=true;
   try {
     super.layoutChildren();
     invalidate();
@@ -14,19 +12,15 @@
       invokeOnItemScrollListener();
       return;
     }
-    int childrenTop=mListPadding.top;
-    int childrenBottom=mBottom - mTop - mListPadding.bottom;
-    int childCount=getChildCount();
+    final int childrenTop=mListPadding.top;
+    final int childrenBottom=mBottom - mTop - mListPadding.bottom;
+    final int childCount=getChildCount();
     int index=0;
     int delta=0;
     View sel;
     View oldSel=null;
     View oldFirst=null;
     View newSel=null;
-    View focusLayoutRestoreView=null;
-    AccessibilityNodeInfo accessibilityFocusLayoutRestoreNode=null;
-    View accessibilityFocusLayoutRestoreView=null;
-    int accessibilityFocusPosition=INVALID_POSITION;
 switch (mLayoutMode) {
 case LAYOUT_SET_SELECTION:
       index=mNextSelectedPosition - mFirstPosition;
@@ -61,28 +55,24 @@ invokeOnItemScrollListener();
 return;
 }
  else if (mItemCount != mAdapter.getCount()) {
-throw new IllegalStateException("The content of the adapter has changed but " + "ListView did not receive a notification. Make sure the content of " + "your adapter is not modified from a background thread, but only "+ "from the UI thread. [in ListView(" + getId() + ", "+ getClass()+ ") with Adapter("+ mAdapter.getClass()+ ")]");
+throw new IllegalStateException("The content of the adapter has changed but " + "ListView did not receive a notification. Make sure the content of " + "your adapter is not modified from a background thread, but only from "+ "the UI thread. Make sure your adapter calls notifyDataSetChanged() "+ "when its content changes. [in ListView(" + getId() + ", "+ getClass()+ ") with Adapter("+ mAdapter.getClass()+ ")]");
 }
 setSelectedPositionInt(mNextSelectedPosition);
-final ViewRootImpl viewRootImpl=getViewRootImpl();
-if (viewRootImpl != null) {
-final View accessFocusedView=viewRootImpl.getAccessibilityFocusedHost();
-if (accessFocusedView != null) {
-final View accessFocusedChild=findAccessibilityFocusedChild(accessFocusedView);
+final int accessibilityFocusPosition;
+final View accessFocusedChild=getAccessibilityFocusedChild();
 if (accessFocusedChild != null) {
-if (!dataChanged || isDirectChildHeaderOrFooter(accessFocusedChild)) {
-accessibilityFocusLayoutRestoreView=accessFocusedView;
-accessibilityFocusLayoutRestoreNode=viewRootImpl.getAccessibilityFocusedVirtualView();
+accessibilityFocusPosition=getPositionForView(accessFocusedChild);
+accessFocusedChild.setHasTransientState(true);
 }
  else {
-accessibilityFocusPosition=getPositionForView(accessFocusedChild);
+accessibilityFocusPosition=INVALID_POSITION;
 }
-}
-}
+final View focusedChild=getFocusedChild();
+if (focusedChild != null) {
+focusedChild.setHasTransientState(true);
 }
 final int firstPosition=mFirstPosition;
 final RecycleBin recycleBin=mRecycler;
-View focusLayoutRestoreDirectChild=null;
 if (dataChanged) {
 for (int i=0; i < childCount; i++) {
 recycleBin.addScrapView(getChildAt(i),firstPosition + i);
@@ -90,17 +80,6 @@ recycleBin.addScrapView(getChildAt(i),firstPosition + i);
 }
  else {
 recycleBin.fillActiveViews(childCount,firstPosition);
-}
-final View focusedChild=getFocusedChild();
-if (focusedChild != null) {
-if (!dataChanged || isDirectChildHeaderOrFooter(focusedChild)) {
-focusLayoutRestoreDirectChild=focusedChild;
-focusLayoutRestoreView=findFocus();
-if (focusLayoutRestoreView != null) {
-focusLayoutRestoreView.onStartTemporaryDetach();
-}
-}
-requestFocus();
 }
 detachAllViewsFromParent();
 recycleBin.removeSkippedScrap();
@@ -159,18 +138,19 @@ break;
 }
 recycleBin.scrapActiveViews();
 if (sel != null) {
-if (mItemsCanFocus && hasFocus() && !sel.hasFocus()) {
-final boolean focusWasTaken=(sel == focusLayoutRestoreDirectChild && focusLayoutRestoreView != null && focusLayoutRestoreView.requestFocus()) || sel.requestFocus();
-if (!focusWasTaken) {
+final boolean shouldPlaceFocus=mItemsCanFocus && hasFocus();
+final boolean maintainedFocus=focusedChild != null && focusedChild.hasFocus();
+if (shouldPlaceFocus && !maintainedFocus && !sel.hasFocus()) {
+if (sel.requestFocus()) {
+sel.setSelected(false);
+mSelectorRect.setEmpty();
+}
+ else {
 final View focused=getFocusedChild();
 if (focused != null) {
 focused.clearFocus();
 }
 positionSelector(INVALID_POSITION,sel);
-}
- else {
-sel.setSelected(false);
-mSelectorRect.setEmpty();
 }
 }
  else {
@@ -179,37 +159,29 @@ positionSelector(INVALID_POSITION,sel);
 mSelectedTop=sel.getTop();
 }
  else {
-if (mTouchMode > TOUCH_MODE_DOWN && mTouchMode < TOUCH_MODE_SCROLL) {
-View child=getChildAt(mMotionPosition - mFirstPosition);
-if (child != null) positionSelector(mMotionPosition,child);
+if (mTouchMode == TOUCH_MODE_TAP || mTouchMode == TOUCH_MODE_DONE_WAITING) {
+final View child=getChildAt(mMotionPosition - mFirstPosition);
+if (child != null) {
+positionSelector(mMotionPosition,child);
+}
 }
  else {
 mSelectedTop=0;
 mSelectorRect.setEmpty();
 }
-if (hasFocus() && focusLayoutRestoreView != null) {
-focusLayoutRestoreView.requestFocus();
 }
-}
-if (accessibilityFocusLayoutRestoreView != null) {
-final AccessibilityNodeProvider provider=accessibilityFocusLayoutRestoreView.getAccessibilityNodeProvider();
-if ((accessibilityFocusLayoutRestoreNode != null) && (provider != null)) {
-final int virtualViewId=AccessibilityNodeInfo.getVirtualDescendantId(accessibilityFocusLayoutRestoreNode.getSourceNodeId());
-provider.performAction(virtualViewId,AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS,null);
-}
- else {
-accessibilityFocusLayoutRestoreView.requestAccessibilityFocus();
-}
-}
- else if (accessibilityFocusPosition != INVALID_POSITION) {
-final int position=MathUtils.constrain((accessibilityFocusPosition - mFirstPosition),0,(getChildCount() - 1));
+if (accessFocusedChild != null) {
+accessFocusedChild.setHasTransientState(false);
+if (!accessFocusedChild.isAccessibilityFocused() && accessibilityFocusPosition != INVALID_POSITION) {
+final int position=MathUtils.constrain(accessibilityFocusPosition - mFirstPosition,0,getChildCount() - 1);
 final View restoreView=getChildAt(position);
 if (restoreView != null) {
 restoreView.requestAccessibilityFocus();
 }
 }
-if (focusLayoutRestoreView != null && focusLayoutRestoreView.getWindowToken() != null) {
-focusLayoutRestoreView.onFinishTemporaryDetach();
+}
+if (focusedChild != null) {
+focusedChild.setHasTransientState(false);
 }
 mLayoutMode=LAYOUT_NORMAL;
 mDataChanged=false;

@@ -33,6 +33,7 @@
       pw.println("    m[essages]: print collected runtime messages");
       pw.println("    v[erifiers]: print package verifier info");
       pw.println("    <package.name>: info about given package");
+      pw.println("    k[eysets]: print known keysets");
       return;
     }
  else     if ("-f".equals(opt)) {
@@ -47,6 +48,7 @@
     opti++;
     if ("android".equals(cmd) || cmd.contains(".")) {
       packageName=cmd;
+      dumpState.setOptionEnabled(DumpState.OPTION_SHOW_FILTERS);
     }
  else     if ("l".equals(cmd) || "libraries".equals(cmd)) {
       dumpState.setDump(DumpState.DUMP_LIBS);
@@ -85,10 +87,13 @@
  else     if ("v".equals(cmd) || "verifiers".equals(cmd)) {
       dumpState.setDump(DumpState.DUMP_VERIFIERS);
     }
+ else     if ("k".equals(cmd) || "keysets".equals(cmd)) {
+      dumpState.setDump(DumpState.DUMP_KEYSETS);
+    }
   }
 synchronized (mPackages) {
     if (dumpState.isDumping(DumpState.DUMP_VERIFIERS) && packageName == null) {
-      if (dumpState.onTitlePrinted())       pw.println(" ");
+      if (dumpState.onTitlePrinted())       pw.println();
       pw.println("Verifiers:");
       pw.print("  Required: ");
       pw.print(mRequiredVerifierPackage);
@@ -97,15 +102,19 @@ synchronized (mPackages) {
       pw.println(")");
     }
     if (dumpState.isDumping(DumpState.DUMP_LIBS) && packageName == null) {
-      if (dumpState.onTitlePrinted())       pw.println(" ");
-      pw.println("Libraries:");
+      boolean printedHeader=false;
       final Iterator<String> it=mSharedLibraries.keySet().iterator();
       while (it.hasNext()) {
         String name=it.next();
+        SharedLibraryEntry ent=mSharedLibraries.get(name);
+        if (!printedHeader) {
+          if (dumpState.onTitlePrinted())           pw.println();
+          pw.println("Libraries:");
+          printedHeader=true;
+        }
         pw.print("  ");
         pw.print(name);
         pw.print(" -> ");
-        SharedLibraryEntry ent=mSharedLibraries.get(name);
         if (ent.path != null) {
           pw.print("(jar) ");
           pw.print(ent.path);
@@ -118,7 +127,7 @@ synchronized (mPackages) {
       }
     }
     if (dumpState.isDumping(DumpState.DUMP_FEATURES) && packageName == null) {
-      if (dumpState.onTitlePrinted())       pw.println(" ");
+      if (dumpState.onTitlePrinted())       pw.println();
       pw.println("Features:");
       Iterator<String> it=mAvailableFeatures.keySet().iterator();
       while (it.hasNext()) {
@@ -137,12 +146,15 @@ synchronized (mPackages) {
       if (mServices.dump(pw,dumpState.getTitlePrinted() ? "\nService Resolver Table:" : "Service Resolver Table:","  ",packageName,dumpState.isOptionEnabled(DumpState.OPTION_SHOW_FILTERS))) {
         dumpState.setTitlePrinted(true);
       }
+      if (mProviders.dump(pw,dumpState.getTitlePrinted() ? "\nProvider Resolver Table:" : "Provider Resolver Table:","  ",packageName,dumpState.isOptionEnabled(DumpState.OPTION_SHOW_FILTERS))) {
+        dumpState.setTitlePrinted(true);
+      }
     }
     if (dumpState.isDumping(DumpState.DUMP_PREFERRED)) {
       for (int i=0; i < mSettings.mPreferredActivities.size(); i++) {
         PreferredIntentResolver pir=mSettings.mPreferredActivities.valueAt(i);
         int user=mSettings.mPreferredActivities.keyAt(i);
-        if (pir.dump(pw,dumpState.getTitlePrinted() ? "\nPreferred Activities User " + user + ":" : "Preferred Activities User " + user + ":","  ",packageName,dumpState.isOptionEnabled(DumpState.OPTION_SHOW_FILTERS))) {
+        if (pir.dump(pw,dumpState.getTitlePrinted() ? "\nPreferred Activities User " + user + ":" : "Preferred Activities User " + user + ":","  ",packageName,true)) {
           dumpState.setTitlePrinted(true);
         }
       }
@@ -175,29 +187,29 @@ catch (      IOException e) {
     }
     if (dumpState.isDumping(DumpState.DUMP_PROVIDERS)) {
       boolean printedSomething=false;
-      for (      PackageParser.Provider p : mProvidersByComponent.values()) {
+      for (      PackageParser.Provider p : mProviders.mProviders.values()) {
         if (packageName != null && !packageName.equals(p.info.packageName)) {
           continue;
         }
         if (!printedSomething) {
-          if (dumpState.onTitlePrinted())           pw.println(" ");
+          if (dumpState.onTitlePrinted())           pw.println();
           pw.println("Registered ContentProviders:");
           printedSomething=true;
         }
         pw.print("  ");
-        pw.print(p.getComponentShortName());
+        p.printComponentShortName(pw);
         pw.println(":");
         pw.print("    ");
         pw.println(p.toString());
       }
       printedSomething=false;
-      for (      Map.Entry<String,PackageParser.Provider> entry : mProviders.entrySet()) {
+      for (      Map.Entry<String,PackageParser.Provider> entry : mProvidersByAuthority.entrySet()) {
         PackageParser.Provider p=entry.getValue();
         if (packageName != null && !packageName.equals(p.info.packageName)) {
           continue;
         }
         if (!printedSomething) {
-          if (dumpState.onTitlePrinted())           pw.println(" ");
+          if (dumpState.onTitlePrinted())           pw.println();
           pw.println("ContentProvider Authorities:");
           printedSomething=true;
         }
@@ -213,6 +225,9 @@ catch (      IOException e) {
         }
       }
     }
+    if (dumpState.isDumping(DumpState.DUMP_KEYSETS)) {
+      mSettings.mKeySetManager.dump(pw,packageName,dumpState);
+    }
     if (dumpState.isDumping(DumpState.DUMP_PACKAGES)) {
       mSettings.dumpPackagesLPr(pw,packageName,dumpState);
     }
@@ -220,9 +235,9 @@ catch (      IOException e) {
       mSettings.dumpSharedUsersLPr(pw,packageName,dumpState);
     }
     if (dumpState.isDumping(DumpState.DUMP_MESSAGES) && packageName == null) {
-      if (dumpState.onTitlePrinted())       pw.println(" ");
+      if (dumpState.onTitlePrinted())       pw.println();
       mSettings.dumpReadMessagesLPr(pw,dumpState);
-      pw.println(" ");
+      pw.println();
       pw.println("Package warning messages:");
       final File fname=getSettingsProblemFile();
       FileInputStream in=null;

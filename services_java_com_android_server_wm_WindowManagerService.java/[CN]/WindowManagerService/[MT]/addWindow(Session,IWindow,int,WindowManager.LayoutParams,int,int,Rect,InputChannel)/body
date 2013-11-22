@@ -15,6 +15,11 @@ synchronized (mWindowMap) {
     }
     final DisplayContent displayContent=getDisplayContentLocked(displayId);
     if (displayContent == null) {
+      Slog.w(TAG,"Attempted to add window to a display that does not exist: " + displayId + ".  Aborting.");
+      return WindowManagerGlobal.ADD_INVALID_DISPLAY;
+    }
+    if (!displayContent.hasAccess(session.mUid)) {
+      Slog.w(TAG,"Attempted to add window to a display for which the application " + "does not have access: " + displayId + ".  Aborting.");
       return WindowManagerGlobal.ADD_INVALID_DISPLAY;
     }
     if (mWindowMap.containsKey(client.asBinder())) {
@@ -31,6 +36,10 @@ synchronized (mWindowMap) {
         Slog.w(TAG,"Attempted to add window with token that is a sub-window: " + attrs.token + ".  Aborting.");
         return WindowManagerGlobal.ADD_BAD_SUBWINDOW_TOKEN;
       }
+    }
+    if (type == TYPE_PRIVATE_PRESENTATION && !displayContent.isPrivate()) {
+      Slog.w(TAG,"Attempted to add private presentation window to a non-private display.  Aborting.");
+      return WindowManagerGlobal.ADD_PERMISSION_DENIED;
     }
     boolean addToken=false;
     WindowToken token=mTokenMap.get(attrs.token);
@@ -120,6 +129,8 @@ synchronized (mWindowMap) {
     if (type == TYPE_APPLICATION_STARTING && token.appWindowToken != null) {
       token.appWindowToken.startingWindow=win;
       if (DEBUG_STARTING_WINDOW)       Slog.v(TAG,"addWindow: " + token.appWindowToken + " startingWindow="+ win);
+      Message m=mH.obtainMessage(H.REMOVE_STARTING_TIMEOUT,token.appWindowToken);
+      mH.sendMessageDelayed(m,STARTING_WINDOW_TIMEOUT_DURATION);
     }
     boolean imMayMove=true;
     if (type == TYPE_INPUT_METHOD) {
@@ -131,7 +142,7 @@ synchronized (mWindowMap) {
  else     if (type == TYPE_INPUT_METHOD_DIALOG) {
       mInputMethodDialogs.add(win);
       addWindowToListInOrderLocked(win,true);
-      adjustInputMethodDialogsLocked();
+      moveInputMethodDialogsLocked(findDesiredInputMethodWindowIndexLocked(true));
       imMayMove=false;
     }
  else {

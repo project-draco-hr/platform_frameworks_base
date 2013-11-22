@@ -1,18 +1,19 @@
 {
   boolean needSep=false;
+  boolean printedAnything=false;
   ItemMatcher matcher=new ItemMatcher();
   matcher.build(args,opti);
   pw.println("ACTIVITY MANAGER SERVICES (dumpsys activity services)");
   try {
     int[] users=mAm.getUsersLocked();
     for (    int user : users) {
-      if (mServiceMap.getAllServices(user).size() > 0) {
-        boolean printed=false;
+      ServiceMap smap=getServiceMap(user);
+      boolean printed=false;
+      if (smap.mServicesByName.size() > 0) {
         long nowReal=SystemClock.elapsedRealtime();
-        Iterator<ServiceRecord> it=mServiceMap.getAllServices(user).iterator();
         needSep=false;
-        while (it.hasNext()) {
-          ServiceRecord r=it.next();
+        for (int si=0; si < smap.mServicesByName.size(); si++) {
+          ServiceRecord r=smap.mServicesByName.valueAt(si);
           if (!matcher.match(r,r.name)) {
             continue;
           }
@@ -20,12 +21,13 @@
             continue;
           }
           if (!printed) {
-            if (user != 0) {
+            if (printedAnything) {
               pw.println();
             }
             pw.println("  User " + user + " active services:");
             printed=true;
           }
+          printedAnything=true;
           if (needSep) {
             pw.println();
           }
@@ -46,7 +48,8 @@
             pw.println(r.connections.size());
             if (r.connections.size() > 0) {
               pw.println("    Connections:");
-              for (              ArrayList<ConnectionRecord> clist : r.connections.values()) {
+              for (int conni=0; conni < r.connections.size(); conni++) {
+                ArrayList<ConnectionRecord> clist=r.connections.valueAt(conni);
                 for (int i=0; i < clist.size(); i++) {
                   ConnectionRecord conn=clist.get(i);
                   pw.print("      ");
@@ -81,12 +84,52 @@ catch (            RemoteException e) {
             needSep=true;
           }
         }
-        needSep=printed;
+        needSep|=printed;
+      }
+      printed=false;
+      for (int si=0, SN=smap.mDelayedStartList.size(); si < SN; si++) {
+        ServiceRecord r=smap.mDelayedStartList.get(si);
+        if (!matcher.match(r,r.name)) {
+          continue;
+        }
+        if (dumpPackage != null && !dumpPackage.equals(r.appInfo.packageName)) {
+          continue;
+        }
+        if (!printed) {
+          if (printedAnything) {
+            pw.println();
+          }
+          pw.println("  User " + user + " delayed start services:");
+          printed=true;
+        }
+        printedAnything=true;
+        pw.print("  * Delayed start ");
+        pw.println(r);
+      }
+      printed=false;
+      for (int si=0, SN=smap.mStartingBackground.size(); si < SN; si++) {
+        ServiceRecord r=smap.mStartingBackground.get(si);
+        if (!matcher.match(r,r.name)) {
+          continue;
+        }
+        if (dumpPackage != null && !dumpPackage.equals(r.appInfo.packageName)) {
+          continue;
+        }
+        if (!printed) {
+          if (printedAnything) {
+            pw.println();
+          }
+          pw.println("  User " + user + " starting in background:");
+          printed=true;
+        }
+        printedAnything=true;
+        pw.print("  * Starting bg ");
+        pw.println(r);
       }
     }
   }
  catch (  Exception e) {
-    Log.w(TAG,"Exception in dumpServicesLocked: " + e);
+    Slog.w(TAG,"Exception in dumpServicesLocked",e);
   }
   if (mPendingServices.size() > 0) {
     boolean printed=false;
@@ -98,8 +141,9 @@ catch (            RemoteException e) {
       if (dumpPackage != null && !dumpPackage.equals(r.appInfo.packageName)) {
         continue;
       }
+      printedAnything=true;
       if (!printed) {
-        if (needSep)         pw.println(" ");
+        if (needSep)         pw.println();
         needSep=true;
         pw.println("  Pending services:");
         printed=true;
@@ -120,8 +164,9 @@ catch (            RemoteException e) {
       if (dumpPackage != null && !dumpPackage.equals(r.appInfo.packageName)) {
         continue;
       }
+      printedAnything=true;
       if (!printed) {
-        if (needSep)         pw.println(" ");
+        if (needSep)         pw.println();
         needSep=true;
         pw.println("  Restarting services:");
         printed=true;
@@ -132,55 +177,55 @@ catch (            RemoteException e) {
     }
     needSep=true;
   }
-  if (mStoppingServices.size() > 0) {
+  if (mDestroyingServices.size() > 0) {
     boolean printed=false;
-    for (int i=0; i < mStoppingServices.size(); i++) {
-      ServiceRecord r=mStoppingServices.get(i);
+    for (int i=0; i < mDestroyingServices.size(); i++) {
+      ServiceRecord r=mDestroyingServices.get(i);
       if (!matcher.match(r,r.name)) {
         continue;
       }
       if (dumpPackage != null && !dumpPackage.equals(r.appInfo.packageName)) {
         continue;
       }
+      printedAnything=true;
       if (!printed) {
-        if (needSep)         pw.println(" ");
+        if (needSep)         pw.println();
         needSep=true;
-        pw.println("  Stopping services:");
+        pw.println("  Destroying services:");
         printed=true;
       }
-      pw.print("  * Stopping ");
+      pw.print("  * Destroy ");
       pw.println(r);
       r.dump(pw,"    ");
     }
     needSep=true;
   }
   if (dumpAll) {
-    if (mServiceConnections.size() > 0) {
-      boolean printed=false;
-      Iterator<ArrayList<ConnectionRecord>> it=mServiceConnections.values().iterator();
-      while (it.hasNext()) {
-        ArrayList<ConnectionRecord> r=it.next();
-        for (int i=0; i < r.size(); i++) {
-          ConnectionRecord cr=r.get(i);
-          if (!matcher.match(cr.binding.service,cr.binding.service.name)) {
-            continue;
-          }
-          if (dumpPackage != null && (cr.binding.client == null || !dumpPackage.equals(cr.binding.client.info.packageName))) {
-            continue;
-          }
-          if (!printed) {
-            if (needSep)             pw.println(" ");
-            needSep=true;
-            pw.println("  Connection bindings to services:");
-            printed=true;
-          }
-          pw.print("  * ");
-          pw.println(cr);
-          cr.dump(pw,"    ");
+    boolean printed=false;
+    for (int ic=0; ic < mServiceConnections.size(); ic++) {
+      ArrayList<ConnectionRecord> r=mServiceConnections.valueAt(ic);
+      for (int i=0; i < r.size(); i++) {
+        ConnectionRecord cr=r.get(i);
+        if (!matcher.match(cr.binding.service,cr.binding.service.name)) {
+          continue;
         }
+        if (dumpPackage != null && (cr.binding.client == null || !dumpPackage.equals(cr.binding.client.info.packageName))) {
+          continue;
+        }
+        printedAnything=true;
+        if (!printed) {
+          if (needSep)           pw.println();
+          needSep=true;
+          pw.println("  Connection bindings to services:");
+          printed=true;
+        }
+        pw.print("  * ");
+        pw.println(cr);
+        cr.dump(pw,"    ");
       }
-      needSep=true;
     }
   }
-  return needSep;
+  if (!printedAnything) {
+    pw.println("  (nothing)");
+  }
 }

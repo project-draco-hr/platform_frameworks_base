@@ -1,12 +1,17 @@
 {
   boolean waitedHalf=false;
   while (true) {
-    mCompleted=false;
-    mHandler.sendEmptyMessage(MONITOR);
-    final String name;
+    final ArrayList<HandlerChecker> blockedCheckers;
+    final String subject;
     final boolean allowRestart;
 synchronized (this) {
       long timeout=TIME_TO_WAIT;
+      if (!waitedHalf) {
+        for (int i=0; i < mHandlerCheckers.size(); i++) {
+          HandlerChecker hc=mHandlerCheckers.get(i);
+          hc.scheduleCheckLocked();
+        }
+      }
       long start=SystemClock.uptimeMillis();
       while (timeout > 0) {
         try {
@@ -17,7 +22,7 @@ synchronized (this) {
         }
         timeout=TIME_TO_WAIT - (SystemClock.uptimeMillis() - start);
       }
-      if (mCompleted) {
+      if (haveAllCheckersCompletedLocked()) {
         waitedHalf=false;
         continue;
       }
@@ -28,10 +33,11 @@ synchronized (this) {
         waitedHalf=true;
         continue;
       }
-      name=(mCurrentMonitor != null) ? mCurrentMonitor.getClass().getName() : "null";
+      blockedCheckers=getBlockedCheckersLocked();
+      subject=describeCheckersLocked(blockedCheckers);
       allowRestart=mAllowRestart;
     }
-    EventLog.writeEvent(EventLogTags.WATCHDOG,name);
+    EventLog.writeEvent(EventLogTags.WATCHDOG,subject);
     ArrayList<Integer> pids=new ArrayList<Integer>();
     pids.add(Process.myPid());
     if (mPhonePid > 0)     pids.add(mPhonePid);
@@ -51,7 +57,7 @@ synchronized (this) {
     }
     Thread dropboxThread=new Thread("watchdogWriteToDropbox"){
       public void run(){
-        mActivity.addErrorToDropBox("watchdog",null,"system_server",null,null,name,null,stack,null);
+        mActivity.addErrorToDropBox("watchdog",null,"system_server",null,null,subject,null,stack,null);
       }
     }
 ;
@@ -69,7 +75,7 @@ synchronized (this) {
       Slog.i(TAG,"Reporting stuck state to activity controller");
       try {
         Binder.setDumpDisabled("Service dumps disabled due to hung system process.");
-        int res=controller.systemNotResponding(name);
+        int res=controller.systemNotResponding(subject);
         if (res >= 0) {
           Slog.i(TAG,"Activity controller requested to coninue to wait");
           waitedHalf=false;
@@ -86,7 +92,15 @@ synchronized (this) {
       Slog.w(TAG,"Restart not allowed: Watchdog is *not* killing the system process");
     }
  else {
-      Slog.w(TAG,"*** WATCHDOG KILLING SYSTEM PROCESS: " + name);
+      Slog.w(TAG,"*** WATCHDOG KILLING SYSTEM PROCESS: " + subject);
+      for (int i=0; i < blockedCheckers.size(); i++) {
+        Slog.w(TAG,blockedCheckers.get(i).getName() + " stack trace:");
+        StackTraceElement[] stackTrace=blockedCheckers.get(i).getThread().getStackTrace();
+        for (        StackTraceElement element : stackTrace) {
+          Slog.w(TAG,"    at " + element);
+        }
+      }
+      Slog.w(TAG,"*** GOODBYE!");
       Process.killProcess(Process.myPid());
       System.exit(10);
     }

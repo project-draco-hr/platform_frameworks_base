@@ -9,12 +9,12 @@
   mNoDexOpt="eng".equals(SystemProperties.get("ro.build.type"));
   mMetrics=new DisplayMetrics();
   mSettings=new Settings(context);
-  mSettings.addSharedUserLPw("android.uid.system",Process.SYSTEM_UID,ApplicationInfo.FLAG_SYSTEM);
-  mSettings.addSharedUserLPw("android.uid.phone",RADIO_UID,ApplicationInfo.FLAG_SYSTEM);
-  mSettings.addSharedUserLPw("android.uid.log",LOG_UID,ApplicationInfo.FLAG_SYSTEM);
-  mSettings.addSharedUserLPw("android.uid.nfc",NFC_UID,ApplicationInfo.FLAG_SYSTEM);
-  mSettings.addSharedUserLPw("android.uid.bluetooth",BLUETOOTH_UID,ApplicationInfo.FLAG_SYSTEM);
-  mSettings.addSharedUserLPw("android.uid.shell",SHELL_UID,ApplicationInfo.FLAG_SYSTEM);
+  mSettings.addSharedUserLPw("android.uid.system",Process.SYSTEM_UID,ApplicationInfo.FLAG_SYSTEM | ApplicationInfo.FLAG_PRIVILEGED);
+  mSettings.addSharedUserLPw("android.uid.phone",RADIO_UID,ApplicationInfo.FLAG_SYSTEM | ApplicationInfo.FLAG_PRIVILEGED);
+  mSettings.addSharedUserLPw("android.uid.log",LOG_UID,ApplicationInfo.FLAG_SYSTEM | ApplicationInfo.FLAG_PRIVILEGED);
+  mSettings.addSharedUserLPw("android.uid.nfc",NFC_UID,ApplicationInfo.FLAG_SYSTEM | ApplicationInfo.FLAG_PRIVILEGED);
+  mSettings.addSharedUserLPw("android.uid.bluetooth",BLUETOOTH_UID,ApplicationInfo.FLAG_SYSTEM | ApplicationInfo.FLAG_PRIVILEGED);
+  mSettings.addSharedUserLPw("android.uid.shell",SHELL_UID,ApplicationInfo.FLAG_SYSTEM | ApplicationInfo.FLAG_PRIVILEGED);
   String separateProcesses=SystemProperties.get("debug.separate_processes");
   if (separateProcesses != null && separateProcesses.length() > 0) {
     if ("*".equals(separateProcesses)) {
@@ -40,6 +40,7 @@ synchronized (mInstallLock) {
 synchronized (mPackages) {
       mHandlerThread.start();
       mHandler=new PackageHandler(mHandlerThread.getLooper());
+      Watchdog.getInstance().addThread(mHandler,mHandlerThread.getName());
       File dataDir=Environment.getDataDirectory();
       mAppDataDir=new File(dataDir,"data");
       mAppInstallDir=new File(dataDir,"app");
@@ -51,6 +52,13 @@ synchronized (mPackages) {
       readPermissions();
       mFoundPolicyFile=SELinuxMMAC.readInstallPolicy();
       mRestoredSettings=mSettings.readLPw(this,sUserManager.getUsers(false),mSdkVersion,mOnlyCore);
+      String customResolverActivity=Resources.getSystem().getString(R.string.config_customResolverActivity);
+      if (TextUtils.isEmpty(customResolverActivity)) {
+        customResolverActivity=null;
+      }
+ else {
+        mCustomResolverComponentName=ComponentName.unflattenFromString(customResolverActivity);
+      }
       long startTime=SystemClock.uptimeMillis();
       EventLog.writeEvent(EventLogTags.BOOT_PROGRESS_PMS_SYSTEM_SCAN_START,startTime);
       int scanMode=SCAN_MONITOR | SCAN_NO_PATHS | SCAN_DEFER_DEX| SCAN_BOOTING;
@@ -58,32 +66,18 @@ synchronized (mPackages) {
         Slog.w(TAG,"Running ENG build: no pre-dexopt!");
         scanMode|=SCAN_NO_DEX;
       }
-      final HashSet<String> libFiles=new HashSet<String>();
-      mFrameworkDir=new File(Environment.getRootDirectory(),"framework");
-      mDalvikCacheDir=new File(dataDir,"dalvik-cache");
-      boolean didDexOpt=false;
+      final HashSet<String> alreadyDexOpted=new HashSet<String>();
       String bootClassPath=System.getProperty("java.boot.class.path");
       if (bootClassPath != null) {
         String[] paths=splitString(bootClassPath,':');
         for (int i=0; i < paths.length; i++) {
-          try {
-            if (dalvik.system.DexFile.isDexOptNeeded(paths[i])) {
-              libFiles.add(paths[i]);
-              mInstaller.dexopt(paths[i],Process.SYSTEM_UID,true);
-              didDexOpt=true;
-            }
-          }
- catch (          FileNotFoundException e) {
-            Slog.w(TAG,"Boot class path not found: " + paths[i]);
-          }
-catch (          IOException e) {
-            Slog.w(TAG,"Cannot dexopt " + paths[i] + "; is it an APK or JAR? "+ e.getMessage());
-          }
+          alreadyDexOpted.add(paths[i]);
         }
       }
  else {
         Slog.w(TAG,"No BOOTCLASSPATH found!");
       }
+      boolean didDexOpt=false;
       if (mSharedLibraries.size() > 0) {
         Iterator<SharedLibraryEntry> libs=mSharedLibraries.values().iterator();
         while (libs.hasNext()) {
@@ -93,7 +87,7 @@ catch (          IOException e) {
           }
           try {
             if (dalvik.system.DexFile.isDexOptNeeded(lib)) {
-              libFiles.add(lib);
+              alreadyDexOpted.add(lib);
               mInstaller.dexopt(lib,Process.SYSTEM_UID,true);
               didDexOpt=true;
             }
@@ -106,13 +100,15 @@ catch (          IOException e) {
           }
         }
       }
-      libFiles.add(mFrameworkDir.getPath() + "/framework-res.apk");
-      String[] frameworkFiles=mFrameworkDir.list();
+      File frameworkDir=new File(Environment.getRootDirectory(),"framework");
+      alreadyDexOpted.add(frameworkDir.getPath() + "/framework-res.apk");
+      alreadyDexOpted.add(frameworkDir.getPath() + "/core-libart.jar");
+      String[] frameworkFiles=frameworkDir.list();
       if (frameworkFiles != null) {
         for (int i=0; i < frameworkFiles.length; i++) {
-          File libPath=new File(mFrameworkDir,frameworkFiles[i]);
+          File libPath=new File(frameworkDir,frameworkFiles[i]);
           String path=libPath.getPath();
-          if (libFiles.contains(path)) {
+          if (alreadyDexOpted.contains(path)) {
             continue;
           }
           if (!path.endsWith(".apk") && !path.endsWith(".jar")) {
@@ -133,28 +129,33 @@ catch (          IOException e) {
         }
       }
       if (didDexOpt) {
-        String[] files=mDalvikCacheDir.list();
+        File dalvikCacheDir=new File(dataDir,"dalvik-cache");
+        String[] files=dalvikCacheDir.list();
         if (files != null) {
           for (int i=0; i < files.length; i++) {
             String fn=files[i];
             if (fn.startsWith("data@app@") || fn.startsWith("data@app-private@")) {
               Slog.i(TAG,"Pruning dalvik file: " + fn);
-              (new File(mDalvikCacheDir,fn)).delete();
+              (new File(dalvikCacheDir,fn)).delete();
             }
           }
         }
       }
-      mFrameworkInstallObserver=new AppDirObserver(mFrameworkDir.getPath(),OBSERVER_EVENTS,true);
+      mFrameworkInstallObserver=new AppDirObserver(frameworkDir.getPath(),OBSERVER_EVENTS,true,false);
       mFrameworkInstallObserver.startWatching();
-      scanDirLI(mFrameworkDir,PackageParser.PARSE_IS_SYSTEM | PackageParser.PARSE_IS_SYSTEM_DIR,scanMode | SCAN_NO_DEX,0);
-      mSystemAppDir=new File(Environment.getRootDirectory(),"app");
-      mSystemInstallObserver=new AppDirObserver(mSystemAppDir.getPath(),OBSERVER_EVENTS,true);
+      scanDirLI(frameworkDir,PackageParser.PARSE_IS_SYSTEM | PackageParser.PARSE_IS_SYSTEM_DIR,scanMode | SCAN_NO_DEX,0);
+      File privilegedAppDir=new File(Environment.getRootDirectory(),"priv-app");
+      mPrivilegedInstallObserver=new AppDirObserver(privilegedAppDir.getPath(),OBSERVER_EVENTS,true,true);
+      mPrivilegedInstallObserver.startWatching();
+      scanDirLI(privilegedAppDir,PackageParser.PARSE_IS_SYSTEM | PackageParser.PARSE_IS_SYSTEM_DIR | PackageParser.PARSE_IS_PRIVILEGED,scanMode,0);
+      File systemAppDir=new File(Environment.getRootDirectory(),"app");
+      mSystemInstallObserver=new AppDirObserver(systemAppDir.getPath(),OBSERVER_EVENTS,true,false);
       mSystemInstallObserver.startWatching();
-      scanDirLI(mSystemAppDir,PackageParser.PARSE_IS_SYSTEM | PackageParser.PARSE_IS_SYSTEM_DIR,scanMode,0);
-      mVendorAppDir=new File("/vendor/app");
-      mVendorInstallObserver=new AppDirObserver(mVendorAppDir.getPath(),OBSERVER_EVENTS,true);
+      scanDirLI(systemAppDir,PackageParser.PARSE_IS_SYSTEM | PackageParser.PARSE_IS_SYSTEM_DIR,scanMode,0);
+      File vendorAppDir=new File("/vendor/app");
+      mVendorInstallObserver=new AppDirObserver(vendorAppDir.getPath(),OBSERVER_EVENTS,true,false);
       mVendorInstallObserver.startWatching();
-      scanDirLI(mVendorAppDir,PackageParser.PARSE_IS_SYSTEM | PackageParser.PARSE_IS_SYSTEM_DIR,scanMode,0);
+      scanDirLI(vendorAppDir,PackageParser.PARSE_IS_SYSTEM | PackageParser.PARSE_IS_SYSTEM_DIR,scanMode,0);
       if (DEBUG_UPGRADE)       Log.v(TAG,"Running installd update commands");
       mInstaller.moveFiles();
       final List<String> possiblyDeletedUpdatedSystemApps=new ArrayList<String>();
@@ -192,12 +193,13 @@ catch (          IOException e) {
         cleanupInstallFailedPackage(deletePkgsList.get(i));
       }
       deleteTempPackageFiles();
+      mSettings.pruneSharedUsersLPw();
       if (!mOnlyCore) {
         EventLog.writeEvent(EventLogTags.BOOT_PROGRESS_PMS_DATA_SCAN_START,SystemClock.uptimeMillis());
-        mAppInstallObserver=new AppDirObserver(mAppInstallDir.getPath(),OBSERVER_EVENTS,false);
+        mAppInstallObserver=new AppDirObserver(mAppInstallDir.getPath(),OBSERVER_EVENTS,false,false);
         mAppInstallObserver.startWatching();
         scanDirLI(mAppInstallDir,0,scanMode,0);
-        mDrmAppInstallObserver=new AppDirObserver(mDrmAppPrivateInstallDir.getPath(),OBSERVER_EVENTS,false);
+        mDrmAppInstallObserver=new AppDirObserver(mDrmAppPrivateInstallDir.getPath(),OBSERVER_EVENTS,false,false);
         mDrmAppInstallObserver.startWatching();
         scanDirLI(mDrmAppPrivateInstallDir,PackageParser.PARSE_FORWARD_LOCK,scanMode,0);
         for (        String deletedAppName : possiblyDeletedUpdatedSystemApps) {

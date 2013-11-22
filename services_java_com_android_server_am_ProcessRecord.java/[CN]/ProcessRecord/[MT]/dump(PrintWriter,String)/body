@@ -28,8 +28,12 @@
   pw.print(" data=");
   pw.println(info.dataDir);
   pw.print(prefix);
-  pw.print("packageList=");
-  pw.println(pkgList);
+  pw.print("packageList={");
+  for (int i=0; i < pkgList.size(); i++) {
+    if (i > 0)     pw.print(", ");
+    pw.print(pkgList.keyAt(i));
+  }
+  pw.println("}");
   pw.print(prefix);
   pw.print("compat=");
   pw.println(compat);
@@ -56,37 +60,52 @@
   pw.print("pid=");
   pw.print(pid);
   pw.print(" starting=");
-  pw.print(starting);
-  pw.print(" lastPss=");
-  pw.println(lastPss);
+  pw.println(starting);
   pw.print(prefix);
   pw.print("lastActivityTime=");
   TimeUtils.formatDuration(lastActivityTime,now,pw);
-  pw.print(" lruWeight=");
-  pw.print(lruWeight);
-  pw.print(" serviceb=");
-  pw.print(serviceb);
-  pw.print(" keeping=");
+  pw.print(" lastPssTime=");
+  TimeUtils.formatDuration(lastPssTime,now,pw);
+  pw.print(" nextPssTime=");
+  TimeUtils.formatDuration(nextPssTime,now,pw);
+  pw.println();
+  pw.print(prefix);
+  pw.print("adjSeq=");
+  pw.print(adjSeq);
+  pw.print(" lruSeq=");
+  pw.print(lruSeq);
+  pw.print(" lastPss=");
+  pw.print(lastPss);
+  pw.print(" lastCachedPss=");
+  pw.println(lastCachedPss);
+  pw.print(prefix);
+  pw.print("keeping=");
   pw.print(keeping);
-  pw.print(" hidden=");
-  pw.print(hidden);
+  pw.print(" cached=");
+  pw.print(cached);
   pw.print(" empty=");
   pw.println(empty);
+  if (serviceb) {
+    pw.print(prefix);
+    pw.print("serviceb=");
+    pw.print(serviceb);
+    pw.print(" serviceHighRam=");
+    pw.println(serviceHighRam);
+  }
+  if (notCachedSinceIdle) {
+    pw.print(prefix);
+    pw.print("notCachedSinceIdle=");
+    pw.print(notCachedSinceIdle);
+    pw.print(" initialIdlePss=");
+    pw.println(initialIdlePss);
+  }
   pw.print(prefix);
   pw.print("oom: max=");
   pw.print(maxAdj);
-  pw.print(" hidden=");
-  pw.print(hiddenAdj);
-  pw.print(" client=");
-  pw.print(clientHiddenAdj);
-  pw.print(" empty=");
-  pw.print(emptyAdj);
   pw.print(" curRaw=");
   pw.print(curRawAdj);
   pw.print(" setRaw=");
   pw.print(setRawAdj);
-  pw.print(" nonStopping=");
-  pw.print(nonStoppingAdj);
   pw.print(" cur=");
   pw.print(curAdj);
   pw.print(" set=");
@@ -101,10 +120,17 @@
   pw.print(" trimMemoryLevel=");
   pw.println(trimMemoryLevel);
   pw.print(prefix);
-  pw.print("adjSeq=");
-  pw.print(adjSeq);
-  pw.print(" lruSeq=");
-  pw.println(lruSeq);
+  pw.print("curProcState=");
+  pw.print(curProcState);
+  pw.print(" repProcState=");
+  pw.print(repProcState);
+  pw.print(" pssProcState=");
+  pw.print(pssProcState);
+  pw.print(" setProcState=");
+  pw.print(setProcState);
+  pw.print(" lastStateTime=");
+  TimeUtils.formatDuration(lastStateTime,now,pw);
+  pw.println();
   if (hasShownUi || pendingUiClean || hasAboveClient) {
     pw.print(prefix);
     pw.print("hasShownUi=");
@@ -139,6 +165,11 @@
     pw.print(" foregroundActivities=");
     pw.println(foregroundActivities);
   }
+  if (hasStartedServices) {
+    pw.print(prefix);
+    pw.print("hasStartedServices=");
+    pw.println(hasStartedServices);
+  }
   if (!keeping) {
     long wtime;
 synchronized (batteryStats.getBatteryStats()) {
@@ -165,10 +196,10 @@ synchronized (batteryStats.getBatteryStats()) {
   TimeUtils.formatDuration(lastLowMemory,now,pw);
   pw.print(" reportLowMemory=");
   pw.println(reportLowMemory);
-  if (killedBackground || waitingToKill != null) {
+  if (killedByAm || waitingToKill != null) {
     pw.print(prefix);
-    pw.print("killedBackground=");
-    pw.print(killedBackground);
+    pw.print("killedByAm=");
+    pw.print(killedByAm);
     pw.print(" waitingToKill=");
     pw.println(waitingToKill);
   }
@@ -204,40 +235,42 @@ synchronized (batteryStats.getBatteryStats()) {
   if (services.size() > 0) {
     pw.print(prefix);
     pw.println("Services:");
-    for (    ServiceRecord sr : services) {
+    for (int i=0; i < services.size(); i++) {
       pw.print(prefix);
       pw.print("  - ");
-      pw.println(sr);
+      pw.println(services.valueAt(i));
     }
   }
   if (executingServices.size() > 0) {
     pw.print(prefix);
-    pw.println("Executing Services:");
-    for (    ServiceRecord sr : executingServices) {
+    pw.print("Executing Services (fg=");
+    pw.print(execServicesFg);
+    pw.println(")");
+    for (int i=0; i < executingServices.size(); i++) {
       pw.print(prefix);
       pw.print("  - ");
-      pw.println(sr);
+      pw.println(executingServices.valueAt(i));
     }
   }
   if (connections.size() > 0) {
     pw.print(prefix);
     pw.println("Connections:");
-    for (    ConnectionRecord cr : connections) {
+    for (int i=0; i < connections.size(); i++) {
       pw.print(prefix);
       pw.print("  - ");
-      pw.println(cr);
+      pw.println(connections.valueAt(i));
     }
   }
   if (pubProviders.size() > 0) {
     pw.print(prefix);
     pw.println("Published Providers:");
-    for (    HashMap.Entry<String,ContentProviderRecord> ent : pubProviders.entrySet()) {
+    for (int i=0; i < pubProviders.size(); i++) {
       pw.print(prefix);
       pw.print("  - ");
-      pw.println(ent.getKey());
+      pw.println(pubProviders.keyAt(i));
       pw.print(prefix);
       pw.print("    -> ");
-      pw.println(ent.getValue());
+      pw.println(pubProviders.valueAt(i));
     }
   }
   if (conProviders.size() > 0) {
@@ -257,10 +290,10 @@ synchronized (batteryStats.getBatteryStats()) {
   if (receivers.size() > 0) {
     pw.print(prefix);
     pw.println("Receivers:");
-    for (    ReceiverList rl : receivers) {
+    for (int i=0; i < receivers.size(); i++) {
       pw.print(prefix);
       pw.print("  - ");
-      pw.println(rl);
+      pw.println(receivers.valueAt(i));
     }
   }
 }

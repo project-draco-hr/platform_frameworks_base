@@ -27,29 +27,29 @@ synchronized (mPidsSelfLocked) {
     handleAppDiedLocked(app,true,true);
   }
   if (localLOGV)   Slog.v(TAG,"Binding process pid " + pid + " to record "+ app);
-  String processName=app.processName;
+  final String processName=app.processName;
   try {
     AppDeathRecipient adr=new AppDeathRecipient(app,pid,thread);
     thread.asBinder().linkToDeath(adr,0);
     app.deathRecipient=adr;
   }
  catch (  RemoteException e) {
-    app.resetPackageList();
+    app.resetPackageList(mProcessStats);
     startProcessLocked(app,"link fail",processName);
     return false;
   }
   EventLog.writeEvent(EventLogTags.AM_PROC_BOUND,app.userId,app.pid,app.processName);
-  app.thread=thread;
+  app.makeActive(thread,mProcessStats);
   app.curAdj=app.setAdj=-100;
-  app.curSchedGroup=Process.THREAD_GROUP_DEFAULT;
-  app.setSchedGroup=Process.THREAD_GROUP_BG_NONINTERACTIVE;
+  app.curSchedGroup=app.setSchedGroup=Process.THREAD_GROUP_DEFAULT;
   app.forcingToForeground=null;
   app.foregroundServices=false;
   app.hasShownUi=false;
   app.debugging=false;
+  app.cached=false;
   mHandler.removeMessages(PROC_START_TIMEOUT_MSG,app);
   boolean normalMode=mProcessesReady || isAllowedWhileBooting(app.info);
-  List providers=normalMode ? generateApplicationProvidersLocked(app) : null;
+  List<ProviderInfo> providers=normalMode ? generateApplicationProvidersLocked(app) : null;
   if (!normalMode) {
     Slog.i(TAG,"Launching preboot mode app: " + app);
   }
@@ -93,12 +93,12 @@ synchronized (mPidsSelfLocked) {
       profileFd=profileFd.dup();
     }
     thread.bindApplication(processName,appInfo,providers,app.instrumentationClass,profileFile,profileFd,profileAutoStop,app.instrumentationArguments,app.instrumentationWatcher,app.instrumentationUiAutomationConnection,testMode,enableOpenGlTrace,isRestrictedBackupMode || !normalMode,app.persistent,new Configuration(mConfiguration),app.compat,getCommonServicesLocked(),mCoreSettingsObserver.getCoreSettingsLocked());
-    updateLruProcessLocked(app,false);
+    updateLruProcessLocked(app,false,false);
     app.lastRequestedGc=app.lastLowMemory=SystemClock.uptimeMillis();
   }
  catch (  Exception e) {
     Slog.w(TAG,"Exception thrown during bind!",e);
-    app.resetPackageList();
+    app.resetPackageList(mProcessStats);
     app.unlinkDeathRecipient();
     startProcessLocked(app,"bind fail",processName);
     return false;
@@ -108,24 +108,14 @@ synchronized (mPidsSelfLocked) {
   mProcessesOnHold.remove(app);
   boolean badApp=false;
   boolean didSomething=false;
-  ActivityRecord hr=mMainStack.topRunningActivityLocked(null);
-  if (hr != null && normalMode) {
-    if (hr.app == null && app.uid == hr.info.applicationInfo.uid && processName.equals(hr.processName)) {
-      try {
-        if (mHeadless) {
-          Slog.e(TAG,"Starting activities not supported on headless device: " + hr);
-        }
- else         if (mMainStack.realStartActivityLocked(hr,app,true,true)) {
-          didSomething=true;
-        }
-      }
- catch (      Exception e) {
-        Slog.w(TAG,"Exception in new application when starting activity " + hr.intent.getComponent().flattenToShortString(),e);
-        badApp=true;
+  if (normalMode) {
+    try {
+      if (mStackSupervisor.attachApplicationLocked(app,mHeadless)) {
+        didSomething=true;
       }
     }
- else {
-      mMainStack.ensureActivitiesVisibleLocked(hr,null,processName,0);
+ catch (    Exception e) {
+      badApp=true;
     }
   }
   if (!badApp) {
@@ -138,7 +128,7 @@ synchronized (mPidsSelfLocked) {
   }
   if (!badApp && isPendingBroadcastProcessLocked(pid)) {
     try {
-      didSomething=sendPendingBroadcastsLocked(app);
+      didSomething|=sendPendingBroadcastsLocked(app);
     }
  catch (    Exception e) {
       badApp=true;

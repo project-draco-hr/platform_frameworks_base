@@ -1,13 +1,11 @@
 {
   if (mPausingActivity != null) {
-    RuntimeException e=new RuntimeException();
-    Slog.e(TAG,"Trying to pause when pause is already pending for " + mPausingActivity,e);
+    Slog.e(TAG,"Trying to pause when pause is already pending for " + mPausingActivity,new RuntimeException("here").fillInStackTrace());
   }
   ActivityRecord prev=mResumedActivity;
   if (prev == null) {
-    RuntimeException e=new RuntimeException();
-    Slog.e(TAG,"Trying to pause when nothing is resumed",e);
-    resumeTopActivityLocked(null);
+    Slog.e(TAG,"Trying to pause when nothing is resumed",new RuntimeException("here").fillInStackTrace());
+    mStackSupervisor.resumeTopActivitiesLocked();
     return;
   }
   if (DEBUG_STATES)   Slog.v(TAG,"Moving to PAUSING: " + prev);
@@ -15,35 +13,34 @@
   mResumedActivity=null;
   mPausingActivity=prev;
   mLastPausedActivity=prev;
+  mLastNoHistoryActivity=(prev.intent.getFlags() & Intent.FLAG_ACTIVITY_NO_HISTORY) != 0 || (prev.info.flags & ActivityInfo.FLAG_NO_HISTORY) != 0 ? prev : null;
   prev.state=ActivityState.PAUSING;
   prev.task.touchActiveTime();
+  clearLaunchTime(prev);
   prev.updateThumbnail(screenshotActivities(prev),null);
+  stopFullyDrawnTraceIfNeeded();
   mService.updateCpuStats();
   if (prev.app != null && prev.app.thread != null) {
     if (DEBUG_PAUSE)     Slog.v(TAG,"Enqueueing pending pause: " + prev);
     try {
       EventLog.writeEvent(EventLogTags.AM_PAUSE_ACTIVITY,prev.userId,System.identityHashCode(prev),prev.shortComponentName);
+      mService.updateUsageStats(prev,false);
       prev.app.thread.schedulePauseActivity(prev.appToken,prev.finishing,userLeaving,prev.configChangeFlags);
-      if (mMainStack) {
-        mService.updateUsageStats(prev,false);
-      }
     }
  catch (    Exception e) {
       Slog.w(TAG,"Exception thrown during pause",e);
       mPausingActivity=null;
       mLastPausedActivity=null;
+      mLastNoHistoryActivity=null;
     }
   }
  else {
     mPausingActivity=null;
     mLastPausedActivity=null;
+    mLastNoHistoryActivity=null;
   }
-  if (!mService.mSleeping && !mService.mShuttingDown) {
-    mLaunchingActivity.acquire();
-    if (!mHandler.hasMessages(LAUNCH_TIMEOUT_MSG)) {
-      Message msg=mHandler.obtainMessage(LAUNCH_TIMEOUT_MSG);
-      mHandler.sendMessageDelayed(msg,LAUNCH_TIMEOUT);
-    }
+  if (!mService.isSleepingOrShuttingDown()) {
+    mStackSupervisor.acquireLaunchWakelock();
   }
   if (mPausingActivity != null) {
     if (!uiSleeping) {
@@ -60,6 +57,6 @@
   }
  else {
     if (DEBUG_PAUSE)     Slog.v(TAG,"Activity not running, resuming next.");
-    resumeTopActivityLocked(null);
+    mStackSupervisor.getFocusedStack().resumeTopActivityLocked(null);
   }
 }

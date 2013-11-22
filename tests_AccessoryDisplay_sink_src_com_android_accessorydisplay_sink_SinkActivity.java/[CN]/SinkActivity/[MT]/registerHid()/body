@@ -1,0 +1,38 @@
+{
+  mLogger.log("Registering HID multitouch device.");
+  mMultitouch=new UsbHid.Multitouch(MULTITOUCH_REPORT_ID,MULTITOUCH_MAX_CONTACTS,mSurfaceView.getWidth(),mSurfaceView.getHeight());
+  mHidBuffer.clear();
+  mMultitouch.generateDescriptor(mHidBuffer);
+  mHidBuffer.flip();
+  mLogger.log("HID descriptor size: " + mHidBuffer.limit());
+  mLogger.log("HID report size: " + mMultitouch.getReportSize());
+  final int maxPacketSize=mControlEndpoint.getMaxPacketSize();
+  mLogger.log("Control endpoint max packet size: " + maxPacketSize);
+  if (mMultitouch.getReportSize() > maxPacketSize) {
+    mLogger.logError("HID report is too big for this accessory.");
+    return;
+  }
+  int len=mAccessoryConnection.controlTransfer(UsbConstants.USB_DIR_OUT | UsbConstants.USB_TYPE_VENDOR,UsbAccessoryConstants.ACCESSORY_REGISTER_HID,MULTITOUCH_DEVICE_ID,mHidBuffer.limit(),null,0,10000);
+  if (len != 0) {
+    mLogger.logError("Device rejected ACCESSORY_REGISTER_HID request.");
+    return;
+  }
+  while (mHidBuffer.hasRemaining()) {
+    int position=mHidBuffer.position();
+    int count=Math.min(mHidBuffer.remaining(),maxPacketSize);
+    len=mAccessoryConnection.controlTransfer(UsbConstants.USB_DIR_OUT | UsbConstants.USB_TYPE_VENDOR,UsbAccessoryConstants.ACCESSORY_SET_HID_REPORT_DESC,MULTITOUCH_DEVICE_ID,0,mHidBuffer.array(),position,count,10000);
+    if (len != count) {
+      mLogger.logError("Device rejected ACCESSORY_SET_HID_REPORT_DESC request.");
+      return;
+    }
+    mHidBuffer.position(position + count);
+  }
+  mLogger.log("HID device registered.");
+  mMultitouchEnabled=true;
+  if (mMultitouchContacts == null) {
+    mMultitouchContacts=new UsbHid.Multitouch.Contact[MULTITOUCH_MAX_CONTACTS];
+    for (int i=0; i < MULTITOUCH_MAX_CONTACTS; i++) {
+      mMultitouchContacts[i]=new UsbHid.Multitouch.Contact();
+    }
+  }
+}

@@ -6,7 +6,7 @@
   }
   ActivityRecord activity=null;
   if (token != null) {
-    activity=mAm.mMainStack.isInStackLocked(token);
+    activity=ActivityRecord.isInStackLocked(token);
     if (activity == null) {
       Slog.w(TAG,"Binding with unknown activity: " + token);
       return 0;
@@ -27,7 +27,8 @@
       }
     }
   }
-  ServiceLookupResult res=retrieveServiceLocked(service,resolvedType,Binder.getCallingPid(),Binder.getCallingUid(),userId,true);
+  final boolean callerFg=callerApp.setSchedGroup != Process.THREAD_GROUP_BG_NONINTERACTIVE;
+  ServiceLookupResult res=retrieveServiceLocked(service,resolvedType,Binder.getCallingPid(),Binder.getCallingUid(),userId,true,callerFg);
   if (res == null) {
     return 0;
   }
@@ -39,6 +40,15 @@
   try {
     if (unscheduleServiceRestartLocked(s)) {
       if (DEBUG_SERVICE)       Slog.v(TAG,"BIND SERVICE WHILE RESTART PENDING: " + s);
+    }
+    if ((flags & Context.BIND_AUTO_CREATE) != 0) {
+      s.lastActivity=SystemClock.uptimeMillis();
+      if (!s.hasAutoCreateConnections()) {
+        ProcessStats.ServiceState stracker=s.getTracker();
+        if (stracker != null) {
+          stracker.setBound(true,mAm.mProcessStats.getMemFactorLocked(),s.lastActivity);
+        }
+      }
     }
     AppBindRecord b=s.retrieveAppBindingLocked(service,callerApp);
     ConnectionRecord c=new ConnectionRecord(b,activity,connection,flags,clientLabel,clientIntent);
@@ -68,7 +78,7 @@
     clist.add(c);
     if ((flags & Context.BIND_AUTO_CREATE) != 0) {
       s.lastActivity=SystemClock.uptimeMillis();
-      if (bringUpServiceLocked(s,service.getFlags(),false) != null) {
+      if (bringUpServiceLocked(s,service.getFlags(),callerFg,false) != null) {
         return 0;
       }
     }
@@ -84,12 +94,13 @@
         Slog.w(TAG,"Failure sending service " + s.shortName + " to connection "+ c.conn.asBinder()+ " (in "+ c.binding.client.processName+ ")",e);
       }
       if (b.intent.apps.size() == 1 && b.intent.doRebind) {
-        requestServiceBindingLocked(s,b.intent,true);
+        requestServiceBindingLocked(s,b.intent,callerFg,true);
       }
     }
  else     if (!b.intent.requested) {
-      requestServiceBindingLocked(s,b.intent,false);
+      requestServiceBindingLocked(s,b.intent,callerFg,false);
     }
+    getServiceMap(s.userId).ensureNotStartingBackground(s);
   }
   finally {
     Binder.restoreCallingIdentity(origId);

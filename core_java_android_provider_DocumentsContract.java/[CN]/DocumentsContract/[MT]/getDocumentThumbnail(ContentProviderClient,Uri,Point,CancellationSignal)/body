@@ -1,0 +1,57 @@
+{
+  final Bundle openOpts=new Bundle();
+  openOpts.putParcelable(DocumentsContract.EXTRA_THUMBNAIL_SIZE,size);
+  AssetFileDescriptor afd=null;
+  Bitmap bitmap=null;
+  try {
+    afd=client.openTypedAssetFileDescriptor(documentUri,"image/*",openOpts,signal);
+    final FileDescriptor fd=afd.getFileDescriptor();
+    final long offset=afd.getStartOffset();
+    BufferedInputStream is=null;
+    try {
+      Libcore.os.lseek(fd,offset,SEEK_SET);
+    }
+ catch (    ErrnoException e) {
+      is=new BufferedInputStream(new FileInputStream(fd),THUMBNAIL_BUFFER_SIZE);
+      is.mark(THUMBNAIL_BUFFER_SIZE);
+    }
+    final BitmapFactory.Options opts=new BitmapFactory.Options();
+    opts.inJustDecodeBounds=true;
+    if (is != null) {
+      BitmapFactory.decodeStream(is,null,opts);
+    }
+ else {
+      BitmapFactory.decodeFileDescriptor(fd,null,opts);
+    }
+    final int widthSample=opts.outWidth / size.x;
+    final int heightSample=opts.outHeight / size.y;
+    opts.inJustDecodeBounds=false;
+    opts.inSampleSize=Math.min(widthSample,heightSample);
+    if (is != null) {
+      is.reset();
+      bitmap=BitmapFactory.decodeStream(is,null,opts);
+    }
+ else {
+      try {
+        Libcore.os.lseek(fd,offset,SEEK_SET);
+      }
+ catch (      ErrnoException e) {
+        e.rethrowAsIOException();
+      }
+      bitmap=BitmapFactory.decodeFileDescriptor(fd,null,opts);
+    }
+    final Bundle extras=afd.getExtras();
+    final int orientation=(extras != null) ? extras.getInt(EXTRA_ORIENTATION,0) : 0;
+    if (orientation != 0) {
+      final int width=bitmap.getWidth();
+      final int height=bitmap.getHeight();
+      final Matrix m=new Matrix();
+      m.setRotate(orientation,width / 2,height / 2);
+      bitmap=Bitmap.createBitmap(bitmap,0,0,width,height,m,false);
+    }
+  }
+  finally {
+    IoUtils.closeQuietly(afd);
+  }
+  return bitmap;
+}

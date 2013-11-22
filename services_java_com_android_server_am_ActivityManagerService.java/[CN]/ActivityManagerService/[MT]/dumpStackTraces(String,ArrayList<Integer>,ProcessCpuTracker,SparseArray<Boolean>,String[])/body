@@ -1,0 +1,66 @@
+{
+  FileObserver observer=new FileObserver(tracesPath,FileObserver.CLOSE_WRITE){
+    @Override public synchronized void onEvent(    int event,    String path){
+      notify();
+    }
+  }
+;
+  try {
+    observer.startWatching();
+    if (firstPids != null) {
+      try {
+        int num=firstPids.size();
+        for (int i=0; i < num; i++) {
+synchronized (observer) {
+            Process.sendSignal(firstPids.get(i),Process.SIGNAL_QUIT);
+            observer.wait(200);
+          }
+        }
+      }
+ catch (      InterruptedException e) {
+        Log.wtf(TAG,e);
+      }
+    }
+    if (processCpuTracker != null) {
+      processCpuTracker.init();
+      System.gc();
+      processCpuTracker.update();
+      try {
+synchronized (processCpuTracker) {
+          processCpuTracker.wait(500);
+        }
+      }
+ catch (      InterruptedException e) {
+      }
+      processCpuTracker.update();
+      final int N=processCpuTracker.countWorkingStats();
+      int numProcs=0;
+      for (int i=0; i < N && numProcs < 5; i++) {
+        ProcessCpuTracker.Stats stats=processCpuTracker.getWorkingStats(i);
+        if (lastPids.indexOfKey(stats.pid) >= 0) {
+          numProcs++;
+          try {
+synchronized (observer) {
+              Process.sendSignal(stats.pid,Process.SIGNAL_QUIT);
+              observer.wait(200);
+            }
+          }
+ catch (          InterruptedException e) {
+            Log.wtf(TAG,e);
+          }
+        }
+      }
+    }
+  }
+  finally {
+    observer.stopWatching();
+  }
+  if (nativeProcs != null) {
+    int[] pids=Process.getPidsForCommands(nativeProcs);
+    if (pids != null) {
+      for (      int pid : pids) {
+        Debug.dumpNativeBacktraceToFile(pid,tracesPath);
+      }
+    }
+  }
+}

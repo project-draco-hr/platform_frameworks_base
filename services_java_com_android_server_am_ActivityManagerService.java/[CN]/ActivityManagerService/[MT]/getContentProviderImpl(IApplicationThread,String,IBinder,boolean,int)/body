@@ -27,7 +27,7 @@ synchronized (this) {
       conn=incProviderCountLocked(r,cpr,token,stable);
       if (conn != null && (conn.stableCount + conn.unstableCount) == 1) {
         if (cpr.proc != null && r.setAdj <= ProcessList.PERCEPTIBLE_APP_ADJ) {
-          updateLruProcessLocked(cpr.proc,false);
+          updateLruProcessLocked(cpr.proc,false,false);
         }
       }
       if (cpr.proc != null) {
@@ -99,7 +99,7 @@ synchronized (this) {
       }
       if (DEBUG_PROVIDER) {
         RuntimeException e=new RuntimeException("here");
-        Slog.w(TAG,"LAUNCHING REMOTE PROVIDER (myuid " + r.uid + " pruid "+ cpr.appInfo.uid+ "): "+ cpr.info.name,e);
+        Slog.w(TAG,"LAUNCHING REMOTE PROVIDER (myuid " + (r != null ? r.uid : null) + " pruid "+ cpr.appInfo.uid+ "): "+ cpr.info.name,e);
       }
       final int N=mLaunchingProviders.size();
       int i;
@@ -119,10 +119,24 @@ synchronized (this) {
 catch (          IllegalArgumentException e) {
             Slog.w(TAG,"Failed trying to unstop package " + cpr.appInfo.packageName + ": "+ e);
           }
-          ProcessRecord proc=startProcessLocked(cpi.processName,cpr.appInfo,false,0,"content provider",new ComponentName(cpi.applicationInfo.packageName,cpi.name),false,false);
-          if (proc == null) {
-            Slog.w(TAG,"Unable to launch app " + cpi.applicationInfo.packageName + "/"+ cpi.applicationInfo.uid+ " for provider "+ name+ ": process is bad");
-            return null;
+          ProcessRecord proc=getProcessRecordLocked(cpi.processName,cpr.appInfo.uid,false);
+          if (proc != null && proc.thread != null) {
+            if (DEBUG_PROVIDER) {
+              Slog.d(TAG,"Installing in existing process " + proc);
+            }
+            proc.pubProviders.put(cpi.name,cpr);
+            try {
+              proc.thread.scheduleInstallProvider(cpi);
+            }
+ catch (            RemoteException e) {
+            }
+          }
+ else {
+            proc=startProcessLocked(cpi.processName,cpr.appInfo,false,0,"content provider",new ComponentName(cpi.applicationInfo.packageName,cpi.name),false,false,false);
+            if (proc == null) {
+              Slog.w(TAG,"Unable to launch app " + cpi.applicationInfo.packageName + "/"+ cpi.applicationInfo.uid+ " for provider "+ name+ ": process is bad");
+              return null;
+            }
           }
           cpr.launchingApp=proc;
           mLaunchingProviders.add(cpr);

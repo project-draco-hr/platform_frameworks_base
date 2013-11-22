@@ -7,7 +7,6 @@
     mRemoteDisplayConnected=false;
     mHandler.removeCallbacks(mRtspTimeout);
     mWifiP2pManager.setMiracastMode(WifiP2pManager.MIRACAST_DISABLED);
-    setRemoteSubmixOn(false);
     unadvertiseDisplay();
   }
   if (mDisconnectingDevice != null) {
@@ -17,6 +16,7 @@
     Slog.i(TAG,"Disconnecting from Wifi display: " + mConnectedDevice.deviceName);
     mDisconnectingDevice=mConnectedDevice;
     mConnectedDevice=null;
+    mConnectedDeviceGroupInfo=null;
     unadvertiseDisplay();
     final WifiP2pDevice oldDevice=mDisconnectingDevice;
     mWifiP2pManager.removeGroup(mWifiP2pChannel,new ActionListener(){
@@ -68,6 +68,9 @@
     return;
   }
   if (mDesiredDevice == null) {
+    if (mWifiDisplayCertMode) {
+      mListener.onDisplaySessionInfo(getSessionInfo(mConnectedDeviceGroupInfo,0));
+    }
     unadvertiseDisplay();
     return;
   }
@@ -76,7 +79,10 @@
     mConnectingDevice=mDesiredDevice;
     WifiP2pConfig config=new WifiP2pConfig();
     WpsInfo wps=new WpsInfo();
-    if (mConnectingDevice.wpsPbcSupported()) {
+    if (mWifiDisplayWpsConfig != WpsInfo.INVALID) {
+      wps.setup=mWifiDisplayWpsConfig;
+    }
+ else     if (mConnectingDevice.wpsPbcSupported()) {
       wps.setup=WpsInfo.PBC;
     }
  else     if (mConnectingDevice.wpsDisplaySupported()) {
@@ -114,7 +120,6 @@
       handleConnectionFailure(false);
       return;
     }
-    setRemoteSubmixOn(true);
     mWifiP2pManager.setMiracastMode(WifiP2pManager.MIRACAST_SOURCE);
     final WifiP2pDevice oldDevice=mConnectedDevice;
     final int port=getPortNumber(mConnectedDevice);
@@ -122,11 +127,14 @@
     mRemoteDisplayInterface=iface;
     Slog.i(TAG,"Listening for RTSP connection on " + iface + " from Wifi display: "+ mConnectedDevice.deviceName);
     mRemoteDisplay=RemoteDisplay.listen(iface,new RemoteDisplay.Listener(){
-      @Override public void onDisplayConnected(      Surface surface,      int width,      int height,      int flags){
+      @Override public void onDisplayConnected(      Surface surface,      int width,      int height,      int flags,      int session){
         if (mConnectedDevice == oldDevice && !mRemoteDisplayConnected) {
           Slog.i(TAG,"Opened RTSP connection with Wifi display: " + mConnectedDevice.deviceName);
           mRemoteDisplayConnected=true;
           mHandler.removeCallbacks(mRtspTimeout);
+          if (mWifiDisplayCertMode) {
+            mListener.onDisplaySessionInfo(getSessionInfo(mConnectedDeviceGroupInfo,session));
+          }
           final WifiDisplay display=createWifiDisplay(mConnectedDevice);
           advertiseDisplay(display,surface,width,height,flags);
         }
@@ -147,6 +155,7 @@
       }
     }
 ,mHandler);
-    mHandler.postDelayed(mRtspTimeout,RTSP_TIMEOUT_SECONDS * 1000);
+    int rtspTimeout=mWifiDisplayCertMode ? RTSP_TIMEOUT_SECONDS_CERT_MODE : RTSP_TIMEOUT_SECONDS;
+    mHandler.postDelayed(mRtspTimeout,rtspTimeout * 1000);
   }
 }

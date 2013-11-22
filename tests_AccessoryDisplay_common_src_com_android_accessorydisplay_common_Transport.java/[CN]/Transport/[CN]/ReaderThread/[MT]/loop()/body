@@ -1,0 +1,73 @@
+{
+  ByteBuffer buffer=null;
+  int length=Protocol.HEADER_SIZE;
+  int contentSize=-1;
+  outer:   while (!mQuitting) {
+    if (buffer == null) {
+      buffer=mInputBufferPool.acquire(length);
+    }
+ else {
+      buffer=mInputBufferPool.grow(buffer,length);
+    }
+    int position=buffer.position();
+    int count;
+    try {
+      count=ioRead(buffer.array(),position,buffer.capacity() - position);
+      if (count < 0) {
+        break;
+      }
+    }
+ catch (    IOException ex) {
+      mLogger.logError("Read failed: " + ex);
+      break;
+    }
+    position+=count;
+    buffer.position(position);
+    if (contentSize < 0 && position >= Protocol.HEADER_SIZE) {
+      contentSize=buffer.getInt(4);
+      if (contentSize < 0 || contentSize > Protocol.MAX_CONTENT_SIZE) {
+        mLogger.logError("Encountered invalid content size: " + contentSize);
+        break;
+      }
+      length+=contentSize;
+    }
+    if (position < length) {
+      continue;
+    }
+    int next=length;
+    int remaining;
+    for (; ; ) {
+      length=Protocol.HEADER_SIZE;
+      remaining=position - next;
+      if (remaining < length) {
+        contentSize=-1;
+        break;
+      }
+      contentSize=buffer.getInt(next + 4);
+      if (contentSize < 0 || contentSize > Protocol.MAX_CONTENT_SIZE) {
+        mLogger.logError("Encountered invalid content size: " + contentSize);
+        break outer;
+      }
+      length+=contentSize;
+      if (remaining < length) {
+        break;
+      }
+      next+=length;
+    }
+    buffer.limit(next);
+    buffer.rewind();
+    mHandler.obtainMessage(0,buffer).sendToTarget();
+    if (remaining == 0) {
+      buffer=null;
+    }
+ else {
+      final ByteBuffer oldBuffer=buffer;
+      buffer=mInputBufferPool.acquire(length);
+      System.arraycopy(oldBuffer.array(),next,buffer.array(),0,remaining);
+      buffer.position(remaining);
+    }
+  }
+  if (buffer != null) {
+    mInputBufferPool.release(buffer);
+  }
+}

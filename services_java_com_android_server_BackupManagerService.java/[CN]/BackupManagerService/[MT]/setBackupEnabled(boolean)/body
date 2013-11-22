@@ -1,28 +1,34 @@
 {
   mContext.enforceCallingOrSelfPermission(android.Manifest.permission.BACKUP,"setBackupEnabled");
   Slog.i(TAG,"Backup enabled => " + enable);
-  boolean wasEnabled=mEnabled;
+  long oldId=Binder.clearCallingIdentity();
+  try {
+    boolean wasEnabled=mEnabled;
 synchronized (this) {
-    Settings.Secure.putInt(mContext.getContentResolver(),Settings.Secure.BACKUP_ENABLED,enable ? 1 : 0);
-    mEnabled=enable;
-  }
-synchronized (mQueueLock) {
-    if (enable && !wasEnabled && mProvisioned) {
-      startBackupAlarmsLocked(BACKUP_INTERVAL);
+      Settings.Secure.putInt(mContext.getContentResolver(),Settings.Secure.BACKUP_ENABLED,enable ? 1 : 0);
+      mEnabled=enable;
     }
- else     if (!enable) {
-      if (DEBUG)       Slog.i(TAG,"Opting out of backup");
-      mAlarmManager.cancel(mRunBackupIntent);
-      if (wasEnabled && mProvisioned) {
-        HashSet<String> allTransports;
+synchronized (mQueueLock) {
+      if (enable && !wasEnabled && mProvisioned) {
+        startBackupAlarmsLocked(BACKUP_INTERVAL);
+      }
+ else       if (!enable) {
+        if (DEBUG)         Slog.i(TAG,"Opting out of backup");
+        mAlarmManager.cancel(mRunBackupIntent);
+        if (wasEnabled && mProvisioned) {
+          HashSet<String> allTransports;
 synchronized (mTransports) {
-          allTransports=new HashSet<String>(mTransports.keySet());
+            allTransports=new HashSet<String>(mTransports.keySet());
+          }
+          for (          String transport : allTransports) {
+            recordInitPendingLocked(true,transport);
+          }
+          mAlarmManager.set(AlarmManager.RTC_WAKEUP,System.currentTimeMillis(),mRunInitIntent);
         }
-        for (        String transport : allTransports) {
-          recordInitPendingLocked(true,transport);
-        }
-        mAlarmManager.set(AlarmManager.RTC_WAKEUP,System.currentTimeMillis(),mRunInitIntent);
       }
     }
+  }
+  finally {
+    Binder.restoreCallingIdentity(oldId);
   }
 }

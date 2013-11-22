@@ -1,0 +1,38 @@
+{
+  short tagId=mTiffStream.readShort();
+  short dataFormat=mTiffStream.readShort();
+  long numOfComp=mTiffStream.readUnsignedInt();
+  if (numOfComp > Integer.MAX_VALUE) {
+    throw new ExifInvalidFormatException("Number of component is larger then Integer.MAX_VALUE");
+  }
+  if (!ExifTag.isValidType(dataFormat)) {
+    Log.w(TAG,String.format("Tag %04x: Invalid data type %d",tagId,dataFormat));
+    mTiffStream.skip(4);
+    return null;
+  }
+  ExifTag tag=new ExifTag(tagId,dataFormat,(int)numOfComp,mIfdType,((int)numOfComp) != ExifTag.SIZE_UNDEFINED);
+  int dataSize=tag.getDataSize();
+  if (dataSize > 4) {
+    long offset=mTiffStream.readUnsignedInt();
+    if (offset > Integer.MAX_VALUE) {
+      throw new ExifInvalidFormatException("offset is larger then Integer.MAX_VALUE");
+    }
+    if ((offset < mIfd0Position) && (dataFormat == ExifTag.TYPE_UNDEFINED)) {
+      byte[] buf=new byte[(int)numOfComp];
+      System.arraycopy(mDataAboveIfd0,(int)offset - DEFAULT_IFD0_OFFSET,buf,0,(int)numOfComp);
+      tag.setValue(buf);
+    }
+ else {
+      tag.setOffset((int)offset);
+    }
+  }
+ else {
+    boolean defCount=tag.hasDefinedCount();
+    tag.setHasDefinedCount(false);
+    readFullTagValue(tag);
+    tag.setHasDefinedCount(defCount);
+    mTiffStream.skip(4 - dataSize);
+    tag.setOffset(mTiffStream.getReadByteCount() - 4);
+  }
+  return tag;
+}
