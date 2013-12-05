@@ -1,0 +1,102 @@
+{
+  final boolean hasActivity=app.activities.size() > 0 || app.hasClientActivities;
+  final boolean hasService=false;
+  if (!activityChange && hasActivity) {
+    return;
+  }
+  mLruSeq++;
+  final long now=SystemClock.uptimeMillis();
+  app.lastActivityTime=now;
+  if (hasActivity) {
+    final int N=mLruProcesses.size();
+    if (N > 0 && mLruProcesses.get(N - 1) == app) {
+      if (DEBUG_LRU)       Slog.d(TAG,"Not moving, already top activity: " + app);
+      return;
+    }
+  }
+ else {
+    if (mLruProcessServiceStart > 0 && mLruProcesses.get(mLruProcessServiceStart - 1) == app) {
+      if (DEBUG_LRU)       Slog.d(TAG,"Not moving, already top other: " + app);
+      return;
+    }
+  }
+  int lrui=mLruProcesses.lastIndexOf(app);
+  if (app.persistent && lrui >= 0) {
+    if (DEBUG_LRU)     Slog.d(TAG,"Not moving, persistent: " + app);
+    return;
+  }
+  if (lrui >= 0) {
+    if (lrui < mLruProcessActivityStart) {
+      mLruProcessActivityStart--;
+    }
+    if (lrui < mLruProcessServiceStart) {
+      mLruProcessServiceStart--;
+    }
+    mLruProcesses.remove(lrui);
+  }
+  int nextIndex;
+  if (hasActivity) {
+    final int N=mLruProcesses.size();
+    if (app.activities.size() == 0 && mLruProcessActivityStart < (N - 1)) {
+      if (DEBUG_LRU)       Slog.d(TAG,"Adding to second-top of LRU activity list: " + app);
+      mLruProcesses.add(N - 1,app);
+      final int uid=app.info.uid;
+      for (int i=N - 2; i > mLruProcessActivityStart; i--) {
+        ProcessRecord subProc=mLruProcesses.get(i);
+        if (subProc.info.uid == uid) {
+          if (mLruProcesses.get(i - 1).info.uid != uid) {
+            if (DEBUG_LRU)             Slog.d(TAG,"Pushing uid " + uid + " swapping at "+ i+ ": "+ mLruProcesses.get(i)+ " : "+ mLruProcesses.get(i - 1));
+            ProcessRecord tmp=mLruProcesses.get(i);
+            mLruProcesses.set(i,mLruProcesses.get(i - 1));
+            mLruProcesses.set(i - 1,tmp);
+            i--;
+          }
+        }
+ else {
+          break;
+        }
+      }
+    }
+ else {
+      if (DEBUG_LRU)       Slog.d(TAG,"Adding to top of LRU activity list: " + app);
+      mLruProcesses.add(app);
+    }
+    nextIndex=mLruProcessServiceStart;
+  }
+ else   if (hasService) {
+    if (DEBUG_LRU)     Slog.d(TAG,"Adding to top of LRU service list: " + app);
+    mLruProcesses.add(mLruProcessActivityStart,app);
+    nextIndex=mLruProcessServiceStart;
+    mLruProcessActivityStart++;
+  }
+ else {
+    int index=mLruProcessServiceStart;
+    if (client != null) {
+      int clientIndex=mLruProcesses.lastIndexOf(client);
+      if (DEBUG_LRU && clientIndex < 0)       Slog.d(TAG,"Unknown client " + client + " when updating "+ app);
+      if (clientIndex <= lrui) {
+        clientIndex=lrui;
+      }
+      if (clientIndex >= 0 && index > clientIndex) {
+        index=clientIndex;
+      }
+    }
+    if (DEBUG_LRU)     Slog.d(TAG,"Adding at " + index + " of LRU list: "+ app);
+    mLruProcesses.add(index,app);
+    nextIndex=index - 1;
+    mLruProcessActivityStart++;
+    mLruProcessServiceStart++;
+  }
+  for (int j=app.connections.size() - 1; j >= 0; j--) {
+    ConnectionRecord cr=app.connections.valueAt(j);
+    if (cr.binding != null && !cr.serviceDead && cr.binding.service != null && cr.binding.service.app != null && cr.binding.service.app.lruSeq != mLruSeq && !cr.binding.service.app.persistent) {
+      nextIndex=updateLruProcessInternalLocked(cr.binding.service.app,now,nextIndex,"service connection",cr,app);
+    }
+  }
+  for (int j=app.conProviders.size() - 1; j >= 0; j--) {
+    ContentProviderRecord cpr=app.conProviders.get(j).provider;
+    if (cpr.proc != null && cpr.proc.lruSeq != mLruSeq && !cpr.proc.persistent) {
+      nextIndex=updateLruProcessInternalLocked(cpr.proc,now,nextIndex,"provider reference",cpr,app);
+    }
+  }
+}
