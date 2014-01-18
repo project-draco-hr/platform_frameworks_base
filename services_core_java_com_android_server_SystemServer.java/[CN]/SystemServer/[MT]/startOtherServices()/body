@@ -1,13 +1,8 @@
 {
-  final ServiceThread windowManagerThread=new ServiceThread("WindowManager",android.os.Process.THREAD_PRIORITY_DISPLAY);
-  windowManagerThread.start();
-  final Handler windowManagerHandler=new Handler(windowManagerThread.getLooper());
-  Watchdog.getInstance().addThread(windowManagerHandler);
   final Context context=mSystemContext;
   AccountManagerService accountManager=null;
   ContentService contentService=null;
   LightsManager lights=null;
-  DisplayManagerService display=null;
   BatteryService battery=null;
   VibratorService vibrator=null;
   IAlarmManager alarm=null;
@@ -41,18 +36,13 @@
   boolean disableNonCoreServices=SystemProperties.getBoolean("config.disable_noncore",false);
   boolean disableNetwork=SystemProperties.getBoolean("config.disable_network",false);
   try {
-    Slog.i(TAG,"Display Manager");
-    display=new DisplayManagerService(context,windowManagerHandler);
-    ServiceManager.addService(Context.DISPLAY_SERVICE,display,true);
     Slog.i(TAG,"Telephony Registry");
     telephonyRegistry=new TelephonyRegistry(context);
     ServiceManager.addService("telephony.registry",telephonyRegistry);
     Slog.i(TAG,"Scheduling Policy");
     ServiceManager.addService("scheduling_policy",new SchedulingPolicyService());
     AttributeCache.init(context);
-    if (!display.waitForDefaultDisplay()) {
-      reportWtf("Timeout waiting for default display to be initialized.",new Throwable());
-    }
+    mSystemServiceManager.startBootPhase(SystemService.PHASE_WAIT_FOR_DEFAULT_DISPLAY);
     Slog.i(TAG,"Package Manager");
     String cryptState=SystemProperties.get("vold.decrypt");
     if (ENCRYPTING_STATE.equals(cryptState)) {
@@ -69,7 +59,7 @@
     }
  catch (    RemoteException e) {
     }
-    ActivityManagerService.setSystemProcess();
+    mActivityManagerService.setSystemProcess();
     Slog.i(TAG,"Entropy Mixer");
     ServiceManager.addService("entropy",new EntropyMixer(context));
     Slog.i(TAG,"User Service");
@@ -86,7 +76,7 @@
     Slog.i(TAG,"Content Manager");
     contentService=ContentService.main(context,mFactoryTestMode == FactoryTest.FACTORY_TEST_LOW_LEVEL);
     Slog.i(TAG,"System Content Providers");
-    ActivityManagerService.installSystemProviders();
+    mActivityManagerService.installSystemProviders();
     mSystemServiceManager.startService(LightsService.class);
     lights=LocalServices.getService(LightsManager.class);
     Slog.i(TAG,"Battery Service");
@@ -95,7 +85,7 @@
     Slog.i(TAG,"Vibrator Service");
     vibrator=new VibratorService(context);
     ServiceManager.addService("vibrator",vibrator);
-    mPowerManagerService.init(lights,battery,BatteryStatsService.getService(),ActivityManagerService.self().getAppOpsService(),display);
+    mPowerManagerService.init(lights,battery,BatteryStatsService.getService(),mActivityManagerService.getAppOpsService());
     Slog.i(TAG,"Consumer IR Service");
     consumerIr=new ConsumerIrService(context);
     ServiceManager.addService(Context.CONSUMER_IR_SERVICE,consumerIr);
@@ -103,18 +93,17 @@
     alarm=IAlarmManager.Stub.asInterface(ServiceManager.getService(Context.ALARM_SERVICE));
     Slog.i(TAG,"Init Watchdog");
     final Watchdog watchdog=Watchdog.getInstance();
-    watchdog.init(context,ActivityManagerService.self());
+    watchdog.init(context,mActivityManagerService);
     Slog.i(TAG,"Input Manager");
-    inputManager=new InputManagerService(context,windowManagerHandler);
+    inputManager=new InputManagerService(context);
     Slog.i(TAG,"Window Manager");
-    wm=WindowManagerService.main(context,display,inputManager,windowManagerHandler,mFactoryTestMode != FactoryTest.FACTORY_TEST_LOW_LEVEL,!firstBoot,onlyCore);
+    wm=WindowManagerService.main(context,inputManager,mFactoryTestMode != FactoryTest.FACTORY_TEST_LOW_LEVEL,!firstBoot,onlyCore);
     ServiceManager.addService(Context.WINDOW_SERVICE,wm);
     ServiceManager.addService(Context.INPUT_SERVICE,inputManager);
-    ActivityManagerService.self().setWindowManager(wm);
+    mActivityManagerService.setWindowManager(wm);
     inputManager.setWindowManagerCallbacks(wm.getInputMonitor());
     inputManager.start();
-    display.setWindowManager(wm);
-    display.setInputManager(inputManager);
+    mDisplayManagerService.windowManagerAndInputReady();
     if (SystemProperties.get("ro.kernel.qemu").equals("1")) {
       Slog.i(TAG,"No Bluetooh Service (emulator)");
     }
@@ -262,7 +251,7 @@
       }
       try {
         Slog.i(TAG,"NetworkPolicy Service");
-        networkPolicy=new NetworkPolicyManagerService(context,ActivityManagerService.self(),(IPowerManager)ServiceManager.getService(Context.POWER_SERVICE),networkStats,networkManagement);
+        networkPolicy=new NetworkPolicyManagerService(context,mActivityManagerService,(IPowerManager)ServiceManager.getService(Context.POWER_SERVICE),networkStats,networkManagement);
         ServiceManager.addService(Context.NETWORK_POLICY_SERVICE,networkPolicy);
       }
  catch (      Throwable e) {
@@ -489,7 +478,7 @@
     if (!disableNonCoreServices && context.getResources().getBoolean(R.bool.config_dreamsSupported)) {
       try {
         Slog.i(TAG,"Dreams Service");
-        dreamy=new DreamManagerService(context,windowManagerHandler);
+        dreamy=new DreamManagerService(context);
         ServiceManager.addService(DreamService.DREAM_SERVICE,dreamy);
       }
  catch (      Throwable e) {
@@ -533,7 +522,7 @@
   }
   final boolean safeMode=wm.detectSafeMode();
   if (safeMode) {
-    ActivityManagerService.self().enterSafeMode();
+    mActivityManagerService.enterSafeMode();
     Zygote.systemInSafeMode=true;
     VMRuntime.getRuntime().disableJitCompilation();
   }
@@ -563,7 +552,7 @@
     reportWtf("making Window Manager Service ready",e);
   }
   if (safeMode) {
-    ActivityManagerService.self().showSafeModeOverlay();
+    mActivityManagerService.showSafeModeOverlay();
   }
   Configuration config=wm.computeNewConfiguration();
   DisplayMetrics metrics=new DisplayMetrics();
@@ -583,7 +572,7 @@
     reportWtf("making Package Manager Service ready",e);
   }
   try {
-    display.systemReady(safeMode,onlyCore);
+    mDisplayManagerService.systemReady(safeMode,onlyCore);
   }
  catch (  Throwable e) {
     reportWtf("making Display Manager Service ready",e);
@@ -611,11 +600,11 @@
   final InputManagerService inputManagerF=inputManager;
   final TelephonyRegistry telephonyRegistryF=telephonyRegistry;
   final MediaRouterService mediaRouterF=mediaRouter;
-  ActivityManagerService.self().systemReady(new Runnable(){
+  mActivityManagerService.systemReady(new Runnable(){
     public void run(){
       Slog.i(TAG,"Making services ready");
       try {
-        ActivityManagerService.self().startObservingNativeCrashes();
+        mActivityManagerService.startObservingNativeCrashes();
       }
  catch (      Throwable e) {
         reportWtf("observing native crashes",e);
