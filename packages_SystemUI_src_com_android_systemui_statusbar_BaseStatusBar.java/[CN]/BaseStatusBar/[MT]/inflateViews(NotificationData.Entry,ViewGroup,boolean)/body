@@ -1,0 +1,104 @@
+{
+  int minHeight=mContext.getResources().getDimensionPixelSize(R.dimen.notification_min_height);
+  int maxHeight=mContext.getResources().getDimensionPixelSize(R.dimen.notification_max_height);
+  StatusBarNotification sbn=entry.notification;
+  RemoteViews contentView=sbn.getNotification().contentView;
+  RemoteViews bigContentView=sbn.getNotification().bigContentView;
+  if (contentView == null) {
+    return false;
+  }
+  Log.v(TAG,"publicNotification: " + sbn.getNotification().publicVersion);
+  Notification publicNotification=sbn.getNotification().publicVersion;
+  LayoutInflater inflater=(LayoutInflater)mContext.getSystemService(Context.LAYOUT_INFLATER_SERVICE);
+  ExpandableNotificationRow row=(ExpandableNotificationRow)inflater.inflate(R.layout.status_bar_notification_row,parent,false);
+  row.setTag(sbn.getPackageName());
+  workAroundBadLayerDrawableOpacity(row);
+  View vetoButton=updateNotificationVetoButton(row,sbn);
+  vetoButton.setContentDescription(mContext.getString(R.string.accessibility_remove_notification));
+  ViewGroup content=(ViewGroup)row.findViewById(R.id.container);
+  SizeAdaptiveLayout expanded=(SizeAdaptiveLayout)row.findViewById(R.id.expanded);
+  SizeAdaptiveLayout expandedPublic=(SizeAdaptiveLayout)row.findViewById(R.id.expandedPublic);
+  content.setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
+  PendingIntent contentIntent=sbn.getNotification().contentIntent;
+  if (contentIntent != null) {
+    final View.OnClickListener listener=makeClicker(contentIntent,sbn.getPackageName(),sbn.getTag(),sbn.getId(),isHeadsUp);
+    content.setOnClickListener(listener);
+  }
+ else {
+    content.setOnClickListener(null);
+  }
+  View contentViewLocal=null;
+  View bigContentViewLocal=null;
+  try {
+    contentViewLocal=contentView.apply(mContext,expanded,mOnClickHandler);
+    if (bigContentView != null) {
+      bigContentViewLocal=bigContentView.apply(mContext,expanded,mOnClickHandler);
+    }
+  }
+ catch (  RuntimeException e) {
+    final String ident=sbn.getPackageName() + "/0x" + Integer.toHexString(sbn.getId());
+    Log.e(TAG,"couldn't inflate view for notification " + ident,e);
+    return false;
+  }
+  if (contentViewLocal != null) {
+    SizeAdaptiveLayout.LayoutParams params=new SizeAdaptiveLayout.LayoutParams(contentViewLocal.getLayoutParams());
+    params.minHeight=minHeight;
+    params.maxHeight=minHeight;
+    expanded.addView(contentViewLocal,params);
+  }
+  if (bigContentViewLocal != null) {
+    SizeAdaptiveLayout.LayoutParams params=new SizeAdaptiveLayout.LayoutParams(bigContentViewLocal.getLayoutParams());
+    params.minHeight=minHeight + 1;
+    params.maxHeight=maxHeight;
+    expanded.addView(bigContentViewLocal,params);
+  }
+  PackageManager pm=mContext.getPackageManager();
+  View publicViewLocal=null;
+  if (publicNotification != null) {
+    try {
+      publicViewLocal=publicNotification.contentView.apply(mContext,expandedPublic,mOnClickHandler);
+      if (publicViewLocal != null) {
+        SizeAdaptiveLayout.LayoutParams params=new SizeAdaptiveLayout.LayoutParams(publicViewLocal.getLayoutParams());
+        params.minHeight=minHeight;
+        params.maxHeight=minHeight;
+        expandedPublic.addView(publicViewLocal,params);
+      }
+    }
+ catch (    RuntimeException e) {
+      final String ident=sbn.getPackageName() + "/0x" + Integer.toHexString(sbn.getId());
+      Log.e(TAG,"couldn't inflate public view for notification " + ident,e);
+      publicViewLocal=null;
+    }
+  }
+  if (publicViewLocal == null) {
+    publicViewLocal=LayoutInflater.from(mContext).inflate(com.android.internal.R.layout.notification_template_base,expandedPublic,true);
+    final TextView title=(TextView)publicViewLocal.findViewById(com.android.internal.R.id.title);
+    try {
+      title.setText(pm.getApplicationLabel(pm.getApplicationInfo(entry.notification.getPackageName(),0)));
+    }
+ catch (    NameNotFoundException e) {
+      title.setText(entry.notification.getPackageName());
+    }
+    final ImageView icon=(ImageView)publicViewLocal.findViewById(com.android.internal.R.id.icon);
+    final StatusBarIcon ic=new StatusBarIcon(entry.notification.getPackageName(),entry.notification.getUser(),entry.notification.getNotification().icon,entry.notification.getNotification().iconLevel,entry.notification.getNotification().number,entry.notification.getNotification().tickerText);
+    icon.setImageDrawable(StatusBarIconView.getIcon(mContext,ic));
+    final TextView text=(TextView)publicViewLocal.findViewById(com.android.internal.R.id.text);
+    text.setText("Unlock your device to see this notification.");
+  }
+  row.setDrawingCacheEnabled(true);
+  applyLegacyRowBackground(sbn,content);
+  if (MULTIUSER_DEBUG) {
+    TextView debug=(TextView)row.findViewById(R.id.debug_info);
+    if (debug != null) {
+      debug.setVisibility(View.VISIBLE);
+      debug.setText("U " + entry.notification.getUserId());
+    }
+  }
+  entry.row=row;
+  entry.row.setRowHeight(mRowHeight);
+  entry.content=content;
+  entry.expanded=contentViewLocal;
+  entry.expandedPublic=publicViewLocal;
+  entry.setBigContentView(bigContentViewLocal);
+  return true;
+}
