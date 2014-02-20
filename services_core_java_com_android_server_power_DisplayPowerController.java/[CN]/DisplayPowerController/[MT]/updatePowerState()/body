@@ -2,7 +2,7 @@
   final boolean mustNotify;
   boolean mustInitialize=false;
   boolean updateAutoBrightness=mTwilightChanged;
-  boolean wasDim=false;
+  boolean wasDimOrDoze=false;
   mTwilightChanged=false;
 synchronized (mLock) {
     mPendingUpdatePowerStateLocked=false;
@@ -20,7 +20,7 @@ synchronized (mLock) {
       if (mPowerRequest.screenAutoBrightnessAdjustment != mPendingRequestLocked.screenAutoBrightnessAdjustment) {
         updateAutoBrightness=true;
       }
-      wasDim=(mPowerRequest.screenState == DisplayPowerRequest.SCREEN_STATE_DIM);
+      wasDimOrDoze=(mPowerRequest.screenState == DisplayPowerRequest.SCREEN_STATE_DIM || mPowerRequest.screenState == DisplayPowerRequest.SCREEN_STATE_DOZE);
       mPowerRequest.copyFrom(mPendingRequestLocked);
       mWaitingForNegativeProximity|=mPendingWaitForNegativeProximityLocked;
       mPendingWaitForNegativeProximityLocked=false;
@@ -57,9 +57,9 @@ synchronized (mLock) {
     mWaitingForNegativeProximity=false;
   }
   if (mLightSensor != null) {
-    setLightSensorEnabled(mPowerRequest.useAutoBrightness && wantScreenOn(mPowerRequest.screenState),updateAutoBrightness);
+    setLightSensorEnabled(mPowerRequest.wantLightSensorEnabled(),updateAutoBrightness);
   }
-  if (wantScreenOn(mPowerRequest.screenState)) {
+  if (mPowerRequest.wantScreenOnAny()) {
     int target;
     boolean slow;
     if (mScreenAutoBrightness >= 0 && mLightSensorEnabled) {
@@ -72,11 +72,15 @@ synchronized (mLock) {
       slow=false;
       mUsingScreenAutoBrightness=false;
     }
-    if (mPowerRequest.screenState == DisplayPowerRequest.SCREEN_STATE_DIM) {
+    if (mPowerRequest.screenState == DisplayPowerRequest.SCREEN_STATE_DOZE) {
+      target=mScreenBrightnessDozeConfig;
+      slow=false;
+    }
+ else     if (mPowerRequest.screenState == DisplayPowerRequest.SCREEN_STATE_DIM) {
       target=Math.min(target - SCREEN_DIM_MINIMUM_REDUCTION,mScreenBrightnessDimConfig);
       slow=false;
     }
- else     if (wasDim) {
+ else     if (wasDimOrDoze) {
       slow=false;
     }
     animateScreenBrightness(clampScreenBrightness(target),slow ? BRIGHTNESS_RAMP_RATE_SLOW : BRIGHTNESS_RAMP_RATE_FAST);
@@ -85,7 +89,7 @@ synchronized (mLock) {
     mUsingScreenAutoBrightness=false;
   }
   if (!mScreenOffBecauseOfProximity) {
-    if (wantScreenOn(mPowerRequest.screenState)) {
+    if (mPowerRequest.wantScreenOnAny()) {
       if (!mElectronBeamOffAnimator.isStarted()) {
         setScreenOn(true);
         if (mPowerRequest.blockScreenOn && mPowerState.getElectronBeamLevel() == 0.0f) {
