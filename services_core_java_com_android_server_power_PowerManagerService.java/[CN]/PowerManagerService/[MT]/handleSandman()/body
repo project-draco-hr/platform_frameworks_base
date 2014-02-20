@@ -1,48 +1,68 @@
 {
-  boolean startDreaming=false;
+  final boolean startDreaming;
+  final int wakefulness;
 synchronized (mLock) {
     mSandmanScheduled=false;
-    boolean canDream=canDreamLocked();
-    if (DEBUG_SPEW) {
-      Slog.d(TAG,"handleSandman: canDream=" + canDream + ", mWakefulness="+ wakefulnessToString(mWakefulness));
+    wakefulness=mWakefulness;
+    if (mSandmanSummoned) {
+      startDreaming=((wakefulness == WAKEFULNESS_DREAMING && canDreamLocked()) || wakefulness == WAKEFULNESS_DOZING);
+      mSandmanSummoned=false;
     }
-    if (canDream && mWakefulness == WAKEFULNESS_NAPPING) {
-      startDreaming=true;
+ else {
+      startDreaming=false;
     }
   }
-  boolean isDreaming=false;
+  final boolean isDreaming;
   if (mDreamManager != null) {
     if (startDreaming) {
-      mDreamManager.startDream();
+      mDreamManager.stopDream();
+      mDreamManager.startDream(wakefulness == WAKEFULNESS_DOZING);
     }
     isDreaming=mDreamManager.isDreaming();
   }
-  boolean continueDreaming=false;
+ else {
+    isDreaming=false;
+  }
 synchronized (mLock) {
-    if (isDreaming && canDreamLocked()) {
-      if (mWakefulness == WAKEFULNESS_NAPPING) {
-        mWakefulness=WAKEFULNESS_DREAMING;
-        mDirty|=DIRTY_WAKEFULNESS;
-        mBatteryLevelWhenDreamStarted=mBatteryLevel;
-        updatePowerStateLocked();
-        continueDreaming=true;
+    if (startDreaming && isDreaming) {
+      mBatteryLevelWhenDreamStarted=mBatteryLevel;
+      if (wakefulness == WAKEFULNESS_DOZING) {
+        Slog.i(TAG,"Dozing...");
       }
- else       if (mWakefulness == WAKEFULNESS_DREAMING) {
-        if (!isBeingKeptAwakeLocked() && mBatteryLevel < mBatteryLevelWhenDreamStarted - DREAM_BATTERY_LEVEL_DRAIN_CUTOFF) {
+ else {
+        Slog.i(TAG,"Dreaming...");
+      }
+    }
+    if (mSandmanSummoned || mWakefulness != wakefulness) {
+      return;
+    }
+    if (wakefulness == WAKEFULNESS_DREAMING) {
+      if (isDreaming && canDreamLocked()) {
+        if (mDreamsBatteryLevelDrainCutoffConfig >= 0 && mBatteryLevel < mBatteryLevelWhenDreamStarted - mDreamsBatteryLevelDrainCutoffConfig && !isBeingKeptAwakeLocked()) {
           Slog.i(TAG,"Stopping dream because the battery appears to " + "be draining faster than it is charging.  " + "Battery level when dream started: " + mBatteryLevelWhenDreamStarted + "%.  "+ "Battery level now: "+ mBatteryLevel+ "%.");
         }
  else {
-          continueDreaming=true;
+          return;
         }
       }
+      if (isItBedTimeYetLocked()) {
+        goToSleepNoUpdateLocked(SystemClock.uptimeMillis(),PowerManager.GO_TO_SLEEP_REASON_TIMEOUT);
+        updatePowerStateLocked();
+      }
+ else {
+        wakeUpNoUpdateLocked(SystemClock.uptimeMillis());
+        updatePowerStateLocked();
+      }
     }
-    if (!continueDreaming) {
-      handleDreamFinishedLocked();
+ else     if (wakefulness == WAKEFULNESS_DOZING) {
+      if (isDreaming) {
+        return;
+      }
+      reallyGoToSleepNoUpdateLocked(SystemClock.uptimeMillis());
+      updatePowerStateLocked();
     }
   }
-  if (mDreamManager != null) {
-    if (!continueDreaming) {
-      mDreamManager.stopDream();
-    }
+  if (isDreaming) {
+    mDreamManager.stopDream();
   }
 }
