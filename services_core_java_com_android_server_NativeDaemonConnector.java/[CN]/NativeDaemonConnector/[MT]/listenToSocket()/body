@@ -23,10 +23,17 @@ synchronized (mDaemonLock) {
         if (buffer[i] == 0) {
           final String rawEvent=new String(buffer,start,i - start,StandardCharsets.UTF_8);
           log("RCV <- {" + rawEvent + "}");
+          boolean releaseWl=false;
           try {
             final NativeDaemonEvent event=NativeDaemonEvent.parseRawEvent(rawEvent);
             if (event.isClassUnsolicited()) {
-              mCallbackHandler.sendMessage(mCallbackHandler.obtainMessage(event.getCode(),event.getRawEvent()));
+              if (mCallbacks.onCheckHoldWakeLock(event.getCode())) {
+                mWakeLock.acquire();
+                releaseWl=true;
+              }
+              if (mCallbackHandler.sendMessage(mCallbackHandler.obtainMessage(event.getCode(),event.getRawEvent()))) {
+                releaseWl=false;
+              }
             }
  else {
               mResponseQueue.add(event.getCmdNumber(),event);
@@ -34,6 +41,11 @@ synchronized (mDaemonLock) {
           }
  catch (          IllegalArgumentException e) {
             log("Problem parsing message: " + rawEvent + " - "+ e);
+          }
+ finally {
+            if (releaseWl) {
+              mWakeLock.acquire();
+            }
           }
           start=i + 1;
         }
