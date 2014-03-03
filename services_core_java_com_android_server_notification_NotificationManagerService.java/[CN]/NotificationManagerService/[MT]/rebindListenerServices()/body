@@ -1,26 +1,34 @@
 {
-  final int currentUser=ActivityManager.getCurrentUser();
-  String flat=Settings.Secure.getStringForUser(getContext().getContentResolver(),Settings.Secure.ENABLED_NOTIFICATION_LISTENERS,currentUser);
+  final int[] userIds=getCurrentProfileIds();
+  final int nUserIds=userIds.length;
+  final SparseArray<String> flat=new SparseArray<String>();
+  for (int i=0; i < nUserIds; ++i) {
+    flat.put(userIds[i],Settings.Secure.getStringForUser(getContext().getContentResolver(),Settings.Secure.ENABLED_NOTIFICATION_LISTENERS,userIds[i]));
+  }
   NotificationListenerInfo[] toRemove=new NotificationListenerInfo[mListeners.size()];
-  final ArrayList<ComponentName> toAdd;
+  final SparseArray<ArrayList<ComponentName>> toAdd=new SparseArray<ArrayList<ComponentName>>();
 synchronized (mNotificationList) {
     toRemove=mListeners.toArray(toRemove);
-    toAdd=new ArrayList<ComponentName>();
     final HashSet<ComponentName> newEnabled=new HashSet<ComponentName>();
     final HashSet<String> newPackages=new HashSet<String>();
-    if (flat != null) {
-      String[] components=flat.split(ENABLED_NOTIFICATION_LISTENERS_SEPARATOR);
-      for (int i=0; i < components.length; i++) {
-        final ComponentName component=ComponentName.unflattenFromString(components[i]);
-        if (component != null) {
-          newEnabled.add(component);
-          toAdd.add(component);
-          newPackages.add(component.getPackageName());
+    for (int i=0; i < nUserIds; ++i) {
+      final ArrayList<ComponentName> add=new ArrayList<ComponentName>();
+      toAdd.put(userIds[i],add);
+      String toDecode=flat.get(userIds[i]);
+      if (toDecode != null) {
+        String[] components=toDecode.split(ENABLED_NOTIFICATION_LISTENERS_SEPARATOR);
+        for (int j=0; j < components.length; j++) {
+          final ComponentName component=ComponentName.unflattenFromString(components[j]);
+          if (component != null) {
+            newEnabled.add(component);
+            add.add(component);
+            newPackages.add(component.getPackageName());
+          }
         }
       }
-      mEnabledListenersForCurrentUser=newEnabled;
-      mEnabledListenerPackageNames=newPackages;
     }
+    mEnabledListenersForCurrentProfiles=newEnabled;
+    mEnabledListenerPackageNames=newPackages;
   }
   for (  NotificationListenerInfo info : toRemove) {
     final ComponentName component=info.component;
@@ -28,10 +36,13 @@ synchronized (mNotificationList) {
     Slog.v(TAG,"disabling notification listener for user " + oldUser + ": "+ component);
     unregisterListenerService(component,info.userid);
   }
-  final int N=toAdd.size();
-  for (int i=0; i < N; i++) {
-    final ComponentName component=toAdd.get(i);
-    Slog.v(TAG,"enabling notification listener for user " + currentUser + ": "+ component);
-    registerListenerService(component,currentUser);
+  for (int i=0; i < nUserIds; ++i) {
+    final ArrayList<ComponentName> add=toAdd.get(userIds[i]);
+    final int N=add.size();
+    for (int j=0; j < N; j++) {
+      final ComponentName component=add.get(j);
+      Slog.v(TAG,"enabling notification listener for user " + userIds[i] + ": "+ component);
+      registerListenerService(component,userIds[i]);
+    }
   }
 }
