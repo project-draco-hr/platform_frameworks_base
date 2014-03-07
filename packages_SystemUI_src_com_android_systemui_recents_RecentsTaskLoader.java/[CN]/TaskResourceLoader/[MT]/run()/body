@@ -1,0 +1,73 @@
+{
+  while (true) {
+    Console.log(Constants.DebugFlags.App.TaskDataLoader,"[TaskResourceLoader|run|" + Thread.currentThread().getId() + "]");
+    if (mCancelled) {
+      mContext=null;
+synchronized (mLoadThread) {
+        try {
+          Console.log(Constants.DebugFlags.App.TaskDataLoader,"[TaskResourceLoader|waitOnLoadThreadCancelled]");
+          mLoadThread.wait();
+        }
+ catch (        InterruptedException ie) {
+          ie.printStackTrace();
+        }
+      }
+    }
+ else {
+      final Task t=mLoadQueue.nextTask();
+      if (t != null) {
+        try {
+          Drawable cachedIcon=mIconCache.get(t);
+          Bitmap cachedThumbnail=mThumbnailCache.get(t);
+          Console.log(Constants.DebugFlags.App.TaskDataLoader,"  [TaskResourceLoader|load]",t + " icon: " + cachedIcon+ " thumbnail: "+ cachedThumbnail);
+          if (cachedIcon == null) {
+            PackageManager pm=mContext.getPackageManager();
+            ActivityInfo info=pm.getActivityInfo(t.intent.getComponent(),PackageManager.GET_META_DATA);
+            Drawable icon=info.loadIcon(pm);
+            if (!mCancelled) {
+              Console.log(Constants.DebugFlags.App.TaskDataLoader,"    [TaskResourceLoader|loadIcon]",icon);
+              t.icon=icon;
+              mIconCache.put(t,icon);
+            }
+          }
+          if (cachedThumbnail == null) {
+            ActivityManager am=(ActivityManager)mContext.getSystemService(Context.ACTIVITY_SERVICE);
+            Bitmap thumbnail=am.getTaskTopThumbnail(t.id);
+            if (!mCancelled) {
+              if (thumbnail != null) {
+                Console.log(Constants.DebugFlags.App.TaskDataLoader,"    [TaskResourceLoader|loadThumbnail]",thumbnail);
+                t.thumbnail=thumbnail;
+                mThumbnailCache.put(t,thumbnail);
+              }
+ else {
+                Console.logError(mContext,"Failed to load task top thumbnail for: " + t.intent.getComponent().getPackageName());
+              }
+            }
+          }
+          if (!mCancelled) {
+            mMainThreadHandler.post(new Runnable(){
+              @Override public void run(){
+                t.notifyTaskDataChanged();
+              }
+            }
+);
+          }
+        }
+ catch (        PackageManager.NameNotFoundException ne) {
+          ne.printStackTrace();
+        }
+      }
+      if (!mCancelled && mLoadQueue.isEmpty()) {
+synchronized (mLoadQueue) {
+          try {
+            Console.log(Constants.DebugFlags.App.TaskDataLoader,"[TaskResourceLoader|waitOnLoadQueue]");
+            mLoadQueue.wait();
+          }
+ catch (          InterruptedException ie) {
+            ie.printStackTrace();
+          }
+        }
+      }
+    }
+  }
+}
