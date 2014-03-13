@@ -3,6 +3,31 @@
   if (mProtectedNetworks.contains(networkType)) {
     enforceConnectivityInternalPermission();
   }
+  boolean exempt;
+  InetAddress addr;
+  try {
+    addr=InetAddress.getByAddress(hostAddress);
+  }
+ catch (  UnknownHostException e) {
+    if (DBG)     log("requestRouteToHostAddress got " + e.toString());
+    return false;
+  }
+  if (Binder.getCallingUid() == Process.SYSTEM_UID) {
+    exempt=true;
+  }
+ else {
+    mAppOpsManager.checkPackage(Binder.getCallingUid(),packageName);
+    try {
+      ApplicationInfo info=mContext.getPackageManager().getApplicationInfo(packageName,0);
+      exempt=(info.flags & ApplicationInfo.FLAG_SYSTEM) != 0;
+    }
+ catch (    NameNotFoundException e) {
+      throw new IllegalArgumentException("Failed to find calling package details",e);
+    }
+  }
+  if (!exempt && isAddressUnderVpn(addr)) {
+    return false;
+  }
   if (!ConnectivityManager.isNetworkTypeValid(networkType)) {
     if (DBG)     log("requestRouteToHostAddress on invalid network: " + networkType);
     return false;
@@ -20,18 +45,12 @@
   }
   final long token=Binder.clearCallingIdentity();
   try {
-    InetAddress addr=InetAddress.getByAddress(hostAddress);
     LinkProperties lp=tracker.getLinkProperties();
-    boolean ok=addRouteToAddress(lp,addr,EXEMPT);
+    boolean ok=addRouteToAddress(lp,addr,exempt);
     if (DBG)     log("requestRouteToHostAddress ok=" + ok);
     return ok;
   }
- catch (  UnknownHostException e) {
-    if (DBG)     log("requestRouteToHostAddress got " + e.toString());
-  }
- finally {
+  finally {
     Binder.restoreCallingIdentity(token);
   }
-  if (DBG)   log("requestRouteToHostAddress X bottom return false");
-  return false;
 }
