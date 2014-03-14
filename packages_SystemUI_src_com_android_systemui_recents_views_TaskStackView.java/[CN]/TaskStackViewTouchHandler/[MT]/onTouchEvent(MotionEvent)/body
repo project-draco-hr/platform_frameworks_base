@@ -4,6 +4,9 @@
   if (!hasChildren) {
     return false;
   }
+  if (mInterceptedBySwipeHelper && mSwipeHelper.onTouchEvent(ev)) {
+    return true;
+  }
   initVelocityTrackerIfNotExists();
   mVelocityTracker.addMovement(ev);
   int action=ev.getAction();
@@ -31,22 +34,7 @@ case MotionEvent.ACTION_MOVE:
     int x=(int)ev.getX(activePointerIndex);
     int y=(int)ev.getY(activePointerIndex);
     int deltaY=mLastMotionY - y;
-    int deltaX=x - mLastMotionX;
-    if (!mIsSwiping) {
-      if (mActiveTaskView != null && mTotalScrollMotion < mMaxScrollMotionToRejectSwipe && Math.abs(x - mInitialMotionX) > Math.abs(y - mInitialMotionY) && Math.abs(x - mInitialMotionX) > mSwipeTouchSlop) {
-        mIsScrolling=false;
-        mIsSwiping=true;
-        System.out.println("SWIPING: " + mActiveTaskView);
-        initOrResetVelocityTracker();
-        mVelocityTracker.addMovement(ev);
-        final ViewParent parent=mSv.getParent();
-        if (parent != null) {
-          parent.requestDisallowInterceptTouchEvent(true);
-        }
-        mSv.addHwLayersRefCount();
-      }
-    }
-    if (!mIsSwiping && !mIsScrolling) {
+    if (!mIsScrolling) {
       if (Math.abs(y - mInitialMotionY) > mScrollTouchSlop) {
         mIsScrolling=true;
         initOrResetVelocityTracker();
@@ -64,9 +52,6 @@ case MotionEvent.ACTION_MOVE:
         mVelocityTracker.clear();
       }
     }
- else     if (mIsSwiping) {
-      mActiveTaskView.setTranslationX(mActiveTaskView.getTranslationX() + deltaX);
-    }
     mLastMotionX=x;
     mLastMotionY=y;
     mTotalScrollMotion+=Math.abs(deltaY);
@@ -74,63 +59,20 @@ case MotionEvent.ACTION_MOVE:
   }
 case MotionEvent.ACTION_UP:
 {
-  if (mIsScrolling || mIsSwiping) {
-    final TaskView activeTv=mActiveTaskView;
-    final VelocityTracker velocityTracker=mVelocityTracker;
-    velocityTracker.computeCurrentVelocity(1000,mMaximumVelocity);
-    if (mIsSwiping) {
-      int initialVelocity=(int)velocityTracker.getXVelocity(mActivePointerId);
-      if ((Math.abs(initialVelocity) > mMinimumVelocity)) {
-        int newScrollX=(int)(Math.signum(initialVelocity) * activeTv.getMeasuredWidth());
-        int duration=Math.min(Constants.Values.TaskStackView.Animation.SwipeDismissDuration,(int)(Math.abs(newScrollX - activeTv.getScrollX()) * 1000f / Math.abs(initialVelocity)));
-        activeTv.animate().translationX(newScrollX).alpha(0f).setDuration(duration).setListener(new AnimatorListenerAdapter(){
-          @Override public void onAnimationEnd(          Animator animation){
-            Task task=activeTv.getTask();
-            Activity activity=(Activity)mSv.getContext();
-            activeTv.animate().setListener(null);
-            mSv.mStack.removeTask(task);
-            RecentsTaskLoader loader=RecentsTaskLoader.getInstance();
-            loader.deleteTaskData(task);
-            final ActivityManager am=(ActivityManager)activity.getSystemService(Context.ACTIVITY_SERVICE);
-            if (am != null) {
-              am.removeTask(activeTv.getTask().id,ActivityManager.REMOVE_TASK_KILL_PROCESS);
-            }
-            if (mSv.mStack.getTaskCount() == 0) {
-              activity.finish();
-            }
-            mSv.decHwLayersRefCount();
-          }
-        }
-).start();
-        mSv.addHwLayersRefCount();
-      }
- else {
-        int duration=Constants.Values.TaskStackView.Animation.SwipeSnapBackDuration;
-        activeTv.animate().translationX(0).setDuration(duration).setListener(new AnimatorListenerAdapter(){
-          @Override public void onAnimationEnd(          Animator animation){
-            mSv.decHwLayersRefCount();
-          }
-        }
-).start();
-        mSv.addHwLayersRefCount();
-      }
-    }
- else {
-      int velocity=(int)velocityTracker.getYVelocity(mActivePointerId);
-      if ((Math.abs(velocity) > mMinimumVelocity)) {
-        Console.log(Constants.DebugFlags.UI.TouchEvents,"[TaskStackViewTouchHandler|fling]","scroll: " + mSv.getStackScroll() + " velocity: "+ velocity,Console.AnsiGreen);
-        mSv.addHwLayersRefCount();
-        mSv.mScroller.fling(0,mSv.getStackScroll(),0,-velocity,0,0,mSv.mMinScroll,mSv.mMaxScroll,0,0);
-        mSv.invalidate();
-      }
- else       if (mSv.isScrollOutOfBounds()) {
-        mSv.animateBoundScroll(Constants.Values.TaskStackView.Animation.SnapScrollBackDuration);
-      }
-    }
+  final VelocityTracker velocityTracker=mVelocityTracker;
+  velocityTracker.computeCurrentVelocity(1000,mMaximumVelocity);
+  int velocity=(int)velocityTracker.getYVelocity(mActivePointerId);
+  if (mIsScrolling && (Math.abs(velocity) > mMinimumVelocity)) {
+    Console.log(Constants.DebugFlags.UI.TouchEvents,"[TaskStackViewTouchHandler|fling]","scroll: " + mSv.getStackScroll() + " velocity: "+ velocity,Console.AnsiGreen);
+    mSv.addHwLayersRefCount();
+    mSv.mScroller.fling(0,mSv.getStackScroll(),0,-velocity,0,0,mSv.mMinScroll,mSv.mMaxScroll,0,0);
+    mSv.invalidate();
+  }
+ else   if (mSv.isScrollOutOfBounds()) {
+    mSv.animateBoundScroll(Constants.Values.TaskStackView.Animation.SnapScrollBackDuration);
   }
   mActivePointerId=INACTIVE_POINTER_ID;
   mIsScrolling=false;
-  mIsSwiping=false;
   mTotalScrollMotion=0;
   recycleVelocityTracker();
   mSv.decHwLayersRefCount();
@@ -138,18 +80,11 @@ case MotionEvent.ACTION_UP:
 }
 case MotionEvent.ACTION_CANCEL:
 {
-if (mIsScrolling || mIsSwiping) {
-  if (mIsSwiping) {
-    int duration=Constants.Values.TaskStackView.Animation.SwipeSnapBackDuration;
-    mActiveTaskView.animate().translationX(0).setDuration(duration).start();
-  }
- else {
-    mSv.animateBoundScroll(Constants.Values.TaskStackView.Animation.SnapScrollBackDuration);
-  }
+if (mSv.isScrollOutOfBounds()) {
+  mSv.animateBoundScroll(Constants.Values.TaskStackView.Animation.SnapScrollBackDuration);
 }
 mActivePointerId=INACTIVE_POINTER_ID;
 mIsScrolling=false;
-mIsSwiping=false;
 mTotalScrollMotion=0;
 recycleVelocityTracker();
 mSv.decHwLayersRefCount();
