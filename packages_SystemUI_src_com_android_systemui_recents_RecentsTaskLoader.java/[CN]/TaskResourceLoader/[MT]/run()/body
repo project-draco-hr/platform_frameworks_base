@@ -2,6 +2,7 @@
   while (true) {
     Console.log(Constants.DebugFlags.App.TaskDataLoader,"[TaskResourceLoader|run|" + Thread.currentThread().getId() + "]");
     if (mCancelled) {
+      Console.log(Constants.DebugFlags.App.TaskDataLoader,"[TaskResourceLoader|cancel|" + Thread.currentThread().getId() + "]");
       mContext=null;
 synchronized (mLoadThread) {
         try {
@@ -17,37 +18,39 @@ synchronized (mLoadThread) {
       final Task t=mLoadQueue.nextTask();
       if (t != null) {
         try {
-          Drawable cachedIcon=mIconCache.get(t);
-          Bitmap cachedThumbnail=mThumbnailCache.get(t);
-          Console.log(Constants.DebugFlags.App.TaskDataLoader,"  [TaskResourceLoader|load]",t + " icon: " + cachedIcon+ " thumbnail: "+ cachedThumbnail);
-          if (cachedIcon == null) {
+          Drawable loadIcon=mIconCache.get(t.key);
+          Bitmap loadThumbnail=mThumbnailCache.get(t.key);
+          Console.log(Constants.DebugFlags.App.TaskDataLoader,"  [TaskResourceLoader|load]",t + " icon: " + loadIcon+ " thumbnail: "+ loadThumbnail);
+          if (loadIcon == null) {
             PackageManager pm=mContext.getPackageManager();
-            ActivityInfo info=pm.getActivityInfo(t.intent.getComponent(),PackageManager.GET_META_DATA);
+            ActivityInfo info=pm.getActivityInfo(t.key.intent.getComponent(),PackageManager.GET_META_DATA);
             Drawable icon=info.loadIcon(pm);
             if (!mCancelled) {
               Console.log(Constants.DebugFlags.App.TaskDataLoader,"    [TaskResourceLoader|loadIcon]",icon);
-              t.icon=icon;
-              mIconCache.put(t,icon);
+              loadIcon=icon;
+              mIconCache.put(t.key,icon);
             }
           }
-          if (cachedThumbnail == null) {
+          if (loadThumbnail == null) {
             ActivityManager am=(ActivityManager)mContext.getSystemService(Context.ACTIVITY_SERVICE);
-            Bitmap thumbnail=am.getTaskTopThumbnail(t.id);
+            Bitmap thumbnail=am.getTaskTopThumbnail(t.key.id);
             if (!mCancelled) {
               if (thumbnail != null) {
                 Console.log(Constants.DebugFlags.App.TaskDataLoader,"    [TaskResourceLoader|loadThumbnail]",thumbnail);
-                t.thumbnail=thumbnail;
-                mThumbnailCache.put(t,thumbnail);
+                loadThumbnail=thumbnail;
+                mThumbnailCache.put(t.key,thumbnail);
               }
  else {
-                Console.logError(mContext,"Failed to load task top thumbnail for: " + t.intent.getComponent().getPackageName());
+                Console.logError(mContext,"Failed to load task top thumbnail for: " + t.key.intent.getComponent().getPackageName());
               }
             }
           }
           if (!mCancelled) {
+            final Drawable newIcon=loadIcon;
+            final Bitmap newThumbnail=loadThumbnail;
             mMainThreadHandler.post(new Runnable(){
               @Override public void run(){
-                t.notifyTaskDataChanged();
+                t.notifyTaskDataLoaded(newThumbnail,newIcon);
               }
             }
 );
@@ -61,7 +64,9 @@ synchronized (mLoadThread) {
 synchronized (mLoadQueue) {
           try {
             Console.log(Constants.DebugFlags.App.TaskDataLoader,"[TaskResourceLoader|waitOnLoadQueue]");
+            mWaitingOnLoadQueue=true;
             mLoadQueue.wait();
+            mWaitingOnLoadQueue=false;
           }
  catch (          InterruptedException ie) {
             ie.printStackTrace();
