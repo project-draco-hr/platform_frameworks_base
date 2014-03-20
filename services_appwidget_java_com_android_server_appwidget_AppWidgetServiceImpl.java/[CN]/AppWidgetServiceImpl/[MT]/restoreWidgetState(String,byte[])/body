@@ -1,0 +1,124 @@
+{
+  if (!mHasFeature) {
+    return;
+  }
+  if (DEBUG_BACKUP) {
+    Slog.i(TAG,"Restoring widget state for " + packageName);
+  }
+  ByteArrayInputStream stream=new ByteArrayInputStream(restoredState);
+  try {
+    ArrayList<Provider> restoredProviders=new ArrayList<Provider>();
+    ArrayList<Host> restoredHosts=new ArrayList<Host>();
+    XmlPullParser parser=Xml.newPullParser();
+    parser.setInput(stream,null);
+synchronized (mAppWidgetIds) {
+synchronized (mRestoredWidgetIds) {
+        int type;
+        do {
+          type=parser.next();
+          if (type == XmlPullParser.START_TAG) {
+            final String tag=parser.getName();
+            if ("ws".equals(tag)) {
+              String v=parser.getAttributeValue(null,"version");
+              String pkg=parser.getAttributeValue(null,"pkg");
+              if (!packageName.equals(pkg)) {
+                Slog.w(TAG,"Package mismatch in ws");
+                return;
+              }
+              int version=Integer.parseInt(v);
+              if (version > WIDGET_STATE_VERSION) {
+                Slog.w(TAG,"Unable to process state version " + version);
+                return;
+              }
+            }
+ else             if ("p".equals(tag)) {
+              String pkg=parser.getAttributeValue(null,"pkg");
+              String cl=parser.getAttributeValue(null,"cl");
+              final ComponentName cn=new ComponentName(pkg,cl);
+              Provider p=lookupProviderLocked(cn,mInstalledProviders);
+              if (p == null) {
+                p=new Provider();
+                p.info=new AppWidgetProviderInfo();
+                p.info.provider=cn;
+                p.zombie=true;
+                mInstalledProviders.add(p);
+              }
+              if (DEBUG_BACKUP) {
+                Slog.i(TAG,"   provider " + cn);
+              }
+              restoredProviders.add(p);
+            }
+ else             if ("h".equals(tag)) {
+              String pkg=parser.getAttributeValue(null,"pkg");
+              int uid;
+              try {
+                uid=getUidForPackage(pkg);
+              }
+ catch (              NameNotFoundException e) {
+                uid=-1;
+              }
+              int hostId=Integer.parseInt(parser.getAttributeValue(null,"id"),16);
+              Host h=lookupOrAddHostLocked(uid,pkg,hostId);
+              if (DEBUG_BACKUP) {
+                Slog.i(TAG,"   host[" + restoredHosts.size() + "]: {"+ h.packageName+ ":"+ h.hostId+ "}");
+              }
+              restoredHosts.add(h);
+            }
+ else             if ("g".equals(tag)) {
+              int restoredId=Integer.parseInt(parser.getAttributeValue(null,"id"),16);
+              int hostIndex=Integer.parseInt(parser.getAttributeValue(null,"h"),16);
+              Host host=restoredHosts.get(hostIndex);
+              Provider p=null;
+              String prov=parser.getAttributeValue(null,"p");
+              if (prov != null) {
+                int which=Integer.parseInt(prov,16);
+                p=restoredProviders.get(which);
+              }
+              pruneWidgetStateLr(host.packageName);
+              if (p != null) {
+                pruneWidgetStateLr(p.info.provider.getPackageName());
+              }
+              AppWidgetId id=findRestoredWidgetLocked(restoredId,host,p);
+              if (id == null) {
+                id=new AppWidgetId();
+                id.appWidgetId=mNextAppWidgetId++;
+                id.restoredId=restoredId;
+                id.options=parseWidgetIdOptions(parser);
+                id.host=host;
+                id.host.instances.add(id);
+                id.provider=p;
+                if (id.provider != null) {
+                  id.provider.instances.add(id);
+                }
+                if (DEBUG_BACKUP) {
+                  Slog.i(TAG,"New restored id " + restoredId + " now "+ id);
+                }
+                mAppWidgetIds.add(id);
+              }
+              if (id.provider.info != null) {
+                stashProviderRestoreUpdateLr(id.provider,restoredId,id.appWidgetId);
+              }
+ else {
+                Slog.w(TAG,"Missing provider for restored widget " + id);
+              }
+              stashHostRestoreUpdateLr(id.host,restoredId,id.appWidgetId);
+              if (DEBUG_BACKUP) {
+                Slog.i(TAG,"   instance: " + restoredId + " -> "+ id.appWidgetId+ " :: p="+ id.provider);
+              }
+            }
+          }
+        }
+ while (type != XmlPullParser.END_DOCUMENT);
+      }
+    }
+  }
+ catch (  XmlPullParserException e) {
+    Slog.w(TAG,"Unable to restore widget state for " + packageName);
+  }
+catch (  IOException e) {
+    Slog.w(TAG,"Unable to restore widget state for " + packageName);
+  }
+ finally {
+    saveStateAsync();
+  }
+}

@@ -1,54 +1,51 @@
 {
   Slog.i(TAG,"--- Performing full-dataset backup ---");
-  List<PackageInfo> packagesToBackup=new ArrayList<PackageInfo>();
+  TreeMap<String,PackageInfo> packagesToBackup=new TreeMap<String,PackageInfo>();
   FullBackupObbConnection obbConnection=new FullBackupObbConnection();
   obbConnection.establish();
   sendStartBackup();
   if (mAllApps) {
-    packagesToBackup=mPackageManager.getInstalledPackages(PackageManager.GET_SIGNATURES);
-    if (mIncludeSystem == false) {
-      for (int i=0; i < packagesToBackup.size(); ) {
-        PackageInfo pkg=packagesToBackup.get(i);
-        if ((pkg.applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) != 0) {
-          packagesToBackup.remove(i);
-        }
- else {
-          i++;
-        }
+    List<PackageInfo> allPackages=mPackageManager.getInstalledPackages(PackageManager.GET_SIGNATURES);
+    for (int i=0; i < allPackages.size(); i++) {
+      PackageInfo pkg=allPackages.get(i);
+      if (mIncludeSystem == true || ((pkg.applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) != 0)) {
+        packagesToBackup.put(pkg.packageName,pkg);
       }
+    }
+  }
+  if (mDoWidgets) {
+    List<String> pkgs=AppWidgetBackupBridge.getWidgetParticipants(UserHandle.USER_OWNER);
+    if (pkgs != null) {
+      if (MORE_DEBUG) {
+        Slog.i(TAG,"Adding widget participants to backup set:");
+        StringBuilder sb=new StringBuilder(128);
+        sb.append("   ");
+        for (        String s : pkgs) {
+          sb.append(' ');
+          sb.append(s);
+        }
+        Slog.i(TAG,sb.toString());
+      }
+      addPackagesToSet(packagesToBackup,pkgs);
     }
   }
   if (mPackages != null) {
-    for (    String pkgName : mPackages) {
-      try {
-        packagesToBackup.add(mPackageManager.getPackageInfo(pkgName,PackageManager.GET_SIGNATURES));
-      }
- catch (      NameNotFoundException e) {
-        Slog.w(TAG,"Unknown package " + pkgName + ", skipping");
-      }
-    }
+    addPackagesToSet(packagesToBackup,mPackages);
   }
-  for (int i=0; i < packagesToBackup.size(); ) {
-    PackageInfo pkg=packagesToBackup.get(i);
+  Iterator<Entry<String,PackageInfo>> iter=packagesToBackup.entrySet().iterator();
+  while (iter.hasNext()) {
+    PackageInfo pkg=iter.next().getValue();
     if ((pkg.applicationInfo.flags & ApplicationInfo.FLAG_ALLOW_BACKUP) == 0 || pkg.packageName.equals(SHARED_BACKUP_AGENT_PACKAGE)) {
-      packagesToBackup.remove(i);
+      iter.remove();
     }
- else {
-      i++;
-    }
-  }
-  for (int i=0; i < packagesToBackup.size(); ) {
-    PackageInfo pkg=packagesToBackup.get(i);
-    if ((pkg.applicationInfo.uid < Process.FIRST_APPLICATION_UID) && (pkg.applicationInfo.backupAgentName == null)) {
+ else     if ((pkg.applicationInfo.uid < Process.FIRST_APPLICATION_UID) && (pkg.applicationInfo.backupAgentName == null)) {
       if (MORE_DEBUG) {
         Slog.i(TAG,"... ignoring non-agent system package " + pkg.packageName);
       }
-      packagesToBackup.remove(i);
-    }
- else {
-      i++;
+      iter.remove();
     }
   }
+  ArrayList<PackageInfo> backupQueue=new ArrayList<PackageInfo>(packagesToBackup.values());
   FileOutputStream ofstream=new FileOutputStream(mOutputFile.getFileDescriptor());
   OutputStream out=null;
   PackageInfo pkg=null;
@@ -86,15 +83,15 @@
     if (mIncludeShared) {
       try {
         pkg=mPackageManager.getPackageInfo(SHARED_BACKUP_AGENT_PACKAGE,0);
-        packagesToBackup.add(pkg);
+        backupQueue.add(pkg);
       }
  catch (      NameNotFoundException e) {
         Slog.e(TAG,"Unable to find shared-storage backup handler");
       }
     }
-    int N=packagesToBackup.size();
+    int N=backupQueue.size();
     for (int i=0; i < N; i++) {
-      pkg=packagesToBackup.get(i);
+      pkg=backupQueue.get(i);
       backupOnePackage(pkg,out);
       if (mIncludeObbs) {
         boolean obbOkay=obbConnection.backupObbs(pkg,out);
