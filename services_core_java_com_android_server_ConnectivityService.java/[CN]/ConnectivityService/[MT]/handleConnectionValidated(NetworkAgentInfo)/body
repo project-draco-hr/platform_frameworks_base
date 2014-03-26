@@ -6,31 +6,57 @@
   boolean keep=false;
   boolean isNewDefault=false;
   if (DBG)   log("handleConnectionValidated for " + newNetwork.name());
-  for (int i=0; i < mNetworkRequests.size(); i++) {
-    NetworkRequest nr=mNetworkRequests.valueAt(i);
-    if (nr.networkCapabilities.satisfiedByNetworkCapabilities(newNetwork.networkCapabilities)) {
-      NetworkAgentInfo currentNetwork=mNetworkForRequestId.get(nr.requestId);
+  ArrayList<NetworkAgentInfo> affectedNetworks=new ArrayList<NetworkAgentInfo>();
+  if (VDBG)   log(" new Network has: " + newNetwork.networkCapabilities);
+  for (  NetworkRequestInfo nri : mNetworkRequests.values()) {
+    if (VDBG)     log("  checking if request is satisfied: " + nri.request);
+    if (nri.request.networkCapabilities.satisfiedByNetworkCapabilities(newNetwork.networkCapabilities)) {
+      NetworkAgentInfo currentNetwork=mNetworkForRequestId.get(nri.request.requestId);
       if (VDBG) {
         log("currentScore = " + (currentNetwork != null ? currentNetwork.currentScore : 0) + ", newScore = "+ newNetwork.currentScore);
       }
       if (currentNetwork == null || currentNetwork.currentScore < newNetwork.currentScore) {
         if (currentNetwork != null) {
-          currentNetwork.networkRequests.remove(nr.requestId);
-          currentNetwork.networkListens.add(nr);
-          if (currentNetwork.networkRequests.size() == 0) {
-            currentNetwork.networkMonitor.sendMessage(NetworkMonitor.CMD_NETWORK_LINGER);
-            notifyNetworkCallbacks(currentNetwork,NetworkCallbacks.LOSING);
-          }
+          if (VDBG)           log("   accepting network in place of " + currentNetwork.name());
+          currentNetwork.networkRequests.remove(nri.request.requestId);
+          currentNetwork.networkLingered.add(nri.request);
+          affectedNetworks.add(currentNetwork);
         }
-        mNetworkForRequestId.put(nr.requestId,newNetwork);
-        newNetwork.networkRequests.put(nr.requestId,nr);
+ else {
+          if (VDBG)           log("   accepting network in place of null");
+        }
+        mNetworkForRequestId.put(nri.request.requestId,newNetwork);
+        newNetwork.networkRequests.put(nri.request.requestId,nri.request);
         keep=true;
-        sendUpdatedScoreToFactories(nr,newNetwork.currentScore);
-        if (mDefaultRequest.requestId == nr.requestId) {
+        sendUpdatedScoreToFactories(nri.request,newNetwork.currentScore);
+        if (mDefaultRequest.requestId == nri.request.requestId) {
           isNewDefault=true;
           updateActiveDefaultNetwork(newNetwork);
         }
       }
+    }
+  }
+  for (  NetworkAgentInfo nai : affectedNetworks) {
+    boolean teardown=true;
+    for (int i=0; i < nai.networkRequests.size(); i++) {
+      NetworkRequest nr=nai.networkRequests.valueAt(i);
+      try {
+        if (mNetworkRequests.get(nr).isRequest) {
+          teardown=false;
+        }
+      }
+ catch (      Exception e) {
+        loge("Request " + nr + " not found in mNetworkRequests.");
+        loge("  it came from request list  of " + nai.name());
+      }
+    }
+    if (teardown) {
+      nai.networkMonitor.sendMessage(NetworkMonitor.CMD_NETWORK_LINGER);
+      notifyNetworkCallbacks(nai,ConnectivityManager.CALLBACK_LOSING);
+    }
+ else {
+      nai.networkLingered.clear();
+      if (VDBG)       log("Lingered for " + nai.name() + " cleared");
     }
   }
   if (keep) {
@@ -55,9 +81,15 @@ synchronized (ConnectivityService.this) {
       mDefaultConnectionSequence++;
       mInetConditionChangeInFlight=false;
     }
-    notifyNetworkCallbacks(newNetwork,NetworkCallbacks.AVAILABLE);
+    notifyNetworkCallbacks(newNetwork,ConnectivityManager.CALLBACK_AVAILABLE);
   }
- else   if (newNetwork.networkRequests.size() == 0) {
+ else {
+    if (DBG && newNetwork.networkRequests.size() != 0) {
+      loge("tearing down network with live requests:");
+      for (int i=0; i < newNetwork.networkRequests.size(); i++) {
+        loge("  " + newNetwork.networkRequests.valueAt(i));
+      }
+    }
     if (VDBG)     log("Validated network turns out to be unwanted.  Tear it down.");
     newNetwork.asyncChannel.disconnect();
   }
