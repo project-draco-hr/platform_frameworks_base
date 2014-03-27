@@ -1,0 +1,45 @@
+{
+  if (DEBUG)   Slog.d(TAG,"refreshAgentList()");
+  PackageManager pm=mContext.getPackageManager();
+  List<UserInfo> userInfos=mUserManager.getUsers(true);
+  LockPatternUtils lockPatternUtils=new LockPatternUtils(mContext);
+  mObsoleteAgents.clear();
+  mObsoleteAgents.addAll(mActiveAgents);
+  for (  UserInfo userInfo : userInfos) {
+    List<ComponentName> enabledAgents=lockPatternUtils.getEnabledTrustAgents(userInfo.id);
+    if (enabledAgents == null) {
+      continue;
+    }
+    List<ResolveInfo> resolveInfos=pm.queryIntentServicesAsUser(TRUST_AGENT_INTENT,PackageManager.GET_META_DATA,userInfo.id);
+    for (    ResolveInfo resolveInfo : resolveInfos) {
+      if (resolveInfo.serviceInfo == null)       continue;
+      ComponentName name=getComponentName(resolveInfo);
+      if (!enabledAgents.contains(name))       continue;
+      AgentInfo agentInfo=new AgentInfo();
+      agentInfo.component=name;
+      agentInfo.userId=userInfo.id;
+      if (!mActiveAgents.contains(agentInfo)) {
+        agentInfo.label=resolveInfo.loadLabel(pm);
+        agentInfo.icon=resolveInfo.loadIcon(pm);
+        agentInfo.settings=getSettingsComponentName(pm,resolveInfo);
+        agentInfo.agent=new TrustAgentWrapper(mContext,this,new Intent().setComponent(name),userInfo.getUserHandle());
+        mActiveAgents.add(agentInfo);
+      }
+ else {
+        mObsoleteAgents.remove(agentInfo);
+      }
+    }
+  }
+  boolean trustMayHaveChanged=false;
+  for (int i=0; i < mObsoleteAgents.size(); i++) {
+    AgentInfo info=mActiveAgents.valueAt(i);
+    if (info.agent.isTrusted()) {
+      trustMayHaveChanged=true;
+    }
+    info.agent.unbind();
+    mActiveAgents.remove(info);
+  }
+  if (trustMayHaveChanged) {
+    updateTrustAll();
+  }
+}
