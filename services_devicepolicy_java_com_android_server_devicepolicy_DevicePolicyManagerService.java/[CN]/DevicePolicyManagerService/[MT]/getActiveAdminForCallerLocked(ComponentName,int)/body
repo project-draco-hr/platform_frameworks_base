@@ -2,6 +2,7 @@
   final int callingUid=Binder.getCallingUid();
   final int userHandle=UserHandle.getUserId(callingUid);
   final DevicePolicyData policy=getUserData(userHandle);
+  List<ActiveAdmin> candidates=new ArrayList<ActiveAdmin>();
   if (who != null) {
     ActiveAdmin admin=policy.mAdminMap.get(who);
     if (admin == null) {
@@ -10,19 +11,38 @@
     if (admin.getUid() != callingUid) {
       throw new SecurityException("Admin " + who + " is not owned by uid "+ Binder.getCallingUid());
     }
-    if (!admin.info.usesPolicy(reqPolicy)) {
-      throw new SecurityException("Admin " + admin.info.getComponent() + " did not specify uses-policy for: "+ admin.info.getTagForPolicy(reqPolicy));
-    }
-    return admin;
+    candidates.add(admin);
   }
  else {
-    final int N=policy.mAdminList.size();
-    for (int i=0; i < N; i++) {
-      ActiveAdmin admin=policy.mAdminList.get(i);
-      if (admin.getUid() == callingUid && admin.info.usesPolicy(reqPolicy)) {
+    for (    ActiveAdmin admin : policy.mAdminList) {
+      if (admin.getUid() == callingUid) {
+        candidates.add(admin);
+      }
+    }
+  }
+  for (  ActiveAdmin admin : candidates) {
+    boolean ownsDevice=isDeviceOwner(admin.info.getPackageName());
+    boolean ownsProfile=(getProfileOwner(userHandle) != null && getProfileOwner(userHandle).equals(admin.info.getPackageName()));
+    if (reqPolicy == DeviceAdminInfo.USES_POLICY_DEVICE_OWNER) {
+      if (ownsDevice) {
         return admin;
       }
     }
-    throw new SecurityException("No active admin owned by uid " + Binder.getCallingUid() + " for policy #"+ reqPolicy);
+ else     if (reqPolicy == DeviceAdminInfo.USES_POLICY_PROFILE_OWNER) {
+      if (ownsDevice || ownsProfile) {
+        return admin;
+      }
+    }
+ else {
+      if (admin.info.usesPolicy(reqPolicy)) {
+        return admin;
+      }
+    }
+  }
+  if (who != null) {
+    throw new SecurityException("Admin " + candidates.get(0).info.getComponent() + " did not specify uses-policy for: "+ candidates.get(0).info.getTagForPolicy(reqPolicy));
+  }
+ else {
+    throw new SecurityException("No active admin owned by uid " + Binder.getCallingUid() + " for policy:"+ reqPolicy);
   }
 }
