@@ -1,0 +1,46 @@
+{
+  if (listener != null) {
+    handler=checkHandler(handler);
+  }
+synchronized (mLock) {
+    checkIfCameraClosed();
+    int requestId;
+    if (repeating) {
+      stopRepeating();
+    }
+    LongParcelable lastFrameNumberRef=new LongParcelable();
+    try {
+      requestId=mRemoteDevice.submitRequestList(requestList,repeating,lastFrameNumberRef);
+      if (!repeating) {
+        Log.v(TAG,"last frame number " + lastFrameNumberRef.getNumber());
+      }
+    }
+ catch (    CameraRuntimeException e) {
+      throw e.asChecked();
+    }
+catch (    RemoteException e) {
+      return -1;
+    }
+    if (listener != null) {
+      mCaptureListenerMap.put(requestId,new CaptureListenerHolder(listener,requestList,handler,repeating));
+    }
+    long lastFrameNumber=lastFrameNumberRef.getNumber();
+    if (((lastFrameNumber < 0) && (requestId > 0)) || ((lastFrameNumber < 0) && (!repeating))) {
+      throw new AssertionError(String.format("returned bad frame number %d",lastFrameNumber));
+    }
+    if (repeating) {
+      if (mRepeatingRequestId != REQUEST_ID_NONE) {
+        mFrameNumberRequestPairs.add(new SimpleEntry<Long,Integer>(lastFrameNumber,mRepeatingRequestId));
+      }
+      mRepeatingRequestId=requestId;
+    }
+ else {
+      mFrameNumberRequestPairs.add(new SimpleEntry<Long,Integer>(lastFrameNumber,requestId));
+    }
+    if (mIdle) {
+      mDeviceHandler.post(mCallOnActive);
+    }
+    mIdle=false;
+    return requestId;
+  }
+}
