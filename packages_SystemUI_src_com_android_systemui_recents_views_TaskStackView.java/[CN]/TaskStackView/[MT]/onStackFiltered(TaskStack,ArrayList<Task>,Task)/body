@@ -1,0 +1,55 @@
+{
+  mStashedScroll=getStackScroll();
+  final ArrayList<TaskViewTransform> curTaskTransforms=getStackTransforms(curStack,mStashedScroll,null);
+  updateMinMaxScroll(false);
+  boundScrollRaw();
+  final ArrayList<TaskViewTransform> taskTransforms=getStackTransforms(mStack.getTasks(),getStackScroll(),null);
+  final ArrayList<TaskView> childrenToReturnToPool=new ArrayList<TaskView>();
+  final ArrayList<Task> tasks=mStack.getTasks();
+  ArrayList<Animator> childViewAnims=new ArrayList<Animator>();
+  int childCount=getChildCount();
+  for (int i=0; i < childCount; i++) {
+    TaskView tv=(TaskView)getChildAt(i);
+    Task task=tv.getTask();
+    TaskViewTransform toTransform;
+    int taskIndex=tasks.indexOf(task);
+    if ((taskIndex < 0) || !taskTransforms.get(taskIndex).visible) {
+      TaskViewTransform fromTransform=curTaskTransforms.get(curStack.indexOf(task));
+      toTransform=new TaskViewTransform(fromTransform);
+      tv.updateViewPropertiesToTaskTransform(null,fromTransform,0);
+      tv.prepareTaskTransformForFilterTaskHidden(toTransform);
+      childrenToReturnToPool.add(tv);
+    }
+ else {
+      toTransform=taskTransforms.get(taskIndex);
+    }
+    childViewAnims.add(tv.getAnimatorToTaskTransform(toTransform));
+  }
+  AnimatorSet childViewAnimSet=new AnimatorSet();
+  childViewAnimSet.setDuration(Constants.Values.TaskStackView.Animation.FilteredCurrentViewsDuration);
+  childViewAnimSet.addListener(new AnimatorListenerAdapter(){
+    @Override public void onAnimationEnd(    Animator animation){
+      for (      TaskView tv : childrenToReturnToPool) {
+        mViewPool.returnViewToPool(tv);
+      }
+      int taskCount=tasks.size();
+      for (int i=0; i < taskCount; i++) {
+        Task task=tasks.get(i);
+        TaskViewTransform toTransform=taskTransforms.get(i);
+        if (toTransform.visible) {
+          TaskViewTransform fromTransform=curTaskTransforms.get(curStack.indexOf(task));
+          TaskView tv=getChildViewForTask(task);
+          if (tv == null) {
+            tv=mViewPool.pickUpViewFromPool(task,task);
+            tv.prepareTaskTransformForFilterTaskVisible(fromTransform);
+            tv.updateViewPropertiesToTaskTransform(fromTransform,toTransform,Constants.Values.TaskStackView.Animation.FilteredNewViewsDuration);
+          }
+        }
+      }
+      invalidate();
+    }
+  }
+);
+  childViewAnimSet.playTogether(childViewAnims);
+  childViewAnimSet.start();
+}
