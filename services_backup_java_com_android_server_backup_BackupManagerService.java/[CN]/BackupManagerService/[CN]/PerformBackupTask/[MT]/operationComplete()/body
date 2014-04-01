@@ -3,6 +3,29 @@
   final long filepos=mBackupDataName.length();
   FileDescriptor fd=mBackupData.getFileDescriptor();
   try {
+    if (mCurrentPackage.applicationInfo != null && (mCurrentPackage.applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) == 0) {
+      ParcelFileDescriptor readFd=ParcelFileDescriptor.open(mBackupDataName,ParcelFileDescriptor.MODE_READ_ONLY);
+      BackupDataInput in=new BackupDataInput(readFd.getFileDescriptor());
+      try {
+        while (in.readNextHeader()) {
+          final String key=in.getKey();
+          if (key != null && key.charAt(0) >= 0xff00) {
+            failAgent(mAgentBinder,"Illegal backup key: " + key);
+            addBackupTrace("illegal key " + key + " from "+ pkgName);
+            EventLog.writeEvent(EventLogTags.BACKUP_AGENT_FAILURE,pkgName,"bad key");
+            mBackupHandler.removeMessages(MSG_TIMEOUT);
+            agentErrorCleanup();
+            return;
+          }
+          in.skipEntityData();
+        }
+      }
+  finally {
+        if (readFd != null) {
+          readFd.close();
+        }
+      }
+    }
     BackupDataOutput out=new BackupDataOutput(fd);
     byte[] widgetState=AppWidgetBackupBridge.getWidgetState(pkgName,UserHandle.USER_OWNER);
     if (widgetState != null) {
