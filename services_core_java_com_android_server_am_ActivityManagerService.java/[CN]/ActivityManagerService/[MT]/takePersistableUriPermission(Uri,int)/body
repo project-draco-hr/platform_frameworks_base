@@ -3,11 +3,20 @@
   Preconditions.checkFlagsArgument(modeFlags,Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
 synchronized (this) {
     final int callingUid=Binder.getCallingUid();
-    final UriPermission perm=findUriPermissionLocked(callingUid,uri);
-    if (perm == null) {
-      throw new SecurityException("No permission grant found for UID " + callingUid + " and Uri "+ uri.toSafeString());
+    boolean persistChanged=false;
+    UriPermission exactPerm=findUriPermissionLocked(callingUid,new GrantUri(uri,false));
+    UriPermission prefixPerm=findUriPermissionLocked(callingUid,new GrantUri(uri,true));
+    final boolean exactValid=(exactPerm != null) && ((modeFlags & exactPerm.persistableModeFlags) == modeFlags);
+    final boolean prefixValid=(prefixPerm != null) && ((modeFlags & prefixPerm.persistableModeFlags) == modeFlags);
+    if (!(exactValid || prefixValid)) {
+      throw new SecurityException("No persistable permission grants found for UID " + callingUid + " and Uri "+ uri.toSafeString());
     }
-    boolean persistChanged=perm.takePersistableModes(modeFlags);
+    if (exactValid) {
+      persistChanged|=exactPerm.takePersistableModes(modeFlags);
+    }
+    if (prefixValid) {
+      persistChanged|=prefixPerm.takePersistableModes(modeFlags);
+    }
     persistChanged|=maybePrunePersistedUriGrantsLocked(callingUid);
     if (persistChanged) {
       schedulePersistUriGrants();
