@@ -1,0 +1,68 @@
+{
+  if (startValues == null || endValues == null || startValues.values.get(PROPNAME_BOUNDS) == null || endValues.values.get(PROPNAME_BOUNDS) == null || startValues.values.get(PROPNAME_DRAWABLE) != endValues.values.get(PROPNAME_DRAWABLE)) {
+    return null;
+  }
+  ArrayList<PropertyValuesHolder> changes=new ArrayList<PropertyValuesHolder>();
+  Matrix startMatrix=(Matrix)startValues.values.get(PROPNAME_MATRIX);
+  Matrix endMatrix=(Matrix)endValues.values.get(PROPNAME_MATRIX);
+  if (!startMatrix.equals(endMatrix)) {
+    changes.add(PropertyValuesHolder.ofObject(MatrixClippedDrawable.MATRIX_PROPERTY,new MatrixEvaluator(),startMatrix,endMatrix));
+  }
+  sceneRoot.getLocationInWindow(mTempLoc);
+  int rootX=mTempLoc[0];
+  int rootY=mTempLoc[1];
+  final ImageView imageView=(ImageView)endValues.view;
+  Drawable drawable=imageView.getDrawable();
+  Rect startBounds=new Rect((Rect)startValues.values.get(PROPNAME_BOUNDS));
+  Rect endBounds=new Rect((Rect)endValues.values.get(PROPNAME_BOUNDS));
+  startBounds.offset(-rootX,-rootY);
+  endBounds.offset(-rootX,-rootY);
+  if (!startBounds.equals(endBounds)) {
+    changes.add(PropertyValuesHolder.ofObject("bounds",new RectEvaluator(new Rect()),startBounds,endBounds));
+  }
+  Rect startClip=(Rect)startValues.values.get(PROPNAME_CLIP);
+  Rect endClip=(Rect)endValues.values.get(PROPNAME_CLIP);
+  if (startClip != null || endClip != null) {
+    startClip=nonNullClip(startClip,sceneRoot,rootX,rootY);
+    endClip=nonNullClip(endClip,sceneRoot,rootX,rootY);
+    expandClip(startBounds,startMatrix,startClip,endClip);
+    expandClip(endBounds,endMatrix,endClip,startClip);
+    boolean clipped=!startClip.contains(startBounds) || !endClip.contains(endBounds);
+    if (!clipped) {
+      startClip=null;
+    }
+ else     if (!startClip.equals(endClip)) {
+      changes.add(PropertyValuesHolder.ofObject(MatrixClippedDrawable.CLIP_PROPERTY,new RectEvaluator(),startClip,endClip));
+    }
+  }
+  if (changes.isEmpty()) {
+    return null;
+  }
+  drawable=drawable.getConstantState().newDrawable();
+  final MatrixClippedDrawable matrixClippedDrawable=new MatrixClippedDrawable(drawable);
+  matrixClippedDrawable.setMatrix(startMatrix);
+  matrixClippedDrawable.setBounds(startBounds);
+  matrixClippedDrawable.setClipRect(startClip);
+  imageView.setVisibility(View.INVISIBLE);
+  final ViewGroupOverlay overlay=sceneRoot.getOverlay();
+  overlay.add(matrixClippedDrawable);
+  ObjectAnimator animator=ObjectAnimator.ofPropertyValuesHolder(matrixClippedDrawable,changes.toArray(new PropertyValuesHolder[changes.size()]));
+  AnimatorListenerAdapter listener=new AnimatorListenerAdapter(){
+    @Override public void onAnimationEnd(    Animator animation){
+      imageView.setVisibility(View.VISIBLE);
+      overlay.remove(matrixClippedDrawable);
+    }
+    @Override public void onAnimationPause(    Animator animation){
+      imageView.setVisibility(View.VISIBLE);
+      overlay.remove(matrixClippedDrawable);
+    }
+    @Override public void onAnimationResume(    Animator animation){
+      imageView.setVisibility(View.INVISIBLE);
+      overlay.add(matrixClippedDrawable);
+    }
+  }
+;
+  animator.addListener(listener);
+  animator.addPauseListener(listener);
+  return animator;
+}
