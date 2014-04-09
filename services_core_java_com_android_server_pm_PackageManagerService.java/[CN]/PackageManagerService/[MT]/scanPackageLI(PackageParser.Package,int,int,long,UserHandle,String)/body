@@ -139,20 +139,32 @@ synchronized (mPackages) {
     }
     pkg.applicationInfo.uid=pkgSetting.appId;
     pkg.mExtras=pkgSetting;
-    if (!verifySignaturesLP(pkgSetting,pkg)) {
-      if ((parseFlags & PackageParser.PARSE_IS_SYSTEM_DIR) == 0) {
-        return null;
-      }
-      pkgSetting.signatures.mSignatures=pkg.mSignatures;
-      if (pkgSetting.sharedUser != null) {
-        if (compareSignatures(pkgSetting.sharedUser.signatures.mSignatures,pkg.mSignatures) != PackageManager.SIGNATURE_MATCH) {
-          Log.w(TAG,"Signature mismatch for shared user : " + pkgSetting.sharedUser);
-          mLastScanError=PackageManager.INSTALL_PARSE_FAILED_INCONSISTENT_CERTIFICATES;
+    if (!pkgSetting.keySetData.isUsingUpgradeKeySets() || pkgSetting.sharedUser != null) {
+      if (!verifySignaturesLP(pkgSetting,pkg)) {
+        if ((parseFlags & PackageParser.PARSE_IS_SYSTEM_DIR) == 0) {
           return null;
         }
+        pkgSetting.signatures.mSignatures=pkg.mSignatures;
+        if (pkgSetting.sharedUser != null) {
+          if (compareSignatures(pkgSetting.sharedUser.signatures.mSignatures,pkg.mSignatures) != PackageManager.SIGNATURE_MATCH) {
+            Log.w(TAG,"Signature mismatch for shared user : " + pkgSetting.sharedUser);
+            mLastScanError=PackageManager.INSTALL_PARSE_FAILED_INCONSISTENT_CERTIFICATES;
+            return null;
+          }
+        }
+        String msg="System package " + pkg.packageName + " signature changed; retaining data.";
+        reportSettingsProblem(Log.WARN,msg);
       }
-      String msg="System package " + pkg.packageName + " signature changed; retaining data.";
-      reportSettingsProblem(Log.WARN,msg);
+    }
+ else {
+      if (!checkUpgradeKeySetLP(pkgSetting,pkg)) {
+        Slog.e(TAG,"Package " + pkg.packageName + " upgrade keys do not match the previously installed version; ");
+        mLastScanError=PackageManager.INSTALL_FAILED_UPDATE_INCOMPATIBLE;
+        return null;
+      }
+ else {
+        pkgSetting.signatures.mSignatures=pkg.mSignatures;
+      }
     }
     if ((scanMode & SCAN_NEW_INSTALL) != 0) {
       final int N=pkg.providers.size();
@@ -500,13 +512,19 @@ synchronized (mPackages) {
         pkgSetting.lastUpdateTime=scanFileTime;
       }
     }
-    KeySetManager ksm=mSettings.mKeySetManager;
+    KeySetManagerService ksms=mSettings.mKeySetManagerService;
     try {
-      ksm.addSigningKeySetToPackage(pkg.packageName,pkg.mSigningKeys);
+      ksms.removeAppKeySetData(pkg.packageName);
+      ksms.addSigningKeySetToPackage(pkg.packageName,pkg.mSigningKeys);
       if (pkg.mKeySetMapping != null) {
-        for (        Map.Entry<String,ArraySet<PublicKey>> entry : pkg.mKeySetMapping.entrySet()) {
+        for (        Map.Entry<String,Set<PublicKey>> entry : pkg.mKeySetMapping.entrySet()) {
           if (entry.getValue() != null) {
-            ksm.addDefinedKeySetToPackage(pkg.packageName,entry.getValue(),entry.getKey());
+            ksms.addDefinedKeySetToPackage(pkg.packageName,entry.getValue(),entry.getKey());
+          }
+        }
+        if (pkg.mUpgradeKeySets != null && pkg.mKeySetMapping.keySet().containsAll(pkg.mUpgradeKeySets)) {
+          for (          String upgradeAlias : pkg.mUpgradeKeySets) {
+            ksms.addUpgradeKeySetToPackage(pkg.packageName,upgradeAlias);
           }
         }
       }
