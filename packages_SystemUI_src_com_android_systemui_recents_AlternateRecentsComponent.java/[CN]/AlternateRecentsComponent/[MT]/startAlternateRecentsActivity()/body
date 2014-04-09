@@ -4,8 +4,10 @@
   }
   SystemServicesProxy ssp=mSystemServicesProxy;
   List<ActivityManager.RunningTaskInfo> tasks=ssp.getRunningTasks(1);
+  boolean isTopTaskHome=false;
   if (!tasks.isEmpty()) {
-    ComponentName topActivity=tasks.get(0).topActivity;
+    ActivityManager.RunningTaskInfo topTask=tasks.get(0);
+    ComponentName topActivity=topTask.topActivity;
     if (topActivity.getPackageName().equals(sRecentsPackage) && topActivity.getClassName().equals(sRecentsActivity)) {
       try {
         Bundle data=new Bundle();
@@ -21,33 +23,35 @@
       mLastToggleTime=System.currentTimeMillis();
       return;
     }
+    isTopTaskHome=ssp.isInHomeStack(topTask.id);
   }
-  Rect taskRect=mFirstTaskRect;
-  if (taskRect != null && taskRect.width() > 0 && taskRect.height() > 0 && hasFirstTask()) {
+  boolean hasMultipleTasks=hasMultipleRecentsTask();
+  Rect taskRect=hasMultipleTasks ? mMultipleCountFirstTaskRect : mSingleCountFirstTaskRect;
+  if (!isTopTaskHome && taskRect != null && taskRect.width() > 0 && taskRect.height() > 0) {
     Bitmap thumbnail;
     Bitmap firstThumbnail=loadFirstTaskThumbnail();
-    if (firstThumbnail == null) {
+    if (firstThumbnail != null) {
+      thumbnail=Bitmap.createBitmap(taskRect.width(),taskRect.height(),Bitmap.Config.ARGB_8888);
+      int size=Math.min(firstThumbnail.getWidth(),firstThumbnail.getHeight());
+      Canvas c=new Canvas(thumbnail);
+      c.drawBitmap(firstThumbnail,new Rect(0,0,size,size),new Rect(0,0,taskRect.width(),taskRect.height()),null);
+      c.setBitmap(null);
+      firstThumbnail.recycle();
+    }
+ else {
       WindowManager wm=(WindowManager)mContext.getSystemService(Context.WINDOW_SERVICE);
       Display display=wm.getDefaultDisplay();
       Bitmap screenshot=takeScreenshot(display);
       Resources res=mContext.getResources();
       int size=Math.min(screenshot.getWidth(),screenshot.getHeight());
       int statusBarHeight=res.getDimensionPixelSize(com.android.internal.R.dimen.status_bar_height);
-      thumbnail=Bitmap.createBitmap(mFirstTaskRect.width(),mFirstTaskRect.height(),Bitmap.Config.ARGB_8888);
+      thumbnail=Bitmap.createBitmap(taskRect.width(),taskRect.height(),Bitmap.Config.ARGB_8888);
       Canvas c=new Canvas(thumbnail);
-      c.drawBitmap(screenshot,new Rect(0,statusBarHeight,size,statusBarHeight + size),new Rect(0,0,mFirstTaskRect.width(),mFirstTaskRect.height()),null);
+      c.drawBitmap(screenshot,new Rect(0,statusBarHeight,size,statusBarHeight + size),new Rect(0,0,taskRect.width(),taskRect.height()),null);
       c.setBitmap(null);
       screenshot.recycle();
     }
- else {
-      thumbnail=Bitmap.createBitmap(mFirstTaskRect.width(),mFirstTaskRect.height(),Bitmap.Config.ARGB_8888);
-      int size=Math.min(firstThumbnail.getWidth(),firstThumbnail.getHeight());
-      Canvas c=new Canvas(thumbnail);
-      c.drawBitmap(firstThumbnail,new Rect(0,0,size,size),new Rect(0,0,mFirstTaskRect.width(),mFirstTaskRect.height()),null);
-      c.setBitmap(null);
-      firstThumbnail.recycle();
-    }
-    ActivityOptions opts=ActivityOptions.makeThumbnailScaleDownAnimation(mStatusBarView,thumbnail,mFirstTaskRect.left,mFirstTaskRect.top,null);
+    ActivityOptions opts=ActivityOptions.makeThumbnailScaleDownAnimation(mStatusBarView,thumbnail,taskRect.left,taskRect.top,null);
     startAlternateRecentsActivity(opts);
   }
  else {
