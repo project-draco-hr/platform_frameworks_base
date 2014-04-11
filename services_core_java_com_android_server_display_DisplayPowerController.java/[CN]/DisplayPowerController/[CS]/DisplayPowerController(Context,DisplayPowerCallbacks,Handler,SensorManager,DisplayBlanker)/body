@@ -1,0 +1,44 @@
+{
+  mHandler=new DisplayControllerHandler(handler.getLooper());
+  mCallbacks=callbacks;
+  mBatteryStats=BatteryStatsService.getService();
+  mLights=LocalServices.getService(LightsManager.class);
+  mTwilight=LocalServices.getService(TwilightManager.class);
+  mSensorManager=sensorManager;
+  mBlanker=blanker;
+  final Resources resources=context.getResources();
+  mScreenBrightnessDozeConfig=clampAbsoluteBrightness(resources.getInteger(com.android.internal.R.integer.config_screenBrightnessDoze));
+  mScreenBrightnessDimConfig=clampAbsoluteBrightness(resources.getInteger(com.android.internal.R.integer.config_screenBrightnessDim));
+  int screenBrightnessMinimum=Math.min(resources.getInteger(com.android.internal.R.integer.config_screenBrightnessSettingMinimum),mScreenBrightnessDimConfig);
+  mUseSoftwareAutoBrightnessConfig=resources.getBoolean(com.android.internal.R.bool.config_automatic_brightness_available);
+  if (mUseSoftwareAutoBrightnessConfig) {
+    int[] lux=resources.getIntArray(com.android.internal.R.array.config_autoBrightnessLevels);
+    int[] screenBrightness=resources.getIntArray(com.android.internal.R.array.config_autoBrightnessLcdBacklightValues);
+    mScreenAutoBrightnessSpline=createAutoBrightnessSpline(lux,screenBrightness);
+    if (mScreenAutoBrightnessSpline == null) {
+      Slog.e(TAG,"Error in config.xml.  config_autoBrightnessLcdBacklightValues " + "(size " + screenBrightness.length + ") "+ "must be monotic and have exactly one more entry than "+ "config_autoBrightnessLevels (size "+ lux.length+ ") "+ "which must be strictly increasing.  "+ "Auto-brightness will be disabled.");
+      mUseSoftwareAutoBrightnessConfig=false;
+    }
+ else {
+      if (screenBrightness[0] < screenBrightnessMinimum) {
+        screenBrightnessMinimum=screenBrightness[0];
+      }
+    }
+    mLightSensorWarmUpTimeConfig=resources.getInteger(com.android.internal.R.integer.config_lightSensorWarmupTime);
+  }
+  mScreenBrightnessRangeMinimum=clampAbsoluteBrightness(screenBrightnessMinimum);
+  mScreenBrightnessRangeMaximum=PowerManager.BRIGHTNESS_ON;
+  mElectronBeamFadesConfig=resources.getBoolean(com.android.internal.R.bool.config_animateScreenLights);
+  if (!DEBUG_PRETEND_PROXIMITY_SENSOR_ABSENT) {
+    mProximitySensor=mSensorManager.getDefaultSensor(Sensor.TYPE_PROXIMITY);
+    if (mProximitySensor != null) {
+      mProximityThreshold=Math.min(mProximitySensor.getMaximumRange(),TYPICAL_PROXIMITY_THRESHOLD);
+    }
+  }
+  if (mUseSoftwareAutoBrightnessConfig && !DEBUG_PRETEND_LIGHT_SENSOR_ABSENT) {
+    mLightSensor=mSensorManager.getDefaultSensor(Sensor.TYPE_LIGHT);
+  }
+  if (mUseSoftwareAutoBrightnessConfig && USE_TWILIGHT_ADJUSTMENT) {
+    mTwilight.registerListener(mTwilightListener,mHandler);
+  }
+}
