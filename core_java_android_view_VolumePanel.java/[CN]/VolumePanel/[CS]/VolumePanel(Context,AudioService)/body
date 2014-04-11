@@ -2,19 +2,46 @@
   mContext=context;
   mAudioManager=(AudioManager)context.getSystemService(Context.AUDIO_SERVICE);
   mAudioService=volumeService;
-  final boolean useMasterVolume=context.getResources().getBoolean(R.bool.config_useMasterVolume);
+  final Resources res=context.getResources();
+  final boolean useMasterVolume=res.getBoolean(R.bool.config_useMasterVolume);
   if (useMasterVolume) {
     for (int i=0; i < STREAMS.length; i++) {
       StreamResources streamRes=STREAMS[i];
       streamRes.show=(streamRes.streamType == STREAM_MASTER);
     }
   }
-  final TypedArray a=context.obtainStyledAttributes(null,com.android.internal.R.styleable.AlertDialog,com.android.internal.R.attr.alertDialogStyle,0);
-  final Drawable background=a.getDrawable(R.styleable.AlertDialog_fullBright);
-  a.recycle();
-  final LayoutInflater inflater=(LayoutInflater)context.getSystemService(Context.LAYOUT_INFLATER_SERVICE);
-  mView=inflater.inflate(R.layout.volume_adjust,null);
-  mView.setBackground(background);
+  mDialog=new Dialog(context){
+    @Override public boolean onTouchEvent(    MotionEvent event){
+      if (isShowing() && event.getAction() == MotionEvent.ACTION_OUTSIDE && sConfirmSafeVolumeDialog == null) {
+        forceTimeout();
+        return true;
+      }
+      return false;
+    }
+  }
+;
+  final Window window=mDialog.getWindow();
+  final LayoutParams lp=window.getAttributes();
+  lp.token=null;
+  lp.y=res.getDimensionPixelOffset(R.dimen.volume_panel_top);
+  lp.type=LayoutParams.TYPE_VOLUME_OVERLAY;
+  lp.windowAnimations=R.style.Animation_VolumePanel;
+  window.setAttributes(lp);
+  window.setGravity(Gravity.TOP);
+  window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+  window.requestFeature(Window.FEATURE_NO_TITLE);
+  window.addFlags(LayoutParams.FLAG_NOT_FOCUSABLE | LayoutParams.FLAG_NOT_TOUCH_MODAL | LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH);
+  mDialog.setCanceledOnTouchOutside(true);
+  mDialog.setContentView(R.layout.volume_adjust);
+  mDialog.setOnDismissListener(new OnDismissListener(){
+    @Override public void onDismiss(    DialogInterface dialog){
+      mActiveStreamType=-1;
+      mAudioManager.forceVolumeControlStream(mActiveStreamType);
+    }
+  }
+);
+  mDialog.create();
+  mView=window.findViewById(R.id.content);
   mView.setOnTouchListener(new View.OnTouchListener(){
     @Override public boolean onTouch(    View v,    MotionEvent event){
       resetTimeout();
@@ -26,35 +53,6 @@
   mSliderGroup=(ViewGroup)mView.findViewById(R.id.slider_group);
   mMoreButton=mView.findViewById(R.id.expand_button);
   mDivider=mView.findViewById(R.id.expand_button_divider);
-  mDialog=new Dialog(context,R.style.Theme_Panel_Volume){
-    @Override public boolean onTouchEvent(    MotionEvent event){
-      if (isShowing() && event.getAction() == MotionEvent.ACTION_OUTSIDE && sConfirmSafeVolumeDialog == null) {
-        forceTimeout();
-        return true;
-      }
-      return false;
-    }
-  }
-;
-  mDialog.setTitle("Volume control");
-  mDialog.setContentView(mView);
-  mDialog.setOnDismissListener(new OnDismissListener(){
-    @Override public void onDismiss(    DialogInterface dialog){
-      mActiveStreamType=-1;
-      mAudioManager.forceVolumeControlStream(mActiveStreamType);
-    }
-  }
-);
-  final Window window=mDialog.getWindow();
-  window.setGravity(Gravity.TOP);
-  final LayoutParams lp=window.getAttributes();
-  lp.token=null;
-  lp.y=mContext.getResources().getDimensionPixelOffset(R.dimen.volume_panel_top);
-  lp.type=LayoutParams.TYPE_VOLUME_OVERLAY;
-  lp.width=LayoutParams.WRAP_CONTENT;
-  lp.height=LayoutParams.WRAP_CONTENT;
-  window.setAttributes(lp);
-  window.addFlags(LayoutParams.FLAG_NOT_FOCUSABLE | LayoutParams.FLAG_NOT_TOUCH_MODAL | LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH);
   mToneGenerators=new ToneGenerator[AudioSystem.getNumStreamTypes()];
   mVibrator=(Vibrator)context.getSystemService(Context.VIBRATOR_SERVICE);
   mVoiceCapable=context.getResources().getBoolean(R.bool.config_voice_capable);
@@ -64,10 +62,10 @@
     mDivider.setVisibility(View.GONE);
   }
  else {
-    mMoreButton.setOnClickListener(this);
+    mMoreButton.setOnClickListener(mClickListener);
   }
-  final boolean masterVolumeOnly=context.getResources().getBoolean(R.bool.config_useMasterVolume);
-  final boolean masterVolumeKeySounds=mContext.getResources().getBoolean(R.bool.config_useVolumeKeySounds);
+  final boolean masterVolumeOnly=res.getBoolean(R.bool.config_useMasterVolume);
+  final boolean masterVolumeKeySounds=res.getBoolean(R.bool.config_useVolumeKeySounds);
   mPlayMasterStreamTones=masterVolumeOnly && masterVolumeKeySounds;
   listenToRingerMode();
 }
