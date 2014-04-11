@@ -1,56 +1,73 @@
 {
   NetworkInfo info;
 switch (msg.what) {
-case NetworkStateTracker.EVENT_STATE_CHANGED:
+case AsyncChannel.CMD_CHANNEL_HALF_CONNECTED:
 {
-      info=(NetworkInfo)msg.obj;
-      NetworkInfo.State state=info.getState();
-      if (VDBG || (state == NetworkInfo.State.CONNECTED) || (state == NetworkInfo.State.DISCONNECTED)|| (state == NetworkInfo.State.SUSPENDED)) {
-        log("ConnectivityChange for " + info.getTypeName() + ": "+ state+ "/"+ info.getDetailedState());
-      }
-      if (ConnectivityManager.isNetworkTypeMobile(info.getType()) && (0 != Settings.Global.getInt(mContext.getContentResolver(),Settings.Global.DEVICE_PROVISIONED,0)) && (((state == NetworkInfo.State.CONNECTED) && (info.getType() == ConnectivityManager.TYPE_MOBILE)) || info.isConnectedToProvisioningNetwork())) {
-        log("ConnectivityChange checkMobileProvisioning for" + " TYPE_MOBILE or ProvisioningNetwork");
-        checkMobileProvisioning(CheckMp.MAX_TIMEOUT_MS);
-      }
-      EventLogTags.writeConnectivityStateChanged(info.getType(),info.getSubtype(),info.getDetailedState().ordinal());
-      if (info.getDetailedState() == NetworkInfo.DetailedState.FAILED) {
-        handleConnectionFailure(info);
-      }
- else       if (info.isConnectedToProvisioningNetwork()) {
-        LinkProperties lp=getLinkProperties(info.getType());
-        if (DBG) {
-          log("EVENT_STATE_CHANGED: connected to provisioning network, lp=" + lp);
+      AsyncChannel ac=(AsyncChannel)msg.obj;
+      if (mNetworkFactories.contains(ac)) {
+        if (msg.arg1 == AsyncChannel.STATUS_SUCCESSFUL) {
+          if (VDBG)           log("NetworkFactory connected");
+          for (int i=0; i < mNetworkRequests.size(); i++) {
+            ac.sendMessage(NetworkFactoryProtocol.CMD_REQUEST_NETWORK,mNetworkRequests.valueAt(i));
+          }
         }
-        for (        RouteInfo r : lp.getRoutes()) {
-          removeRoute(lp,r,TO_DEFAULT_TABLE);
+ else {
+          loge("Error connecting NetworkFactory");
+          mNetworkFactories.remove((AsyncChannel)msg.obj);
         }
-      }
- else       if (state == NetworkInfo.State.DISCONNECTED) {
-        handleDisconnect(info);
-      }
- else       if (state == NetworkInfo.State.SUSPENDED) {
-        handleDisconnect(info);
-      }
- else       if (state == NetworkInfo.State.CONNECTED) {
-        handleConnect(info);
-      }
-      if (mLockdownTracker != null) {
-        mLockdownTracker.onNetworkInfoChanged(info);
       }
       break;
     }
-case NetworkStateTracker.EVENT_CONFIGURATION_CHANGED:
+case NetworkStateTracker.EVENT_STATE_CHANGED:
 {
     info=(NetworkInfo)msg.obj;
-    handleConnectivityChange(info.getType(),false);
+    NetworkInfo.State state=info.getState();
+    if (VDBG || (state == NetworkInfo.State.CONNECTED) || (state == NetworkInfo.State.DISCONNECTED)|| (state == NetworkInfo.State.SUSPENDED)) {
+      log("ConnectivityChange for " + info.getTypeName() + ": "+ state+ "/"+ info.getDetailedState());
+    }
+    if (ConnectivityManager.isNetworkTypeMobile(info.getType()) && (0 != Settings.Global.getInt(mContext.getContentResolver(),Settings.Global.DEVICE_PROVISIONED,0)) && (((state == NetworkInfo.State.CONNECTED) && (info.getType() == ConnectivityManager.TYPE_MOBILE)) || info.isConnectedToProvisioningNetwork())) {
+      log("ConnectivityChange checkMobileProvisioning for" + " TYPE_MOBILE or ProvisioningNetwork");
+      checkMobileProvisioning(CheckMp.MAX_TIMEOUT_MS);
+    }
+    EventLogTags.writeConnectivityStateChanged(info.getType(),info.getSubtype(),info.getDetailedState().ordinal());
+    if (info.getDetailedState() == NetworkInfo.DetailedState.FAILED) {
+      handleConnectionFailure(info);
+    }
+ else     if (info.isConnectedToProvisioningNetwork()) {
+      LinkProperties lp=getLinkProperties(info.getType());
+      if (DBG) {
+        log("EVENT_STATE_CHANGED: connected to provisioning network, lp=" + lp);
+      }
+      for (      RouteInfo r : lp.getRoutes()) {
+        removeRoute(lp,r,TO_DEFAULT_TABLE);
+      }
+    }
+ else     if (state == NetworkInfo.State.DISCONNECTED) {
+      handleDisconnect(info);
+    }
+ else     if (state == NetworkInfo.State.SUSPENDED) {
+      handleDisconnect(info);
+    }
+ else     if (state == NetworkInfo.State.CONNECTED) {
+      handleConnect(info);
+    }
+    if (mLockdownTracker != null) {
+      mLockdownTracker.onNetworkInfoChanged(info);
+    }
     break;
   }
-case NetworkStateTracker.EVENT_NETWORK_SUBTYPE_CHANGED:
+case NetworkStateTracker.EVENT_CONFIGURATION_CHANGED:
 {
   info=(NetworkInfo)msg.obj;
-  int type=info.getType();
-  if (mNetConfigs[type].isDefault())   updateNetworkSettings(mNetTrackers[type]);
+  handleConnectivityChange(info.getType(),false);
   break;
+}
+case NetworkStateTracker.EVENT_NETWORK_SUBTYPE_CHANGED:
+{
+info=(NetworkInfo)msg.obj;
+int type=info.getType();
+if (mNetConfigs[type].isDefault()) updateNetworkSettings(mNetTrackers[type]);
+break;
 }
 }
 }
