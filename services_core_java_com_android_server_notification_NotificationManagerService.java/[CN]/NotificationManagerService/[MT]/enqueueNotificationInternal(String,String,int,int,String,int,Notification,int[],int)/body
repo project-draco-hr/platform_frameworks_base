@@ -47,28 +47,24 @@ synchronized (mNotificationList) {
         }
       }
       int score=notification.priority * NOTIFICATION_PRIORITY_MULTIPLIER;
-      int initialScore=score;
-      if (!mScorers.isEmpty()) {
-        if (DBG)         Slog.v(TAG,"Initial score is " + score + ".");
-        for (        NotificationScorer scorer : mScorers) {
+      final StatusBarNotification n=new StatusBarNotification(pkg,opPkg,id,tag,callingUid,callingPid,score,notification,user);
+      NotificationRecord r=new NotificationRecord(n);
+      if (!mSignalExtractors.isEmpty()) {
+        for (        NotificationSignalExtractor extractor : mSignalExtractors) {
           try {
-            score=scorer.getScore(notification,score);
+            RankingFuture future=extractor.process(r);
+            scheduleRankingReconsideration(future);
           }
  catch (          Throwable t) {
-            Slog.w(TAG,"Scorer threw on .getScore.",t);
+            Slog.w(TAG,"NotificationSignalExtractor failed.",t);
           }
         }
-        if (DBG)         Slog.v(TAG,"Final score is " + score + ".");
       }
-      notification.extras.putBoolean(Notification.EXTRA_SCORE_MODIFIED,score != initialScore);
       if (ENABLE_BLOCKED_NOTIFICATIONS && !noteNotificationOp(pkg,callingUid)) {
         if (!isSystemNotification) {
           score=JUNK_SCORE;
           Slog.e(TAG,"Suppressing notification from package " + pkg + " by user request.");
         }
-      }
-      if (DBG) {
-        Slog.v(TAG,"Assigned score=" + score + " to "+ notification);
       }
       if (score < SCORE_DISPLAY_THRESHOLD) {
         return;
@@ -78,8 +74,6 @@ synchronized (mNotificationList) {
       final boolean canInterrupt=(score >= SCORE_INTERRUPTION_THRESHOLD) && !intercept;
       if (DBG || intercept)       Slog.v(TAG,"pkg=" + pkg + " canInterrupt="+ canInterrupt+ " intercept="+ intercept);
 synchronized (mNotificationList) {
-        final StatusBarNotification n=new StatusBarNotification(pkg,opPkg,id,tag,callingUid,callingPid,score,notification,user);
-        NotificationRecord r=new NotificationRecord(n);
         NotificationRecord old=null;
         int index=indexOfNotificationLocked(pkg,tag,id,userId);
         if (index < 0) {
@@ -98,6 +92,7 @@ synchronized (mNotificationList) {
           mNotificationsByKey.remove(old.sbn.getKey());
         }
         mNotificationsByKey.put(n.getKey(),r);
+        Collections.sort(mNotificationList,mRankingComparator);
         if ((notification.flags & Notification.FLAG_FOREGROUND_SERVICE) != 0) {
           notification.flags|=Notification.FLAG_ONGOING_EVENT | Notification.FLAG_NO_CLEAR;
         }
