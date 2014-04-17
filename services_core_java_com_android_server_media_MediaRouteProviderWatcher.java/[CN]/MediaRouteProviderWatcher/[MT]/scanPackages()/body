@@ -1,0 +1,39 @@
+{
+  if (!mRunning) {
+    return;
+  }
+  int targetIndex=0;
+  Intent intent=new Intent(RouteProviderService.SERVICE_INTERFACE);
+  for (  ResolveInfo resolveInfo : mPackageManager.queryIntentServicesAsUser(intent,0,mUserId)) {
+    ServiceInfo serviceInfo=resolveInfo.serviceInfo;
+    if (DEBUG) {
+      Slog.d(TAG,"Checking service " + (serviceInfo == null ? null : serviceInfo.name));
+    }
+    if (serviceInfo != null && verifyServiceTrusted(serviceInfo)) {
+      int sourceIndex=findProvider(serviceInfo.packageName,serviceInfo.name);
+      if (sourceIndex < 0) {
+        if (DEBUG) {
+          Slog.d(TAG,"Creating new provider proxy for service");
+        }
+        MediaRouteProviderProxy provider=new MediaRouteProviderProxy(mContext,UUID.randomUUID().toString(),new ComponentName(serviceInfo.packageName,serviceInfo.name),mUserId,null);
+        provider.start();
+        mProviders.add(targetIndex++,provider);
+        mCallback.addProvider(provider);
+      }
+ else       if (sourceIndex >= targetIndex) {
+        MediaRouteProviderProxy provider=mProviders.get(sourceIndex);
+        provider.start();
+        provider.rebindIfDisconnected();
+        Collections.swap(mProviders,sourceIndex,targetIndex++);
+      }
+    }
+  }
+  if (targetIndex < mProviders.size()) {
+    for (int i=mProviders.size() - 1; i >= targetIndex; i--) {
+      MediaRouteProviderProxy provider=mProviders.get(i);
+      mCallback.removeProvider(provider);
+      mProviders.remove(provider);
+      provider.stop();
+    }
+  }
+}
