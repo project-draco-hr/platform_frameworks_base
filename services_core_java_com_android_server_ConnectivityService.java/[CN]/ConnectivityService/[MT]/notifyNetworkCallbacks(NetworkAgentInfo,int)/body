@@ -1,0 +1,53 @@
+{
+  if (VDBG)   log("notifyType " + notifyType + " for "+ networkAgent.name());
+  boolean needsBroadcasts=false;
+  for (int i=0; i < networkAgent.networkRequests.size(); i++) {
+    NetworkRequest request=networkAgent.networkRequests.valueAt(i);
+    if (request == null)     continue;
+    if (request.needsBroadcasts)     needsBroadcasts=true;
+    callCallbackForRequest(request,networkAgent,notifyType);
+  }
+  for (  NetworkRequest request : networkAgent.networkListens) {
+    if (request.needsBroadcasts)     needsBroadcasts=true;
+    callCallbackForRequest(request,networkAgent,notifyType);
+  }
+  if (needsBroadcasts) {
+    if (notifyType == NetworkCallbacks.AVAILABLE) {
+      sendConnectedBroadcastDelayed(networkAgent.networkInfo,getConnectivityChangeDelay());
+    }
+ else     if (notifyType == NetworkCallbacks.LOST) {
+      NetworkInfo info=new NetworkInfo(networkAgent.networkInfo);
+      Intent intent=new Intent(ConnectivityManager.CONNECTIVITY_ACTION);
+      intent.putExtra(ConnectivityManager.EXTRA_NETWORK_INFO,info);
+      intent.putExtra(ConnectivityManager.EXTRA_NETWORK_TYPE,info.getType());
+      if (info.isFailover()) {
+        intent.putExtra(ConnectivityManager.EXTRA_IS_FAILOVER,true);
+        networkAgent.networkInfo.setFailover(false);
+      }
+      if (info.getReason() != null) {
+        intent.putExtra(ConnectivityManager.EXTRA_REASON,info.getReason());
+      }
+      if (info.getExtraInfo() != null) {
+        intent.putExtra(ConnectivityManager.EXTRA_EXTRA_INFO,info.getExtraInfo());
+      }
+      NetworkAgentInfo newDefaultAgent=null;
+      if (networkAgent.networkRequests.get(mDefaultRequest.requestId) != null) {
+        newDefaultAgent=mNetworkForRequestId.get(mDefaultRequest.requestId);
+        if (newDefaultAgent != null) {
+          intent.putExtra(ConnectivityManager.EXTRA_OTHER_NETWORK_INFO,newDefaultAgent.networkInfo);
+        }
+ else {
+          intent.putExtra(ConnectivityManager.EXTRA_NO_CONNECTIVITY,true);
+        }
+      }
+      intent.putExtra(ConnectivityManager.EXTRA_INET_CONDITION,mDefaultInetConditionPublished);
+      final Intent immediateIntent=new Intent(intent);
+      immediateIntent.setAction(CONNECTIVITY_ACTION_IMMEDIATE);
+      sendStickyBroadcast(immediateIntent);
+      sendStickyBroadcastDelayed(intent,getConnectivityChangeDelay());
+      if (newDefaultAgent != null) {
+        sendConnectedBroadcastDelayed(newDefaultAgent.networkInfo,getConnectivityChangeDelay());
+      }
+    }
+  }
+}
