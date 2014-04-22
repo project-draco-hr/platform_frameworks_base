@@ -1,25 +1,52 @@
 {
   if (DEBUG_RC)   Log.d(TAG,"onNewPlaybackStateForRcc(id=" + rccId + ", state="+ state+ ", time="+ newState.mPositionMs+ ", speed="+ newState.mSpeed+ ")");
 synchronized (mPRStack) {
+    if (mPRStack.empty()) {
+      return;
+    }
+    PlayerRecord oldTopPrse=mPRStack.lastElement();
+    PlayerRecord prse=null;
+    int lastPlayingIndex=mPRStack.size();
+    int inStackIndex=-1;
     try {
       for (int index=mPRStack.size() - 1; index >= 0; index--) {
-        final PlayerRecord prse=mPRStack.elementAt(index);
+        prse=mPRStack.elementAt(index);
+        if (prse.isPlaybackActive()) {
+          lastPlayingIndex=index;
+        }
         if (prse.getRccId() == rccId) {
+          inStackIndex=index;
           prse.mPlaybackState=newState;
+        }
+      }
+      if (inStackIndex != -1) {
+        prse=mPRStack.elementAt(inStackIndex);
 synchronized (mMainRemote) {
-            if (rccId == mMainRemote.mRccId) {
-              mMainRemoteIsActive=isPlaystateActive(state);
-              postReevaluateRemote();
-            }
+          if (rccId == mMainRemote.mRccId) {
+            mMainRemoteIsActive=isPlaystateActive(state);
+            postReevaluateRemote();
           }
-          if (isPlaystateActive(state)) {
-            postPromoteRcc(rccId);
+        }
+        if (mPRStack.size() > 1) {
+          mPRStack.removeElementAt(inStackIndex);
+          if (prse.isPlaybackActive()) {
+            mPRStack.push(prse);
           }
+ else {
+            mPRStack.add(lastPlayingIndex,prse);
+          }
+        }
+        if (oldTopPrse != mPRStack.lastElement()) {
+          final ComponentName target=mPRStack.lastElement().getMediaButtonReceiver();
+          if (target != null) {
+            mEventHandler.sendMessage(mEventHandler.obtainMessage(MSG_PERSIST_MEDIABUTTONRECEIVER,0,0,target));
+          }
+          checkUpdateRemoteControlDisplay_syncPrs(RC_INFO_ALL);
         }
       }
     }
  catch (    ArrayIndexOutOfBoundsException e) {
-      Log.e(TAG,"Wrong index on mPRStack in onNewPlaybackStateForRcc, lock error? ",e);
+      Log.e(TAG,"Wrong index (inStack=" + inStackIndex + " lastPlaying="+ lastPlayingIndex+ " size="+ mPRStack.size()+ "accessing PlayerRecord stack in onNewPlaybackStateForRcc",e);
     }
   }
 }

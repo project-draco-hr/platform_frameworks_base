@@ -1,31 +1,53 @@
 {
-  if (!mPRStack.empty() && mPRStack.peek().hasMatchingMediaButtonIntent(mediaIntent)) {
+  if (mPRStack.empty()) {
+    mPRStack.push(new PlayerRecord(mediaIntent,target,token));
+    return true;
+  }
+ else   if (mPRStack.peek().hasMatchingMediaButtonIntent(mediaIntent)) {
     return false;
   }
   if (mAppOps.noteOp(AppOpsManager.OP_TAKE_MEDIA_BUTTONS,Binder.getCallingUid(),mediaIntent.getCreatorPackage()) != AppOpsManager.MODE_ALLOWED) {
     return false;
   }
+  PlayerRecord oldTopPrse=mPRStack.lastElement();
+  boolean topChanged=false;
   PlayerRecord prse=null;
-  boolean wasInsideStack=false;
+  int lastPlayingIndex=mPRStack.size();
+  int inStackIndex=-1;
   try {
     for (int index=mPRStack.size() - 1; index >= 0; index--) {
       prse=mPRStack.elementAt(index);
+      if (prse.isPlaybackActive()) {
+        lastPlayingIndex=index;
+      }
       if (prse.hasMatchingMediaButtonIntent(mediaIntent)) {
-        mPRStack.removeElementAt(index);
-        wasInsideStack=true;
+        inStackIndex=index;
         break;
       }
     }
+    if (inStackIndex == -1) {
+      prse=new PlayerRecord(mediaIntent,target,token);
+      mPRStack.add(lastPlayingIndex,prse);
+    }
+ else {
+      if (mPRStack.size() > 1) {
+        prse=mPRStack.elementAt(inStackIndex);
+        mPRStack.removeElementAt(inStackIndex);
+        if (prse.isPlaybackActive()) {
+          mPRStack.push(prse);
+        }
+ else {
+          mPRStack.add(lastPlayingIndex,prse);
+        }
+      }
+    }
+    topChanged=(oldTopPrse != mPRStack.lastElement());
+    if (topChanged && (target != null)) {
+      mEventHandler.sendMessage(mEventHandler.obtainMessage(MSG_PERSIST_MEDIABUTTONRECEIVER,0,0,target));
+    }
   }
  catch (  ArrayIndexOutOfBoundsException e) {
-    Log.e(TAG,"Wrong index accessing media button stack, lock error? ",e);
+    Log.e(TAG,"Wrong index (inStack=" + inStackIndex + " lastPlaying="+ lastPlayingIndex+ " size="+ mPRStack.size()+ " accessing media button stack",e);
   }
-  if (!wasInsideStack) {
-    prse=new PlayerRecord(mediaIntent,target,token);
-  }
-  mPRStack.push(prse);
-  if (target != null) {
-    mEventHandler.sendMessage(mEventHandler.obtainMessage(MSG_PERSIST_MEDIABUTTONRECEIVER,0,0,target));
-  }
-  return true;
+  return (topChanged);
 }
