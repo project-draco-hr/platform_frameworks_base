@@ -1,0 +1,37 @@
+{
+  final WritePipe pipe;
+synchronized (mLock) {
+    if (!mMutationsAllowed) {
+      throw new IllegalStateException("Mutations not allowed");
+    }
+    pipe=new WritePipe();
+    mPipes.add(pipe);
+  }
+  try {
+    if (!FileUtils.isValidExtFilename(name)) {
+      throw new IllegalArgumentException("Invalid name: " + name);
+    }
+    final File target=new File(sessionDir,name);
+    final FileDescriptor targetFd=Libcore.os.open(target.getAbsolutePath(),OsConstants.O_CREAT | OsConstants.O_WRONLY,00700);
+    if (lengthBytes > 0) {
+      final StructStat stat=Libcore.os.fstat(targetFd);
+      final long deltaBytes=lengthBytes - stat.st_size;
+      if (deltaBytes > 0) {
+        mPm.freeStorage(deltaBytes);
+      }
+      Libcore.os.posix_fallocate(targetFd,0,lengthBytes);
+    }
+    if (offsetBytes > 0) {
+      Libcore.os.lseek(targetFd,offsetBytes,OsConstants.SEEK_SET);
+    }
+    pipe.setTargetFd(targetFd);
+    pipe.start();
+    return pipe.getWriteFd();
+  }
+ catch (  ErrnoException e) {
+    throw new IllegalStateException("Failed to write",e);
+  }
+catch (  IOException e) {
+    throw new IllegalStateException("Failed to write",e);
+  }
+}
