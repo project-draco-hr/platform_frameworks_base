@@ -33,6 +33,10 @@
  finally {
     Binder.restoreCallingIdentity(token);
   }
+  VpnConfig oldConfig=mConfig;
+  String oldInterface=mInterface;
+  Connection oldConnection=mConnection;
+  SparseBooleanArray oldUsers=mVpnUsers;
   ParcelFileDescriptor tun=ParcelFileDescriptor.adoptFd(jniCreate(config.mtu));
   try {
     updateState(DetailedState.CONNECTING,"establish");
@@ -48,12 +52,6 @@
     if (!mContext.bindServiceAsUser(intent,connection,Context.BIND_AUTO_CREATE,new UserHandle(mUserId))) {
       throw new IllegalStateException("Cannot bind " + config.user);
     }
-    if (mConnection != null) {
-      mContext.unbindService(mConnection);
-    }
-    if (mInterface != null && !mInterface.equals(interfaze)) {
-      jniReset(mInterface);
-    }
     mConnection=connection;
     mInterface=interfaze;
     config.user=mPackage;
@@ -64,35 +62,18 @@
     token=Binder.clearCallingIdentity();
     try {
       mCallback.setMarkedForwarding(mInterface);
-      mCallback.setRoutes(interfaze,config.routes);
+      mCallback.setRoutes(mInterface,config.routes);
       mCallback.override(mInterface,config.dnsServers,config.searchDomains);
       addVpnUserLocked(mUserId);
-    }
-  finally {
-      Binder.restoreCallingIdentity(token);
-    }
-  }
- catch (  RuntimeException e) {
-    updateState(DetailedState.FAILED,"establish");
-    IoUtils.closeQuietly(tun);
-    try {
-      mCallback.clearMarkedForwarding(mInterface);
-    }
- catch (    Exception ingored) {
-    }
-    throw e;
-  }
-  Log.i(TAG,"Established by " + config.user + " on "+ mInterface);
-  if (mUserId == UserHandle.USER_OWNER) {
-    token=Binder.clearCallingIdentity();
-    try {
-      for (      UserInfo user : mgr.getUsers()) {
-        if (user.isRestricted()) {
-          try {
-            addVpnUserLocked(user.id);
-          }
- catch (          Exception e) {
-            Log.wtf(TAG,"Failed to add user " + user.id + " to owner's VPN");
+      if (mUserId == UserHandle.USER_OWNER) {
+        for (        UserInfo user : mgr.getUsers()) {
+          if (user.isRestricted()) {
+            try {
+              addVpnUserLocked(user.id);
+            }
+ catch (            Exception e) {
+              Log.wtf(TAG,"Failed to add user " + user.id + " to owner's VPN");
+            }
           }
         }
       }
@@ -100,7 +81,45 @@
   finally {
       Binder.restoreCallingIdentity(token);
     }
+    if (oldConnection != null) {
+      mContext.unbindService(oldConnection);
+    }
+    if (oldInterface != null && !oldInterface.equals(interfaze)) {
+      token=Binder.clearCallingIdentity();
+      try {
+        final int size=oldUsers.size();
+        final boolean forwardDns=(oldConfig.dnsServers != null && oldConfig.dnsServers.size() != 0);
+        for (int i=0; i < size; i++) {
+          int user=oldUsers.keyAt(i);
+          mCallback.clearUserForwarding(oldInterface,user,forwardDns);
+        }
+        mCallback.clearMarkedForwarding(oldInterface);
+      }
+  finally {
+        Binder.restoreCallingIdentity(token);
+      }
+      jniReset(oldInterface);
+    }
   }
+ catch (  RuntimeException e) {
+    updateState(DetailedState.FAILED,"establish");
+    IoUtils.closeQuietly(tun);
+    token=Binder.clearCallingIdentity();
+    try {
+      mCallback.clearMarkedForwarding(mInterface);
+    }
+ catch (    Exception ingored) {
+    }
+ finally {
+      Binder.restoreCallingIdentity(token);
+    }
+    mConfig=oldConfig;
+    mConnection=oldConnection;
+    mVpnUsers=oldUsers;
+    mInterface=oldInterface;
+    throw e;
+  }
+  Log.i(TAG,"Established by " + config.user + " on "+ mInterface);
   updateState(DetailedState.AUTHENTICATING,"establish");
   return tun;
 }

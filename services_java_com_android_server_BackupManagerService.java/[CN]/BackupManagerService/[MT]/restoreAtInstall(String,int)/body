@@ -3,18 +3,35 @@
     Slog.w(TAG,"Non-system process uid=" + Binder.getCallingUid() + " attemping install-time restore");
     return;
   }
+  boolean skip=false;
   long restoreSet=getAvailableRestoreToken(packageName);
   if (DEBUG)   Slog.v(TAG,"restoreAtInstall pkg=" + packageName + " token="+ Integer.toHexString(token)+ " restoreSet="+ Long.toHexString(restoreSet));
-  if (mAutoRestore && mProvisioned && restoreSet != 0) {
-    PackageInfo pkg=new PackageInfo();
-    pkg.packageName=packageName;
-    mWakelock.acquire();
-    Message msg=mBackupHandler.obtainMessage(MSG_RUN_RESTORE);
-    msg.obj=new RestoreParams(getTransport(mCurrentTransport),null,restoreSet,pkg,token,true);
-    mBackupHandler.sendMessage(msg);
+  if (restoreSet == 0) {
+    if (MORE_DEBUG)     Slog.i(TAG,"No restore set");
+    skip=true;
   }
- else {
-    if (DEBUG)     Slog.v(TAG,"No restore set -- skipping restore");
+  IBackupTransport transport=getTransport(mCurrentTransport);
+  if (transport == null) {
+    if (DEBUG)     Slog.w(TAG,"No transport");
+    skip=true;
+  }
+  if (!skip && mAutoRestore && mProvisioned) {
+    try {
+      String dirName=transport.transportDirName();
+      PackageInfo pkg=new PackageInfo();
+      pkg.packageName=packageName;
+      mWakelock.acquire();
+      Message msg=mBackupHandler.obtainMessage(MSG_RUN_RESTORE);
+      msg.obj=new RestoreParams(transport,dirName,null,restoreSet,pkg,token,true);
+      mBackupHandler.sendMessage(msg);
+    }
+ catch (    RemoteException e) {
+      Slog.e(TAG,"Unable to contact transport");
+      skip=true;
+    }
+  }
+  if (skip) {
+    if (DEBUG)     Slog.v(TAG,"Skipping");
     try {
       mPackageManagerBinder.finishPackageInstall(token);
     }

@@ -1,0 +1,43 @@
+{
+  if (DEBUG)   Slog.v(TAG,"clearBackupData() of " + packageName + " on "+ transportName);
+  PackageInfo info;
+  try {
+    info=mPackageManager.getPackageInfo(packageName,PackageManager.GET_SIGNATURES);
+  }
+ catch (  NameNotFoundException e) {
+    Slog.d(TAG,"No such package '" + packageName + "' - not clearing backup data");
+    return;
+  }
+  HashSet<String> apps;
+  if ((mContext.checkPermission(android.Manifest.permission.BACKUP,Binder.getCallingPid(),Binder.getCallingUid())) == PackageManager.PERMISSION_DENIED) {
+    apps=mBackupParticipants.get(Binder.getCallingUid());
+  }
+ else {
+    if (DEBUG)     Slog.v(TAG,"Privileged caller, allowing clear of other apps");
+    apps=new HashSet<String>();
+    int N=mBackupParticipants.size();
+    for (int i=0; i < N; i++) {
+      HashSet<String> s=mBackupParticipants.valueAt(i);
+      if (s != null) {
+        apps.addAll(s);
+      }
+    }
+  }
+  if (apps.contains(packageName)) {
+    if (DEBUG)     Slog.v(TAG,"Found the app - running clear process");
+    mBackupHandler.removeMessages(MSG_RETRY_CLEAR);
+synchronized (mQueueLock) {
+      final IBackupTransport transport=getTransport(transportName);
+      if (transport == null) {
+        Message msg=mBackupHandler.obtainMessage(MSG_RETRY_CLEAR,new ClearRetryParams(transportName,packageName));
+        mBackupHandler.sendMessageDelayed(msg,TRANSPORT_RETRY_INTERVAL);
+        return;
+      }
+      long oldId=Binder.clearCallingIdentity();
+      mWakelock.acquire();
+      Message msg=mBackupHandler.obtainMessage(MSG_RUN_CLEAR,new ClearParams(transport,info));
+      mBackupHandler.sendMessage(msg);
+      Binder.restoreCallingIdentity(oldId);
+    }
+  }
+}
