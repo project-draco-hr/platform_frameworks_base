@@ -1,7 +1,11 @@
 {
-  userId=handleIncomingUser(Binder.getCallingPid(),Binder.getCallingUid(),userId,false,true,"getRecentTasks",null);
+  final int callingUid=Binder.getCallingUid();
+  userId=handleIncomingUser(Binder.getCallingPid(),callingUid,userId,false,true,"getRecentTasks",null);
 synchronized (this) {
-    enforceCallingPermission(android.Manifest.permission.GET_TASKS,"getRecentTasks()");
+    final boolean allowed=checkCallingPermission(android.Manifest.permission.GET_TASKS) == PackageManager.PERMISSION_GRANTED;
+    if (!allowed) {
+      Slog.w(TAG,"getRecentTasks: caller " + callingUid + " does not hold GET_TASKS; limiting output");
+    }
     final boolean detailed=checkCallingPermission(android.Manifest.permission.GET_DETAILED_TASKS) == PackageManager.PERMISSION_GRANTED;
     IPackageManager pm=AppGlobals.getPackageManager();
     final int N=mRecentTasks.size();
@@ -18,6 +22,11 @@ synchronized (this) {
       TaskRecord tr=mRecentTasks.get(i);
       if (!includedUsers.contains(Integer.valueOf(tr.userId)))       continue;
       if (i == 0 || ((flags & ActivityManager.RECENT_WITH_EXCLUDED) != 0) || (tr.intent == null) || ((tr.intent.getFlags() & Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS) == 0)) {
+        if (!allowed) {
+          if (!tr.isHomeTask() && tr.creatorUid != callingUid) {
+            continue;
+          }
+        }
         ActivityManager.RecentTaskInfo rti=new ActivityManager.RecentTaskInfo();
         rti.id=tr.numActivities > 0 ? tr.taskId : -1;
         rti.persistentId=tr.taskId;
