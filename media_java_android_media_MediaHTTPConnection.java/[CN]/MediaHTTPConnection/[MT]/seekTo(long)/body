@@ -1,17 +1,50 @@
 {
   teardownConnection();
   try {
-    mConnection=(HttpURLConnection)mURL.openConnection();
-    if (mHeaders != null) {
-      for (      Map.Entry<String,String> entry : mHeaders.entrySet()) {
-        mConnection.setRequestProperty(entry.getKey(),entry.getValue());
+    int response;
+    int redirectCount=0;
+    URL url=mURL;
+    while (true) {
+      mConnection=(HttpURLConnection)url.openConnection();
+      mConnection.setInstanceFollowRedirects(mAllowCrossDomainRedirect);
+      if (mHeaders != null) {
+        for (        Map.Entry<String,String> entry : mHeaders.entrySet()) {
+          mConnection.setRequestProperty(entry.getKey(),entry.getValue());
+        }
+      }
+      if (offset > 0) {
+        mConnection.setRequestProperty("Range","bytes=" + offset + "-");
+      }
+      response=mConnection.getResponseCode();
+      if (response != HttpURLConnection.HTTP_MULT_CHOICE && response != HttpURLConnection.HTTP_MOVED_PERM && response != HttpURLConnection.HTTP_MOVED_TEMP && response != HttpURLConnection.HTTP_SEE_OTHER && response != HTTP_TEMP_REDIRECT) {
+        break;
+      }
+      if (++redirectCount > MAX_REDIRECTS) {
+        throw new NoRouteToHostException("Too many redirects: " + redirectCount);
+      }
+      String method=mConnection.getRequestMethod();
+      if (response == HTTP_TEMP_REDIRECT && !method.equals("GET") && !method.equals("HEAD")) {
+        throw new NoRouteToHostException("Invalid redirect");
+      }
+      String location=mConnection.getHeaderField("Location");
+      if (location == null) {
+        throw new NoRouteToHostException("Invalid redirect");
+      }
+      url=new URL(mURL,location);
+      if (!url.getProtocol().equals("https") && !url.getProtocol().equals("http")) {
+        throw new NoRouteToHostException("Unsupported protocol redirect");
+      }
+      boolean sameHost=mURL.getHost().equals(url.getHost());
+      if (!sameHost) {
+        throw new NoRouteToHostException("Cross-domain redirects are disallowed");
+      }
+      if (response != HTTP_TEMP_REDIRECT) {
+        mURL=url;
       }
     }
-    if (offset > 0) {
-      mConnection.setRequestProperty("Range","bytes=" + offset + "-");
+    if (mAllowCrossDomainRedirect) {
+      mURL=mConnection.getURL();
     }
-    int response=mConnection.getResponseCode();
-    mURL=mConnection.getURL();
     if (response == HttpURLConnection.HTTP_PARTIAL) {
       String contentRange=mConnection.getHeaderField("Content-Range");
       mTotalSize=-1;
