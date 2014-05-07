@@ -6,7 +6,6 @@
   mContext=context;
   mFactoryTest=factoryTest;
   mOnlyCore=onlyCore;
-  mNoDexOpt="eng".equals(SystemProperties.get("ro.build.type"));
   mMetrics=new DisplayMetrics();
   mSettings=new Settings(context);
   mSettings.addSharedUserLPw("android.uid.system",Process.SYSTEM_UID,ApplicationInfo.FLAG_SYSTEM | ApplicationInfo.FLAG_PRIVILEGED);
@@ -62,10 +61,6 @@ synchronized (mPackages) {
       long startTime=SystemClock.uptimeMillis();
       EventLog.writeEvent(EventLogTags.BOOT_PROGRESS_PMS_SYSTEM_SCAN_START,startTime);
       int scanMode=SCAN_MONITOR | SCAN_NO_PATHS | SCAN_DEFER_DEX| SCAN_BOOTING;
-      if (mNoDexOpt) {
-        Slog.w(TAG,"Running ENG build: no pre-dexopt!");
-        scanMode|=SCAN_NO_DEX;
-      }
       final HashSet<String> alreadyDexOpted=new HashSet<String>();
       String bootClassPath=System.getProperty("java.boot.class.path");
       if (bootClassPath != null) {
@@ -77,7 +72,7 @@ synchronized (mPackages) {
  else {
         Slog.w(TAG,"No BOOTCLASSPATH found!");
       }
-      boolean didDexOpt=false;
+      boolean didDexOptLibraryOrTool=false;
       final List<String> instructionSets=getAllInstructionSets();
       if (mSharedLibraries.size() > 0) {
         for (        String instructionSet : instructionSets) {
@@ -87,10 +82,10 @@ synchronized (mPackages) {
               continue;
             }
             try {
-              if (dalvik.system.DexFile.isDexOptNeededInternal(lib,null,instructionSet,false)) {
+              if (DexFile.isDexOptNeededInternal(lib,null,instructionSet,false)) {
                 alreadyDexOpted.add(lib);
                 mInstaller.dexopt(lib,Process.SYSTEM_UID,true,instructionSet);
-                didDexOpt=true;
+                didDexOptLibraryOrTool=true;
               }
             }
  catch (            FileNotFoundException e) {
@@ -118,9 +113,9 @@ catch (            IOException e) {
               continue;
             }
             try {
-              if (dalvik.system.DexFile.isDexOptNeededInternal(path,null,instructionSet,false)) {
+              if (DexFile.isDexOptNeededInternal(path,null,instructionSet,false)) {
                 mInstaller.dexopt(path,Process.SYSTEM_UID,true,instructionSet);
-                didDexOpt=true;
+                didDexOptLibraryOrTool=true;
               }
             }
  catch (            FileNotFoundException e) {
@@ -132,7 +127,7 @@ catch (            IOException e) {
           }
         }
       }
-      if (didDexOpt) {
+      if (didDexOptLibraryOrTool) {
         pruneDexFiles(new File(dataDir,"dalvik-cache"));
       }
       File vendorOverlayDir=new File(VENDOR_OVERLAY_DIR);
@@ -230,6 +225,7 @@ catch (            IOException e) {
       for (      SharedUserSetting setting : mSettings.getAllSharedUsersLPw()) {
         adjustCpuAbisForSharedUserLPw(setting.packages,true,false,false);
       }
+      mPackageUsage.readLP();
       EventLog.writeEvent(EventLogTags.BOOT_PROGRESS_PMS_SCAN_END,SystemClock.uptimeMillis());
       Slog.i(TAG,"Time to scan packages: " + ((SystemClock.uptimeMillis() - startTime) / 1000f) + " seconds");
       final boolean regrantPermissions=mSettings.mInternalSdkPlatform != mSdkVersion;
