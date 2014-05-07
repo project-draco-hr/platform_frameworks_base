@@ -6,19 +6,50 @@ synchronized (mPackages) {
     mDeferredDexOpt=null;
   }
   if (pkgs != null) {
+    boolean eng="eng".equals(SystemProperties.get("ro.build.type"));
+    if (eng || !isFirstBoot()) {
+      long dexOptLRUThresholdInMinutes;
+      if (eng) {
+        dexOptLRUThresholdInMinutes=30;
+      }
+ else {
+        dexOptLRUThresholdInMinutes=7 * 24 * 60;
+      }
+      long dexOptLRUThresholdInMills=dexOptLRUThresholdInMinutes * 60 * 1000;
+      int total=pkgs.size();
+      int skipped=0;
+      long now=System.currentTimeMillis();
+      for (Iterator<PackageParser.Package> i=pkgs.iterator(); i.hasNext(); ) {
+        PackageParser.Package pkg=i.next();
+        long then=pkg.mLastPackageUsageTimeInMills;
+        if (then + dexOptLRUThresholdInMills < now) {
+          if (DEBUG_DEXOPT) {
+            Log.i(TAG,"Skipping dexopt of " + pkg.packageName + " last resumed: "+ ((then == 0) ? "never" : new Date(then)));
+          }
+          i.remove();
+          skipped++;
+        }
+      }
+      if (DEBUG_DEXOPT) {
+        Log.i(TAG,"Skipped optimizing " + skipped + " of "+ total);
+      }
+    }
     int i=0;
     for (    PackageParser.Package pkg : pkgs) {
+      i++;
+      if (DEBUG_DEXOPT) {
+        Log.i(TAG,"Optimizing app " + i + " of "+ pkgs.size()+ ": "+ pkg.packageName);
+      }
       if (!isFirstBoot()) {
-        i++;
         try {
-          ActivityManagerNative.getDefault().showBootMessage(mContext.getResources().getString(com.android.internal.R.string.android_upgrading_apk,i,pkgs.size()),true);
+          ActivityManagerNative.getDefault().showBootMessage(mContext.getResources().getString(R.string.android_upgrading_apk,i,pkgs.size()),true);
         }
  catch (        RemoteException e) {
         }
       }
       PackageParser.Package p=pkg;
 synchronized (mInstallLock) {
-        if (!p.mDidDexOpt) {
+        if (p.mDexOptNeeded) {
           performDexOptLI(p,false,false,true);
         }
       }

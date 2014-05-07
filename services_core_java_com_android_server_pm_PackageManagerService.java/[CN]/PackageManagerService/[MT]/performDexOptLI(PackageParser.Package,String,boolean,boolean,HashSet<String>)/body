@@ -12,44 +12,44 @@
   boolean performed=false;
   if ((pkg.applicationInfo.flags & ApplicationInfo.FLAG_HAS_CODE) != 0) {
     String path=pkg.mScanPath;
-    int ret=0;
     try {
-      if (forceDex || dalvik.system.DexFile.isDexOptNeededInternal(path,pkg.packageName,instructionSet,defer)) {
-        if (!forceDex && defer) {
-          if (mDeferredDexOpt == null) {
-            mDeferredDexOpt=new HashSet<PackageParser.Package>();
-          }
-          mDeferredDexOpt.add(pkg);
-          return DEX_OPT_DEFERRED;
+      boolean isDexOptNeededInternal=DexFile.isDexOptNeededInternal(path,pkg.packageName,instructionSet,defer);
+      if (forceDex || (!defer && isDexOptNeededInternal)) {
+        Log.i(TAG,"Running dexopt on: " + pkg.applicationInfo.packageName);
+        final int sharedGid=UserHandle.getSharedAppGid(pkg.applicationInfo.uid);
+        int ret=mInstaller.dexopt(path,sharedGid,!isForwardLocked(pkg),pkg.packageName,instructionSet);
+        pkg.mDexOptNeeded=false;
+        if (ret < 0) {
+          return DEX_OPT_FAILED;
         }
- else {
-          Log.i(TAG,"Running dexopt on: " + pkg.applicationInfo.packageName + " (instructionSet="+ instructionSet+ ")");
-          final int sharedGid=UserHandle.getSharedAppGid(pkg.applicationInfo.uid);
-          ret=mInstaller.dexopt(path,sharedGid,!isForwardLocked(pkg),pkg.packageName,instructionSet);
-          pkg.mDidDexOpt=true;
-          performed=true;
-        }
+        return DEX_OPT_PERFORMED;
       }
+      if (defer && isDexOptNeededInternal) {
+        if (mDeferredDexOpt == null) {
+          mDeferredDexOpt=new HashSet<PackageParser.Package>();
+        }
+        mDeferredDexOpt.add(pkg);
+        return DEX_OPT_DEFERRED;
+      }
+      pkg.mDexOptNeeded=false;
+      return DEX_OPT_SKIPPED;
     }
  catch (    FileNotFoundException e) {
       Slog.w(TAG,"Apk not found for dexopt: " + path);
-      ret=-1;
+      return DEX_OPT_FAILED;
     }
 catch (    IOException e) {
       Slog.w(TAG,"IOException reading apk: " + path,e);
-      ret=-1;
+      return DEX_OPT_FAILED;
     }
-catch (    dalvik.system.StaleDexCacheError e) {
+catch (    StaleDexCacheError e) {
       Slog.w(TAG,"StaleDexCacheError when reading apk: " + path,e);
-      ret=-1;
+      return DEX_OPT_FAILED;
     }
 catch (    Exception e) {
       Slog.w(TAG,"Exception when doing dexopt : ",e);
-      ret=-1;
-    }
-    if (ret < 0) {
       return DEX_OPT_FAILED;
     }
   }
-  return performed ? DEX_OPT_PERFORMED : DEX_OPT_SKIPPED;
+  return DEX_OPT_SKIPPED;
 }
