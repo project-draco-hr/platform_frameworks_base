@@ -7,21 +7,10 @@
   }
   enforceControlPermission();
   if (mInterface != null) {
-    final long token=Binder.clearCallingIdentity();
-    try {
-      mCallback.restore();
-      final int size=mVpnUsers.size();
-      final boolean forwardDns=(mConfig.dnsServers != null && mConfig.dnsServers.size() != 0);
-      for (int i=0; i < size; i++) {
-        int user=mVpnUsers.keyAt(i);
-        mCallback.clearUserForwarding(mInterface,user,forwardDns);
-        hideNotification(user);
-      }
-      mCallback.clearMarkedForwarding(mInterface);
+    for (    UidRange uidRange : mVpnUsers) {
+      hideNotification(uidRange.getStartUser());
     }
-  finally {
-      Binder.restoreCallingIdentity(token);
-    }
+    agentDisconnect();
     jniReset(mInterface);
     mInterface=null;
     mVpnUsers=null;
@@ -39,8 +28,29 @@
     mLegacyVpnRunner.exit();
     mLegacyVpnRunner=null;
   }
+  long token=Binder.clearCallingIdentity();
+  try {
+    mNetd.denyProtect(mOwnerUID);
+  }
+ catch (  Exception e) {
+    Log.wtf(TAG,"Failed to disallow UID " + mOwnerUID + " to call protect() "+ e);
+  }
+ finally {
+    Binder.restoreCallingIdentity(token);
+  }
   Log.i(TAG,"Switched from " + mPackage + " to "+ newPackage);
   mPackage=newPackage;
+  mOwnerUID=getAppUid(newPackage);
+  token=Binder.clearCallingIdentity();
+  try {
+    mNetd.allowProtect(mOwnerUID);
+  }
+ catch (  Exception e) {
+    Log.wtf(TAG,"Failed to allow UID " + mOwnerUID + " to call protect() "+ e);
+  }
+ finally {
+    Binder.restoreCallingIdentity(token);
+  }
   mConfig=null;
   updateState(DetailedState.IDLE,"prepare");
   return true;

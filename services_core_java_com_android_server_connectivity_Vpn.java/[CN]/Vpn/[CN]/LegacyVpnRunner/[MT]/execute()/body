@@ -19,7 +19,7 @@
       restart=restart || (arguments != null);
     }
     if (!restart) {
-      updateState(DetailedState.DISCONNECTED,"execute");
+      agentDisconnect();
       return;
     }
     updateState(DetailedState.CONNECTING,"execute");
@@ -101,14 +101,6 @@
         mConfig.searchDomains=Arrays.asList(searchDomains.split(" "));
       }
     }
-    long token=Binder.clearCallingIdentity();
-    try {
-      mCallback.setMarkedForwarding(mConfig.interfaze);
-      mCallback.setRoutes(mConfig.interfaze,mConfig.routes);
-    }
-  finally {
-      Binder.restoreCallingIdentity(token);
-    }
 synchronized (Vpn.this) {
       mConfig.startTime=SystemClock.elapsedRealtime();
       checkpoint(false);
@@ -116,43 +108,13 @@ synchronized (Vpn.this) {
         throw new IllegalStateException(mConfig.interfaze + " is gone");
       }
       mInterface=mConfig.interfaze;
-      mVpnUsers=new SparseBooleanArray();
-      token=Binder.clearCallingIdentity();
-      try {
-        mCallback.override(mInterface,mConfig.dnsServers,mConfig.searchDomains);
-        addVpnUserLocked(mUserId);
-      }
-  finally {
-        Binder.restoreCallingIdentity(token);
-      }
-      UserManager mgr=UserManager.get(mContext);
-      token=Binder.clearCallingIdentity();
-      try {
-        for (        UserInfo user : mgr.getUsers()) {
-          if (user.isRestricted()) {
-            try {
-              addVpnUserLocked(user.id);
-            }
- catch (            Exception e) {
-              Log.wtf(TAG,"Failed to add user " + user.id + " to owner's VPN");
-            }
-          }
-        }
-      }
-  finally {
-        Binder.restoreCallingIdentity(token);
-      }
+      mVpnUsers=new ArrayList<UidRange>();
+      agentConnect();
       Log.i(TAG,"Connected!");
-      updateState(DetailedState.CONNECTED,"execute");
     }
   }
  catch (  Exception e) {
     Log.i(TAG,"Aborting",e);
-    try {
-      mCallback.clearMarkedForwarding(mConfig.interfaze);
-    }
- catch (    Exception ignored) {
-    }
     exit();
   }
  finally {
@@ -162,7 +124,7 @@ synchronized (Vpn.this) {
       }
     }
     if (!initFinished || mNetworkInfo.getDetailedState() == DetailedState.CONNECTING) {
-      updateState(DetailedState.FAILED,"execute");
+      agentDisconnect();
     }
   }
 }
