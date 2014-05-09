@@ -1,0 +1,81 @@
+{
+  final HistoryPrinter hprinter=new HistoryPrinter();
+  final HistoryItem rec=new HistoryItem();
+  long lastTime=-1;
+  long baseTime=-1;
+  boolean printed=false;
+  HistoryEventTracker tracker=null;
+  while (getNextHistoryLocked(rec)) {
+    lastTime=rec.time;
+    if (baseTime < 0) {
+      baseTime=lastTime;
+    }
+    if (rec.time >= histStart) {
+      if (histStart >= 0 && !printed) {
+        if (rec.cmd == HistoryItem.CMD_CURRENT_TIME || rec.cmd == HistoryItem.CMD_RESET) {
+          printed=true;
+        }
+ else         if (rec.currentTime != 0) {
+          printed=true;
+          byte cmd=rec.cmd;
+          rec.cmd=HistoryItem.CMD_CURRENT_TIME;
+          if (checkin) {
+            pw.print(BATTERY_STATS_CHECKIN_VERSION);
+            pw.print(',');
+            pw.print(HISTORY_DATA);
+            pw.print(',');
+          }
+          hprinter.printNextItem(pw,rec,baseTime,checkin,(flags & DUMP_VERBOSE) != 0);
+          rec.cmd=cmd;
+        }
+        if (tracker != null) {
+          int oldCode=rec.eventCode;
+          HistoryTag oldTag=rec.eventTag;
+          rec.eventTag=new HistoryTag();
+          for (int i=0; i < HistoryItem.EVENT_COUNT; i++) {
+            HashMap<String,SparseIntArray> active=tracker.getStateForEvent(i);
+            if (active == null) {
+              continue;
+            }
+            for (            HashMap.Entry<String,SparseIntArray> ent : active.entrySet()) {
+              SparseIntArray uids=ent.getValue();
+              for (int j=0; j < uids.size(); j++) {
+                rec.eventCode=i;
+                rec.eventTag.string=ent.getKey();
+                rec.eventTag.uid=uids.keyAt(j);
+                rec.eventTag.poolIdx=uids.valueAt(j);
+                if (checkin) {
+                  pw.print(BATTERY_STATS_CHECKIN_VERSION);
+                  pw.print(',');
+                  pw.print(HISTORY_DATA);
+                  pw.print(',');
+                }
+                hprinter.printNextItem(pw,rec,baseTime,checkin,(flags & DUMP_VERBOSE) != 0);
+              }
+            }
+          }
+          rec.eventCode=oldCode;
+          rec.eventTag=oldTag;
+          tracker=null;
+        }
+      }
+      if (checkin) {
+        pw.print(BATTERY_STATS_CHECKIN_VERSION);
+        pw.print(',');
+        pw.print(HISTORY_DATA);
+        pw.print(',');
+      }
+      hprinter.printNextItem(pw,rec,baseTime,checkin,(flags & DUMP_VERBOSE) != 0);
+    }
+ else     if (rec.eventCode != HistoryItem.EVENT_NONE) {
+      if (tracker == null) {
+        tracker=new HistoryEventTracker();
+      }
+      tracker.updateState(rec.eventCode,rec.eventTag.string,rec.eventTag.uid,rec.eventTag.poolIdx);
+    }
+  }
+  if (histStart >= 0) {
+    pw.print(checkin ? "NEXT: " : "  NEXT: ");
+    pw.println(lastTime + 1);
+  }
+}
