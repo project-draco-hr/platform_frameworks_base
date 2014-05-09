@@ -1,0 +1,40 @@
+{
+  if (filter.countActions() != 1) {
+    throw new IllegalArgumentException("replacePreferredActivity expects filter to have only 1 action.");
+  }
+  if (filter.countDataAuthorities() != 0 || filter.countDataPaths() != 0 || filter.countDataSchemes() > 1 || filter.countDataTypes() != 0) {
+    throw new IllegalArgumentException("replacePreferredActivity expects filter to have no data authorities, " + "paths, or types; and at most one scheme.");
+  }
+synchronized (mPackages) {
+    if (mContext.checkCallingOrSelfPermission(android.Manifest.permission.SET_PREFERRED_APPLICATIONS) != PackageManager.PERMISSION_GRANTED) {
+      if (getUidTargetSdkVersionLockedLPr(Binder.getCallingUid()) < Build.VERSION_CODES.FROYO) {
+        Slog.w(TAG,"Ignoring replacePreferredActivity() from uid " + Binder.getCallingUid());
+        return;
+      }
+      mContext.enforceCallingOrSelfPermission(android.Manifest.permission.SET_PREFERRED_APPLICATIONS,null);
+    }
+    final int callingUserId=UserHandle.getCallingUserId();
+    PreferredIntentResolver pir=mSettings.mPreferredActivities.get(callingUserId);
+    if (pir != null) {
+      Intent intent=new Intent(filter.getAction(0)).addCategory(filter.getCategory(0));
+      if (filter.countDataSchemes() == 1) {
+        Uri.Builder builder=new Uri.Builder();
+        builder.scheme(filter.getDataScheme(0));
+        intent.setData(builder.build());
+      }
+      List<PreferredActivity> matches=pir.queryIntent(intent,null,true,callingUserId);
+      if (DEBUG_PREFERRED) {
+        Slog.i(TAG,matches.size() + " preferred matches for " + intent);
+      }
+      for (int i=0; i < matches.size(); i++) {
+        PreferredActivity pa=matches.get(i);
+        if (DEBUG_PREFERRED) {
+          Slog.i(TAG,"Removing preferred activity " + pa.mPref.mComponent + ":");
+          filter.dump(new LogPrinter(Log.INFO,TAG),"  ");
+        }
+        pir.removeFilter(pa);
+      }
+    }
+    addPreferredActivityInternal(filter,match,set,activity,true,callingUserId);
+  }
+}

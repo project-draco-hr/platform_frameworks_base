@@ -1,0 +1,47 @@
+{
+  final PackageRemovedInfo info=new PackageRemovedInfo();
+  final boolean res;
+  if (isPackageDeviceAdmin(packageName,userId)) {
+    Slog.w(TAG,"Not removing package " + packageName + ": has active device admin");
+    return PackageManager.DELETE_FAILED_DEVICE_POLICY_MANAGER;
+  }
+  boolean removedForAllUsers=false;
+  boolean systemUpdate=false;
+  int[] allUsers;
+  boolean[] perUserInstalled;
+synchronized (mPackages) {
+    PackageSetting ps=mSettings.mPackages.get(packageName);
+    allUsers=sUserManager.getUserIds();
+    perUserInstalled=new boolean[allUsers.length];
+    for (int i=0; i < allUsers.length; i++) {
+      perUserInstalled[i]=ps != null ? ps.getInstalled(allUsers[i]) : false;
+    }
+  }
+synchronized (mInstallLock) {
+    if (DEBUG_REMOVE)     Slog.d(TAG,"deletePackageX: pkg=" + packageName + " user="+ userId);
+    res=deletePackageLI(packageName,(flags & PackageManager.DELETE_ALL_USERS) != 0 ? UserHandle.ALL : new UserHandle(userId),true,allUsers,perUserInstalled,flags | REMOVE_CHATTY,info,true);
+    systemUpdate=info.isRemovedPackageSystemUpdate;
+    if (res && !systemUpdate && mPackages.get(packageName) == null) {
+      removedForAllUsers=true;
+    }
+    if (DEBUG_REMOVE)     Slog.d(TAG,"delete res: systemUpdate=" + systemUpdate + " removedForAllUsers="+ removedForAllUsers);
+  }
+  if (res) {
+    info.sendBroadcast(true,systemUpdate,removedForAllUsers);
+    if (systemUpdate) {
+      Bundle extras=new Bundle(1);
+      extras.putInt(Intent.EXTRA_UID,info.removedAppId >= 0 ? info.removedAppId : info.uid);
+      extras.putBoolean(Intent.EXTRA_REPLACING,true);
+      sendPackageBroadcast(Intent.ACTION_PACKAGE_ADDED,packageName,extras,null,null,null);
+      sendPackageBroadcast(Intent.ACTION_PACKAGE_REPLACED,packageName,extras,null,null,null);
+      sendPackageBroadcast(Intent.ACTION_MY_PACKAGE_REPLACED,null,null,packageName,null,null);
+    }
+  }
+  Runtime.getRuntime().gc();
+  if (info.args != null) {
+synchronized (mInstallLock) {
+      info.args.doPostDeleteLI(true);
+    }
+  }
+  return res ? PackageManager.DELETE_SUCCEEDED : PackageManager.DELETE_FAILED_INTERNAL_ERROR;
+}

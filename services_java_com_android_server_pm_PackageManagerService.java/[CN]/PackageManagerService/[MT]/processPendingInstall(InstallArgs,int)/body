@@ -1,0 +1,52 @@
+{
+  mHandler.post(new Runnable(){
+    public void run(){
+      mHandler.removeCallbacks(this);
+      PackageInstalledInfo res=new PackageInstalledInfo();
+      res.returnCode=currentStatus;
+      res.uid=-1;
+      res.pkg=null;
+      res.removedInfo=new PackageRemovedInfo();
+      if (res.returnCode == PackageManager.INSTALL_SUCCEEDED) {
+        args.doPreInstall(res.returnCode);
+synchronized (mInstallLock) {
+          installPackageLI(args,true,res);
+        }
+        args.doPostInstall(res.returnCode,res.uid);
+      }
+      final boolean update=res.removedInfo.removedPackage != null;
+      boolean doRestore=(!update && res.pkg != null && res.pkg.applicationInfo.backupAgentName != null);
+      int token;
+      if (mNextInstallToken < 0)       mNextInstallToken=1;
+      token=mNextInstallToken++;
+      PostInstallData data=new PostInstallData(args,res);
+      mRunningInstalls.put(token,data);
+      if (DEBUG_INSTALL)       Log.v(TAG,"+ starting restore round-trip " + token);
+      if (res.returnCode == PackageManager.INSTALL_SUCCEEDED && doRestore) {
+        IBackupManager bm=IBackupManager.Stub.asInterface(ServiceManager.getService(Context.BACKUP_SERVICE));
+        if (bm != null) {
+          if (DEBUG_INSTALL)           Log.v(TAG,"token " + token + " to BM for possible restore");
+          try {
+            bm.restoreAtInstall(res.pkg.applicationInfo.packageName,token);
+          }
+ catch (          RemoteException e) {
+          }
+catch (          Exception e) {
+            Slog.e(TAG,"Exception trying to enqueue restore",e);
+            doRestore=false;
+          }
+        }
+ else {
+          Slog.e(TAG,"Backup Manager not found!");
+          doRestore=false;
+        }
+      }
+      if (!doRestore) {
+        if (DEBUG_INSTALL)         Log.v(TAG,"No restore - queue post-install for " + token);
+        Message msg=mHandler.obtainMessage(POST_INSTALL,token,0);
+        mHandler.sendMessage(msg);
+      }
+    }
+  }
+);
+}

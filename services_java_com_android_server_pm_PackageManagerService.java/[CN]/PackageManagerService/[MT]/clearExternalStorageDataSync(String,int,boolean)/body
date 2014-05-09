@@ -1,0 +1,51 @@
+{
+  final boolean mounted;
+  if (Environment.isExternalStorageEmulated()) {
+    mounted=true;
+  }
+ else {
+    final String status=Environment.getExternalStorageState();
+    mounted=status.equals(Environment.MEDIA_MOUNTED) || status.equals(Environment.MEDIA_MOUNTED_READ_ONLY);
+  }
+  if (!mounted) {
+    return;
+  }
+  final Intent containerIntent=new Intent().setComponent(DEFAULT_CONTAINER_COMPONENT);
+  int[] users;
+  if (userId == UserHandle.USER_ALL) {
+    users=sUserManager.getUserIds();
+  }
+ else {
+    users=new int[]{userId};
+  }
+  final ClearStorageConnection conn=new ClearStorageConnection();
+  if (mContext.bindServiceAsUser(containerIntent,conn,Context.BIND_AUTO_CREATE,UserHandle.OWNER)) {
+    try {
+      for (      int curUser : users) {
+        long timeout=SystemClock.uptimeMillis() + 5000;
+synchronized (conn) {
+          long now=SystemClock.uptimeMillis();
+          while (conn.mContainerService == null && now < timeout) {
+            try {
+              conn.wait(timeout - now);
+            }
+ catch (            InterruptedException e) {
+            }
+          }
+        }
+        if (conn.mContainerService == null) {
+          return;
+        }
+        final UserEnvironment userEnv=new UserEnvironment(curUser);
+        clearDirectory(conn.mContainerService,userEnv.buildExternalStorageAppCacheDirs(packageName));
+        if (allData) {
+          clearDirectory(conn.mContainerService,userEnv.buildExternalStorageAppDataDirs(packageName));
+          clearDirectory(conn.mContainerService,userEnv.buildExternalStorageAppMediaDirs(packageName));
+        }
+      }
+    }
+  finally {
+      mContext.unbindService(conn);
+    }
+  }
+}

@@ -1,0 +1,48 @@
+{
+  int changedAppId=-1;
+synchronized (mPackages) {
+    final PackageParser.Package pkg=mPackages.get(packageName);
+    if (pkg == null) {
+      throw new IllegalArgumentException("Unknown package: " + packageName);
+    }
+    if (pkg.applicationInfo.uid != Binder.getCallingUid()) {
+      mContext.enforceCallingOrSelfPermission(android.Manifest.permission.GRANT_REVOKE_PERMISSIONS,null);
+    }
+    final BasePermission bp=mSettings.mPermissions.get(permissionName);
+    if (bp == null) {
+      throw new IllegalArgumentException("Unknown permission: " + permissionName);
+    }
+    checkGrantRevokePermissions(pkg,bp);
+    final PackageSetting ps=(PackageSetting)pkg.mExtras;
+    if (ps == null) {
+      return;
+    }
+    final GrantedPermissions gp=(ps.sharedUser != null) ? ps.sharedUser : ps;
+    if (gp.grantedPermissions.remove(permissionName)) {
+      gp.grantedPermissions.remove(permissionName);
+      if (ps.haveGids) {
+        gp.gids=removeInts(gp.gids,bp.gids);
+      }
+      mSettings.writeLPr();
+      changedAppId=ps.appId;
+    }
+  }
+  if (changedAppId >= 0) {
+    IActivityManager am=ActivityManagerNative.getDefault();
+    if (am != null) {
+      final int callingUserId=UserHandle.getCallingUserId();
+      final long ident=Binder.clearCallingIdentity();
+      try {
+        int[] users=sUserManager.getUserIds();
+        for (        int user : users) {
+          am.killUid(UserHandle.getUid(user,changedAppId),"revoke " + permissionName);
+        }
+      }
+ catch (      RemoteException e) {
+      }
+ finally {
+        Binder.restoreCallingIdentity(ident);
+      }
+    }
+  }
+}

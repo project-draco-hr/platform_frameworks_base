@@ -1,0 +1,119 @@
+{
+  mLastScanError=PackageManager.INSTALL_SUCCEEDED;
+  String scanPath=scanFile.getPath();
+  if (DEBUG_INSTALL)   Slog.d(TAG,"Parsing: " + scanPath);
+  parseFlags|=mDefParseFlags;
+  PackageParser pp=new PackageParser(scanPath);
+  pp.setSeparateProcesses(mSeparateProcesses);
+  pp.setOnlyCoreApps(mOnlyCore);
+  final PackageParser.Package pkg=pp.parsePackage(scanFile,scanPath,mMetrics,parseFlags,(scanMode & SCAN_TRUSTED_OVERLAY) != 0);
+  if (pkg == null) {
+    mLastScanError=pp.getParseError();
+    return null;
+  }
+  PackageSetting ps=null;
+  PackageSetting updatedPkg;
+synchronized (mPackages) {
+    String oldName=mSettings.mRenamedPackages.get(pkg.packageName);
+    if (pkg.mOriginalPackages != null && pkg.mOriginalPackages.contains(oldName)) {
+      ps=mSettings.peekPackageLPr(oldName);
+    }
+    if (ps == null) {
+      ps=mSettings.peekPackageLPr(pkg.packageName);
+    }
+    updatedPkg=mSettings.getDisabledSystemPkgLPr(ps != null ? ps.name : pkg.packageName);
+    if (DEBUG_INSTALL && updatedPkg != null)     Slog.d(TAG,"updatedPkg = " + updatedPkg);
+  }
+  boolean updatedPkgBetter=false;
+  if (updatedPkg != null && (parseFlags & PackageParser.PARSE_IS_SYSTEM) != 0) {
+    if (ps != null && !ps.codePath.equals(scanFile)) {
+      if (DEBUG_INSTALL)       Slog.d(TAG,"Path changing from " + ps.codePath);
+      if (pkg.mVersionCode < ps.versionCode) {
+        Log.i(TAG,"Package " + ps.name + " at "+ scanFile+ " ignored: updated version "+ ps.versionCode+ " better than this "+ pkg.mVersionCode);
+        if (!updatedPkg.codePath.equals(scanFile)) {
+          Slog.w(PackageManagerService.TAG,"Code path for hidden system pkg : " + ps.name + " changing from "+ updatedPkg.codePathString+ " to "+ scanFile);
+          updatedPkg.codePath=scanFile;
+          updatedPkg.codePathString=scanFile.toString();
+          if (locationIsPrivileged(scanFile)) {
+            updatedPkg.pkgFlags|=ApplicationInfo.FLAG_PRIVILEGED;
+          }
+        }
+        updatedPkg.pkg=pkg;
+        mLastScanError=PackageManager.INSTALL_FAILED_DUPLICATE_PACKAGE;
+        return null;
+      }
+ else {
+synchronized (mPackages) {
+          mPackages.remove(ps.name);
+        }
+        Slog.w(TAG,"Package " + ps.name + " at "+ scanFile+ "reverting from "+ ps.codePathString+ ": new version "+ pkg.mVersionCode+ " better than installed "+ ps.versionCode);
+        InstallArgs args=createInstallArgs(packageFlagsToInstallFlags(ps),ps.codePathString,ps.resourcePathString,ps.nativeLibraryPathString,getAppInstructionSetFromSettings(ps));
+synchronized (mInstallLock) {
+          args.cleanUpResourcesLI();
+        }
+synchronized (mPackages) {
+          mSettings.enableSystemPackageLPw(ps.name);
+        }
+        updatedPkgBetter=true;
+      }
+    }
+  }
+  if (updatedPkg != null) {
+    parseFlags|=PackageParser.PARSE_IS_SYSTEM;
+    if ((updatedPkg.pkgFlags & ApplicationInfo.FLAG_PRIVILEGED) != 0) {
+      parseFlags|=PackageParser.PARSE_IS_PRIVILEGED;
+    }
+  }
+  if (!collectCertificatesLI(pp,ps,pkg,scanFile,parseFlags)) {
+    Slog.w(TAG,"Failed verifying certificates for package:" + pkg.packageName);
+    return null;
+  }
+  boolean shouldHideSystemApp=false;
+  if (updatedPkg == null && ps != null && (parseFlags & PackageParser.PARSE_IS_SYSTEM_DIR) != 0 && !isSystemApp(ps)) {
+    if (compareSignatures(ps.signatures.mSignatures,pkg.mSignatures) != PackageManager.SIGNATURE_MATCH) {
+      if (DEBUG_INSTALL)       Slog.d(TAG,"Signature mismatch!");
+      deletePackageLI(pkg.packageName,null,true,null,null,0,null,false);
+      ps=null;
+    }
+ else {
+      if (pkg.mVersionCode < ps.versionCode) {
+        shouldHideSystemApp=true;
+      }
+ else {
+        Slog.w(TAG,"Package " + ps.name + " at "+ scanFile+ "reverting from "+ ps.codePathString+ ": new version "+ pkg.mVersionCode+ " better than installed "+ ps.versionCode);
+        InstallArgs args=createInstallArgs(packageFlagsToInstallFlags(ps),ps.codePathString,ps.resourcePathString,ps.nativeLibraryPathString,getAppInstructionSetFromSettings(ps));
+synchronized (mInstallLock) {
+          args.cleanUpResourcesLI();
+        }
+      }
+    }
+  }
+  if ((parseFlags & PackageParser.PARSE_IS_SYSTEM_DIR) == 0) {
+    if (ps != null && !ps.codePath.equals(ps.resourcePath)) {
+      parseFlags|=PackageParser.PARSE_FORWARD_LOCK;
+    }
+  }
+  String codePath=null;
+  String resPath=null;
+  if ((parseFlags & PackageParser.PARSE_FORWARD_LOCK) != 0 && !updatedPkgBetter) {
+    if (ps != null && ps.resourcePathString != null) {
+      resPath=ps.resourcePathString;
+    }
+ else {
+      Slog.e(TAG,"Resource path not set for pkg : " + pkg.packageName);
+    }
+  }
+ else {
+    resPath=pkg.mScanPath;
+  }
+  codePath=pkg.mScanPath;
+  setApplicationInfoPaths(pkg,codePath,resPath);
+  PackageParser.Package scannedPkg=scanPackageLI(pkg,parseFlags,scanMode | SCAN_UPDATE_SIGNATURE,currentTime,user);
+  if (shouldHideSystemApp) {
+synchronized (mPackages) {
+      grantPermissionsLPw(pkg,true);
+      mSettings.disableSystemPackageLPw(pkg.packageName);
+    }
+  }
+  return scannedPkg;
+}
