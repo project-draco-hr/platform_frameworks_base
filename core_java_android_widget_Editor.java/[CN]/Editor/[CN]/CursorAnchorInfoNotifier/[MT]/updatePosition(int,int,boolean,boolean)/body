@@ -1,0 +1,64 @@
+{
+  final InputMethodState ims=mInputMethodState;
+  if (ims == null || ims.mBatchEditNesting > 0) {
+    return;
+  }
+  final InputMethodManager imm=InputMethodManager.peekInstance();
+  if (null == imm) {
+    return;
+  }
+  if (!imm.isWatchingCursor(mTextView)) {
+    return;
+  }
+  Layout layout=mTextView.getLayout();
+  if (layout == null) {
+    return;
+  }
+  final CursorAnchorInfoBuilder builder=mSelectionInfoBuilder;
+  builder.reset();
+  final int selectionStart=mTextView.getSelectionStart();
+  final int selectionEnd=mTextView.getSelectionEnd();
+  builder.setSelectionRange(mTextView.getSelectionStart(),mTextView.getSelectionEnd());
+  mViewToScreenMatrix.set(mTextView.getMatrix());
+  mTextView.getLocationOnScreen(mTmpIntOffset);
+  mViewToScreenMatrix.postTranslate(mTmpIntOffset[0],mTmpIntOffset[1]);
+  builder.setMatrix(mViewToScreenMatrix);
+  final float viewportToContentHorizontalOffset=mTextView.viewportToContentHorizontalOffset();
+  final float viewportToContentVerticalOffset=mTextView.viewportToContentVerticalOffset();
+  if (mTextView.getText() instanceof Spannable) {
+    final Spannable sp=(Spannable)mTextView.getText();
+    int compositionStart=EditableInputConnection.getComposingSpanStart(sp);
+    int compositionEnd=EditableInputConnection.getComposingSpanEnd(sp);
+    if (compositionEnd < compositionStart) {
+      final int temp=compositionEnd;
+      compositionEnd=compositionStart;
+      compositionStart=temp;
+    }
+    builder.setCandidateRange(compositionStart,compositionEnd);
+    for (int offset=compositionStart; offset < compositionEnd; offset++) {
+      if (offset < 0) {
+        continue;
+      }
+      final int line=layout.getLineForOffset(offset);
+      final float left=layout.getPrimaryHorizontal(offset) + viewportToContentHorizontalOffset;
+      final float top=layout.getLineTop(line) + viewportToContentVerticalOffset;
+      final float right=layout.getPrimaryHorizontal(offset + 1) + viewportToContentHorizontalOffset;
+      final float bottom=layout.getLineBottom(line) + viewportToContentVerticalOffset;
+      if (isPositionVisible(left,top) && isPositionVisible(right,bottom)) {
+        builder.addCharacterRect(offset,left,top,right,bottom);
+      }
+    }
+  }
+  if (0 <= selectionStart) {
+    final int offset=selectionStart;
+    final int line=layout.getLineForOffset(offset);
+    final float insertionMarkerX=layout.getPrimaryHorizontal(offset) + viewportToContentHorizontalOffset;
+    final float insertionMarkerTop=layout.getLineTop(line) + viewportToContentVerticalOffset;
+    final float insertionMarkerBaseline=layout.getLineBaseline(line) + viewportToContentVerticalOffset;
+    final float insertionMarkerBottom=layout.getLineBottom(line) + viewportToContentVerticalOffset;
+    if (isPositionVisible(insertionMarkerX,insertionMarkerTop) && isPositionVisible(insertionMarkerX,insertionMarkerBottom)) {
+      builder.setInsertionMarkerLocation(insertionMarkerX,insertionMarkerTop,insertionMarkerBaseline,insertionMarkerBottom);
+    }
+  }
+  imm.updateCursorAnchorInfo(mTextView,builder.build());
+}
