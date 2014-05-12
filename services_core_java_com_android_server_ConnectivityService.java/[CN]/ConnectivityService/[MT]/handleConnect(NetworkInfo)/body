@@ -9,14 +9,20 @@
   if (mNetConfigs[newNetType].isDefault()) {
     if (mActiveDefaultNetwork != -1 && mActiveDefaultNetwork != newNetType) {
       if (isNewNetTypePreferredOverCurrentNetType(newNetType)) {
-        NetworkStateTracker otherNet=mNetTrackers[mActiveDefaultNetwork];
-        if (DBG) {
-          log("Policy requires " + otherNet.getNetworkInfo().getTypeName() + " teardown");
+        String teardownPolicy=SystemProperties.get("net.teardownPolicy");
+        if (TextUtils.equals(teardownPolicy,"keep") == false) {
+          NetworkStateTracker otherNet=mNetTrackers[mActiveDefaultNetwork];
+          if (DBG) {
+            log("Policy requires " + otherNet.getNetworkInfo().getTypeName() + " teardown");
+          }
+          if (!teardown(otherNet)) {
+            loge("Network declined teardown request");
+            teardown(thisNet);
+            return;
+          }
         }
-        if (!teardown(otherNet)) {
-          loge("Network declined teardown request");
-          teardown(thisNet);
-          return;
+ else {
+          loge("network teardown skipped due to net.teardownPolicy setting");
         }
       }
  else {
@@ -26,6 +32,16 @@
         teardown(thisNet);
         return;
       }
+    }
+    int thisNetId=nextNetId();
+    thisNet.setNetId(thisNetId);
+    try {
+      mNetd.createNetwork(thisNetId,thisIface);
+    }
+ catch (    Exception e) {
+      loge("Exception creating network :" + e);
+      teardown(thisNet);
+      return;
     }
     setupDataActivityTracking(newNetType);
 synchronized (ConnectivityService.this) {
@@ -38,6 +54,18 @@ synchronized (ConnectivityService.this) {
     mDefaultConnectionSequence++;
     mInetConditionChangeInFlight=false;
     updateNetworkSettings(thisNet);
+  }
+ else {
+    int thisNetId=nextNetId();
+    thisNet.setNetId(thisNetId);
+    try {
+      mNetd.createNetwork(thisNetId,thisIface);
+    }
+ catch (    Exception e) {
+      loge("Exception creating network :" + e);
+      teardown(thisNet);
+      return;
+    }
   }
   thisNet.setTeardownRequested(false);
   updateMtuSizeSettings(thisNet);
