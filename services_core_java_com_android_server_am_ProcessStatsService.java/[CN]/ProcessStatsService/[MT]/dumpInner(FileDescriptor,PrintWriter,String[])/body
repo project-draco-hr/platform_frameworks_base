@@ -8,6 +8,7 @@
   boolean dumpFullDetails=false;
   boolean dumpAll=false;
   int aggregateHours=0;
+  int lastIndex=0;
   boolean activeOnly=false;
   String reqPackage=null;
   boolean csvSepScreenStats=false;
@@ -97,6 +98,22 @@
         }
  catch (        NumberFormatException e) {
           pw.println("Error: --hours argument not an int -- " + args[i]);
+          dumpHelp(pw);
+          return;
+        }
+      }
+ else       if ("--last".equals(arg)) {
+        i++;
+        if (i >= args.length) {
+          pw.println("Error: argument required for --last");
+          dumpHelp(pw);
+          return;
+        }
+        try {
+          lastIndex=Integer.parseInt(args[i]);
+        }
+ catch (        NumberFormatException e) {
+          pw.println("Error: --last argument not an int -- " + args[i]);
           dumpHelp(pw);
           return;
         }
@@ -202,6 +219,51 @@ synchronized (mAm) {
     dumpAggregatedStats(pw,aggregateHours,now,reqPackage,isCompact,dumpDetails,dumpFullDetails,dumpAll,activeOnly);
     return;
   }
+ else   if (lastIndex > 0) {
+    pw.print("LAST STATS AT INDEX ");
+    pw.print(lastIndex);
+    pw.println(":");
+    ArrayList<String> files=getCommittedFiles(0,false,true);
+    if (lastIndex >= files.size()) {
+      pw.print("Only have ");
+      pw.print(files.size());
+      pw.println(" data sets");
+      return;
+    }
+    AtomicFile file=new AtomicFile(new File(files.get(lastIndex)));
+    ProcessStats processStats=new ProcessStats(false);
+    readLocked(processStats,file);
+    if (processStats.mReadError != null) {
+      if (isCheckin || isCompact)       pw.print("err,");
+      pw.print("Failure reading ");
+      pw.print(files.get(lastIndex));
+      pw.print("; ");
+      pw.println(processStats.mReadError);
+      return;
+    }
+    String fileStr=file.getBaseFile().getPath();
+    boolean checkedIn=fileStr.endsWith(STATE_FILE_CHECKIN_SUFFIX);
+    if (isCheckin || isCompact) {
+      processStats.dumpCheckinLocked(pw,reqPackage);
+    }
+ else {
+      pw.print("COMMITTED STATS FROM ");
+      pw.print(processStats.mTimePeriodStartClockStr);
+      if (checkedIn)       pw.print(" (checked in)");
+      pw.println(":");
+      if (dumpDetails || dumpFullDetails) {
+        processStats.dumpLocked(pw,reqPackage,now,!dumpFullDetails,dumpAll,activeOnly);
+        if (dumpAll) {
+          pw.print("  mFile=");
+          pw.println(mFile.getBaseFile());
+        }
+      }
+ else {
+        processStats.dumpSummaryLocked(pw,reqPackage,now,activeOnly);
+      }
+    }
+    return;
+  }
   boolean sepNeeded=false;
   if (dumpAll || isCheckin) {
     mWriteLock.lock();
@@ -241,7 +303,7 @@ synchronized (mAm) {
               if (checkedIn)               pw.print(" (checked in)");
               pw.println(":");
               if (dumpFullDetails) {
-                mProcessStats.dumpLocked(pw,reqPackage,now,false,false,activeOnly);
+                processStats.dumpLocked(pw,reqPackage,now,false,false,activeOnly);
               }
  else {
                 processStats.dumpSummaryLocked(pw,reqPackage,now,activeOnly);
