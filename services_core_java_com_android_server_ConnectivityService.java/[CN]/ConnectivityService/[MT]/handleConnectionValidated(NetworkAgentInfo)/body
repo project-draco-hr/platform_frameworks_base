@@ -1,0 +1,66 @@
+{
+  if (newNetwork == null) {
+    loge("Unknown NetworkAgentInfo in handleConnectionValidated");
+    return;
+  }
+  boolean keep=false;
+  boolean isNewDefault=false;
+  if (DBG)   log("handleConnectionValidated for " + newNetwork.name());
+  for (int i=0; i < mNetworkRequests.size(); i++) {
+    NetworkRequest nr=mNetworkRequests.valueAt(i);
+    if (nr.networkCapabilities.satisfiedByNetworkCapabilities(newNetwork.networkCapabilities)) {
+      NetworkAgentInfo currentNetwork=mNetworkForRequestId.get(nr.requestId);
+      if (VDBG) {
+        log("currentScore = " + (currentNetwork != null ? currentNetwork.currentScore : 0) + ", newScore = "+ newNetwork.currentScore);
+      }
+      if (currentNetwork == null || currentNetwork.currentScore < newNetwork.currentScore) {
+        if (currentNetwork != null) {
+          currentNetwork.networkRequests.remove(nr.requestId);
+          currentNetwork.networkListens.add(nr);
+          if (currentNetwork.networkRequests.size() == 0) {
+            Message message=Message.obtain();
+            message.obj=currentNetwork;
+            message.what=NetworkMonitorProtocol.EVENT_NETWORK_LINGER_COMPLETE;
+            mTrackerHandler.sendMessage(message);
+            notifyNetworkCallbacks(currentNetwork,NetworkCallbacks.LOSING);
+          }
+        }
+        mNetworkForRequestId.put(nr.requestId,newNetwork);
+        newNetwork.networkRequests.put(nr.requestId,nr);
+        keep=true;
+        sendUpdatedScoreToFactories(nr,newNetwork.currentScore);
+        if (mDefaultRequest.requestId == nr.requestId) {
+          isNewDefault=true;
+        }
+      }
+    }
+  }
+  if (keep) {
+    if (isNewDefault) {
+      if (VDBG)       log("Switching to new default network: " + newNetwork);
+      setupDataActivityTracking(newNetwork);
+      try {
+        mNetd.setDefaultNetId(newNetwork.network.netId);
+      }
+ catch (      Exception e) {
+        loge("Exception setting default network :" + e);
+      }
+      if (newNetwork.equals(mNetworkForRequestId.get(mDefaultRequest.requestId))) {
+        handleApplyDefaultProxy(newNetwork.linkProperties.getHttpProxy());
+      }
+synchronized (ConnectivityService.this) {
+        if (mNetTransitionWakeLock.isHeld()) {
+          mHandler.sendMessageDelayed(mHandler.obtainMessage(EVENT_CLEAR_NET_TRANSITION_WAKELOCK,mNetTransitionWakeLockSerialNumber,0),1000);
+        }
+      }
+      mDefaultInetConditionPublished=0;
+      mDefaultConnectionSequence++;
+      mInetConditionChangeInFlight=false;
+    }
+    notifyNetworkCallbacks(newNetwork,NetworkCallbacks.AVAILABLE);
+  }
+ else {
+    if (VDBG)     log("Validated network turns out to be unwanted.  Tear it down.");
+    newNetwork.asyncChannel.disconnect();
+  }
+}
