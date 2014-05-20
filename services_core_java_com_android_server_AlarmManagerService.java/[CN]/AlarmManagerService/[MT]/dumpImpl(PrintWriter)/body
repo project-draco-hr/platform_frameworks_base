@@ -9,15 +9,30 @@ synchronized (mLock) {
     pw.print("=");
     pw.print(sdf.format(new Date(nowRTC)));
     pw.print(" nowELAPSED=");
-    pw.println(nowELAPSED);
+    TimeUtils.formatDuration(nowELAPSED,pw);
+    pw.println();
+    if (!mInteractive) {
+      pw.print("Time since non-interactive: ");
+      TimeUtils.formatDuration(nowELAPSED - mNonInteractiveStartTime,pw);
+      pw.println();
+      pw.print("Max wakeup delay: ");
+      TimeUtils.formatDuration(currentNonWakeupFuzzLocked(nowELAPSED),pw);
+      pw.println();
+      pw.print("Time since last dispatch: ");
+      TimeUtils.formatDuration(nowELAPSED - mLastAlarmDeliveryTime,pw);
+      pw.println();
+      pw.print("Next non-wakeup delivery time: ");
+      TimeUtils.formatDuration(nowELAPSED - mNextNonWakeupDeliveryTime,pw);
+      pw.println();
+    }
     long nextWakeupRTC=mNextWakeup + (nowRTC - nowELAPSED);
     long nextNonWakeupRTC=mNextNonWakeup + (nowRTC - nowELAPSED);
-    pw.print("Next alarm: ");
-    pw.print(mNextNonWakeup);
+    pw.print("Next non-wakeup alarm: ");
+    TimeUtils.formatDuration(mNextNonWakeup,nowELAPSED,pw);
     pw.print(" = ");
     pw.println(sdf.format(new Date(nextNonWakeupRTC)));
     pw.print("Next wakeup: ");
-    pw.print(mNextWakeup);
+    TimeUtils.formatDuration(mNextWakeup,nowELAPSED,pw);
     pw.print(" = ");
     pw.println(sdf.format(new Date(nextWakeupRTC)));
     if (mAlarmBatches.size() > 0) {
@@ -27,9 +42,28 @@ synchronized (mLock) {
       for (      Batch b : mAlarmBatches) {
         pw.print(b);
         pw.println(':');
-        dumpAlarmList(pw,b.alarms,"  ",nowELAPSED,nowRTC);
+        dumpAlarmList(pw,b.alarms,"  ",nowELAPSED,nowRTC,sdf);
       }
     }
+    pw.println();
+    pw.print("Past-due non-wakeup alarms: ");
+    if (mPendingNonWakeupAlarms.size() > 0) {
+      pw.println(mPendingNonWakeupAlarms.size());
+      dumpAlarmList(pw,mPendingNonWakeupAlarms,"  ",nowELAPSED,nowRTC,sdf);
+    }
+ else {
+      pw.println("(none)");
+    }
+    pw.print("  Number of delayed alarms: ");
+    pw.print(mNumDelayedAlarms);
+    pw.print(", total delay time: ");
+    TimeUtils.formatDuration(mTotalDelayTime,pw);
+    pw.println();
+    pw.print("  Max delay time: ");
+    TimeUtils.formatDuration(mMaxDelayTime,pw);
+    pw.print(", max non-interactive time: ");
+    TimeUtils.formatDuration(mNonInteractiveTime,pw);
+    pw.println();
     pw.println();
     pw.print("  Broadcast ref count: ");
     pw.println(mBroadcastRefCount);
@@ -91,14 +125,7 @@ synchronized (mLock) {
         pw.print(fs.mBroadcastStats.mPackageName);
         pw.println();
         pw.print("      ");
-        if (fs.mTarget.first != null) {
-          pw.print(" act=");
-          pw.print(fs.mTarget.first);
-        }
-        if (fs.mTarget.second != null) {
-          pw.print(" cmp=");
-          pw.print(fs.mTarget.second.toShortString());
-        }
+        pw.print(fs.mTag);
         pw.println();
       }
     }
@@ -133,15 +160,8 @@ synchronized (mLock) {
           pw.print(fs.numWakeup);
           pw.print(" wakes ");
           pw.print(fs.count);
-          pw.print(" alarms:");
-          if (fs.mTarget.first != null) {
-            pw.print(" act=");
-            pw.print(fs.mTarget.first);
-          }
-          if (fs.mTarget.second != null) {
-            pw.print(" cmp=");
-            pw.print(fs.mTarget.second.toShortString());
-          }
+          pw.print(" alarms: ");
+          pw.print(fs.mTag);
           pw.println();
         }
       }
