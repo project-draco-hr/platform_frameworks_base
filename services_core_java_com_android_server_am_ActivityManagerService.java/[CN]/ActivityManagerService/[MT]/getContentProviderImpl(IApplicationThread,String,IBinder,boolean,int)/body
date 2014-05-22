@@ -10,12 +10,27 @@ synchronized (this) {
         throw new SecurityException("Unable to find app for caller " + caller + " (pid="+ Binder.getCallingPid()+ ") when getting content provider "+ name);
       }
     }
+    boolean checkCrossUser=true;
     cpr=mProviderMap.getProviderByName(name,userId);
+    if (cpr == null && userId != UserHandle.USER_OWNER) {
+      cpr=mProviderMap.getProviderByName(name,UserHandle.USER_OWNER);
+      if (cpr != null) {
+        cpi=cpr.info;
+        if (isSingleton(cpi.processName,cpi.applicationInfo,cpi.name,cpi.flags) && isValidSingletonCall(r.uid,cpi.applicationInfo.uid)) {
+          userId=UserHandle.USER_OWNER;
+          checkCrossUser=false;
+        }
+ else {
+          cpr=null;
+          cpi=null;
+        }
+      }
+    }
     boolean providerRunning=cpr != null;
     if (providerRunning) {
       cpi=cpr.info;
       String msg;
-      if ((msg=checkContentProviderPermissionLocked(cpi,r,userId)) != null) {
+      if ((msg=checkContentProviderPermissionLocked(cpi,r,userId,checkCrossUser)) != null) {
         throw new SecurityException(msg);
       }
       if (r != null && cpr.canRunHere(r)) {
@@ -62,13 +77,13 @@ synchronized (this) {
       if (cpi == null) {
         return null;
       }
-      singleton=isSingleton(cpi.processName,cpi.applicationInfo,cpi.name,cpi.flags);
+      singleton=isSingleton(cpi.processName,cpi.applicationInfo,cpi.name,cpi.flags) && isValidSingletonCall(r.uid,cpi.applicationInfo.uid);
       if (singleton) {
-        userId=0;
+        userId=UserHandle.USER_OWNER;
       }
       cpi.applicationInfo=getAppInfoForUser(cpi.applicationInfo,userId);
       String msg;
-      if ((msg=checkContentProviderPermissionLocked(cpi,r,userId)) != null) {
+      if ((msg=checkContentProviderPermissionLocked(cpi,r,userId,!singleton)) != null) {
         throw new SecurityException(msg);
       }
       if (!mProcessesReady && !mDidUpdate && !mWaitingUpdate&& !cpi.processName.equals("system")) {
