@@ -1,0 +1,82 @@
+{
+  mTag=String.format("VolumePanel%s.%08x",parent == null ? "Dialog" : "",hashCode());
+  mContext=context;
+  mParent=parent;
+  mZenController=zenController;
+  mAudioManager=(AudioManager)context.getSystemService(Context.AUDIO_SERVICE);
+  final Resources res=context.getResources();
+  final boolean useMasterVolume=res.getBoolean(R.bool.config_useMasterVolume);
+  if (useMasterVolume) {
+    for (int i=0; i < STREAMS.length; i++) {
+      StreamResources streamRes=STREAMS[i];
+      streamRes.show=(streamRes.streamType == STREAM_MASTER);
+    }
+  }
+  if (LOGD)   Log.d(mTag,String.format("new VolumePanel hasParent=%s",parent != null));
+  final int layoutId=com.android.systemui.R.layout.volume_panel;
+  if (parent == null) {
+    mDialog=new Dialog(context){
+      @Override public boolean onTouchEvent(      MotionEvent event){
+        if (isShowing() && event.getAction() == MotionEvent.ACTION_OUTSIDE && sConfirmSafeVolumeDialog == null) {
+          forceTimeout();
+          return true;
+        }
+        return false;
+      }
+    }
+;
+    final Window window=mDialog.getWindow();
+    final LayoutParams lp=window.getAttributes();
+    lp.token=null;
+    lp.y=res.getDimensionPixelOffset(com.android.systemui.R.dimen.volume_panel_top);
+    lp.width=res.getDimensionPixelSize(com.android.systemui.R.dimen.volume_panel_width);
+    lp.type=LayoutParams.TYPE_VOLUME_OVERLAY;
+    lp.windowAnimations=R.style.Animation_VolumePanel;
+    window.setBackgroundDrawableResource(com.android.systemui.R.drawable.qs_panel_background);
+    window.setAttributes(lp);
+    window.setGravity(Gravity.TOP);
+    window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+    window.requestFeature(Window.FEATURE_NO_TITLE);
+    window.addFlags(LayoutParams.FLAG_NOT_FOCUSABLE | LayoutParams.FLAG_NOT_TOUCH_MODAL | LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH);
+    mDialog.setCanceledOnTouchOutside(true);
+    mDialog.setContentView(layoutId);
+    mDialog.setOnDismissListener(new OnDismissListener(){
+      @Override public void onDismiss(      DialogInterface dialog){
+        mActiveStreamType=-1;
+        mAudioManager.forceVolumeControlStream(mActiveStreamType);
+      }
+    }
+);
+    mDialog.create();
+    mView=window.findViewById(R.id.content);
+    mView.setOnTouchListener(new View.OnTouchListener(){
+      @Override public boolean onTouch(      View v,      MotionEvent event){
+        resetTimeout();
+        return false;
+      }
+    }
+);
+  }
+ else {
+    mDialog=null;
+    mView=LayoutInflater.from(mContext).inflate(layoutId,parent,true);
+  }
+  mPanel=(ViewGroup)mView.findViewById(com.android.systemui.R.id.visible_panel);
+  mSliderPanel=(ViewGroup)mView.findViewById(com.android.systemui.R.id.slider_panel);
+  mExpandButton=(ImageView)mView.findViewById(com.android.systemui.R.id.expand_button);
+  mExpandDivider=mView.findViewById(com.android.systemui.R.id.expand_button_divider);
+  mZenPanelStub=(ViewStub)mView.findViewById(com.android.systemui.R.id.zen_panel_stub);
+  mZenPanelDivider=mView.findViewById(com.android.systemui.R.id.zen_panel_divider);
+  mToneGenerators=new ToneGenerator[AudioSystem.getNumStreamTypes()];
+  mVibrator=(Vibrator)context.getSystemService(Context.VIBRATOR_SERVICE);
+  mVoiceCapable=context.getResources().getBoolean(R.bool.config_voice_capable);
+  mZenModeCapable=!useMasterVolume && mZenController != null;
+  mZenPanelDivider.setVisibility(View.GONE);
+  mExpandButton.setOnClickListener(mClickListener);
+  updateZenMode(mZenController == null ? false : mZenController.isZen());
+  mZenController.addCallback(mZenCallback);
+  final boolean masterVolumeOnly=res.getBoolean(R.bool.config_useMasterVolume);
+  final boolean masterVolumeKeySounds=res.getBoolean(R.bool.config_useVolumeKeySounds);
+  mPlayMasterStreamTones=masterVolumeOnly && masterVolumeKeySounds;
+  listenToRingerMode();
+}
