@@ -1,0 +1,75 @@
+{
+  IBackupTransport transport=getTransport(mCurrentTransport);
+  if (transport == null) {
+    Slog.w(TAG,"Transport not present; full data backup not performed");
+    return;
+  }
+  ParcelFileDescriptor[] enginePipes=null;
+  ParcelFileDescriptor[] transportPipes=null;
+  try {
+    if (transport != null) {
+      for (      PackageInfo target : mPackages) {
+        if (DEBUG) {
+          Slog.i(TAG,"Initiating full-data transport backup of " + target.packageName);
+        }
+        transportPipes=ParcelFileDescriptor.createPipe();
+        int result=transport.performFullBackup(target,transportPipes[0]);
+        if (result == BackupTransport.TRANSPORT_OK) {
+          transportPipes[0].close();
+          transportPipes[0]=null;
+          enginePipes=ParcelFileDescriptor.createPipe();
+          AtomicBoolean runnerLatch=new AtomicBoolean(false);
+          SinglePackageBackupRunner backupRunner=new SinglePackageBackupRunner(enginePipes[1],target,runnerLatch);
+          enginePipes[1].close();
+          enginePipes[1]=null;
+          (new Thread(backupRunner,"package-backup-bridge")).start();
+          FileInputStream in=new FileInputStream(enginePipes[0].getFileDescriptor());
+          FileOutputStream out=new FileOutputStream(transportPipes[1].getFileDescriptor());
+          byte[] buffer=new byte[8192];
+          int nRead=0;
+          do {
+            nRead=in.read(buffer);
+            if (nRead > 0) {
+              out.write(buffer,0,nRead);
+              result=transport.sendBackupData(nRead);
+            }
+          }
+ while (nRead > 0 && result == BackupTransport.TRANSPORT_OK);
+          if (result == BackupTransport.TRANSPORT_OK) {
+            result=transport.finishBackup();
+          }
+ else {
+            Slog.w(TAG,"Error backing up " + target.packageName);
+          }
+        }
+ else         if (result == BackupTransport.TRANSPORT_PACKAGE_REJECTED) {
+          if (DEBUG) {
+            Slog.i(TAG,"Transport rejected backup of " + target.packageName + ", skipping");
+          }
+        }
+ else {
+          if (DEBUG) {
+            Slog.i(TAG,"Transport failed; aborting backup");
+            return;
+          }
+        }
+        cleanUpPipes(transportPipes);
+        cleanUpPipes(enginePipes);
+      }
+      if (DEBUG) {
+        Slog.i(TAG,"Full backup completed.");
+      }
+    }
+  }
+ catch (  Exception e) {
+    Slog.w(TAG,"Exception trying full transport backup",e);
+  }
+ finally {
+    cleanUpPipes(transportPipes);
+    cleanUpPipes(enginePipes);
+synchronized (mLatch) {
+      mLatch.set(true);
+      mLatch.notifyAll();
+    }
+  }
+}
