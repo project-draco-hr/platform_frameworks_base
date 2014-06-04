@@ -1,4 +1,7 @@
 {
+  if (!isScrollingEnabled()) {
+    return false;
+  }
   initVelocityTrackerIfNotExists();
   mVelocityTracker.addMovement(ev);
   final int action=ev.getAction();
@@ -14,6 +17,7 @@ case MotionEvent.ACTION_DOWN:
         mScroller.forceFinished(true);
       }
       mLastMotionY=(int)ev.getY();
+      mDownX=(int)ev.getX();
       mActivePointerId=ev.getPointerId(0);
       break;
     }
@@ -24,8 +28,11 @@ if (activePointerIndex == -1) {
   break;
 }
 final int y=(int)ev.getY(activePointerIndex);
+final int x=(int)ev.getX(activePointerIndex);
 int deltaY=mLastMotionY - y;
-if (!mIsBeingDragged && Math.abs(deltaY) > mTouchSlop) {
+final int xDiff=Math.abs(x - mDownX);
+final int yDiff=Math.abs(deltaY);
+if (!mIsBeingDragged && yDiff > mTouchSlop && yDiff > xDiff) {
 setIsBeingDragged(true);
 if (deltaY > 0) {
 deltaY-=mTouchSlop;
@@ -36,7 +43,10 @@ deltaY+=mTouchSlop;
 }
 if (mIsBeingDragged) {
 mLastMotionY=y;
-final int range=getScrollRange();
+int range=getScrollRange();
+if (mExpandedInThisMotion) {
+range=Math.min(range,mMaxScrollAfterExpand);
+}
 float scrollAmount;
 if (deltaY < 0) {
 scrollAmount=overScrollDown(deltaY);
@@ -54,9 +64,19 @@ if (mIsBeingDragged) {
 final VelocityTracker velocityTracker=mVelocityTracker;
 velocityTracker.computeCurrentVelocity(1000,mMaximumVelocity);
 int initialVelocity=(int)velocityTracker.getYVelocity(mActivePointerId);
+if (shouldOverScrollFling(initialVelocity)) {
+onOverScrollFling(true,initialVelocity);
+}
+ else {
 if (getChildCount() > 0) {
 if ((Math.abs(initialVelocity) > mMinimumVelocity)) {
+float currentOverScrollTop=getCurrentOverScrollAmount(true);
+if (currentOverScrollTop == 0.0f || initialVelocity > 0) {
 fling(-initialVelocity);
+}
+ else {
+onOverScrollFling(false,initialVelocity);
+}
 }
  else {
 if (mScroller.springBack(mScrollX,mOwnScrollY,0,0,0,getScrollRange())) {
@@ -66,6 +86,7 @@ postInvalidateOnAnimation();
 }
 mActivePointerId=INVALID_POINTER;
 endDrag();
+}
 }
 break;
 case MotionEvent.ACTION_CANCEL:
@@ -81,12 +102,14 @@ case MotionEvent.ACTION_POINTER_DOWN:
 {
 final int index=ev.getActionIndex();
 mLastMotionY=(int)ev.getY(index);
+mDownX=(int)ev.getX(index);
 mActivePointerId=ev.getPointerId(index);
 break;
 }
 case MotionEvent.ACTION_POINTER_UP:
 onSecondaryPointerUp(ev);
 mLastMotionY=(int)ev.getY(ev.findPointerIndex(mActivePointerId));
+mDownX=(int)ev.getX(ev.findPointerIndex(mActivePointerId));
 break;
 }
 return true;
