@@ -1,0 +1,40 @@
+{
+  long completedFrameNumber=mFrameNumberTracker.getCompletedFrameNumber();
+  Iterator<SimpleEntry<Long,Integer>> iter=mFrameNumberRequestPairs.iterator();
+  while (iter.hasNext()) {
+    final SimpleEntry<Long,Integer> frameNumberRequestPair=iter.next();
+    if (frameNumberRequestPair.getKey() <= completedFrameNumber) {
+      final int requestId=frameNumberRequestPair.getValue();
+      final CaptureListenerHolder holder;
+synchronized (mLock) {
+        int index=mCaptureListenerMap.indexOfKey(requestId);
+        holder=(index >= 0) ? mCaptureListenerMap.valueAt(index) : null;
+        if (holder != null) {
+          mCaptureListenerMap.removeAt(index);
+          if (DEBUG) {
+            Log.v(TAG,String.format("remove holder for requestId %d, " + "because lastFrame %d is <= %d",requestId,frameNumberRequestPair.getKey(),completedFrameNumber));
+          }
+        }
+      }
+      iter.remove();
+      if (holder != null) {
+        Runnable resultDispatch=new Runnable(){
+          @Override public void run(){
+            if (!CameraDeviceImpl.this.isClosed()) {
+              if (DEBUG) {
+                Log.d(TAG,String.format("fire sequence complete for request %d",requestId));
+              }
+              long lastFrameNumber=frameNumberRequestPair.getKey();
+              if (lastFrameNumber < Integer.MIN_VALUE || lastFrameNumber > Integer.MAX_VALUE) {
+                throw new AssertionError(lastFrameNumber + " cannot be cast to int");
+              }
+              holder.getListener().onCaptureSequenceCompleted(CameraDeviceImpl.this,requestId,lastFrameNumber);
+            }
+          }
+        }
+;
+        holder.getHandler().post(resultDispatch);
+      }
+    }
+  }
+}
