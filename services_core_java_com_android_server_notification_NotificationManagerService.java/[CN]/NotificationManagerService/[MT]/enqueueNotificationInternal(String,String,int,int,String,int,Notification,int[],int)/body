@@ -46,9 +46,9 @@ synchronized (mNotificationList) {
           notification.priority=Notification.PRIORITY_HIGH;
         }
       }
-      int score=notification.priority * NOTIFICATION_PRIORITY_MULTIPLIER;
+      final int score=notification.priority * NOTIFICATION_PRIORITY_MULTIPLIER;
       final StatusBarNotification n=new StatusBarNotification(pkg,opPkg,id,tag,callingUid,callingPid,score,notification,user);
-      NotificationRecord r=new NotificationRecord(n);
+      NotificationRecord r=new NotificationRecord(n,score);
       NotificationRecord old=mNotificationsByKey.get(n.getKey());
       if (old != null) {
         r.copyRankingInformation(old);
@@ -66,11 +66,11 @@ synchronized (mNotificationList) {
       }
       if (ENABLE_BLOCKED_NOTIFICATIONS && !noteNotificationOp(pkg,callingUid)) {
         if (!isSystemNotification) {
-          score=JUNK_SCORE;
+          r.score=JUNK_SCORE;
           Slog.e(TAG,"Suppressing notification from package " + pkg + " by user request.");
         }
       }
-      if (score < SCORE_DISPLAY_THRESHOLD) {
+      if (r.score < SCORE_DISPLAY_THRESHOLD) {
         return;
       }
 synchronized (mNotificationList) {
@@ -85,15 +85,11 @@ synchronized (mNotificationList) {
           mUsageStats.registerUpdatedByApp(r,old);
           notification.flags|=old.getNotification().flags & Notification.FLAG_FOREGROUND_SERVICE;
           mNotificationsByKey.remove(old.sbn.getKey());
+          r.isUpdate=true;
         }
         mNotificationsByKey.put(n.getKey(),r);
         applyZenModeLocked(r);
-        final boolean canInterrupt=(score >= SCORE_INTERRUPTION_THRESHOLD) && !r.isIntercepted();
-        if (DBG || r.isIntercepted())         Slog.v(TAG,"pkg=" + pkg + " canInterrupt="+ canInterrupt+ " intercept="+ r.isIntercepted());
         Collections.sort(mNotificationList,mRankingComparator);
-        if ((notification.flags & Notification.FLAG_FOREGROUND_SERVICE) != 0) {
-          notification.flags|=Notification.FLAG_ONGOING_EVENT | Notification.FLAG_NO_CLEAR;
-        }
         final int currentUser;
         final long token=Binder.clearCallingIdentity();
         try {
@@ -116,18 +112,12 @@ synchronized (mNotificationList) {
             final long identity=Binder.clearCallingIdentity();
             try {
               mStatusBar.addNotification(n);
-              if ((n.getNotification().flags & Notification.FLAG_SHOW_LIGHTS) != 0 && canInterrupt) {
-                mAttentionLight.pulse();
-              }
             }
   finally {
               Binder.restoreCallingIdentity(identity);
             }
           }
-          if (currentUser == userId) {
-            sendAccessibilityEvent(notification,pkg);
-          }
-          mListeners.notifyPostedLocked(r.sbn);
+          mListeners.notifyPostedLocked(n);
         }
  else {
           Slog.e(TAG,"Not posting notification with icon==0: " + notification);
@@ -139,82 +129,14 @@ synchronized (mNotificationList) {
   finally {
               Binder.restoreCallingIdentity(identity);
             }
-            mListeners.notifyRemovedLocked(r.sbn);
+            mListeners.notifyRemovedLocked(n);
           }
           Slog.e(TAG,"WARNING: In a future release this will crash the app: " + n.getPackageName());
         }
-        if (!mDisableNotificationAlerts && (!(old != null && (notification.flags & Notification.FLAG_ONLY_ALERT_ONCE) != 0)) && (r.getUserId() == UserHandle.USER_ALL || (r.getUserId() == userId && r.getUserId() == currentUser) || mUserProfiles.isCurrentProfile(r.getUserId()))&& canInterrupt&& mSystemReady&& mAudioManager != null) {
-          if (DBG)           Slog.v(TAG,"Interrupting!");
-          final boolean useDefaultSound=(notification.defaults & Notification.DEFAULT_SOUND) != 0 || Settings.System.DEFAULT_NOTIFICATION_URI.equals(notification.sound);
-          Uri soundUri=null;
-          boolean hasValidSound=false;
-          if (useDefaultSound) {
-            soundUri=Settings.System.DEFAULT_NOTIFICATION_URI;
-            ContentResolver resolver=getContext().getContentResolver();
-            hasValidSound=Settings.System.getString(resolver,Settings.System.NOTIFICATION_SOUND) != null;
-          }
- else           if (notification.sound != null) {
-            soundUri=notification.sound;
-            hasValidSound=(soundUri != null);
-          }
-          if (hasValidSound) {
-            boolean looping=(notification.flags & Notification.FLAG_INSISTENT) != 0;
-            int audioStreamType;
-            if (notification.audioStreamType >= 0) {
-              audioStreamType=notification.audioStreamType;
-            }
- else {
-              audioStreamType=DEFAULT_STREAM_TYPE;
-            }
-            mSoundNotification=r;
-            if ((mAudioManager.getStreamVolume(audioStreamType) != 0) && !mAudioManager.isAudioFocusExclusive()) {
-              final long identity=Binder.clearCallingIdentity();
-              try {
-                final IRingtonePlayer player=mAudioManager.getRingtonePlayer();
-                if (player != null) {
-                  if (DBG)                   Slog.v(TAG,"Playing sound " + soundUri + " on stream "+ audioStreamType);
-                  player.playAsync(soundUri,user,looping,audioStreamType);
-                }
-              }
- catch (              RemoteException e) {
-              }
- finally {
-                Binder.restoreCallingIdentity(identity);
-              }
-            }
-          }
-          final boolean hasCustomVibrate=notification.vibrate != null;
-          final boolean convertSoundToVibration=!hasCustomVibrate && hasValidSound && (mAudioManager.getRingerMode() == AudioManager.RINGER_MODE_VIBRATE);
-          final boolean useDefaultVibrate=(notification.defaults & Notification.DEFAULT_VIBRATE) != 0;
-          if ((useDefaultVibrate || convertSoundToVibration || hasCustomVibrate) && !(mAudioManager.getRingerMode() == AudioManager.RINGER_MODE_SILENT)) {
-            mVibrateNotification=r;
-            if (useDefaultVibrate || convertSoundToVibration) {
-              long identity=Binder.clearCallingIdentity();
-              try {
-                mVibrator.vibrate(r.sbn.getUid(),r.sbn.getOpPkg(),useDefaultVibrate ? mDefaultVibrationPattern : mFallbackVibrationPattern,((notification.flags & Notification.FLAG_INSISTENT) != 0) ? 0 : -1,notification.audioStreamType);
-              }
-  finally {
-                Binder.restoreCallingIdentity(identity);
-              }
-            }
- else             if (notification.vibrate.length > 1) {
-              mVibrator.vibrate(r.sbn.getUid(),r.sbn.getOpPkg(),notification.vibrate,((notification.flags & Notification.FLAG_INSISTENT) != 0) ? 0 : -1,notification.audioStreamType);
-            }
-          }
+        if ((notification.flags & Notification.FLAG_FOREGROUND_SERVICE) != 0) {
+          notification.flags|=Notification.FLAG_ONGOING_EVENT | Notification.FLAG_NO_CLEAR;
         }
-        mLights.remove(old);
-        if (mLedNotification == old) {
-          mLedNotification=null;
-        }
-        if ((notification.flags & Notification.FLAG_SHOW_LIGHTS) != 0 && canInterrupt) {
-          mLights.add(r);
-          updateLightsLocked();
-        }
- else {
-          if (old != null && ((old.getFlags() & Notification.FLAG_SHOW_LIGHTS) != 0)) {
-            updateLightsLocked();
-          }
-        }
+        buzzBeepBlinkLocked(r);
       }
     }
   }
