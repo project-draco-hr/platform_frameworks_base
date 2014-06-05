@@ -1,0 +1,91 @@
+{
+  Task.Builder taskBuilder;
+  int uid;
+  try {
+    taskBuilder=buildBuilderFromXml(parser);
+    uid=Integer.valueOf(parser.getAttributeValue(null,"uid"));
+  }
+ catch (  NumberFormatException e) {
+    Slog.e(TAG,"Error parsing task's required fields, skipping");
+    return null;
+  }
+  int eventType;
+  do {
+    eventType=parser.next();
+  }
+ while (eventType == XmlPullParser.TEXT);
+  if (!(eventType == XmlPullParser.START_TAG && XML_TAG_PARAMS_CONSTRAINTS.equals(parser.getName()))) {
+    return null;
+  }
+  try {
+    buildConstraintsFromXml(taskBuilder,parser);
+  }
+ catch (  NumberFormatException e) {
+    Slog.d(TAG,"Error reading constraints, skipping.");
+    return null;
+  }
+  parser.next();
+  do {
+    eventType=parser.next();
+  }
+ while (eventType == XmlPullParser.TEXT);
+  if (eventType != XmlPullParser.START_TAG) {
+    return null;
+  }
+  Pair<Long,Long> runtimes;
+  try {
+    runtimes=buildExecutionTimesFromXml(parser);
+  }
+ catch (  NumberFormatException e) {
+    if (DEBUG) {
+      Slog.d(TAG,"Error parsing execution time parameters, skipping.");
+    }
+    return null;
+  }
+  if (XML_TAG_PERIODIC.equals(parser.getName())) {
+    try {
+      String val=parser.getAttributeValue(null,"period");
+      taskBuilder.setPeriodic(Long.valueOf(val));
+    }
+ catch (    NumberFormatException e) {
+      Slog.d(TAG,"Error reading periodic execution criteria, skipping.");
+      return null;
+    }
+  }
+ else   if (XML_TAG_ONEOFF.equals(parser.getName())) {
+    try {
+      if (runtimes.first != TaskStatus.DEFAULT_EARLIEST_RUNTIME) {
+        taskBuilder.setMinimumLatency(runtimes.first - SystemClock.elapsedRealtime());
+      }
+      if (runtimes.second != TaskStatus.DEFAULT_LATEST_RUNTIME) {
+        taskBuilder.setOverrideDeadline(runtimes.second - SystemClock.elapsedRealtime());
+      }
+    }
+ catch (    NumberFormatException e) {
+      Slog.d(TAG,"Error reading task execution criteria, skipping.");
+      return null;
+    }
+  }
+ else {
+    if (DEBUG) {
+      Slog.d(TAG,"Invalid parameter tag, skipping - " + parser.getName());
+    }
+    return null;
+  }
+  maybeBuildBackoffPolicyFromXml(taskBuilder,parser);
+  parser.nextTag();
+  do {
+    eventType=parser.next();
+  }
+ while (eventType == XmlPullParser.TEXT);
+  if (!(eventType == XmlPullParser.START_TAG && XML_TAG_EXTRAS.equals(parser.getName()))) {
+    if (DEBUG) {
+      Slog.d(TAG,"Error reading extras, skipping.");
+    }
+    return null;
+  }
+  PersistableBundle extras=PersistableBundle.restoreFromXml(parser);
+  taskBuilder.setExtras(extras);
+  parser.nextTag();
+  return new TaskStatus(taskBuilder.build(),uid,runtimes.first,runtimes.second);
+}
