@@ -1,29 +1,29 @@
 {
 synchronized (mTasks) {
     int idleCount=0;
+    int backoffCount=0;
     int connectivityCount=0;
     List<TaskStatus> runnableTasks=new ArrayList<TaskStatus>();
     for (    TaskStatus ts : mTasks.getTasks()) {
-      final boolean criteriaSatisfied=ts.isReady();
-      final boolean isRunning=isCurrentlyActive(ts);
-      if (criteriaSatisfied && !isRunning) {
+      if (isReadyToBeExecutedLocked(ts)) {
+        if (ts.getNumFailures() > 0) {
+          backoffCount++;
+        }
         if (ts.hasIdleConstraint()) {
           idleCount++;
         }
-        if (ts.hasConnectivityConstraint() || ts.hasMeteredConstraint()) {
+        if (ts.hasConnectivityConstraint() || ts.hasUnmeteredConstraint()) {
           connectivityCount++;
         }
         runnableTasks.add(ts);
       }
- else       if (!criteriaSatisfied && isRunning) {
-        cancelTaskOnServiceContext(ts);
+ else       if (isReadyToBeCancelledLocked(ts)) {
+        stopTaskOnServiceContextLocked(ts);
       }
     }
-    if (idleCount >= MIN_IDLE_COUNT || connectivityCount >= MIN_CONNECTIVITY_COUNT || runnableTasks.size() >= MIN_READY_TASKS_COUNT) {
+    if (backoffCount > 0 || idleCount >= MIN_IDLE_COUNT || connectivityCount >= MIN_CONNECTIVITY_COUNT || runnableTasks.size() >= MIN_READY_TASKS_COUNT) {
       for (      TaskStatus ts : runnableTasks) {
-synchronized (mPendingTasks) {
-          mPendingTasks.add(ts);
-        }
+        mPendingTasks.add(ts);
       }
     }
   }
