@@ -3,6 +3,9 @@
     Slog.i(LOG_TAG,"computeChangedWindows()");
   }
 synchronized (mWindowManagerService.mWindowMap) {
+    if (mWindowManagerService.mCurrentFocus == null) {
+      return;
+    }
     WindowManager windowManager=(WindowManager)mContext.getSystemService(Context.WINDOW_SERVICE);
     windowManager.getDefaultDisplay().getRealSize(mTempPoint);
     final int screenWidth=mTempPoint.x;
@@ -14,23 +17,14 @@ synchronized (mWindowManagerService.mWindowMap) {
     List<WindowInfo> windows=new ArrayList<WindowInfo>();
     Set<IBinder> addedWindows=mTempBinderSet;
     addedWindows.clear();
+    boolean focusedWindowAdded=false;
     final int visibleWindowCount=visibleWindows.size();
     for (int i=visibleWindowCount - 1; i >= 0; i--) {
       WindowState windowState=visibleWindows.valueAt(i);
-      Region touchableRegion=mTempRegion1;
-      windowState.getTouchableRegion(touchableRegion);
-      Rect touchableFrame=mTempRect;
-      touchableRegion.getBounds(touchableFrame);
-      RectF windowFrame=mTempRectF;
-      windowFrame.set(touchableFrame);
-      windowFrame.offset(-windowState.mFrame.left,-windowState.mFrame.top);
-      Matrix matrix=mTempMatrix;
-      populateTransformationMatrixLocked(windowState,matrix);
-      matrix.mapRect(windowFrame);
       Rect boundsInScreen=mTempRect;
-      boundsInScreen.set((int)windowFrame.left,(int)windowFrame.top,(int)windowFrame.right,(int)windowFrame.bottom);
+      computeWindowBoundsInScreen(windowState,boundsInScreen);
       final int flags=windowState.mAttrs.flags;
-      if ((flags & WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE) == 1) {
+      if ((flags & WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE) != 0) {
         unaccountedSpace.op(boundsInScreen,unaccountedSpace,Region.Op.DIFFERENCE);
         continue;
       }
@@ -38,28 +32,12 @@ synchronized (mWindowManagerService.mWindowMap) {
         continue;
       }
       if (isReportedWindowType(windowState.mAttrs.type)) {
-        WindowInfo window=WindowInfo.obtain();
-        window.type=windowState.mAttrs.type;
-        window.layer=windowState.mLayer;
-        window.token=windowState.mClient.asBinder();
+        WindowInfo window=obtainPopulatedWindowInfo(windowState,boundsInScreen);
         addedWindows.add(window.token);
-        WindowState attachedWindow=windowState.mAttachedWindow;
-        if (attachedWindow != null) {
-          window.parentToken=attachedWindow.mClient.asBinder();
-        }
-        window.focused=windowState.isFocused();
-        window.boundsInScreen.set(boundsInScreen);
-        final int childCount=windowState.mChildWindows.size();
-        if (childCount > 0) {
-          if (window.childTokens == null) {
-            window.childTokens=new ArrayList<IBinder>();
-          }
-          for (int j=0; j < childCount; j++) {
-            WindowState child=windowState.mChildWindows.get(j);
-            window.childTokens.add(child.mClient.asBinder());
-          }
-        }
         windows.add(window);
+        if (windowState.isFocused()) {
+          focusedWindowAdded=true;
+        }
       }
       unaccountedSpace.op(boundsInScreen,unaccountedSpace,Region.Op.REVERSE_DIFFERENCE);
       if (unaccountedSpace.isEmpty()) {
@@ -67,6 +45,19 @@ synchronized (mWindowManagerService.mWindowMap) {
       }
       if ((flags & (WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL)) == 0) {
         break;
+      }
+    }
+    if (!focusedWindowAdded) {
+      for (int i=visibleWindowCount - 1; i >= 0; i--) {
+        WindowState windowState=visibleWindows.valueAt(i);
+        if (windowState.isFocused()) {
+          Rect boundsInScreen=mTempRect;
+          computeWindowBoundsInScreen(windowState,boundsInScreen);
+          WindowInfo window=obtainPopulatedWindowInfo(windowState,boundsInScreen);
+          addedWindows.add(window.token);
+          windows.add(window);
+          break;
+        }
       }
     }
     final int windowCount=windows.size();
