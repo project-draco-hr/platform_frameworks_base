@@ -3,54 +3,54 @@
   if (DEBUG) {
     Log.v(TAG,"Received result frame " + resultExtras.getFrameNumber() + " for id "+ requestId);
   }
-  result.set(CameraCharacteristics.LENS_INFO_SHADING_MAP_SIZE,getCharacteristics().get(CameraCharacteristics.LENS_INFO_SHADING_MAP_SIZE));
-  final CaptureListenerHolder holder;
-synchronized (mLock) {
-    holder=CameraDeviceImpl.this.mCaptureListenerMap.get(requestId);
-  }
-  Boolean quirkPartial=result.get(CaptureResult.QUIRKS_PARTIAL_RESULT);
-  boolean quirkIsPartialResult=(quirkPartial != null && quirkPartial);
-  if (!quirkIsPartialResult) {
-    mFrameNumberTracker.updateTracker(resultExtras.getFrameNumber(),false);
-  }
-  if (holder == null) {
-    if (DEBUG) {
-      Log.d(TAG,"holder is null, early return at frame " + resultExtras.getFrameNumber());
+  try (ScopedLock scopedLock=mCloseLock.acquireLock()){
+    if (scopedLock == null)     return;
+    result.set(CameraCharacteristics.LENS_INFO_SHADING_MAP_SIZE,getCharacteristics().get(CameraCharacteristics.LENS_INFO_SHADING_MAP_SIZE));
+    final CaptureListenerHolder holder=CameraDeviceImpl.this.mCaptureListenerMap.get(requestId);
+    Boolean quirkPartial=result.get(CaptureResult.QUIRKS_PARTIAL_RESULT);
+    boolean quirkIsPartialResult=(quirkPartial != null && quirkPartial);
+    if (!quirkIsPartialResult) {
+      mFrameNumberTracker.updateTracker(resultExtras.getFrameNumber(),false);
     }
-    return;
-  }
-  if (isClosed()) {
-    if (DEBUG) {
-      Log.d(TAG,"camera is closed, early return at frame " + resultExtras.getFrameNumber());
+    if (holder == null) {
+      if (DEBUG) {
+        Log.d(TAG,"holder is null, early return at frame " + resultExtras.getFrameNumber());
+      }
+      return;
     }
-    return;
-  }
-  final CaptureRequest request=holder.getRequest(resultExtras.getSubsequenceId());
-  Runnable resultDispatch=null;
-  if (quirkIsPartialResult) {
-    final CaptureResult resultAsCapture=new CaptureResult(result,request,requestId);
-    resultDispatch=new Runnable(){
-      @Override public void run(){
-        if (!CameraDeviceImpl.this.isClosed()) {
-          holder.getListener().onCapturePartial(CameraDeviceImpl.this,request,resultAsCapture);
+    if (isClosed()) {
+      if (DEBUG) {
+        Log.d(TAG,"camera is closed, early return at frame " + resultExtras.getFrameNumber());
+      }
+      return;
+    }
+    final CaptureRequest request=holder.getRequest(resultExtras.getSubsequenceId());
+    Runnable resultDispatch=null;
+    if (quirkIsPartialResult) {
+      final CaptureResult resultAsCapture=new CaptureResult(result,request,requestId);
+      resultDispatch=new Runnable(){
+        @Override public void run(){
+          if (!CameraDeviceImpl.this.isClosed()) {
+            holder.getListener().onCapturePartial(CameraDeviceImpl.this,request,resultAsCapture);
+          }
         }
       }
-    }
 ;
-  }
+    }
  else {
-    final TotalCaptureResult resultAsCapture=new TotalCaptureResult(result,request,requestId);
-    resultDispatch=new Runnable(){
-      @Override public void run(){
-        if (!CameraDeviceImpl.this.isClosed()) {
-          holder.getListener().onCaptureCompleted(CameraDeviceImpl.this,request,resultAsCapture);
+      final TotalCaptureResult resultAsCapture=new TotalCaptureResult(result,request,requestId);
+      resultDispatch=new Runnable(){
+        @Override public void run(){
+          if (!CameraDeviceImpl.this.isClosed()) {
+            holder.getListener().onCaptureCompleted(CameraDeviceImpl.this,request,resultAsCapture);
+          }
         }
       }
-    }
 ;
+    }
+    holder.getHandler().post(resultDispatch);
+    if (!quirkIsPartialResult) {
+      checkAndFireSequenceComplete();
+    }
   }
-  holder.getHandler().post(resultDispatch);
-  if (!quirkIsPartialResult) {
-    checkAndFireSequenceComplete();
-  }
-}
+ }
