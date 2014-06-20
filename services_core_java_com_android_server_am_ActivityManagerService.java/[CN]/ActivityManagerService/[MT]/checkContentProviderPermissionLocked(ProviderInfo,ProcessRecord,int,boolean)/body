@@ -1,20 +1,14 @@
 {
   final int callingPid=(r != null) ? r.pid : Binder.getCallingPid();
   final int callingUid=(r != null) ? r.uid : Binder.getCallingUid();
-  final ArrayMap<GrantUri,UriPermission> perms=mGrantedUriPermissions.get(callingUid);
-  if (userId != UserHandle.getUserId(callingUid)) {
-    if (perms != null) {
-      for (      GrantUri grantUri : perms.keySet()) {
-        if (grantUri.sourceUserId == userId) {
-          String authority=grantUri.uri.getAuthority();
-          if (authority.equals(cpi.authority)) {
-            return null;
-          }
-        }
-      }
-    }
-  }
+  boolean checkedGrants=false;
   if (checkUser) {
+    if (UserHandle.getUserId(callingUid) != userId) {
+      if (checkAuthorityGrants(callingUid,cpi,userId,checkUser)) {
+        return null;
+      }
+      checkedGrants=true;
+    }
     userId=handleIncomingUser(callingPid,callingUid,userId,false,true,"checkContentProviderPermissionLocked " + cpi.authority,null);
   }
   if (checkComponentPermission(cpi.readPermission,callingPid,callingUid,cpi.applicationInfo.uid,cpi.exported) == PackageManager.PERMISSION_GRANTED) {
@@ -29,20 +23,18 @@
     while (i > 0) {
       i--;
       PathPermission pp=pps[i];
-      if (checkComponentPermission(pp.getReadPermission(),callingPid,callingUid,cpi.applicationInfo.uid,cpi.exported) == PackageManager.PERMISSION_GRANTED) {
+      String pprperm=pp.getReadPermission();
+      if (pprperm != null && checkComponentPermission(pprperm,callingPid,callingUid,cpi.applicationInfo.uid,cpi.exported) == PackageManager.PERMISSION_GRANTED) {
         return null;
       }
-      if (checkComponentPermission(pp.getWritePermission(),callingPid,callingUid,cpi.applicationInfo.uid,cpi.exported) == PackageManager.PERMISSION_GRANTED) {
+      String ppwperm=pp.getWritePermission();
+      if (ppwperm != null && checkComponentPermission(ppwperm,callingPid,callingUid,cpi.applicationInfo.uid,cpi.exported) == PackageManager.PERMISSION_GRANTED) {
         return null;
       }
     }
   }
-  if (perms != null) {
-    for (    GrantUri grantUri : perms.keySet()) {
-      if (grantUri.uri.getAuthority().equals(cpi.authority)) {
-        return null;
-      }
-    }
+  if (!checkedGrants && checkAuthorityGrants(callingUid,cpi,userId,checkUser)) {
+    return null;
   }
   String msg;
   if (!cpi.exported) {
