@@ -5,16 +5,28 @@
   mStoredIncrementalVersion=null;
   mStoredHomeComponent=null;
   mStoredHomeVersion=0;
-  mStoredHomeSigs=null;
+  mStoredHomeSigHashes=null;
   FileInputStream instream=new FileInputStream(stateFile.getFileDescriptor());
   BufferedInputStream inbuffer=new BufferedInputStream(instream);
   DataInputStream in=new DataInputStream(inbuffer);
   try {
+    boolean ignoreExisting=false;
     String pkg=in.readUTF();
+    if (pkg.equals(STATE_FILE_HEADER)) {
+      int stateVersion=in.readInt();
+      if (stateVersion > STATE_FILE_VERSION) {
+        Slog.w(TAG,"Unsupported state file version " + stateVersion + ", redoing from start");
+        return;
+      }
+    }
+ else {
+      Slog.i(TAG,"Older version of saved state - rewriting");
+      ignoreExisting=true;
+    }
     if (pkg.equals(DEFAULT_HOME_KEY)) {
       mStoredHomeComponent=ComponentName.unflattenFromString(in.readUTF());
       mStoredHomeVersion=in.readLong();
-      mStoredHomeSigs=readSignatureArray(in);
+      mStoredHomeSigHashes=readSignatureHashArray(in);
       pkg=in.readUTF();
     }
  else {
@@ -22,7 +34,9 @@
     if (pkg.equals(GLOBAL_METADATA_KEY)) {
       mStoredSdkVersion=in.readInt();
       mStoredIncrementalVersion=in.readUTF();
-      mExisting.add(GLOBAL_METADATA_KEY);
+      if (!ignoreExisting) {
+        mExisting.add(GLOBAL_METADATA_KEY);
+      }
     }
  else {
       Slog.e(TAG,"No global metadata in state file!");
@@ -31,7 +45,9 @@
     while (true) {
       pkg=in.readUTF();
       int versionCode=in.readInt();
-      mExisting.add(pkg);
+      if (!ignoreExisting) {
+        mExisting.add(pkg);
+      }
       mStateVersions.put(pkg,new Metadata(versionCode,null));
     }
   }
