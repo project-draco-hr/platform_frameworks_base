@@ -1,0 +1,92 @@
+{
+  while (true) {
+    if (Console.Enabled) {
+      Console.log(Constants.Log.App.TaskDataLoader,"[TaskResourceLoader|run|" + Thread.currentThread().getId() + "]");
+    }
+    if (mCancelled) {
+      if (Console.Enabled) {
+        Console.log(Constants.Log.App.TaskDataLoader,"[TaskResourceLoader|cancel|" + Thread.currentThread().getId() + "]");
+      }
+      mContext=null;
+synchronized (mLoadThread) {
+        try {
+          if (Console.Enabled) {
+            Console.log(Constants.Log.App.TaskDataLoader,"[TaskResourceLoader|waitOnLoadThreadCancelled]");
+          }
+          mLoadThread.wait();
+        }
+ catch (        InterruptedException ie) {
+          ie.printStackTrace();
+        }
+      }
+    }
+ else {
+      SystemServicesProxy ssp=mSystemServicesProxy;
+      Pair<Task,Boolean> nextTaskData=mLoadQueue.nextTask();
+      final Task t=nextTaskData.first;
+      final boolean forceLoadTask=nextTaskData.second;
+      if (t != null) {
+        Drawable loadIcon=mApplicationIconCache.getCheckLastActiveTime(t.key);
+        Bitmap loadThumbnail=mThumbnailCache.getCheckLastActiveTime(t.key);
+        if (Console.Enabled) {
+          Console.log(Constants.Log.App.TaskDataLoader,"  [TaskResourceLoader|load]",t + " icon: " + loadIcon+ " thumbnail: "+ loadThumbnail+ " forceLoad: "+ forceLoadTask);
+        }
+        if (loadIcon == null || forceLoadTask) {
+          ActivityInfo info=ssp.getActivityInfo(t.key.baseIntent.getComponent(),t.userId);
+          Drawable icon=ssp.getActivityIcon(info,t.userId);
+          if (!mCancelled) {
+            if (icon != null) {
+              if (Console.Enabled) {
+                Console.log(Constants.Log.App.TaskDataLoader,"    [TaskResourceLoader|loadIcon]",icon);
+              }
+              loadIcon=icon;
+              mApplicationIconCache.put(t.key,icon);
+            }
+          }
+        }
+        if (loadThumbnail == null || forceLoadTask) {
+          Bitmap thumbnail=ssp.getTaskThumbnail(t.key.id);
+          if (!mCancelled) {
+            if (thumbnail != null) {
+              if (Console.Enabled) {
+                Console.log(Constants.Log.App.TaskDataLoader,"    [TaskResourceLoader|loadThumbnail]",thumbnail);
+              }
+              thumbnail.setHasAlpha(false);
+              loadThumbnail=thumbnail;
+              mThumbnailCache.put(t.key,thumbnail);
+            }
+ else {
+              loadThumbnail=mDefaultThumbnail;
+              Console.logError(mContext,"Failed to load task top thumbnail for: " + t.key.baseIntent.getComponent().getPackageName());
+            }
+          }
+        }
+        if (!mCancelled) {
+          final Drawable newIcon=loadIcon;
+          final Bitmap newThumbnail=loadThumbnail;
+          mMainThreadHandler.post(new Runnable(){
+            @Override public void run(){
+              t.notifyTaskDataLoaded(newThumbnail,newIcon,forceLoadTask);
+            }
+          }
+);
+        }
+      }
+      if (!mCancelled && mLoadQueue.isEmpty()) {
+synchronized (mLoadQueue) {
+          try {
+            if (Console.Enabled) {
+              Console.log(Constants.Log.App.TaskDataLoader,"[TaskResourceLoader|waitOnLoadQueue]");
+            }
+            mWaitingOnLoadQueue=true;
+            mLoadQueue.wait();
+            mWaitingOnLoadQueue=false;
+          }
+ catch (          InterruptedException ie) {
+            ie.printStackTrace();
+          }
+        }
+      }
+    }
+  }
+}
