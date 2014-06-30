@@ -7,22 +7,28 @@
  catch (  RemoteException e) {
     return;
   }
-  final HashMap<NetworkIdentity,String> networks=Maps.newHashMap();
+  final boolean powerSave=mRestrictPower && !mRestrictBackground;
+  final ArrayMap<NetworkIdentity,String> networks=new ArrayMap();
+  final ArraySet<String> connIfaces=new ArraySet<String>();
   for (  NetworkState state : states) {
     if (state.networkInfo.isConnected()) {
       final String iface=state.linkProperties.getInterfaceName();
       final NetworkIdentity ident=NetworkIdentity.buildNetworkIdentity(mContext,state);
       networks.put(ident,iface);
+      if (powerSave) {
+        connIfaces.add(iface);
+      }
     }
   }
   mNetworkRules.clear();
   final ArrayList<String> ifaceList=Lists.newArrayList();
-  for (  NetworkPolicy policy : mNetworkPolicy.values()) {
+  for (int i=mNetworkPolicy.size() - 1; i >= 0; i--) {
+    final NetworkPolicy policy=mNetworkPolicy.valueAt(i);
     ifaceList.clear();
-    for (    Map.Entry<NetworkIdentity,String> entry : networks.entrySet()) {
-      final NetworkIdentity ident=entry.getKey();
+    for (int j=networks.size() - 1; j >= 0; j--) {
+      final NetworkIdentity ident=networks.keyAt(j);
       if (policy.template.matches(ident)) {
-        final String iface=entry.getValue();
+        final String iface=networks.valueAt(j);
         ifaceList.add(iface);
       }
     }
@@ -34,8 +40,9 @@
   long lowestRule=Long.MAX_VALUE;
   final HashSet<String> newMeteredIfaces=Sets.newHashSet();
   final long currentTime=currentTimeMillis();
-  for (  NetworkPolicy policy : mNetworkRules.keySet()) {
-    final String[] ifaces=mNetworkRules.get(policy);
+  for (int i=mNetworkRules.size() - 1; i >= 0; i--) {
+    final NetworkPolicy policy=mNetworkRules.keyAt(i);
+    final String[] ifaces=mNetworkRules.valueAt(i);
     final long start;
     final long totalBytes;
     if (policy.hasCycle()) {
@@ -69,6 +76,9 @@
         removeInterfaceQuota(iface);
         setInterfaceQuota(iface,quotaBytes);
         newMeteredIfaces.add(iface);
+        if (powerSave) {
+          connIfaces.remove(iface);
+        }
       }
     }
     if (hasWarning && policy.warningBytes < lowestRule) {
@@ -77,6 +87,12 @@
     if (hasLimit && policy.limitBytes < lowestRule) {
       lowestRule=policy.limitBytes;
     }
+  }
+  for (int i=connIfaces.size() - 1; i >= 0; i--) {
+    String iface=connIfaces.valueAt(i);
+    removeInterfaceQuota(iface);
+    setInterfaceQuota(iface,Long.MAX_VALUE);
+    newMeteredIfaces.add(iface);
   }
   mHandler.obtainMessage(MSG_ADVISE_PERSIST_THRESHOLD,lowestRule).sendToTarget();
   for (  String iface : mMeteredIfaces) {

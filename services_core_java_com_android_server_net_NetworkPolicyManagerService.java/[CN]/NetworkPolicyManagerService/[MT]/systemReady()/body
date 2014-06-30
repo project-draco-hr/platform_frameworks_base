@@ -3,10 +3,37 @@
     Slog.w(TAG,"bandwidth controls disabled, unable to enforce policy");
     return;
   }
+  final PackageManager pm=mContext.getPackageManager();
 synchronized (mRulesLock) {
+    SystemConfig sysConfig=SystemConfig.getInstance();
+    ArraySet<String> allowPower=sysConfig.getAllowInPowerSave();
+    for (int i=0; i < allowPower.size(); i++) {
+      String pkg=allowPower.valueAt(i);
+      try {
+        ApplicationInfo ai=pm.getApplicationInfo(pkg,0);
+        if ((ai.flags & ApplicationInfo.FLAG_SYSTEM) != 0) {
+          mPowerSaveWhitelistAppIds.put(UserHandle.getAppId(ai.uid),true);
+        }
+      }
+ catch (      PackageManager.NameNotFoundException e) {
+      }
+    }
+    mPowerManagerInternal=LocalServices.getService(PowerManagerInternal.class);
+    mPowerManagerInternal.registerLowPowerModeObserver(new PowerManagerInternal.LowPowerModeListener(){
+      @Override public void onLowPowerModeChanged(      boolean enabled){
+synchronized (mRulesLock) {
+          if (mRestrictPower != enabled) {
+            mRestrictPower=enabled;
+            updateRulesForGlobalChangeLocked(true);
+          }
+        }
+      }
+    }
+);
+    mRestrictPower=mPowerManagerInternal.getLowPowerModeEnabled();
     readPolicyLocked();
-    if (mRestrictBackground) {
-      updateRulesForRestrictBackgroundLocked();
+    if (mRestrictBackground || mRestrictPower) {
+      updateRulesForGlobalChangeLocked(true);
       updateNotificationsLocked();
     }
   }
