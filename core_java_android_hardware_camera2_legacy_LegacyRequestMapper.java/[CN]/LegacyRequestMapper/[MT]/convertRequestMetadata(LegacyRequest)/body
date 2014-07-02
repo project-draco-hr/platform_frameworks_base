@@ -1,0 +1,82 @@
+{
+  CameraCharacteristics characteristics=legacyRequest.characteristics;
+  CaptureRequest request=legacyRequest.captureRequest;
+  Size previewSize=legacyRequest.previewSize;
+  Camera.Parameters params=legacyRequest.parameters;
+{
+    Rect activeArraySize=characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE);
+    Rect activeArraySizeOnly=new Rect(0,0,activeArraySize.width(),activeArraySize.height());
+    Rect userCropRegion=request.get(SCALER_CROP_REGION);
+    if (userCropRegion == null) {
+      userCropRegion=activeArraySizeOnly;
+    }
+    if (VERBOSE) {
+      Log.v(TAG,"convertRequestToMetadata - user crop region was " + userCropRegion);
+    }
+    Rect reportedCropRegion=new Rect();
+    Rect previewCropRegion=new Rect();
+    int zoomIndex=ParameterUtils.getClosestAvailableZoomCrop(params,activeArraySizeOnly,previewSize,userCropRegion,reportedCropRegion,previewCropRegion);
+    if (VERBOSE) {
+      Log.v(TAG,"convertRequestToMetadata - zoom calculated to: " + "zoomIndex = " + zoomIndex + ", reported crop region = "+ reportedCropRegion+ ", preview crop region = "+ previewCropRegion);
+    }
+    if (params.isZoomSupported()) {
+      params.setZoom(zoomIndex);
+    }
+ else     if (VERBOSE) {
+      Log.v(TAG,"convertRequestToMetadata - zoom is not supported");
+    }
+  }
+{
+    String legacyMode;
+    Integer antiBandingMode=request.get(CONTROL_AE_ANTIBANDING_MODE);
+    if (antiBandingMode != null) {
+      legacyMode=convertAeAntiBandingModeToLegacy(antiBandingMode);
+    }
+ else {
+      legacyMode=ListUtils.listSelectFirstFrom(params.getSupportedAntibanding(),new String[]{Parameters.ANTIBANDING_AUTO,Parameters.ANTIBANDING_OFF,Parameters.ANTIBANDING_50HZ,Parameters.ANTIBANDING_60HZ});
+    }
+    if (legacyMode != null) {
+      params.setAntibanding(legacyMode);
+    }
+  }
+{
+    MeteringRectangle[] aeRegions=request.get(CONTROL_AE_REGIONS);
+    int maxNumMeteringAreas=params.getMaxNumMeteringAreas();
+    if (aeRegions != null && maxNumMeteringAreas > 0) {
+      List<MeteringRectangle> meteringRectangleList=new ArrayList<>();
+      for (      MeteringRectangle rect : aeRegions) {
+        if (rect.getMeteringWeight() != MeteringRectangle.METERING_WEIGHT_DONT_CARE) {
+          meteringRectangleList.add(rect);
+        }
+      }
+      int countMeteringAreas=Math.min(maxNumMeteringAreas,meteringRectangleList.size());
+      List<Camera.Area> meteringAreaList=new ArrayList<>(countMeteringAreas);
+      Rect activeArray=characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE);
+      for (int i=0; i < countMeteringAreas; ++i) {
+        MeteringRectangle rect=meteringRectangleList.get(i);
+        Camera.Area area=convertMeteringRectangleToLegacy(activeArray,rect);
+        meteringAreaList.add(area);
+      }
+      params.setMeteringAreas(meteringAreaList);
+      if (maxNumMeteringAreas < meteringRectangleList.size()) {
+        Log.w(TAG,"convertRequestToMetadata - Too many requested AE regions, " + "ignoring all beyond the first " + maxNumMeteringAreas);
+      }
+    }
+ else {
+      if (maxNumMeteringAreas > 0) {
+        params.setMeteringAreas(Arrays.asList(CAMERA_AREA_DEFAULT));
+      }
+ else {
+        params.setMeteringAreas(null);
+      }
+    }
+  }
+  Range<Integer> aeFpsRange=request.get(CONTROL_AE_TARGET_FPS_RANGE);
+  if (aeFpsRange != null) {
+    int[] legacyFps=convertAeFpsRangeToLegacy(aeFpsRange);
+    params.setPreviewFpsRange(legacyFps[Parameters.PREVIEW_FPS_MIN_INDEX],legacyFps[Parameters.PREVIEW_FPS_MAX_INDEX]);
+  }
+  mapAeAndFlashMode(request,params);
+  Boolean awbLock=request.get(CONTROL_AWB_LOCK);
+  params.setAutoWhiteBalanceLock(awbLock == null ? false : awbLock);
+}
