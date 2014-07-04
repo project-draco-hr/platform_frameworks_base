@@ -38,30 +38,52 @@
       return ret;
     }
   }
-  String[] abiList=(abiOverride != null) ? new String[]{abiOverride} : Build.SUPPORTED_ABIS;
+  final File libraryRoot=new File(codeFile,LIB_DIR_NAME);
   NativeLibraryHelper.Handle handle=null;
   try {
     handle=NativeLibraryHelper.Handle.create(codeFile);
-    if (Build.SUPPORTED_64_BIT_ABIS.length > 0 && abiOverride == null && NativeLibraryHelper.hasRenderscriptBitcode(handle)) {
-      abiList=Build.SUPPORTED_32_BIT_ABIS;
+    if (multiArch) {
+      if (abiOverride != null) {
+        Slog.w(TAG,"Ignoring abiOverride for multi arch application.");
+      }
+      int copyRet=PackageManager.NO_NATIVE_LIBRARIES;
+      if (Build.SUPPORTED_32_BIT_ABIS.length > 0) {
+        copyRet=copyNativeLibrariesForInternalApp(handle,libraryRoot,Build.SUPPORTED_32_BIT_ABIS,true);
+        if (copyRet < 0 && copyRet != PackageManager.NO_NATIVE_LIBRARIES) {
+          Slog.w(TAG,"Failure copying 32 bit native libraries [errorCode=" + copyRet + "]");
+          return copyRet;
+        }
+      }
+      if (DEBUG_ABI_SELECTION && copyRet >= 0) {
+        Log.d(TAG,"Installed 32 bit libraries under: " + codeFile + " abi="+ Build.SUPPORTED_32_BIT_ABIS[copyRet]);
+      }
+      if (Build.SUPPORTED_64_BIT_ABIS.length > 0) {
+        copyRet=copyNativeLibrariesForInternalApp(handle,libraryRoot,Build.SUPPORTED_64_BIT_ABIS,true);
+        if (copyRet < 0 && copyRet != PackageManager.NO_NATIVE_LIBRARIES) {
+          Slog.w(TAG,"Failure copying 64 bit native libraries [errorCode=" + copyRet + "]");
+          return copyRet;
+        }
+      }
+      if (DEBUG_ABI_SELECTION && copyRet >= 0) {
+        Log.d(TAG,"Installed 64 bit libraries under: " + codeFile + " abi="+ Build.SUPPORTED_64_BIT_ABIS[copyRet]);
+      }
     }
-    final int abiIndex=NativeLibraryHelper.findSupportedAbi(handle,abiList);
-    if (abiIndex < 0 && abiIndex != PackageManager.NO_NATIVE_LIBRARIES) {
-      return abiIndex;
-    }
- else     if (abiIndex >= 0) {
-      final File baseLibFile=new File(codeFile,LIB_DIR_NAME);
-      baseLibFile.mkdir();
-      Os.chmod(baseLibFile.getAbsolutePath(),0755);
-      final String abi=Build.SUPPORTED_ABIS[abiIndex];
-      final String instructionSet=VMRuntime.getInstructionSet(abi);
-      nativeLibraryFile=new File(baseLibFile,instructionSet);
-      nativeLibraryFile.mkdir();
-      Os.chmod(nativeLibraryFile.getAbsolutePath(),0755);
-      copyNativeLibrariesForInternalApp(handle,nativeLibraryFile,abiList);
+ else {
+      String[] abiList=(abiOverride != null) ? new String[]{abiOverride} : Build.SUPPORTED_ABIS;
+      if (Build.SUPPORTED_64_BIT_ABIS.length > 0 && abiOverride == null && NativeLibraryHelper.hasRenderscriptBitcode(handle)) {
+        abiList=Build.SUPPORTED_32_BIT_ABIS;
+      }
+      int copyRet=copyNativeLibrariesForInternalApp(handle,libraryRoot,abiList,true);
+      if (copyRet < 0 && copyRet != PackageManager.NO_NATIVE_LIBRARIES) {
+        Slog.w(TAG,"Failure copying native libraries [errorCode=" + copyRet + "]");
+        return copyRet;
+      }
+      if (DEBUG_ABI_SELECTION && copyRet >= 0) {
+        Log.d(TAG,"Installed libraries under: " + codeFile + " abi="+ abiList[copyRet]);
+      }
     }
   }
- catch (  IOException|ErrnoException e) {
+ catch (  IOException e) {
     Slog.e(TAG,"Copying native libraries failed",e);
     ret=PackageManager.INSTALL_FAILED_INTERNAL_ERROR;
   }

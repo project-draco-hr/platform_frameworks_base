@@ -110,7 +110,7 @@ synchronized (mPackages) {
     if (mTransferedPackages.contains(pkg.packageName)) {
       Slog.w(TAG,"Package " + pkg.packageName + " was transferred to another, but its .apk remains");
     }
-    pkgSetting=mSettings.getPackageLPw(pkg,origPackage,realName,suid,destCodeFile,destResourceFile,pkg.applicationInfo.nativeLibraryDir,pkg.applicationInfo.cpuAbi,pkg.applicationInfo.flags,user,false);
+    pkgSetting=mSettings.getPackageLPw(pkg,origPackage,realName,suid,destCodeFile,destResourceFile,pkg.applicationInfo.legacyNativeLibraryDir,pkg.applicationInfo.primaryCpuAbi,pkg.applicationInfo.secondaryCpuAbi,pkg.applicationInfo.flags,user,false);
     if (pkgSetting == null) {
       Slog.w(TAG,"Creating application package " + pkg.packageName + " failed");
       mLastScanError=PackageManager.INSTALL_FAILED_INSUFFICIENT_STORAGE;
@@ -254,6 +254,7 @@ synchronized (mPackages) {
         if (!recovered) {
           pkg.applicationInfo.dataDir="/mismatched_uid/settings_" + pkg.applicationInfo.uid + "/fs_"+ currentUid;
           pkg.applicationInfo.nativeLibraryDir=pkg.applicationInfo.dataDir;
+          pkg.applicationInfo.legacyNativeLibraryDir=pkg.applicationInfo.dataDir;
           String msg="Package " + pkg.packageName + " has mismatched uid: "+ currentUid+ " on disk, "+ pkg.applicationInfo.uid+ " in settings";
 synchronized (mPackages) {
             mSettings.mReadMessages.append(msg);
@@ -277,6 +278,7 @@ synchronized (mPackages) {
       }
       int ret=createDataDirsLI(pkgName,pkg.applicationInfo.uid,pkg.applicationInfo.seinfo);
       if (ret < 0) {
+        Slog.w(TAG,"Unable to create data dirs [errorCode=" + ret + "]");
         mLastScanError=PackageManager.INSTALL_FAILED_INSUFFICIENT_STORAGE;
         return null;
       }
@@ -288,104 +290,98 @@ synchronized (mPackages) {
         pkg.applicationInfo.dataDir=null;
       }
     }
-    if (pkg.applicationInfo.nativeLibraryDir == null && pkg.applicationInfo.dataDir != null) {
-      if (pkgSetting.nativeLibraryPathString == null) {
-        setInternalAppNativeLibraryPath(pkg,pkgSetting);
-      }
- else {
-        pkg.applicationInfo.nativeLibraryDir=pkgSetting.nativeLibraryPathString;
-      }
-    }
     pkgSetting.uidError=uidError;
   }
   final String path=scanFile.getPath();
-  if (pkg.applicationInfo.nativeLibraryDir != null) {
+  final String codePath=pkg.applicationInfo.getCodePath();
+  if (isSystemApp(pkg) && !isUpdatedSystemApp(pkg)) {
+    NativeLibraryHelper.removeNativeBinariesFromDirLI(new File(codePath,LIB_DIR_NAME),false);
+    setBundledAppAbisAndRoots(pkg,pkgSetting);
+  }
+ else {
+    final boolean isAsec=isForwardLocked(pkg) || isExternal(pkg);
+    final String nativeLibraryRootStr;
+    final boolean useIsaSpecificSubdirs;
+    if (pkg.applicationInfo.legacyNativeLibraryDir != null) {
+      nativeLibraryRootStr=pkg.applicationInfo.legacyNativeLibraryDir;
+      useIsaSpecificSubdirs=false;
+    }
+ else {
+      nativeLibraryRootStr=new File(pkg.codePath,LIB_DIR_NAME).getAbsolutePath();
+      useIsaSpecificSubdirs=true;
+    }
     NativeLibraryHelper.Handle handle=null;
     try {
       handle=NativeLibraryHelper.Handle.create(scanFile);
-      String[] abiList=Build.SUPPORTED_ABIS;
-      boolean hasLegacyRenderscriptBitcode=false;
-      if (abiOverride != null) {
-        abiList=new String[]{abiOverride};
-      }
- else       if (Build.SUPPORTED_64_BIT_ABIS.length > 0 && NativeLibraryHelper.hasRenderscriptBitcode(handle)) {
-        abiList=Build.SUPPORTED_32_BIT_ABIS;
-        hasLegacyRenderscriptBitcode=true;
-      }
-      File nativeLibraryDir=new File(pkg.applicationInfo.nativeLibraryDir);
-      final String dataPathString=dataPath.getCanonicalPath();
-      if (isSystemApp(pkg) && !isUpdatedSystemApp(pkg)) {
-        if (NativeLibraryHelper.removeNativeBinariesFromDirLI(nativeLibraryDir)) {
-          Log.i(TAG,"removed obsolete native libraries for system package " + path);
+      final File nativeLibraryRoot=new File(nativeLibraryRootStr);
+      pkg.applicationInfo.primaryCpuAbi=null;
+      pkg.applicationInfo.secondaryCpuAbi=null;
+      if (isMultiArch(pkg.applicationInfo)) {
+        if (abiOverride != null) {
+          Slog.w(TAG,"Ignoring abiOverride for multi arch application.");
         }
-        if (abiOverride != null || hasLegacyRenderscriptBitcode) {
-          pkg.applicationInfo.cpuAbi=abiList[0];
-          pkgSetting.cpuAbiString=abiList[0];
-        }
- else {
-          setInternalAppAbi(pkg,pkgSetting);
-        }
-      }
- else {
-        if (!isForwardLocked(pkg) && !isExternal(pkg)) {
-          if (nativeLibraryDir.getPath().startsWith(dataPathString)) {
-            setInternalAppNativeLibraryPath(pkg,pkgSetting);
-            nativeLibraryDir=new File(pkg.applicationInfo.nativeLibraryDir);
+        int abi32=PackageManager.NO_NATIVE_LIBRARIES;
+        int abi64=PackageManager.NO_NATIVE_LIBRARIES;
+        if (Build.SUPPORTED_32_BIT_ABIS.length > 0) {
+          if (isAsec) {
+            abi32=NativeLibraryHelper.findSupportedAbi(handle,Build.SUPPORTED_32_BIT_ABIS);
           }
-          try {
-            int copyRet=copyNativeLibrariesForInternalApp(handle,nativeLibraryDir,abiList);
-            if (copyRet < 0 && copyRet != PackageManager.NO_NATIVE_LIBRARIES) {
-              Slog.e(TAG,"Unable to copy native libraries");
-              mLastScanError=PackageManager.INSTALL_FAILED_INTERNAL_ERROR;
-              return null;
-            }
-            if (copyRet != PackageManager.NO_NATIVE_LIBRARIES) {
-              pkg.applicationInfo.cpuAbi=abiList[copyRet];
-            }
- else             if (abiOverride != null || hasLegacyRenderscriptBitcode) {
-              pkg.applicationInfo.cpuAbi=abiList[0];
-            }
  else {
-              pkg.applicationInfo.cpuAbi=null;
-            }
-          }
- catch (          IOException e) {
-            Slog.e(TAG,"Unable to copy native libraries",e);
-            mLastScanError=PackageManager.INSTALL_FAILED_INTERNAL_ERROR;
-            return null;
+            abi32=copyNativeLibrariesForInternalApp(handle,nativeLibraryRoot,Build.SUPPORTED_32_BIT_ABIS,useIsaSpecificSubdirs);
           }
         }
- else {
-          final int abi=NativeLibraryHelper.findSupportedAbi(handle,abiList);
-          if (abi >= 0) {
-            pkg.applicationInfo.cpuAbi=abiList[abi];
-          }
- else           if (abi == PackageManager.NO_NATIVE_LIBRARIES) {
-            if (abiOverride != null || hasLegacyRenderscriptBitcode) {
-              pkg.applicationInfo.cpuAbi=abiList[0];
-            }
- else {
-              pkg.applicationInfo.cpuAbi=null;
-            }
+        if (abi32 < 0 && abi32 != PackageManager.NO_NATIVE_LIBRARIES) {
+          Slog.w(TAG,"Error unpackaging 32 bit native libs for multiarch app, errorCode=" + abi32);
+          mLastScanError=PackageManager.INSTALL_FAILED_INTERNAL_ERROR;
+          return null;
+        }
+        if (Build.SUPPORTED_64_BIT_ABIS.length > 0) {
+          if (isAsec) {
+            abi64=NativeLibraryHelper.findSupportedAbi(handle,Build.SUPPORTED_64_BIT_ABIS);
           }
  else {
-            mLastScanError=PackageManager.INSTALL_FAILED_INTERNAL_ERROR;
-            return null;
+            abi64=copyNativeLibrariesForInternalApp(handle,nativeLibraryRoot,Build.SUPPORTED_64_BIT_ABIS,useIsaSpecificSubdirs);
           }
         }
-        if (DEBUG_INSTALL)         Slog.i(TAG,"Linking native library dir for " + path);
-        final int[] userIds=sUserManager.getUserIds();
-synchronized (mInstallLock) {
-          for (          int userId : userIds) {
-            if (mInstaller.linkNativeLibraryDirectory(pkg.packageName,pkg.applicationInfo.nativeLibraryDir,userId) < 0) {
-              Slog.w(TAG,"Failed linking native library dir (user=" + userId + ")");
-              mLastScanError=PackageManager.INSTALL_FAILED_INTERNAL_ERROR;
-              return null;
-            }
+        if (abi64 < 0 && abi64 != PackageManager.NO_NATIVE_LIBRARIES) {
+          Slog.w(TAG,"Error unpackaging 64 bit native libs for multiarch app, errorCode=" + abi32);
+          mLastScanError=PackageManager.INSTALL_FAILED_INTERNAL_ERROR;
+          return null;
+        }
+        if (abi64 >= 0) {
+          pkg.applicationInfo.primaryCpuAbi=Build.SUPPORTED_64_BIT_ABIS[abi64];
+        }
+        if (abi32 >= 0) {
+          final String abi=Build.SUPPORTED_32_BIT_ABIS[abi32];
+          if (abi64 >= 0) {
+            pkg.applicationInfo.secondaryCpuAbi=abi;
+          }
+ else {
+            pkg.applicationInfo.primaryCpuAbi=abi;
           }
         }
       }
-      pkgSetting.cpuAbiString=pkg.applicationInfo.cpuAbi;
+ else {
+        String[] abiList=(abiOverride != null) ? new String[]{abiOverride} : Build.SUPPORTED_ABIS;
+        if (Build.SUPPORTED_64_BIT_ABIS.length > 0 && abiOverride == null && NativeLibraryHelper.hasRenderscriptBitcode(handle)) {
+          abiList=Build.SUPPORTED_32_BIT_ABIS;
+        }
+        final int copyRet;
+        if (isAsec) {
+          copyRet=NativeLibraryHelper.findSupportedAbi(handle,abiList);
+        }
+ else {
+          copyRet=copyNativeLibrariesForInternalApp(handle,nativeLibraryRoot,abiList,useIsaSpecificSubdirs);
+        }
+        if (copyRet < 0 && copyRet != PackageManager.NO_NATIVE_LIBRARIES) {
+          Slog.w(TAG,"Error unpackaging native libs for app, errorCode=" + copyRet);
+          mLastScanError=PackageManager.INSTALL_FAILED_INTERNAL_ERROR;
+          return null;
+        }
+        if (copyRet >= 0) {
+          pkg.applicationInfo.primaryCpuAbi=abiList[copyRet];
+        }
+      }
     }
  catch (    IOException ioe) {
       Slog.e(TAG,"Unable to get canonical file " + ioe.toString());
@@ -393,7 +389,34 @@ synchronized (mInstallLock) {
  finally {
       IoUtils.closeQuietly(handle);
     }
+    if (DEBUG_INSTALL)     Slog.i(TAG,"Linking native library dir for " + path);
+    final int[] userIds=sUserManager.getUserIds();
+synchronized (mInstallLock) {
+      if (pkg.applicationInfo.primaryCpuAbi != null && !VMRuntime.is64BitAbi(pkg.applicationInfo.primaryCpuAbi)) {
+        final String nativeLibPath;
+        if (pkg.applicationInfo.legacyNativeLibraryDir != null) {
+          nativeLibPath=pkg.applicationInfo.legacyNativeLibraryDir;
+        }
+ else {
+          nativeLibPath=new File(nativeLibraryRootStr,VMRuntime.getInstructionSet(pkg.applicationInfo.primaryCpuAbi)).getAbsolutePath();
+        }
+        for (        int userId : userIds) {
+          if (mInstaller.linkNativeLibraryDirectory(pkg.packageName,nativeLibPath,userId) < 0) {
+            Slog.w(TAG,"Failed linking native library dir (user=" + userId + ")");
+            mLastScanError=PackageManager.INSTALL_FAILED_INTERNAL_ERROR;
+            return null;
+          }
+        }
+      }
+    }
+    pkgSetting.primaryCpuAbiString=pkg.applicationInfo.primaryCpuAbi;
+    pkgSetting.secondaryCpuAbiString=pkg.applicationInfo.secondaryCpuAbi;
   }
+  if (DEBUG_ABI_SELECTION) {
+    Log.d(TAG,"Abis for package[" + pkg.packageName + "] are"+ " primary="+ pkg.applicationInfo.primaryCpuAbi+ " secondary="+ pkg.applicationInfo.secondaryCpuAbi);
+  }
+  pkg.applicationInfo.legacyNativeLibraryDir=pkgSetting.legacyNativeLibraryPathString;
+  populateDefaultNativeLibraryPath(pkg,pkg.applicationInfo);
   if ((scanMode & SCAN_BOOTING) == 0 && pkgSetting.sharedUser != null) {
     if (!adjustCpuAbisForSharedUserLPw(pkgSetting.sharedUser.packages,pkg,forceDex,(scanMode & SCAN_DEFER_DEX) != 0)) {
       mLastScanError=PackageManager.INSTALL_FAILED_CPU_ABI_INCOMPATIBLE;
