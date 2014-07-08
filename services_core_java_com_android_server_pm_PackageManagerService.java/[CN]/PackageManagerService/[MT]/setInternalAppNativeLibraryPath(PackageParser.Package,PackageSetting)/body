@@ -2,7 +2,7 @@
   final boolean bundledApk=isSystemApp(pkg) && !isUpdatedSystemApp(pkg);
   final File codeFile=new File(pkg.applicationInfo.getCodePath());
   final String apkName=deriveCodePathName(pkg.applicationInfo.getCodePath());
-  final String nativeLibraryPath;
+  String nativeLibraryPath=null;
   if (bundledApk) {
     String apkRoot=calculateApkRoot(pkg.applicationInfo.getCodePath());
     File lib64=new File(apkRoot,LIB64_DIR_NAME);
@@ -11,7 +11,27 @@
     nativeLibraryPath=(new File(libDir,apkName)).getAbsolutePath();
   }
  else {
-    nativeLibraryPath=pkg.applicationInfo.nativeLibraryDir;
+    String[] abiList=Build.SUPPORTED_ABIS;
+    NativeLibraryHelper.Handle handle=null;
+    try {
+      handle=NativeLibraryHelper.Handle.create(codeFile);
+      if (Build.SUPPORTED_64_BIT_ABIS.length > 0 && NativeLibraryHelper.hasRenderscriptBitcode(handle)) {
+        abiList=Build.SUPPORTED_32_BIT_ABIS;
+      }
+      final int abiIndex=NativeLibraryHelper.findSupportedAbi(handle,abiList);
+      if (abiIndex >= 0) {
+        final File baseLibFile=new File(codeFile,LIB_DIR_NAME);
+        final String abi=Build.SUPPORTED_ABIS[abiIndex];
+        final String instructionSet=VMRuntime.getInstructionSet(abi);
+        nativeLibraryPath=new File(baseLibFile,instructionSet).getAbsolutePath();
+      }
+    }
+ catch (    IOException e) {
+      Slog.e(TAG,"Failed to detect native libraries",e);
+    }
+ finally {
+      IoUtils.closeQuietly(handle);
+    }
   }
   pkg.applicationInfo.nativeLibraryDir=nativeLibraryPath;
   if (pkgSetting != null) {
