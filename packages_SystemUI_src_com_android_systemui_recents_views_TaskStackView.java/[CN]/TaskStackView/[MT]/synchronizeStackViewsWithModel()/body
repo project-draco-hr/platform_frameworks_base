@@ -3,41 +3,39 @@
     Console.log(Constants.Log.TaskStack.SynchronizeViewsWithModel,"[TaskStackView|synchronizeViewsWithModel]","mStackViewsDirty: " + mStackViewsDirty,Console.AnsiYellow);
   }
   if (mStackViewsDirty) {
-    int[] visibleRange=mTmpVisibleRange;
-    int stackScroll=getStackScroll();
     ArrayList<Task> tasks=mStack.getTasks();
+    int stackScroll=getStackScroll();
+    int[] visibleRange=mTmpVisibleRange;
     updateStackTransforms(mCurrentTaskTransforms,tasks,stackScroll,visibleRange,false);
-    int taskCount=tasks.size();
-    for (int i=0; i < taskCount; i++) {
-      Task task=tasks.get(i);
-      TaskViewTransform transform=mCurrentTaskTransforms.get(i);
-      TaskView tv=getChildViewForTask(task);
-      if (transform.visible) {
-        if (tv == null) {
-          tv=mViewPool.pickUpViewFromPool(task,task);
-          if (mStackViewsAnimationDuration > 0 && i != 0) {
-            int fromIndex=(transform.t < 0) ? Math.max(0,(visibleRange[1] - 1)) : Math.min(taskCount - 1,(visibleRange[0] + 1));
-            tv.updateViewPropertiesToTaskTransform(mStackAlgorithm.getStackTransform(fromIndex,stackScroll),0);
-          }
-        }
-      }
- else {
-        if (tv != null) {
-          mViewPool.returnViewToPool(tv);
-        }
-      }
-    }
+    TaskViewTransform tmpTransform=new TaskViewTransform();
+    TaskStack.GroupTaskIndex gti=new TaskStack.GroupTaskIndex();
+    HashMap<Task,TaskView> taskChildViewMap=getTaskChildViewMap();
     int childCount=getChildCount();
     for (int i=childCount - 1; i >= 0; i--) {
       TaskView tv=(TaskView)getChildAt(i);
       Task task=tv.getTask();
       int taskIndex=mStack.indexOfTask(task);
-      if (taskIndex < 0 || !mCurrentTaskTransforms.get(taskIndex).visible) {
+      if (taskIndex < visibleRange[1] || taskIndex > visibleRange[0]) {
+        taskChildViewMap.remove(task);
         mViewPool.returnViewToPool(tv);
       }
- else {
-        tv.updateViewPropertiesToTaskTransform(mCurrentTaskTransforms.get(taskIndex),mStackViewsAnimationDuration);
+    }
+    boolean isValidVisibleRange=visibleRange[0] != -1 && visibleRange[1] != -1;
+    for (int i=visibleRange[0]; isValidVisibleRange && i >= visibleRange[1]; i--) {
+      Task task=tasks.get(i);
+      TaskViewTransform transform=mCurrentTaskTransforms.get(i);
+      TaskView tv=taskChildViewMap.get(task);
+      int taskIndex=mStack.indexOfTask(task);
+      if (tv == null) {
+        tv=mViewPool.pickUpViewFromPool(task,task);
+        if (mStackViewsAnimationDuration > 0) {
+          Task fromTask=(transform.t < 0) ? tasks.get(visibleRange[1]) : tasks.get(visibleRange[0]);
+          mStack.getGroupIndexForTask(fromTask,gti);
+          tmpTransform=mStackAlgorithm.getStackTransform((transform.t < 0) ? gti.groupIndex - 1 : gti.groupIndex + 1,(transform.t < 0) ? gti.taskIndex - 1 : gti.taskIndex + 1,stackScroll,tmpTransform);
+          tv.updateViewPropertiesToTaskTransform(tmpTransform,0);
+        }
       }
+      tv.updateViewPropertiesToTaskTransform(mCurrentTaskTransforms.get(taskIndex),mStackViewsAnimationDuration);
     }
     if (Console.Enabled) {
       Console.log(Constants.Log.TaskStack.SynchronizeViewsWithModel,"  [TaskStackView|viewChildren]","" + getChildCount());
