@@ -1,6 +1,8 @@
 {
   final int callingUid=Binder.getCallingUid();
   userId=handleIncomingUser(Binder.getCallingPid(),callingUid,userId,false,ALLOW_FULL_ONLY,"getRecentTasks",null);
+  final boolean includeProfiles=(flags & ActivityManager.RECENT_INCLUDE_PROFILES) != 0;
+  final boolean withExcluded=(flags & ActivityManager.RECENT_WITH_EXCLUDED) != 0;
 synchronized (this) {
     final boolean allowed=checkCallingPermission(android.Manifest.permission.GET_TASKS) == PackageManager.PERMISSION_GRANTED;
     if (!allowed) {
@@ -11,17 +13,59 @@ synchronized (this) {
     final int N=mRecentTasks.size();
     ArrayList<ActivityManager.RecentTaskInfo> res=new ArrayList<ActivityManager.RecentTaskInfo>(maxNum < N ? maxNum : N);
     final Set<Integer> includedUsers;
-    if ((flags & ActivityManager.RECENT_INCLUDE_PROFILES) != 0) {
+    if (includeProfiles) {
       includedUsers=getProfileIdsLocked(userId);
     }
  else {
       includedUsers=new HashSet<Integer>();
     }
     includedUsers.add(Integer.valueOf(userId));
+    for (int i=0; i < N; ) {
+      TaskRecord task=mRecentTasks.remove(i);
+      if (mTmpRecents.contains(task)) {
+        continue;
+      }
+      int affiliatedTaskId=task.mAffiliatedTaskId;
+      while (true) {
+        TaskRecord next=task.mNextAffiliate;
+        if (next == null) {
+          break;
+        }
+        if (next.mAffiliatedTaskId != affiliatedTaskId) {
+          Slog.e(TAG,"Error in Recents: next.affiliatedTaskId=" + next.mAffiliatedTaskId + " affiliatedTaskId="+ affiliatedTaskId);
+          task.setNextAffiliate(null);
+          if (next.mPrevAffiliate == task) {
+            next.setPrevAffiliate(null);
+          }
+          break;
+        }
+        if (next.mPrevAffiliate != task) {
+          Slog.e(TAG,"Error in Recents chain prev.mNextAffiliate=" + next.mPrevAffiliate + " task="+ task);
+          next.setPrevAffiliate(null);
+          break;
+        }
+        if (!mRecentTasks.contains(next)) {
+          Slog.e(TAG,"Error in Recents: next=" + next + " not in mRecentTasks");
+          task.setNextAffiliate(null);
+          if (next.mPrevAffiliate == task) {
+            next.setPrevAffiliate(null);
+          }
+          break;
+        }
+        task=next;
+      }
+      do {
+        mRecentTasks.remove(task);
+        mRecentTasks.add(i++,task);
+        mTmpRecents.add(task);
+      }
+ while ((task=task.mPrevAffiliate) != null);
+    }
+    mTmpRecents.clear();
     for (int i=0; i < N && maxNum > 0; i++) {
       TaskRecord tr=mRecentTasks.get(i);
       if (!includedUsers.contains(Integer.valueOf(tr.userId)))       continue;
-      if (i == 0 || ((flags & ActivityManager.RECENT_WITH_EXCLUDED) != 0) || (tr.intent == null) || ((tr.intent.getFlags() & Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS) == 0)) {
+      if (i == 0 || withExcluded || (tr.intent == null) || ((tr.intent.getFlags() & Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS) == 0)) {
         if (!allowed) {
           if (!tr.isHomeTask() && tr.creatorUid != callingUid) {
             continue;
