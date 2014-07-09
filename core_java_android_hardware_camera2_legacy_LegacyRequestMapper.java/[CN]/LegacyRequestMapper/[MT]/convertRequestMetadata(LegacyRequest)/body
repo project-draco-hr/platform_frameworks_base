@@ -3,24 +3,12 @@
   CaptureRequest request=legacyRequest.captureRequest;
   Size previewSize=legacyRequest.previewSize;
   Camera.Parameters params=legacyRequest.parameters;
+  Rect activeArray=characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE);
+  ParameterUtils.ZoomData zoomData;
 {
-    Rect activeArraySize=characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE);
-    Rect activeArraySizeOnly=new Rect(0,0,activeArraySize.width(),activeArraySize.height());
-    Rect userCropRegion=request.get(SCALER_CROP_REGION);
-    if (userCropRegion == null) {
-      userCropRegion=activeArraySizeOnly;
-    }
-    if (VERBOSE) {
-      Log.v(TAG,"convertRequestToMetadata - user crop region was " + userCropRegion);
-    }
-    Rect reportedCropRegion=new Rect();
-    Rect previewCropRegion=new Rect();
-    int zoomIndex=ParameterUtils.getClosestAvailableZoomCrop(params,activeArraySizeOnly,previewSize,userCropRegion,reportedCropRegion,previewCropRegion);
-    if (VERBOSE) {
-      Log.v(TAG,"convertRequestToMetadata - zoom calculated to: " + "zoomIndex = " + zoomIndex + ", reported crop region = "+ reportedCropRegion+ ", preview crop region = "+ previewCropRegion);
-    }
+    zoomData=ParameterUtils.convertScalerCropRegion(activeArray,request.get(SCALER_CROP_REGION),previewSize,params);
     if (params.isZoomSupported()) {
-      params.setZoom(zoomIndex);
+      params.setZoom(zoomData.zoomIndex);
     }
  else     if (VERBOSE) {
       Log.v(TAG,"convertRequestToMetadata - zoom is not supported");
@@ -40,35 +28,17 @@
     }
   }
 {
-    MeteringRectangle[] aeRegions=request.get(CONTROL_AE_REGIONS);
-    int maxNumMeteringAreas=params.getMaxNumMeteringAreas();
-    if (aeRegions != null && maxNumMeteringAreas > 0) {
-      List<MeteringRectangle> meteringRectangleList=new ArrayList<>();
-      for (      MeteringRectangle rect : aeRegions) {
-        if (rect.getMeteringWeight() != MeteringRectangle.METERING_WEIGHT_DONT_CARE) {
-          meteringRectangleList.add(rect);
-        }
-      }
-      int countMeteringAreas=Math.min(maxNumMeteringAreas,meteringRectangleList.size());
-      List<Camera.Area> meteringAreaList=new ArrayList<>(countMeteringAreas);
-      Rect activeArray=characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE);
-      for (int i=0; i < countMeteringAreas; ++i) {
-        MeteringRectangle rect=meteringRectangleList.get(i);
-        Camera.Area area=convertMeteringRectangleToLegacy(activeArray,rect);
-        meteringAreaList.add(area);
-      }
+{
+      MeteringRectangle[] aeRegions=request.get(CONTROL_AE_REGIONS);
+      int maxNumMeteringAreas=params.getMaxNumMeteringAreas();
+      List<Camera.Area> meteringAreaList=convertMeteringRegionsToLegacy(activeArray,zoomData,aeRegions,maxNumMeteringAreas,"AE");
       params.setMeteringAreas(meteringAreaList);
-      if (maxNumMeteringAreas < meteringRectangleList.size()) {
-        Log.w(TAG,"convertRequestToMetadata - Too many requested AE regions, " + "ignoring all beyond the first " + maxNumMeteringAreas);
-      }
     }
- else {
-      if (maxNumMeteringAreas > 0) {
-        params.setMeteringAreas(Arrays.asList(CAMERA_AREA_DEFAULT));
-      }
- else {
-        params.setMeteringAreas(null);
-      }
+{
+      MeteringRectangle[] afRegions=request.get(CONTROL_AF_REGIONS);
+      int maxNumFocusAreas=params.getMaxNumFocusAreas();
+      List<Camera.Area> focusAreaList=convertMeteringRegionsToLegacy(activeArray,zoomData,afRegions,maxNumFocusAreas,"AF");
+      params.setFocusAreas(focusAreaList);
     }
   }
   Range<Integer> aeFpsRange=request.get(CONTROL_AE_TARGET_FPS_RANGE);
