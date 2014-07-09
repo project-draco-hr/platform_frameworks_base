@@ -70,12 +70,10 @@ synchronized (mPidsSelfLocked) {
       requiredAbi=Build.SUPPORTED_ABIS[0];
     }
     Process.ProcessStartResult startResult=Process.start("android.app.ActivityThread",app.processName,uid,uid,gids,debugFlags,mountExternal,app.info.targetSdkVersion,app.info.seinfo,requiredAbi,null);
-    BatteryStatsImpl bs=mBatteryStatsService.getActiveStatistics();
-synchronized (bs) {
-      if (bs.isOnBattery()) {
-        bs.getProcessStatsLocked(app.uid,app.processName).incStartsLocked();
-      }
+    if (app.isolated) {
+      mBatteryStatsService.addIsolatedUid(app.uid,app.info.uid);
     }
+    mBatteryStatsService.noteProcessStart(app.processName,app.info.uid);
     EventLog.writeEvent(EventLogTags.AM_PROC_START,UserHandle.getUserId(uid),startResult.pid,uid,app.processName,hostingType,hostingNameStr != null ? hostingNameStr : "");
     if (app.persistent) {
       Watchdog.getInstance().processStarted(app.processName,startResult.pid);
@@ -117,13 +115,13 @@ synchronized (mPidsSelfLocked) {
       msg.obj=app;
       mHandler.sendMessageDelayed(msg,startResult.usingWrapper ? PROC_START_TIMEOUT_WITH_WRAPPER : PROC_START_TIMEOUT);
     }
-    mBatteryStatsService.noteEvent(BatteryStats.HistoryItem.EVENT_PROC_START,app.processName,app.info.uid);
-    if (app.isolated) {
-      mBatteryStatsService.addIsolatedUid(app.uid,app.info.uid);
-    }
   }
  catch (  RuntimeException e) {
     app.setPid(0);
+    mBatteryStatsService.noteProcessFinish(app.processName,app.info.uid);
+    if (app.isolated) {
+      mBatteryStatsService.removeIsolatedUid(app.uid,app.info.uid);
+    }
     Slog.e(TAG,"Failure starting process " + app.processName,e);
   }
 }
