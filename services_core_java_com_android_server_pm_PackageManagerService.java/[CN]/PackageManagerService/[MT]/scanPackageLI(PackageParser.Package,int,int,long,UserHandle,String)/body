@@ -110,7 +110,7 @@ synchronized (mPackages) {
     if (mTransferedPackages.contains(pkg.packageName)) {
       Slog.w(TAG,"Package " + pkg.packageName + " was transferred to another, but its .apk remains");
     }
-    pkgSetting=mSettings.getPackageLPw(pkg,origPackage,realName,suid,destCodeFile,destResourceFile,pkg.applicationInfo.legacyNativeLibraryDir,pkg.applicationInfo.primaryCpuAbi,pkg.applicationInfo.secondaryCpuAbi,pkg.applicationInfo.flags,user,false);
+    pkgSetting=mSettings.getPackageLPw(pkg,origPackage,realName,suid,destCodeFile,destResourceFile,pkg.applicationInfo.nativeLibraryRootDir,pkg.applicationInfo.primaryCpuAbi,pkg.applicationInfo.secondaryCpuAbi,pkg.applicationInfo.flags,user,false);
     if (pkgSetting == null) {
       Slog.w(TAG,"Creating application package " + pkg.packageName + " failed");
       mLastScanError=PackageManager.INSTALL_FAILED_INSUFFICIENT_STORAGE;
@@ -254,7 +254,7 @@ synchronized (mPackages) {
         if (!recovered) {
           pkg.applicationInfo.dataDir="/mismatched_uid/settings_" + pkg.applicationInfo.uid + "/fs_"+ currentUid;
           pkg.applicationInfo.nativeLibraryDir=pkg.applicationInfo.dataDir;
-          pkg.applicationInfo.legacyNativeLibraryDir=pkg.applicationInfo.dataDir;
+          pkg.applicationInfo.nativeLibraryRootDir=pkg.applicationInfo.dataDir;
           String msg="Package " + pkg.packageName + " has mismatched uid: "+ currentUid+ " on disk, "+ pkg.applicationInfo.uid+ " in settings";
 synchronized (mPackages) {
             mSettings.mReadMessages.append(msg);
@@ -297,19 +297,13 @@ synchronized (mPackages) {
   if (isSystemApp(pkg) && !isUpdatedSystemApp(pkg)) {
     NativeLibraryHelper.removeNativeBinariesFromDirLI(new File(codePath,LIB_DIR_NAME),false);
     setBundledAppAbisAndRoots(pkg,pkgSetting);
+    setNativeLibraryPaths(pkg);
   }
  else {
+    setNativeLibraryPaths(pkg);
     final boolean isAsec=isForwardLocked(pkg) || isExternal(pkg);
-    final String nativeLibraryRootStr;
-    final boolean useIsaSpecificSubdirs;
-    if (pkg.applicationInfo.legacyNativeLibraryDir != null) {
-      nativeLibraryRootStr=pkg.applicationInfo.legacyNativeLibraryDir;
-      useIsaSpecificSubdirs=false;
-    }
- else {
-      nativeLibraryRootStr=new File(pkg.codePath,LIB_DIR_NAME).getAbsolutePath();
-      useIsaSpecificSubdirs=true;
-    }
+    final String nativeLibraryRootStr=pkg.applicationInfo.nativeLibraryRootDir;
+    final boolean useIsaSpecificSubdirs=pkg.applicationInfo.nativeLibraryRootRequiresIsa;
     NativeLibraryHelper.Handle handle=null;
     try {
       handle=NativeLibraryHelper.Handle.create(scanFile);
@@ -389,17 +383,12 @@ synchronized (mPackages) {
  finally {
       IoUtils.closeQuietly(handle);
     }
+    setNativeLibraryPaths(pkg);
     if (DEBUG_INSTALL)     Slog.i(TAG,"Linking native library dir for " + path);
     final int[] userIds=sUserManager.getUserIds();
 synchronized (mInstallLock) {
       if (pkg.applicationInfo.primaryCpuAbi != null && !VMRuntime.is64BitAbi(pkg.applicationInfo.primaryCpuAbi)) {
-        final String nativeLibPath;
-        if (pkg.applicationInfo.legacyNativeLibraryDir != null) {
-          nativeLibPath=pkg.applicationInfo.legacyNativeLibraryDir;
-        }
- else {
-          nativeLibPath=new File(nativeLibraryRootStr,VMRuntime.getInstructionSet(pkg.applicationInfo.primaryCpuAbi)).getAbsolutePath();
-        }
+        final String nativeLibPath=pkg.applicationInfo.nativeLibraryDir;
         for (        int userId : userIds) {
           if (mInstaller.linkNativeLibraryDirectory(pkg.packageName,nativeLibPath,userId) < 0) {
             Slog.w(TAG,"Failed linking native library dir (user=" + userId + ")");
@@ -412,11 +401,11 @@ synchronized (mInstallLock) {
     pkgSetting.primaryCpuAbiString=pkg.applicationInfo.primaryCpuAbi;
     pkgSetting.secondaryCpuAbiString=pkg.applicationInfo.secondaryCpuAbi;
   }
+  Slog.d(TAG,"Resolved nativeLibraryRoot for " + pkg.applicationInfo.packageName + " to root="+ pkg.applicationInfo.nativeLibraryRootDir+ ", isa="+ pkg.applicationInfo.nativeLibraryRootRequiresIsa);
+  pkgSetting.legacyNativeLibraryPathString=pkg.applicationInfo.nativeLibraryRootDir;
   if (DEBUG_ABI_SELECTION) {
     Log.d(TAG,"Abis for package[" + pkg.packageName + "] are"+ " primary="+ pkg.applicationInfo.primaryCpuAbi+ " secondary="+ pkg.applicationInfo.secondaryCpuAbi);
   }
-  pkg.applicationInfo.legacyNativeLibraryDir=pkgSetting.legacyNativeLibraryPathString;
-  populateDefaultNativeLibraryPath(pkg,pkg.applicationInfo);
   if ((scanMode & SCAN_BOOTING) == 0 && pkgSetting.sharedUser != null) {
     if (!adjustCpuAbisForSharedUserLPw(pkgSetting.sharedUser.packages,pkg,forceDex,(scanMode & SCAN_DEFER_DEX) != 0)) {
       mLastScanError=PackageManager.INSTALL_FAILED_CPU_ABI_INCOMPATIBLE;
