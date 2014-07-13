@@ -12,8 +12,27 @@
   try {
     final NetworkStatsHistory history=mSession.getHistoryForNetwork(template,FIELDS);
     final long now=System.currentTimeMillis();
-    final long start=now - DateUtils.WEEK_IN_MILLIS * 4;
-    final long end=now;
+    final long start, end;
+    if (policy != null && policy.cycleDay > 0) {
+      if (DEBUG)       Log.d(TAG,"Cycle day=" + policy.cycleDay + " tz="+ policy.cycleTimezone);
+      final Time nowTime=new Time(policy.cycleTimezone);
+      nowTime.setToNow();
+      final Time policyTime=new Time(nowTime);
+      policyTime.set(policy.cycleDay,policyTime.month,policyTime.year);
+      policyTime.normalize(false);
+      if (nowTime.after(policyTime)) {
+        start=policyTime.toMillis(false);
+        end=addMonth(policyTime,1).toMillis(false);
+      }
+ else {
+        start=addMonth(policyTime,-1).toMillis(false);
+        end=policyTime.toMillis(false);
+      }
+    }
+ else {
+      end=now;
+      start=now - DateUtils.WEEK_IN_MILLIS * 4;
+    }
     final long callStart=System.currentTimeMillis();
     final NetworkStatsHistory.Entry entry=history.getValues(start,end,now,null);
     final long callEnd=System.currentTimeMillis();
@@ -23,12 +42,14 @@
     }
     final long totalBytes=entry.rxBytes + entry.txBytes;
     final DataUsageInfo usage=new DataUsageInfo();
-    usage.maxLevel=(long)(totalBytes / .4);
     usage.usageLevel=totalBytes;
-    usage.period=MMM_D.format(new Date(start)) + " - " + MMM_D.format(new Date(end));
+    usage.period=formatDateRange(start,end);
     if (policy != null) {
       usage.limitLevel=policy.limitBytes > 0 ? policy.limitBytes : 0;
       usage.warningLevel=policy.warningBytes > 0 ? policy.warningBytes : 0;
+    }
+ else {
+      usage.warningLevel=DEFAULT_WARNING_LEVEL;
     }
     return usage;
   }
