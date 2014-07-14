@@ -1,0 +1,93 @@
+{
+  setTheme(R.style.Theme_DeviceDefault_Resolver);
+  super.onCreate(savedInstanceState);
+  try {
+    mLaunchedFromUid=ActivityManagerNative.getDefault().getLaunchedFromUid(getActivityToken());
+  }
+ catch (  RemoteException e) {
+    mLaunchedFromUid=-1;
+  }
+  mPm=getPackageManager();
+  mMaxColumns=getResources().getInteger(R.integer.config_maxResolverActivityColumns);
+  mPackageMonitor.register(this,getMainLooper(),false);
+  mRegistered=true;
+  final ActivityManager am=(ActivityManager)getSystemService(ACTIVITY_SERVICE);
+  mIconDpi=am.getLauncherLargeIconDensity();
+  mIconSize=am.getLauncherLargeIconSize();
+  mAdapter=new ResolveListAdapter(this,intent,initialIntents,rList,mLaunchedFromUid,alwaysUseOption);
+  final int layoutId;
+  if (mAdapter.hasFilteredItem()) {
+    layoutId=R.layout.resolver_list_with_default;
+    alwaysUseOption=false;
+  }
+ else {
+    layoutId=R.layout.resolver_list;
+  }
+  mAlwaysUseOption=alwaysUseOption;
+  int count=mAdapter.getCount();
+  if (mLaunchedFromUid < 0 || UserHandle.isIsolated(mLaunchedFromUid)) {
+    finish();
+    return;
+  }
+ else   if (count > 1) {
+    setContentView(layoutId);
+    mGridView=(GridView)findViewById(R.id.resolver_list);
+    mGridView.setAdapter(mAdapter);
+    mGridView.setOnItemClickListener(this);
+    mGridView.setOnItemLongClickListener(new ItemLongClickListener());
+    if (alwaysUseOption) {
+      mGridView.setChoiceMode(ListView.CHOICE_MODE_SINGLE);
+    }
+    resizeGrid();
+  }
+ else   if (count == 1) {
+    startActivity(mAdapter.intentForPosition(0,false));
+    mPackageMonitor.unregister();
+    mRegistered=false;
+    finish();
+    return;
+  }
+ else {
+    setContentView(R.layout.resolver_list);
+    final TextView empty=(TextView)findViewById(R.id.empty);
+    empty.setVisibility(View.VISIBLE);
+    mGridView=(GridView)findViewById(R.id.resolver_list);
+    mGridView.setVisibility(View.GONE);
+  }
+  final ResolverDrawerLayout rdl=(ResolverDrawerLayout)findViewById(R.id.contentPanel);
+  if (rdl != null) {
+    rdl.setOnClickOutsideListener(new View.OnClickListener(){
+      @Override public void onClick(      View v){
+        finish();
+      }
+    }
+);
+  }
+  final TextView titleView=(TextView)findViewById(R.id.title);
+  if (titleView != null) {
+    if (title == null) {
+      title=getTitleForAction(intent.getAction(),defaultTitleRes);
+    }
+    titleView.setText(title);
+  }
+  final ImageView iconView=(ImageView)findViewById(R.id.icon);
+  final DisplayResolveInfo iconInfo=mAdapter.getFilteredItem();
+  if (iconView != null && iconInfo != null) {
+    new LoadIconIntoViewTask(iconView).execute(iconInfo);
+  }
+  if (alwaysUseOption || mAdapter.hasFilteredItem()) {
+    final ViewGroup buttonLayout=(ViewGroup)findViewById(R.id.button_bar);
+    if (buttonLayout != null) {
+      buttonLayout.setVisibility(View.VISIBLE);
+      mAlwaysButton=(Button)buttonLayout.findViewById(R.id.button_always);
+      mOnceButton=(Button)buttonLayout.findViewById(R.id.button_once);
+    }
+ else {
+      mAlwaysUseOption=false;
+    }
+  }
+  if (mAdapter.hasFilteredItem()) {
+    setAlwaysButtonEnabled(true,mAdapter.getFilteredPosition(),false);
+    mOnceButton.setEnabled(true);
+  }
+}
