@@ -1,6 +1,6 @@
 {
   final int callingUid=Binder.getCallingUid();
-  mPm.enforceCrossUserPermission(callingUid,userId,false,TAG);
+  mPm.enforceCrossUserPermission(callingUid,userId,true,"createSession");
   if (mPm.isUserRestricted(UserHandle.getUserId(callingUid),UserManager.DISALLOW_INSTALL_APPS)) {
     throw new SecurityException("User restriction prevents installing");
   }
@@ -13,13 +13,24 @@
     params.installFlags&=~INSTALL_ALL_USERS;
     params.installFlags|=INSTALL_REPLACE_EXISTING;
   }
-synchronized (mSessions) {
-    final long createdMillis=System.currentTimeMillis();
-    final int sessionId=allocateSessionIdLocked();
-    final File sessionStageDir=prepareSessionStageDir(sessionId);
-    final PackageInstallerSession session=new PackageInstallerSession(mCallback,mPm,sessionId,userId,installerPackageName,callingUid,params,createdMillis,sessionStageDir,mInstallThread.getLooper());
-    mSessions.put(sessionId,session);
-    writeSessionsAsync();
-    return sessionId;
+  if (params.deltaSize > 0) {
+    try {
+      mPm.freeStorage(params.deltaSize);
+    }
+ catch (    IOException e) {
+      throw ExceptionUtils.wrap(e);
+    }
   }
+  final int sessionId;
+  final PackageInstallerSession session;
+synchronized (mSessions) {
+    sessionId=allocateSessionIdLocked();
+    final long createdMillis=System.currentTimeMillis();
+    final File sessionStageDir=prepareSessionStageDir(sessionId);
+    session=new PackageInstallerSession(mCallback,mPm,sessionId,userId,installerPackageName,callingUid,params,createdMillis,sessionStageDir,mInstallThread.getLooper());
+    mSessions.put(sessionId,session);
+  }
+  notifySessionCreated(session.generateInfo());
+  writeSessionsAsync();
+  return sessionId;
 }
