@@ -1,0 +1,112 @@
+{
+  if (DEBUG) {
+    Slog.i(TAG,"Restoring widget state for user:" + userId + " package: "+ packageName);
+  }
+  ByteArrayInputStream stream=new ByteArrayInputStream(restoredState);
+  try {
+    ArrayList<Provider> restoredProviders=new ArrayList<>();
+    ArrayList<Host> restoredHosts=new ArrayList<>();
+    XmlPullParser parser=Xml.newPullParser();
+    parser.setInput(stream,null);
+synchronized (mLock) {
+      int type;
+      do {
+        type=parser.next();
+        if (type == XmlPullParser.START_TAG) {
+          final String tag=parser.getName();
+          if ("ws".equals(tag)) {
+            String version=parser.getAttributeValue(null,"version");
+            final int versionNumber=Integer.parseInt(version);
+            if (versionNumber > WIDGET_STATE_VERSION) {
+              Slog.w(TAG,"Unable to process state version " + version);
+              return;
+            }
+            String pkg=parser.getAttributeValue(null,"pkg");
+            if (!packageName.equals(pkg)) {
+              Slog.w(TAG,"Package mismatch in ws");
+              return;
+            }
+          }
+ else           if ("p".equals(tag)) {
+            String pkg=parser.getAttributeValue(null,"pkg");
+            String cl=parser.getAttributeValue(null,"cl");
+            ComponentName componentName=new ComponentName(pkg,cl);
+            Provider p=findProviderLocked(componentName,userId);
+            if (p == null) {
+              p=new Provider();
+              p.id=new ProviderId(UNKNOWN_UID,componentName);
+              p.info=new AppWidgetProviderInfo();
+              p.info.provider=componentName;
+              p.zombie=true;
+              mProviders.add(p);
+            }
+            if (DEBUG) {
+              Slog.i(TAG,"   provider " + p.id);
+            }
+            restoredProviders.add(p);
+          }
+ else           if ("h".equals(tag)) {
+            String pkg=parser.getAttributeValue(null,"pkg");
+            final int uid=getUidForPackage(pkg,userId);
+            final int hostId=Integer.parseInt(parser.getAttributeValue(null,"id"),16);
+            HostId id=new HostId(uid,hostId,pkg);
+            Host h=lookupOrAddHostLocked(id);
+            restoredHosts.add(h);
+            if (DEBUG) {
+              Slog.i(TAG,"   host[" + restoredHosts.size() + "]: {"+ h.id+ "}");
+            }
+          }
+ else           if ("g".equals(tag)) {
+            int restoredId=Integer.parseInt(parser.getAttributeValue(null,"id"),16);
+            int hostIndex=Integer.parseInt(parser.getAttributeValue(null,"h"),16);
+            Host host=restoredHosts.get(hostIndex);
+            Provider p=null;
+            String prov=parser.getAttributeValue(null,"p");
+            if (prov != null) {
+              int which=Integer.parseInt(prov,16);
+              p=restoredProviders.get(which);
+            }
+            pruneWidgetStateLocked(host.id.packageName,userId);
+            if (p != null) {
+              pruneWidgetStateLocked(p.id.componentName.getPackageName(),userId);
+            }
+            Widget id=findRestoredWidgetLocked(restoredId,host,p);
+            if (id == null) {
+              id=new Widget();
+              id.appWidgetId=incrementAndGetAppWidgetIdLocked(userId);
+              id.restoredId=restoredId;
+              id.options=parseWidgetIdOptions(parser);
+              id.host=host;
+              id.host.widgets.add(id);
+              id.provider=p;
+              if (id.provider != null) {
+                id.provider.widgets.add(id);
+              }
+              if (DEBUG) {
+                Slog.i(TAG,"New restored id " + restoredId + " now "+ id);
+              }
+              mWidgets.add(id);
+            }
+            if (id.provider.info != null) {
+              stashProviderRestoreUpdateLocked(id.provider,restoredId,id.appWidgetId);
+            }
+ else {
+              Slog.w(TAG,"Missing provider for restored widget " + id);
+            }
+            stashHostRestoreUpdateLocked(id.host,restoredId,id.appWidgetId);
+            if (DEBUG) {
+              Slog.i(TAG,"   instance: " + restoredId + " -> "+ id.appWidgetId+ " :: p="+ id.provider);
+            }
+          }
+        }
+      }
+ while (type != XmlPullParser.END_DOCUMENT);
+    }
+  }
+ catch (  XmlPullParserException|IOException e) {
+    Slog.w(TAG,"Unable to restore widget state for " + packageName);
+  }
+ finally {
+    saveGroupStateAsync(userId);
+  }
+}
