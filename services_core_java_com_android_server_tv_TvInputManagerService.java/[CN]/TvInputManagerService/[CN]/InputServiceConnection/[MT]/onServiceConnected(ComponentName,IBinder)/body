@@ -1,14 +1,14 @@
 {
-  String inputId=mTvInputInfo.getId();
   if (DEBUG) {
-    Slog.d(TAG,"onServiceConnected(inputId=" + inputId + ")");
+    Slog.d(TAG,"onServiceConnected(name=" + name + ")");
   }
 synchronized (mLock) {
+    List<TvInputHardwareInfo> hardwareInfoList=mTvInputHardwareManager.getHardwareList();
     UserState userState=getUserStateLocked(mUserId);
-    ServiceState serviceState=userState.serviceStateMap.get(inputId);
+    ServiceState serviceState=userState.serviceStateMap.get(mName);
     serviceState.mService=ITvInputService.Stub.asInterface(service);
-    if (!serviceState.mClientTokens.isEmpty() && serviceState.mCallback == null) {
-      serviceState.mCallback=new ServiceCallback(mTvInputInfo.getId(),mUserId);
+    if (serviceState.mIsHardware && serviceState.mCallback == null) {
+      serviceState.mCallback=new ServiceCallback(mName,mUserId);
       try {
         serviceState.mService.registerCallback(serviceState.mCallback);
       }
@@ -19,9 +19,20 @@ synchronized (mLock) {
     for (    IBinder sessionToken : serviceState.mSessionTokens) {
       createSessionInternalLocked(serviceState.mService,sessionToken,mUserId);
     }
-    TvInputState inputState=userState.inputMap.get(inputId);
-    if (inputState != null && inputState.mState != INPUT_STATE_DISCONNECTED) {
-      notifyStateChangedLocked(userState,mTvInputInfo.getId(),inputState.mState,null);
+    for (    TvInputState inputState : userState.inputMap.values()) {
+      if (inputState.mInfo.getComponent().equals(name) && inputState.mState != INPUT_STATE_DISCONNECTED) {
+        notifyStateChangedLocked(userState,inputState.mInfo.getId(),inputState.mState,null);
+      }
+    }
+    if (serviceState.mIsHardware) {
+      for (      TvInputHardwareInfo hardwareInfo : hardwareInfoList) {
+        try {
+          serviceState.mService.notifyHardwareAdded(hardwareInfo);
+        }
+ catch (        RemoteException e) {
+          Slog.e(TAG,"error in notifyHardwareAdded",e);
+        }
+      }
     }
   }
 }
