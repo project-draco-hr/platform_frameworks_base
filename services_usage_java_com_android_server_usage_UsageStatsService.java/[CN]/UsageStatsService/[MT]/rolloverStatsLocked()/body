@@ -1,0 +1,30 @@
+{
+  final long startTime=System.currentTimeMillis();
+  Slog.i(TAG,"Rolling over usage stats");
+  ArraySet<String> continuePreviousDay=new ArraySet<>();
+  for (  UsageStats stat : mCurrentStats) {
+    final int pkgCount=stat.getPackageCount();
+    for (int i=0; i < pkgCount; i++) {
+      PackageUsageStats pkgStats=stat.getPackage(i);
+      if (pkgStats.mLastEvent == UsageStats.Event.MOVE_TO_FOREGROUND || pkgStats.mLastEvent == UsageStats.Event.CONTINUE_PREVIOUS_DAY) {
+        continuePreviousDay.add(pkgStats.mPackageName);
+        updateStatsLocked(stat,pkgStats.mPackageName,mDailyExpiryDate.getTimeInMillis() - 1,UsageStats.Event.END_OF_DAY);
+        mStatsChanged=true;
+      }
+    }
+  }
+  persistActiveStatsLocked();
+  mDatabase.prune();
+  loadActiveStatsLocked();
+  final int continueCount=continuePreviousDay.size();
+  for (int i=0; i < continueCount; i++) {
+    String name=continuePreviousDay.valueAt(i);
+    for (    UsageStats stat : mCurrentStats) {
+      updateStatsLocked(stat,name,mCurrentStats[UsageStatsManager.DAILY_BUCKET].mBeginTimeStamp,UsageStats.Event.CONTINUE_PREVIOUS_DAY);
+      mStatsChanged=true;
+    }
+  }
+  persistActiveStatsLocked();
+  final long totalTime=System.currentTimeMillis() - startTime;
+  Slog.i(TAG,"Rolling over usage stats complete. Took " + totalTime + " milliseconds");
+}
