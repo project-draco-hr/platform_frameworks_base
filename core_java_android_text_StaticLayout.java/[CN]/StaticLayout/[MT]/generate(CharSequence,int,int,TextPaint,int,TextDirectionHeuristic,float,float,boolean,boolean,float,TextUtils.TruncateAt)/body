@@ -1,5 +1,7 @@
 {
-  int[] breakOpp=null;
+  LineBreaks lineBreaks=new LineBreaks();
+  int[] spanEndCache=new int[4];
+  int[] fmCache=new int[4 * 4];
   final String localeLanguageTag=paint.getTextLocale().toLanguageTag();
   mLineCount=0;
   int v=0;
@@ -14,7 +16,7 @@
     paraEnd=TextUtils.indexOf(source,CHAR_NEW_LINE,paraStart,bufEnd);
     if (paraEnd < 0)     paraEnd=bufEnd;
  else     paraEnd++;
-    int firstWidthLineLimit=mLineCount + 1;
+    int firstWidthLineCount=1;
     int firstWidth=outerWidth;
     int restWidth=outerWidth;
     LineHeightSpan[] chooseHt=null;
@@ -26,8 +28,7 @@
         restWidth-=sp[i].getLeadingMargin(false);
         if (lms instanceof LeadingMarginSpan2) {
           LeadingMarginSpan2 lms2=(LeadingMarginSpan2)lms;
-          int lmsFirstLine=getLineForOffset(spanned.getSpanStart(lms2));
-          firstWidthLineLimit=Math.max(firstWidthLineLimit,lmsFirstLine + lms2.getLeadingMarginLineCount());
+          firstWidthLineCount=Math.max(firstWidthLineCount,lms2.getLeadingMarginLineCount());
         }
       }
       chooseHt=getParagraphSpans(spanned,paraStart,paraEnd,LineHeightSpan.class);
@@ -52,21 +53,19 @@
     byte[] chdirs=measured.mLevels;
     int dir=measured.mDir;
     boolean easy=measured.mEasy;
-    breakOpp=nLineBreakOpportunities(localeLanguageTag,chs,paraEnd - paraStart,breakOpp);
-    int breakOppIndex=0;
-    int width=firstWidth;
-    float w=0;
-    int here=paraStart;
-    int ok=paraStart;
-    float okWidth=w;
-    int okAscent=0, okDescent=0, okTop=0, okBottom=0;
-    int fit=paraStart;
-    float fitWidth=w;
-    int fitAscent=0, fitDescent=0, fitTop=0, fitBottom=0;
-    boolean hasTabOrEmoji=false;
-    boolean hasTab=false;
-    TabStops tabStops=null;
+    int fmCacheCount=0;
+    int spanEndCacheCount=0;
     for (int spanStart=paraStart, spanEnd; spanStart < paraEnd; spanStart=spanEnd) {
+      if (fmCacheCount * 4 >= fmCache.length) {
+        int[] grow=new int[fmCacheCount * 4 * 2];
+        System.arraycopy(fmCache,0,grow,0,fmCacheCount * 4);
+        fmCache=grow;
+      }
+      if (spanEndCacheCount >= spanEndCache.length) {
+        int[] grow=new int[spanEndCacheCount * 2];
+        System.arraycopy(spanEndCache,0,grow,0,spanEndCacheCount);
+        spanEndCache=grow;
+      }
       if (spanned == null) {
         spanEnd=paraEnd;
         int spanLen=spanEnd - spanStart;
@@ -79,148 +78,77 @@
         spans=TextUtils.removeEmptySpans(spans,spanned,MetricAffectingSpan.class);
         measured.addStyleRun(paint,spans,spanLen,fm);
       }
-      int fmTop=fm.top;
-      int fmBottom=fm.bottom;
-      int fmAscent=fm.ascent;
-      int fmDescent=fm.descent;
-      for (int j=spanStart; j < spanEnd; j++) {
-        char c=chs[j - paraStart];
-        if (c == CHAR_NEW_LINE) {
+      fmCache[fmCacheCount * 4 + 0]=fm.top;
+      fmCache[fmCacheCount * 4 + 1]=fm.bottom;
+      fmCache[fmCacheCount * 4 + 2]=fm.ascent;
+      fmCache[fmCacheCount * 4 + 3]=fm.descent;
+      fmCacheCount++;
+      spanEndCache[spanEndCacheCount]=spanEnd;
+      spanEndCacheCount++;
+    }
+    int[] variableTabStops=null;
+    if (spanned != null) {
+      TabStopSpan[] spans=getParagraphSpans(spanned,paraStart,paraEnd,TabStopSpan.class);
+      if (spans.length > 0) {
+        int[] stops=new int[spans.length];
+        for (int i=0; i < spans.length; i++) {
+          stops[i]=spans[i].getTabStop();
         }
- else         if (c == CHAR_TAB) {
-          if (hasTab == false) {
-            hasTab=true;
-            hasTabOrEmoji=true;
-            if (spanned != null) {
-              TabStopSpan[] spans=getParagraphSpans(spanned,paraStart,paraEnd,TabStopSpan.class);
-              if (spans.length > 0) {
-                tabStops=new TabStops(TAB_INCREMENT,spans);
-              }
-            }
-          }
-          if (tabStops != null) {
-            w=tabStops.nextTab(w);
-          }
- else {
-            w=TabStops.nextDefaultStop(w,TAB_INCREMENT);
-          }
-        }
- else         if (c >= CHAR_FIRST_HIGH_SURROGATE && c <= CHAR_LAST_LOW_SURROGATE && j + 1 < spanEnd) {
-          int emoji=Character.codePointAt(chs,j - paraStart);
-          if (emoji >= MIN_EMOJI && emoji <= MAX_EMOJI) {
-            Bitmap bm=EMOJI_FACTORY.getBitmapFromAndroidPua(emoji);
-            if (bm != null) {
-              Paint whichPaint;
-              if (spanned == null) {
-                whichPaint=paint;
-              }
- else {
-                whichPaint=mWorkPaint;
-              }
-              float wid=bm.getWidth() * -whichPaint.ascent() / bm.getHeight();
-              w+=wid;
-              hasTabOrEmoji=true;
-              j++;
-            }
- else {
-              w+=widths[j - paraStart];
-            }
-          }
- else {
-            w+=widths[j - paraStart];
-          }
-        }
- else {
-          w+=widths[j - paraStart];
-        }
-        boolean isSpaceOrTab=c == CHAR_SPACE || c == CHAR_TAB || c == CHAR_ZWSP;
-        if (w <= width || isSpaceOrTab) {
-          fitWidth=w;
-          fit=j + 1;
-          if (fmTop < fitTop)           fitTop=fmTop;
-          if (fmAscent < fitAscent)           fitAscent=fmAscent;
-          if (fmDescent > fitDescent)           fitDescent=fmDescent;
-          if (fmBottom > fitBottom)           fitBottom=fmBottom;
-          while (breakOpp[breakOppIndex] != -1 && breakOpp[breakOppIndex] < j - paraStart + 1) {
-            breakOppIndex++;
-          }
-          boolean isLineBreak=breakOppIndex < breakOpp.length && breakOpp[breakOppIndex] == j - paraStart + 1;
-          if (isLineBreak) {
-            okWidth=w;
-            ok=j + 1;
-            if (fitTop < okTop)             okTop=fitTop;
-            if (fitAscent < okAscent)             okAscent=fitAscent;
-            if (fitDescent > okDescent)             okDescent=fitDescent;
-            if (fitBottom > okBottom)             okBottom=fitBottom;
-          }
+        Arrays.sort(stops,0,stops.length);
+        variableTabStops=stops;
+      }
+    }
+    int breakCount=nComputeLineBreaks(localeLanguageTag,chs,widths,paraEnd - paraStart,firstWidth,firstWidthLineCount,restWidth,variableTabStops,TAB_INCREMENT,lineBreaks,lineBreaks.breaks,lineBreaks.widths,lineBreaks.flags,lineBreaks.breaks.length);
+    int[] breaks=lineBreaks.breaks;
+    float[] lineWidths=lineBreaks.widths;
+    boolean[] flags=lineBreaks.flags;
+    int here=paraStart;
+    int fmTop=0, fmBottom=0, fmAscent=0, fmDescent=0;
+    int fmCacheIndex=0;
+    int spanEndCacheIndex=0;
+    int breakIndex=0;
+    for (int spanStart=paraStart, spanEnd; spanStart < paraEnd; spanStart=spanEnd) {
+      spanEnd=spanEndCache[spanEndCacheIndex++];
+      fm.top=fmCache[fmCacheIndex * 4 + 0];
+      fm.bottom=fmCache[fmCacheIndex * 4 + 1];
+      fm.ascent=fmCache[fmCacheIndex * 4 + 2];
+      fm.descent=fmCache[fmCacheIndex * 4 + 3];
+      fmCacheIndex++;
+      if (fm.top < fmTop) {
+        fmTop=fm.top;
+      }
+      if (fm.ascent < fmAscent) {
+        fmAscent=fm.ascent;
+      }
+      if (fm.descent > fmDescent) {
+        fmDescent=fm.descent;
+      }
+      if (fm.bottom > fmBottom) {
+        fmBottom=fm.bottom;
+      }
+      while (breakIndex < breakCount && paraStart + breaks[breakIndex] < spanStart) {
+        breakIndex++;
+      }
+      while (breakIndex < breakCount && paraStart + breaks[breakIndex] <= spanEnd) {
+        int endPos=paraStart + breaks[breakIndex];
+        boolean moreChars=(endPos < paraEnd);
+        v=out(source,here,endPos,fmAscent,fmDescent,fmTop,fmBottom,v,spacingmult,spacingadd,chooseHt,chooseHtv,fm,flags[breakIndex],needMultiply,chdirs,dir,easy,bufEnd,includepad,trackpad,chs,widths,paraStart,ellipsize,ellipsizedWidth,lineWidths[breakIndex],paint,moreChars);
+        if (endPos < spanEnd) {
+          fmTop=fm.top;
+          fmBottom=fm.bottom;
+          fmAscent=fm.ascent;
+          fmDescent=fm.descent;
         }
  else {
-          final boolean moreChars;
-          int endPos;
-          int above, below, top, bottom;
-          float currentTextWidth;
-          if (ok != here) {
-            endPos=ok;
-            above=okAscent;
-            below=okDescent;
-            top=okTop;
-            bottom=okBottom;
-            currentTextWidth=okWidth;
-            moreChars=(j + 1 < spanEnd);
-          }
- else           if (fit != here) {
-            endPos=fit;
-            above=fitAscent;
-            below=fitDescent;
-            top=fitTop;
-            bottom=fitBottom;
-            currentTextWidth=fitWidth;
-            moreChars=(j + 1 < spanEnd);
-          }
- else {
-            endPos=here + 1;
-            while (endPos < spanEnd && widths[endPos - paraStart] == 0) {
-              endPos++;
-            }
-            above=fmAscent;
-            below=fmDescent;
-            top=fmTop;
-            bottom=fmBottom;
-            currentTextWidth=widths[here - paraStart];
-            moreChars=(endPos < spanEnd);
-          }
-          v=out(source,here,endPos,above,below,top,bottom,v,spacingmult,spacingadd,chooseHt,chooseHtv,fm,hasTabOrEmoji,needMultiply,chdirs,dir,easy,bufEnd,includepad,trackpad,chs,widths,paraStart,ellipsize,ellipsizedWidth,currentTextWidth,paint,moreChars);
-          here=endPos;
-          j=here - 1;
-          ok=fit=here;
-          w=0;
-          fitAscent=fitDescent=fitTop=fitBottom=0;
-          okAscent=okDescent=okTop=okBottom=0;
-          if (--firstWidthLineLimit <= 0) {
-            width=restWidth;
-          }
-          if (here < spanStart) {
-            measured.setPos(here);
-            spanEnd=here;
-            break;
-          }
-          if (mLineCount >= mMaximumVisibleLineCount) {
-            return;
-          }
+          fmTop=fmBottom=fmAscent=fmDescent=0;
+        }
+        here=endPos;
+        breakIndex++;
+        if (mLineCount >= mMaximumVisibleLineCount) {
+          return;
         }
       }
     }
-    if (paraEnd != here && mLineCount < mMaximumVisibleLineCount) {
-      if ((fitTop | fitBottom | fitDescent| fitAscent) == 0) {
-        paint.getFontMetricsInt(fm);
-        fitTop=fm.top;
-        fitBottom=fm.bottom;
-        fitAscent=fm.ascent;
-        fitDescent=fm.descent;
-      }
-      v=out(source,here,paraEnd,fitAscent,fitDescent,fitTop,fitBottom,v,spacingmult,spacingadd,chooseHt,chooseHtv,fm,hasTabOrEmoji,needMultiply,chdirs,dir,easy,bufEnd,includepad,trackpad,chs,widths,paraStart,ellipsize,ellipsizedWidth,w,paint,paraEnd != bufEnd);
-    }
-    paraStart=paraEnd;
     if (paraEnd == bufEnd)     break;
   }
   if ((bufEnd == bufStart || source.charAt(bufEnd - 1) == CHAR_NEW_LINE) && mLineCount < mMaximumVisibleLineCount) {
