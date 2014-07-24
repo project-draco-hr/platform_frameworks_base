@@ -1,7 +1,9 @@
 {
 synchronized (this) {
     if (mSystemReady) {
-      if (goingCallback != null)       goingCallback.run();
+      if (goingCallback != null) {
+        goingCallback.run();
+      }
       return;
     }
     updateCurrentProfileIdsLocked();
@@ -16,65 +18,18 @@ synchronized (this) {
       if (mWaitingUpdate) {
         return;
       }
-      Intent intent=new Intent(Intent.ACTION_PRE_BOOT_COMPLETED);
-      List<ResolveInfo> ris=null;
-      try {
-        ris=AppGlobals.getPackageManager().queryIntentReceivers(intent,null,0,0);
-      }
- catch (      RemoteException e) {
-      }
-      if (ris != null) {
-        for (int i=ris.size() - 1; i >= 0; i--) {
-          if ((ris.get(i).activityInfo.applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) == 0) {
-            ris.remove(i);
-          }
-        }
-        intent.addFlags(Intent.FLAG_RECEIVER_BOOT_UPGRADE);
-        ArrayList<ComponentName> lastDoneReceivers=readLastDonePreBootReceivers();
-        final ArrayList<ComponentName> doneReceivers=new ArrayList<ComponentName>();
-        for (int i=0; i < ris.size(); i++) {
-          ActivityInfo ai=ris.get(i).activityInfo;
-          ComponentName comp=new ComponentName(ai.packageName,ai.name);
-          if (lastDoneReceivers.contains(comp)) {
-            ris.remove(i);
-            i--;
-            doneReceivers.add(comp);
-          }
-        }
-        final int[] users=getUsersLocked();
-        for (int i=0; i < ris.size(); i++) {
-          ActivityInfo ai=ris.get(i).activityInfo;
-          ComponentName comp=new ComponentName(ai.packageName,ai.name);
-          doneReceivers.add(comp);
-          intent.setComponent(comp);
-          for (int j=0; j < users.length; j++) {
-            IIntentReceiver finisher=null;
-            if (i == ris.size() - 1 && j == users.length - 1) {
-              finisher=new IIntentReceiver.Stub(){
-                public void performReceive(                Intent intent,                int resultCode,                String data,                Bundle extras,                boolean ordered,                boolean sticky,                int sendingUser){
-                  mHandler.post(new Runnable(){
-                    public void run(){
+      final ArrayList<ComponentName> doneReceivers=new ArrayList<ComponentName>();
+      mWaitingUpdate=deliverPreBootCompleted(new Runnable(){
+        public void run(){
 synchronized (ActivityManagerService.this) {
-                        mDidUpdate=true;
-                      }
-                      writeLastDonePreBootReceivers(doneReceivers);
-                      showBootMessage(mContext.getText(R.string.android_upgrading_complete),false);
-                      systemReady(goingCallback);
-                    }
-                  }
-);
-                }
-              }
-;
-            }
-            Slog.i(TAG,"Sending system update to " + intent.getComponent() + " for user "+ users[j]);
-            broadcastIntentLocked(null,null,intent,null,finisher,0,null,null,null,AppOpsManager.OP_NONE,true,false,MY_PID,Process.SYSTEM_UID,users[j]);
-            if (finisher != null) {
-              mWaitingUpdate=true;
-            }
+            mDidUpdate=true;
           }
+          writeLastDonePreBootReceivers(doneReceivers);
+          showBootMessage(mContext.getText(R.string.android_upgrading_complete),false);
+          systemReady(goingCallback);
         }
       }
+,doneReceivers,UserHandle.USER_OWNER);
       if (mWaitingUpdate) {
         return;
       }
