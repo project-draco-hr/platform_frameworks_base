@@ -1,12 +1,36 @@
 {
+  if (uri == null) {
+    throw new IllegalStateException("loadThumbnail sent null list for uri " + uri);
+  }
   mHandler.post(new Runnable(){
     @Override public void run(){
-      Bitmap bitmap=onGetThumbnail(uri,width,height);
-      try {
-        callbacks.onLoadThumbnail(uri,width,height,bitmap);
+      final ConnectionRecord connection=mConnections.get(callbacks.asBinder());
+      if (connection == null) {
+        if (DBG) {
+          Log.d(TAG,"Not loading bitmap for invalid connection. uri=" + uri);
+        }
+        return;
       }
- catch (      RemoteException e) {
-        Log.e(TAG,"RemoteException in calling onLoadThumbnail",e);
+      final Result<Bitmap> result=new Result<Bitmap>(uri){
+        @Override void onResultSent(        Bitmap bitmap){
+          if (mConnections.get(connection.callbacks.asBinder()) != connection) {
+            if (DBG) {
+              Log.d(TAG,"Not sending onLoadThumbnail result for connection" + " that has been disconnected. pkg=" + connection.pkg + " uri="+ uri);
+            }
+            return;
+          }
+          try {
+            callbacks.onLoadThumbnail(uri,width,height,bitmap);
+          }
+ catch (          RemoteException e) {
+            Log.w(TAG,"RemoteException in calling onLoadThumbnail",e);
+          }
+        }
+      }
+;
+      onLoadThumbnail(uri,width,height,result);
+      if (!result.isDone()) {
+        throw new IllegalStateException("onLoadThumbnail must call detach() or" + " sendResult() before returning for package=" + connection.pkg + " uri="+ uri);
       }
     }
   }
