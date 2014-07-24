@@ -8,26 +8,34 @@ synchronized (this) {
       return;
     }
     checkDataOwnerLocked(clip,callingUid);
-    clearActiveOwnersLocked();
-    PerUserClipboard clipboard=getClipboard();
-    clipboard.primaryClip=clip;
-    final long ident=Binder.clearCallingIdentity();
-    final int n=clipboard.primaryClipListeners.beginBroadcast();
-    try {
-      for (int i=0; i < n; i++) {
+    final int userId=UserHandle.getUserId(callingUid);
+    PerUserClipboard clipboard=getClipboard(userId);
+    revokeUris(clipboard);
+    setPrimaryClipInternal(clipboard,clip);
+    List<UserInfo> related=getRelatedProfiles(userId);
+    if (related != null) {
+      int size=related.size();
+      if (size > 1) {
+        boolean canCopy=false;
         try {
-          ListenerInfo li=(ListenerInfo)clipboard.primaryClipListeners.getBroadcastCookie(i);
-          if (mAppOps.checkOpNoThrow(AppOpsManager.OP_READ_CLIPBOARD,li.mUid,li.mPackageName) == AppOpsManager.MODE_ALLOWED) {
-            clipboard.primaryClipListeners.getBroadcastItem(i).dispatchPrimaryClipChanged();
-          }
+          canCopy=!mUm.getUserRestrictions(userId).getBoolean(UserManager.DISALLOW_CROSS_PROFILE_COPY_PASTE);
         }
  catch (        RemoteException e) {
+          Slog.e(TAG,"Remote Exception calling UserManager: " + e);
+        }
+        if (!canCopy) {
+          clip=null;
+        }
+ else {
+          clip.fixUrisLight(userId);
+        }
+        for (int i=0; i < size; i++) {
+          int id=related.get(i).id;
+          if (id != userId) {
+            setPrimaryClipInternal(getClipboard(id),clip);
+          }
         }
       }
-    }
-  finally {
-      clipboard.primaryClipListeners.finishBroadcast();
-      Binder.restoreCallingIdentity(ident);
     }
   }
 }
