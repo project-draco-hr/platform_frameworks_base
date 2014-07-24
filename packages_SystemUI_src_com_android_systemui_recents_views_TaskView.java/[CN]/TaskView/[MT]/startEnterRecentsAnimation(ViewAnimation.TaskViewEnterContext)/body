@@ -1,12 +1,14 @@
 {
-  TaskViewTransform transform=ctx.currentTaskTransform;
-  Rect taskRect=ctx.currentTaskRect;
+  final TaskViewTransform transform=ctx.currentTaskTransform;
   if (mConfig.launchedFromAppWithScreenshot) {
     if (mTask.isLaunchTarget) {
-      int duration=mConfig.taskViewEnterFromHomeDuration * 5;
+      Rect taskRect=ctx.currentTaskRect;
+      int duration=mConfig.taskViewEnterFromHomeDuration * 10;
       int windowInsetTop=mConfig.systemInsets.top;
       float taskScale=((float)taskRect.width() / getMeasuredWidth()) * transform.scale;
-      float taskTranslationY=taskRect.top + transform.translationY - windowInsetTop;
+      float scaledYOffset=((1f - taskScale) * getMeasuredHeight()) / 2;
+      float scaledWindowInsetTop=(int)(taskScale * windowInsetTop);
+      float scaledTranslationY=taskRect.top + transform.translationY - (scaledWindowInsetTop + scaledYOffset);
       mViewBounds.animateClipTop(windowInsetTop,duration,new ValueAnimator.AnimatorUpdateListener(){
         @Override public void onAnimationUpdate(        ValueAnimator animation){
           int y=(Integer)animation.getAnimatedValue();
@@ -21,14 +23,21 @@
  else {
         mViewBounds.animateClipBottom(getMeasuredHeight() - (windowInsetTop + size),duration);
       }
-      animate().scaleX(taskScale).scaleY(taskScale).translationY(taskTranslationY).setDuration(duration).withEndAction(new Runnable(){
+      mBarView.startEnterRecentsAnimation(0,null);
+      animate().scaleX(taskScale).scaleY(taskScale).translationY(scaledTranslationY).setDuration(duration).withEndAction(new Runnable(){
         @Override public void run(){
-          mBarView.startEnterRecentsAnimation(0,mThumbnailView.enableTaskBarClipAsRunnable(mBarView));
-          animateFooterVisibility(true,mConfig.taskBarEnterAnimDuration);
-          ctx.postAnimationTrigger.decrement();
           setIsFullScreen(false);
-          mThumbnailView.unbindFromScreenshot();
+          requestLayout();
+          mViewBounds.setClipTop(0);
+          mViewBounds.setClipBottom(0);
+          mViewBounds.setClipRight(0);
+          mBarView.setTranslationY(0);
+          mThumbnailView.enableTaskBarClip(mBarView);
+          animateFooterVisibility(true,mConfig.taskBarEnterAnimDuration);
+          RecentsTaskLoader.getInstance().loadTaskData(mTask);
           AlternateRecentsComponent.consumeLastScreenshot();
+          mCb.onTaskViewFullScreenTransitionCompleted();
+          ctx.postAnimationTrigger.decrement();
         }
       }
 ).start();
@@ -58,6 +67,18 @@
     }
  else {
       mThumbnailView.enableTaskBarClip(mBarView);
+      if (ctx.currentTaskOccludesLaunchTarget) {
+        setTranslationY(transform.translationY + mConfig.taskViewAffiliateGroupEnterOffsetPx);
+        setAlpha(0f);
+        animate().alpha(1f).translationY(transform.translationY).setStartDelay(mConfig.taskBarEnterAnimDelay).setUpdateListener(null).setInterpolator(mConfig.fastOutSlowInInterpolator).setDuration(mConfig.taskViewEnterFromHomeDuration).withEndAction(new Runnable(){
+          @Override public void run(){
+            mThumbnailView.enableTaskBarClip(mBarView);
+            ctx.postAnimationTrigger.decrement();
+          }
+        }
+).start();
+        ctx.postAnimationTrigger.increment();
+      }
     }
   }
  else   if (mConfig.launchedFromHome) {
