@@ -1,23 +1,47 @@
 {
-  Log.d(this,"call %s",originalRequest);
-  CreateConnectionResponse response=new CreateConnectionResponse<Connection>(){
-    @Override public void onSuccess(    ConnectionRequest request,    Connection connection){
-      Log.d(this,"adapter handleCreateConnectionSuccessful %s",request.getCallId());
-      addConnection(request.getCallId(),connection);
-      mAdapter.handleCreateConnectionSuccessful(request,new ParcelableConnection(request.getAccountHandle(),connection.getState(),connection.getCallCapabilities(),connection.getHandle(),connection.getHandlePresentation(),connection.getCallerDisplayName(),connection.getCallerDisplayNamePresentation(),connection.getVideoCallProvider() == null ? null : connection.getVideoCallProvider().getInterface(),connection.getVideoState()));
-    }
-    @Override public void onFailure(    ConnectionRequest request,    int code,    String msg){
-      mAdapter.handleCreateConnectionFailed(request,code,msg);
-    }
-    @Override public void onCancel(    ConnectionRequest request){
-      mAdapter.handleCreateConnectionCancelled(request);
-    }
-  }
-;
+  Log.d(this,"call %s",request);
+  final Connection createdConnection;
   if (isIncoming) {
-    onCreateIncomingConnection(originalRequest,response);
+    createdConnection=onCreateIncomingConnection(request);
   }
  else {
-    onCreateOutgoingConnection(originalRequest,response);
+    createdConnection=onCreateOutgoingConnection(request);
   }
+  if (createdConnection != null) {
+    Log.d(this,"adapter handleCreateConnectionSuccessful %s",request.getCallId());
+    if (createdConnection.getState() == Connection.State.INITIALIZING) {
+      createdConnection.addConnectionListener(new Connection.Listener(){
+        @Override public void onStateChanged(        Connection c,        int state){
+switch (state) {
+case Connection.State.FAILED:
+            Log.d(this,"Connection (%s) failed (%d: %s)",request,c.getFailureCode(),c.getFailureMessage());
+          mAdapter.handleCreateConnectionFailed(request,c.getFailureCode(),c.getFailureMessage());
+        break;
+case Connection.State.CANCELED:
+      Log.d(this,"Connection (%s) canceled",request);
+    mAdapter.handleCreateConnectionCancelled(request);
+  break;
+case Connection.State.INITIALIZING:
+Log.d(this,"State changed to INITIALIZING; ignoring");
+return;
+default :
+Log.d(this,"Connection created in state %s",Connection.stateToString(state));
+connectionCreated(request,createdConnection);
+break;
+}
+c.removeConnectionListener(this);
+}
+}
+);
+}
+ else if (createdConnection.getState() == Connection.State.CANCELED) {
+mAdapter.handleCreateConnectionCancelled(request);
+}
+ else {
+connectionCreated(request,createdConnection);
+}
+}
+ else {
+mAdapter.handleCreateConnectionFailed(request,DisconnectCause.ERROR_UNSPECIFIED,null);
+}
 }
