@@ -1,0 +1,38 @@
+{
+  if (mInvalid) {
+    throw new PackageManagerException(INSTALL_FAILED_ALREADY_EXISTS,"Invalid session");
+  }
+  if (mMutationsAllowed) {
+    for (    FileBridge bridge : mBridges) {
+      if (!bridge.isClosed()) {
+        throw new PackageManagerException(INSTALL_FAILED_PACKAGE_CHANGED,"Files still open");
+      }
+    }
+    mMutationsAllowed=false;
+  }
+  validateInstallLocked();
+  Preconditions.checkNotNull(mPackageName);
+  Preconditions.checkNotNull(mSignatures);
+  if (!mPermissionsConfirmed) {
+    throw new SecurityException("Caller must hold INSTALL permission");
+  }
+  if (params.mode == InstallSessionParams.MODE_INHERIT_EXISTING) {
+    spliceExistingFilesIntoStage();
+  }
+  mCallback.onSessionProgressChanged(this,0.9f);
+  final IPackageInstallObserver2 remoteObserver=mRemoteObserver;
+  final IPackageInstallObserver2 localObserver=new IPackageInstallObserver2.Stub(){
+    @Override public void packageInstalled(    String basePackageName,    Bundle extras,    int returnCode,    String msg){
+      destroyInternal();
+      try {
+        remoteObserver.packageInstalled(basePackageName,extras,returnCode,msg);
+      }
+ catch (      RemoteException ignored) {
+      }
+      final boolean success=(returnCode == PackageManager.INSTALL_SUCCEEDED);
+      mCallback.onSessionFinished(PackageInstallerSession.this,success);
+    }
+  }
+;
+  mPm.installStage(mPackageName,this.sessionStageDir,localObserver,params,installerPackageName,installerUid,new UserHandle(userId));
+}
