@@ -10,6 +10,7 @@ synchronized (mLock) {
       ++mAfRun;
       mAfState=CONTROL_AF_STATE_INACTIVE;
     }
+    mCamera.cancelAutoFocus();
   }
   mAfModePrevious=afMode;
 {
@@ -44,10 +45,22 @@ default :
 }
 switch (afTrigger) {
 case CONTROL_AF_TRIGGER_START:
+int afStateAfterStart;
+switch (afMode) {
+case Parameters.FOCUS_MODE_AUTO:
+case Parameters.FOCUS_MODE_MACRO:
+afStateAfterStart=CONTROL_AF_STATE_ACTIVE_SCAN;
+break;
+case Parameters.FOCUS_MODE_CONTINUOUS_PICTURE:
+case Parameters.FOCUS_MODE_CONTINUOUS_VIDEO:
+afStateAfterStart=CONTROL_AF_STATE_PASSIVE_SCAN;
+default :
+afStateAfterStart=CONTROL_AF_STATE_INACTIVE;
+}
 final int currentAfRun;
 synchronized (mLock) {
 currentAfRun=++mAfRun;
-mAfState=CONTROL_AF_STATE_ACTIVE_SCAN;
+mAfState=afStateAfterStart;
 }
 if (VERBOSE) {
 Log.v(TAG,"processRequestTriggers - got AF_TRIGGER_START, " + "new AF run is " + currentAfRun);
@@ -57,11 +70,11 @@ mCamera.autoFocus(new Camera.AutoFocusCallback(){
 synchronized (mLock) {
 int latestAfRun=mAfRun;
 if (VERBOSE) {
-  Log.v(TAG,"onAutoFocus - success " + success + " latest AF run "+ latestAfRun+ ", last AF run "+ currentAfRun);
+Log.v(TAG,"onAutoFocus - success " + success + " latest AF run "+ latestAfRun+ ", last AF run "+ currentAfRun);
 }
 if (latestAfRun != currentAfRun) {
-  Log.d(TAG,String.format("onAutoFocus - ignoring AF callback " + "(old run %d, new run %d)",currentAfRun,latestAfRun));
-  return;
+Log.d(TAG,String.format("onAutoFocus - ignoring AF callback " + "(old run %d, new run %d)",currentAfRun,latestAfRun));
+return;
 }
 int newAfState=success ? CONTROL_AF_STATE_FOCUSED_LOCKED : CONTROL_AF_STATE_NOT_FOCUSED_LOCKED;
 switch (afMode) {
@@ -69,7 +82,7 @@ case Parameters.FOCUS_MODE_AUTO:
 case Parameters.FOCUS_MODE_CONTINUOUS_PICTURE:
 case Parameters.FOCUS_MODE_CONTINUOUS_VIDEO:
 case Parameters.FOCUS_MODE_MACRO:
-  break;
+break;
 default :
 Log.w(TAG,"onAutoFocus - got unexpected onAutoFocus in mode " + afMode);
 }
@@ -81,10 +94,12 @@ mAfState=newAfState;
 break;
 case CONTROL_AF_TRIGGER_CANCEL:
 synchronized (mLock) {
-int updatedAfRun=++mAfRun;
+int updatedAfRun;
+synchronized (mLock) {
+updatedAfRun=++mAfRun;
+mAfState=CONTROL_AF_STATE_INACTIVE;
+}
 mCamera.cancelAutoFocus();
-int newAfState=CONTROL_AF_STATE_INACTIVE;
-mAfState=newAfState;
 if (VERBOSE) {
 Log.v(TAG,"processRequestTriggers - got AF_TRIGGER_CANCEL, " + "new AF run is " + updatedAfRun);
 }
