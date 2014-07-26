@@ -1,0 +1,51 @@
+{
+synchronized (this) {
+    String selectQuery="SELECT  * FROM " + SoundModelContract.TABLE + " WHERE "+ SoundModelContract.KEY_KEYPHRASE_ID+ " = '"+ keyphraseId+ "'";
+    SQLiteDatabase db=getReadableDatabase();
+    Cursor c=db.rawQuery(selectQuery,null);
+    try {
+      if (c.moveToFirst()) {
+        int type=c.getInt(c.getColumnIndex(SoundModelContract.KEY_TYPE));
+        if (type != SoundTrigger.SoundModel.TYPE_KEYPHRASE) {
+          Slog.w(TAG,"No KeyphraseSoundModel available for the given keyphrase");
+          return null;
+        }
+        String modelUuid=c.getString(c.getColumnIndex(SoundModelContract.KEY_MODEL_UUID));
+        if (modelUuid == null) {
+          Slog.w(TAG,"Ignoring sound model since it doesn't specify an ID");
+          return null;
+        }
+        byte[] data=c.getBlob(c.getColumnIndex(SoundModelContract.KEY_DATA));
+        int recognitionModes=c.getInt(c.getColumnIndex(SoundModelContract.KEY_RECOGNITION_MODES));
+        int[] users=getArrayForCommaSeparatedString(c.getString(c.getColumnIndex(SoundModelContract.KEY_USERS)));
+        String locale=c.getString(c.getColumnIndex(SoundModelContract.KEY_LOCALE));
+        String text=c.getString(c.getColumnIndex(SoundModelContract.KEY_HINT_TEXT));
+        if (users == null) {
+          Slog.w(TAG,"Ignoring keyphrase since it doesn't specify users");
+          return null;
+        }
+        boolean isAvailableForCurrentUser=false;
+        int currentUser=mUserManager.getUserHandle();
+        for (        int user : users) {
+          if (currentUser == user) {
+            isAvailableForCurrentUser=true;
+            break;
+          }
+        }
+        if (!isAvailableForCurrentUser) {
+          Slog.w(TAG,"Ignoring keyphrase since it's not for the current user");
+          return null;
+        }
+        Keyphrase[] keyphrases=new Keyphrase[1];
+        keyphrases[0]=new Keyphrase(keyphraseId,recognitionModes,locale,text,users);
+        return new KeyphraseSoundModel(UUID.fromString(modelUuid),data,keyphrases);
+      }
+      Slog.w(TAG,"No SoundModel available for the given keyphrase");
+    }
+  finally {
+      c.close();
+      db.close();
+    }
+    return null;
+  }
+}
