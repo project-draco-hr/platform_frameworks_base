@@ -9,8 +9,12 @@ synchronized (mLock) {
       ICameraDeviceCallbacks callbacks=deviceImpl.getCallbacks();
       int id=Integer.parseInt(cameraId);
       try {
-        if (supportsCamera2Api(cameraId)) {
-          mCameraService.connectDevice(callbacks,id,mContext.getPackageName(),USE_CALLING_UID,holder);
+        if (supportsCamera2ApiLocked(cameraId)) {
+          ICameraService cameraService=getCameraServiceLocked();
+          if (cameraService == null) {
+            throw new CameraRuntimeException(CameraAccessException.CAMERA_DISCONNECTED,"Camera service is currently unavailable");
+          }
+          cameraService.connectDevice(callbacks,id,mContext.getPackageName(),USE_CALLING_UID,holder);
           cameraUser=ICameraDeviceUser.Stub.asInterface(holder.getBinder());
         }
  else {
@@ -25,12 +29,17 @@ synchronized (mLock) {
  else         if (e.getReason() == CameraAccessException.CAMERA_IN_USE || e.getReason() == CameraAccessException.MAX_CAMERAS_IN_USE || e.getReason() == CameraAccessException.CAMERA_DISABLED || e.getReason() == CameraAccessException.CAMERA_DISCONNECTED || e.getReason() == CameraAccessException.CAMERA_ERROR) {
           deviceImpl.setRemoteFailure(e);
           if (e.getReason() == CameraAccessException.CAMERA_DISABLED || e.getReason() == CameraAccessException.CAMERA_DISCONNECTED) {
-            throw e;
+            throw e.asChecked();
           }
         }
  else {
           throw e;
         }
+      }
+catch (      RemoteException e) {
+        CameraRuntimeException ce=new CameraRuntimeException(CameraAccessException.CAMERA_DISCONNECTED,"Camera service is currently unavailable",e);
+        deviceImpl.setRemoteFailure(ce);
+        throw ce.asChecked();
       }
       deviceImpl.setRemoteDevice(cameraUser);
       device=deviceImpl;
@@ -41,8 +50,6 @@ synchronized (mLock) {
   }
 catch (  CameraRuntimeException e) {
     throw e.asChecked();
-  }
-catch (  RemoteException e) {
   }
   return device;
 }
