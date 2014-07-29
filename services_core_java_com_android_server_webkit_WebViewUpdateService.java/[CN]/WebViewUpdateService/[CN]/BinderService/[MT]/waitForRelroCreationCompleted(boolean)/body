@@ -1,25 +1,21 @@
 {
-  if (Binder.getCallingUid() == Process.SYSTEM_UID) {
-    Slog.wtf(TAG,"Trying to load WebView from the SystemServer",new IllegalStateException());
+  if (Binder.getCallingPid() == Process.myPid()) {
+    throw new IllegalStateException("Cannot create a WebView from the SystemServer");
   }
+  final long NS_PER_MS=1000000;
+  final long timeoutTimeMs=System.nanoTime() / NS_PER_MS + WAIT_TIMEOUT_MS;
+  boolean relroReady=false;
 synchronized (WebViewUpdateService.this) {
-    if (is64Bit) {
-      while (!mRelroReady64Bit) {
-        try {
-          WebViewUpdateService.this.wait();
-        }
- catch (        InterruptedException e) {
-        }
+    while (!relroReady) {
+      final long timeNowMs=System.nanoTime() / NS_PER_MS;
+      if (timeNowMs >= timeoutTimeMs)       break;
+      try {
+        WebViewUpdateService.this.wait(timeoutTimeMs - timeNowMs);
       }
-    }
- else {
-      while (!mRelroReady32Bit) {
-        try {
-          WebViewUpdateService.this.wait();
-        }
- catch (        InterruptedException e) {
-        }
+ catch (      InterruptedException e) {
       }
+      relroReady=(is64Bit ? mRelroReady64Bit : mRelroReady32Bit);
     }
   }
+  if (!relroReady)   Slog.w(TAG,"creating relro file timed out");
 }
