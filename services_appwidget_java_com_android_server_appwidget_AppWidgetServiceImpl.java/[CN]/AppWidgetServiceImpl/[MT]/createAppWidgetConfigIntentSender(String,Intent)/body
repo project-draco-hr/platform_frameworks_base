@@ -1,0 +1,56 @@
+{
+  final int userId=UserHandle.getCallingUserId();
+  if (DEBUG) {
+    Slog.i(TAG,"createAppWidgetConfigIntentSender() " + userId);
+  }
+  mSecurityPolicy.enforceCallFromPackage(callingPackage);
+  if (!AppWidgetManager.ACTION_APPWIDGET_CONFIGURE.equals(intent.getAction())) {
+    throw new IllegalArgumentException("Only allowed action is " + AppWidgetManager.ACTION_APPWIDGET_CONFIGURE);
+  }
+  final int appWidgetId=intent.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID,AppWidgetManager.INVALID_APPWIDGET_ID);
+  if (appWidgetId == AppWidgetManager.INVALID_APPWIDGET_ID) {
+    throw new IllegalArgumentException("Widget id required");
+  }
+  ComponentName component=intent.getComponent();
+  if (component == null) {
+    throw new IllegalArgumentException("Component name required");
+  }
+  UserHandle userHandle=intent.getParcelableExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER_PROFILE);
+  if (userHandle != null) {
+    intent.removeExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER_PROFILE);
+    final int profileId=userHandle.getIdentifier();
+    if (profileId != userId) {
+      final int[] profileIds=mSecurityPolicy.resolveCallerEnabledGroupProfiles(new int[]{profileId});
+      if (profileIds.length <= 0) {
+        return null;
+      }
+      if (!mSecurityPolicy.isProviderInCallerOrInProfileAndWhitelListed(component.getPackageName(),profileId)) {
+        throw new IllegalArgumentException("Cannot access provider " + component + " in user "+ profileIds);
+      }
+    }
+  }
+ else {
+    userHandle=new UserHandle(userId);
+  }
+synchronized (mLock) {
+    ensureGroupStateLoadedLocked(userId);
+    Widget widget=lookupWidgetLocked(appWidgetId,Binder.getCallingUid(),callingPackage);
+    if (widget == null) {
+      throw new IllegalArgumentException("Bad widget id " + appWidgetId);
+    }
+    Provider provider=widget.provider;
+    if (provider == null) {
+      throw new IllegalArgumentException("Widget not bound " + appWidgetId);
+    }
+    if (!component.equals(provider.info.configure) || !provider.info.getProfile().equals(userHandle)) {
+      throw new IllegalArgumentException("No component" + component + " for user "+ userHandle.getIdentifier());
+    }
+    final long identity=Binder.clearCallingIdentity();
+    try {
+      return PendingIntent.getActivityAsUser(mContext,0,intent,PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_CANCEL_CURRENT,null,userHandle).getIntentSender();
+    }
+  finally {
+      Binder.restoreCallingIdentity(identity);
+    }
+  }
+}
