@@ -1,0 +1,122 @@
+{
+  int version=-1;
+  try {
+    XmlPullParser parser=Xml.newPullParser();
+    parser.setInput(stream,null);
+    int legacyProviderIndex=-1;
+    int legacyHostIndex=-1;
+    int type;
+    do {
+      type=parser.next();
+      if (type == XmlPullParser.START_TAG) {
+        String tag=parser.getName();
+        if ("gs".equals(tag)) {
+          String attributeValue=parser.getAttributeValue(null,"version");
+          try {
+            version=Integer.parseInt(attributeValue);
+          }
+ catch (          NumberFormatException e) {
+            version=0;
+          }
+        }
+ else         if ("p".equals(tag)) {
+          legacyProviderIndex++;
+          String pkg=parser.getAttributeValue(null,"pkg");
+          String cl=parser.getAttributeValue(null,"cl");
+          pkg=getCanonicalPackageName(pkg,cl,userId);
+          if (pkg == null) {
+            continue;
+          }
+          final int uid=getUidForPackage(pkg,userId);
+          if (uid < 0) {
+            continue;
+          }
+          ComponentName componentName=new ComponentName(pkg,cl);
+          ActivityInfo providerInfo=getProviderInfo(componentName,userId);
+          if (providerInfo == null) {
+            continue;
+          }
+          ProviderId providerId=new ProviderId(uid,componentName);
+          Provider provider=lookupProviderLocked(providerId);
+          if (provider == null && mSafeMode) {
+            provider=new Provider();
+            provider.info=new AppWidgetProviderInfo();
+            provider.info.provider=providerId.componentName;
+            provider.info.providerInfo=providerInfo;
+            provider.zombie=true;
+            provider.id=providerId;
+            mProviders.add(provider);
+          }
+          String tagAttribute=parser.getAttributeValue(null,"tag");
+          final int providerTag=!TextUtils.isEmpty(tagAttribute) ? Integer.parseInt(tagAttribute,16) : legacyProviderIndex;
+          provider.tag=providerTag;
+        }
+ else         if ("h".equals(tag)) {
+          legacyHostIndex++;
+          Host host=new Host();
+          String pkg=parser.getAttributeValue(null,"pkg");
+          final int uid=getUidForPackage(pkg,userId);
+          if (uid < 0) {
+            host.zombie=true;
+          }
+          if (!host.zombie || mSafeMode) {
+            final int hostId=Integer.parseInt(parser.getAttributeValue(null,"id"),16);
+            String tagAttribute=parser.getAttributeValue(null,"tag");
+            final int hostTag=!TextUtils.isEmpty(tagAttribute) ? Integer.parseInt(tagAttribute,16) : legacyHostIndex;
+            host.tag=hostTag;
+            host.id=new HostId(uid,hostId,pkg);
+            mHosts.add(host);
+          }
+        }
+ else         if ("b".equals(tag)) {
+          String packageName=parser.getAttributeValue(null,"packageName");
+          final int uid=getUidForPackage(packageName,userId);
+          if (uid >= 0) {
+            Pair<Integer,String> packageId=Pair.create(userId,packageName);
+            mPackagesWithBindWidgetPermission.add(packageId);
+          }
+        }
+ else         if ("g".equals(tag)) {
+          Widget widget=new Widget();
+          widget.appWidgetId=Integer.parseInt(parser.getAttributeValue(null,"id"),16);
+          setMinAppWidgetIdLocked(userId,widget.appWidgetId + 1);
+          String restoredIdString=parser.getAttributeValue(null,"rid");
+          widget.restoredId=(restoredIdString == null) ? 0 : Integer.parseInt(restoredIdString,16);
+          Bundle options=new Bundle();
+          String minWidthString=parser.getAttributeValue(null,"min_width");
+          if (minWidthString != null) {
+            options.putInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH,Integer.parseInt(minWidthString,16));
+          }
+          String minHeightString=parser.getAttributeValue(null,"min_height");
+          if (minHeightString != null) {
+            options.putInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT,Integer.parseInt(minHeightString,16));
+          }
+          String maxWidthString=parser.getAttributeValue(null,"max_width");
+          if (maxWidthString != null) {
+            options.putInt(AppWidgetManager.OPTION_APPWIDGET_MAX_WIDTH,Integer.parseInt(maxWidthString,16));
+          }
+          String maxHeightString=parser.getAttributeValue(null,"max_height");
+          if (maxHeightString != null) {
+            options.putInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT,Integer.parseInt(maxHeightString,16));
+          }
+          String categoryString=parser.getAttributeValue(null,"host_category");
+          if (categoryString != null) {
+            options.putInt(AppWidgetManager.OPTION_APPWIDGET_HOST_CATEGORY,Integer.parseInt(categoryString,16));
+          }
+          widget.options=options;
+          final int hostTag=Integer.parseInt(parser.getAttributeValue(null,"h"),16);
+          String providerString=parser.getAttributeValue(null,"p");
+          final int providerTag=(providerString != null) ? Integer.parseInt(parser.getAttributeValue(null,"p"),16) : TAG_UNDEFINED;
+          LoadedWidgetState loadedWidgets=new LoadedWidgetState(widget,hostTag,providerTag);
+          outLoadedWidgets.add(loadedWidgets);
+        }
+      }
+    }
+ while (type != XmlPullParser.END_DOCUMENT);
+  }
+ catch (  NullPointerException|NumberFormatException|XmlPullParserException|IOException|IndexOutOfBoundsException e) {
+    Slog.w(TAG,"failed parsing " + e);
+    return -1;
+  }
+  return version;
+}
