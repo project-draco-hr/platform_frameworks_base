@@ -6,47 +6,88 @@ case DO_CREATE_SESSION:
       InputChannel channel=(InputChannel)args.arg1;
       ITvInputSessionCallback cb=(ITvInputSessionCallback)args.arg2;
       String inputId=(String)args.arg3;
-      try {
-        Session sessionImpl=onCreateSession(inputId);
-        if (sessionImpl == null) {
-          cb.onSessionCreated(null);
+      Session sessionImpl=onCreateSession(inputId);
+      args.recycle();
+      if (sessionImpl == null) {
+        try {
+          cb.onSessionCreated(null,null);
+        }
+ catch (        RemoteException e) {
+          Log.e(TAG,"error in onSessionCreated");
+        }
+      }
+ else {
+        sessionImpl.setSessionCallback(cb);
+        ITvInputSession stub=new ITvInputSessionWrapper(TvInputService.this,sessionImpl,channel);
+        if (sessionImpl instanceof HardwareSession) {
+          HardwareSession proxySession=((HardwareSession)sessionImpl);
+          String harewareInputId=proxySession.getHardwareInputId();
+          if (!TextUtils.isEmpty(harewareInputId)) {
+            proxySession.mProxySession=stub;
+            proxySession.mProxySessionCallback=cb;
+            TvInputManager manager=(TvInputManager)getSystemService(Context.TV_INPUT_SERVICE);
+            manager.createSession(harewareInputId,proxySession.mHardwareSessionCallback,mHandler);
+          }
+ else {
+            sessionImpl.onRelease();
+            Log.w(TAG,"Hardware input id is not setup yet.");
+            try {
+              cb.onSessionCreated(null,null);
+            }
+ catch (            RemoteException e) {
+              Log.e(TAG,"error in onSessionCreated");
+            }
+          }
         }
  else {
-          sessionImpl.setSessionCallback(cb);
-          ITvInputSession stub=new ITvInputSessionWrapper(TvInputService.this,sessionImpl,channel);
-          cb.onSessionCreated(stub);
+          SomeArgs someArgs=SomeArgs.obtain();
+          someArgs.arg1=stub;
+          someArgs.arg2=cb;
+          someArgs.arg3=null;
+          mHandler.obtainMessage(ServiceHandler.DO_NOTIFY_SESSION_CREATED,someArgs).sendToTarget();
         }
       }
- catch (      RemoteException e) {
-        Log.e(TAG,"error in onSessionCreated");
-      }
-      args.recycle();
       return;
     }
-case DO_ADD_HARDWARE_TV_INPUT:
+case DO_NOTIFY_SESSION_CREATED:
 {
-    TvInputHardwareInfo hardwareInfo=(TvInputHardwareInfo)msg.obj;
-    TvInputInfo inputInfo=onHardwareAdded(hardwareInfo);
-    if (inputInfo != null) {
-      broadcastAddHardwareTvInput(hardwareInfo.getDeviceId(),inputInfo);
+    SomeArgs args=(SomeArgs)msg.obj;
+    ITvInputSession stub=(ITvInputSession)args.arg1;
+    ITvInputSessionCallback cb=(ITvInputSessionCallback)args.arg2;
+    IBinder hardwareSessionToken=(IBinder)args.arg3;
+    try {
+      cb.onSessionCreated(stub,hardwareSessionToken);
     }
+ catch (    RemoteException e) {
+      Log.e(TAG,"error in onSessionCreated");
+    }
+    args.recycle();
     return;
   }
-case DO_REMOVE_HARDWARE_TV_INPUT:
+case DO_ADD_HARDWARE_TV_INPUT:
 {
   TvInputHardwareInfo hardwareInfo=(TvInputHardwareInfo)msg.obj;
-  String inputId=onHardwareRemoved(hardwareInfo);
-  if (inputId != null) {
-    broadcastRemoveTvInput(inputId);
+  TvInputInfo inputInfo=onHardwareAdded(hardwareInfo);
+  if (inputInfo != null) {
+    broadcastAddHardwareTvInput(hardwareInfo.getDeviceId(),inputInfo);
   }
   return;
+}
+case DO_REMOVE_HARDWARE_TV_INPUT:
+{
+TvInputHardwareInfo hardwareInfo=(TvInputHardwareInfo)msg.obj;
+String inputId=onHardwareRemoved(hardwareInfo);
+if (inputId != null) {
+  broadcastRemoveTvInput(inputId);
+}
+return;
 }
 case DO_ADD_HDMI_CEC_TV_INPUT:
 {
 HdmiCecDeviceInfo cecDeviceInfo=(HdmiCecDeviceInfo)msg.obj;
 TvInputInfo inputInfo=onHdmiCecDeviceAdded(cecDeviceInfo);
 if (inputInfo != null) {
-  broadcastAddHdmiCecTvInput(cecDeviceInfo.getLogicalAddress(),inputInfo);
+broadcastAddHdmiCecTvInput(cecDeviceInfo.getLogicalAddress(),inputInfo);
 }
 return;
 }
@@ -57,14 +98,6 @@ String inputId=onHdmiCecDeviceRemoved(cecDeviceInfo);
 if (inputId != null) {
 broadcastRemoveTvInput(inputId);
 }
-return;
-}
-case DO_SET_WRAPPED_TV_INPUT_ID:
-{
-SomeArgs args=(SomeArgs)msg.obj;
-String inputId=(String)args.arg1;
-String wrappedInputId=(String)args.arg2;
-broadcastSetWrappedTvInputId(inputId,wrappedInputId);
 return;
 }
 default :
