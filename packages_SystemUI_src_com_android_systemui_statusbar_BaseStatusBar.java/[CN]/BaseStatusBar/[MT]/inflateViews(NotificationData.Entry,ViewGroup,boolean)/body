@@ -1,4 +1,5 @@
 {
+  PackageManager pmUser=getPackageManagerForUser(entry.notification.getUser().getIdentifier());
   int maxHeight=mRowMaxHeight;
   StatusBarNotification sbn=entry.notification;
   RemoteViews contentView=sbn.getNotification().contentView;
@@ -35,11 +36,45 @@
   }
   row.setTag(sbn.getPackageName());
   final View guts=row.findViewById(R.id.notification_guts);
-  final Drawable pkgicon=loadPackageIconDrawable(entry.notification.getPackageName(),entry.notification.getUserId());
-  final String pkgname=loadPackageName(entry.notification.getPackageName()).toString();
+  final String pkg=entry.notification.getPackageName();
+  String appname=pkg;
+  Drawable pkgicon=null;
+  int appUid=-1;
+  try {
+    final ApplicationInfo info=pmUser.getApplicationInfo(pkg,PackageManager.GET_UNINSTALLED_PACKAGES | PackageManager.GET_DISABLED_COMPONENTS);
+    if (info != null) {
+      appname=String.valueOf(pmUser.getApplicationLabel(info));
+      pkgicon=pmUser.getApplicationIcon(info);
+      appUid=info.uid;
+    }
+  }
+ catch (  NameNotFoundException e) {
+    pkgicon=pmUser.getDefaultActivityIcon();
+  }
   ((ImageView)row.findViewById(android.R.id.icon)).setImageDrawable(pkgicon);
   ((DateTimeView)row.findViewById(R.id.timestamp)).setTime(entry.notification.getPostTime());
-  ((TextView)row.findViewById(R.id.pkgname)).setText(pkgname);
+  ((TextView)row.findViewById(R.id.pkgname)).setText(appname);
+  final View settingsButton=guts.findViewById(R.id.notification_inspect_item);
+  if (appUid >= 0) {
+    final int appUidF=appUid;
+    settingsButton.setOnClickListener(new View.OnClickListener(){
+      public void onClick(      View v){
+        dismissKeyguardThenExecute(new OnDismissAction(){
+          public boolean onDismiss(){
+            startAppNotificationSettingsActivity(pkg,appUidF);
+            animateCollapsePanels(CommandQueue.FLAG_EXCLUDE_NONE);
+            visibilityChanged(false);
+            return DELAY_DISMISS_TO_ACTIVITY_LAUNCH;
+          }
+        }
+);
+      }
+    }
+);
+  }
+ else {
+    settingsButton.setVisibility(View.GONE);
+  }
   workAroundBadLayerDrawableOpacity(row);
   View vetoButton=updateNotificationVetoButton(row,sbn);
   vetoButton.setContentDescription(mContext.getString(R.string.accessibility_remove_notification));
@@ -91,11 +126,10 @@
     }
   }
   if (publicViewLocal == null) {
-    PackageManager pm=getPackageManagerForUser(entry.notification.getUser().getIdentifier());
     publicViewLocal=LayoutInflater.from(mContext).inflate(com.android.internal.R.layout.notification_template_material_base,expandedPublic,true);
     final TextView title=(TextView)publicViewLocal.findViewById(com.android.internal.R.id.title);
     try {
-      title.setText(pm.getApplicationLabel(pm.getApplicationInfo(entry.notification.getPackageName(),0)));
+      title.setText(pmUser.getApplicationLabel(pmUser.getApplicationInfo(entry.notification.getPackageName(),0)));
     }
  catch (    NameNotFoundException e) {
       title.setText(entry.notification.getPackageName());
