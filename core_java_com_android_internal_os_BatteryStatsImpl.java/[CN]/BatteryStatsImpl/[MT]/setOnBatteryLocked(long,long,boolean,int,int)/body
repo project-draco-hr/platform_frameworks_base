@@ -9,7 +9,34 @@
   final boolean screenOn=mScreenState == Display.STATE_ON;
   if (onBattery) {
     boolean reset=false;
-    if (!mNoAutoReset && (oldStatus == BatteryManager.BATTERY_STATUS_FULL || level >= 90 || (mDischargeCurrentLevel < 20 && level >= 80))) {
+    if (!mNoAutoReset && (oldStatus == BatteryManager.BATTERY_STATUS_FULL || level >= 90 || getLowDischargeAmountSinceCharge() >= 60) || (getHighDischargeAmountSinceCharge() >= 60 && mHistoryBuffer.dataSize() >= MAX_HISTORY_BUFFER)) {
+      if (getLowDischargeAmountSinceCharge() >= 20) {
+        final Parcel parcel=Parcel.obtain();
+        writeSummaryToParcel(parcel,true);
+        BackgroundThread.getHandler().post(new Runnable(){
+          @Override public void run(){
+synchronized (mCheckinFile) {
+              FileOutputStream stream=null;
+              try {
+                stream=mCheckinFile.startWrite();
+                stream.write(parcel.marshall());
+                stream.flush();
+                FileUtils.sync(stream);
+                stream.close();
+                mCheckinFile.finishWrite(stream);
+              }
+ catch (              IOException e) {
+                Slog.w("BatteryStats","Error writing checkin battery statistics",e);
+                mCheckinFile.failWrite(stream);
+              }
+ finally {
+                parcel.recycle();
+              }
+            }
+          }
+        }
+);
+      }
       doWrite=true;
       resetAllStatsLocked();
       mDischargeStartLevel=level;
@@ -19,6 +46,8 @@
     mLastDischargeStepLevel=level;
     mMinDischargeStepLevel=level;
     mLastDischargeStepTime=-1;
+    mInitStepMode=mCurStepMode;
+    mModStepMode=0;
     pullPendingStateUpdatesLocked();
     mHistoryCur.batteryLevel=(byte)level;
     mHistoryCur.states&=~HistoryItem.STATE_BATTERY_PLUGGED_FLAG;
@@ -58,6 +87,8 @@
     mLastChargeStepLevel=level;
     mMaxChargeStepLevel=level;
     mLastChargeStepTime=-1;
+    mInitStepMode=mCurStepMode;
+    mModStepMode=0;
   }
   if (doWrite || (mLastWriteTime + (60 * 1000)) < mSecRealtime) {
     if (mFile != null) {
