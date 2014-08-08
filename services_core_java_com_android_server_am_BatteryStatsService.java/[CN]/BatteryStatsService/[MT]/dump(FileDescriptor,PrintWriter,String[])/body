@@ -4,7 +4,8 @@
     return;
   }
   int flags=0;
-  boolean isCheckin=false;
+  boolean useCheckinFormat=false;
+  boolean isRealCheckin=false;
   boolean noOutput=false;
   boolean writeData=false;
   long historyStart=-1;
@@ -13,7 +14,8 @@
     for (int i=0; i < args.length; i++) {
       String arg=args[i];
       if ("--checkin".equals(arg)) {
-        isCheckin=true;
+        useCheckinFormat=true;
+        isRealCheckin=true;
       }
  else       if ("--history".equals(arg)) {
         flags|=BatteryStats.DUMP_HISTORY_ONLY;
@@ -30,7 +32,7 @@
         writeData=true;
       }
  else       if ("-c".equals(arg)) {
-        isCheckin=true;
+        useCheckinFormat=true;
         flags|=BatteryStats.DUMP_INCLUDE_HISTORY;
       }
  else       if ("--unplugged".equals(arg)) {
@@ -96,8 +98,31 @@ synchronized (mStats) {
   if (noOutput) {
     return;
   }
-  if (isCheckin) {
+  if (useCheckinFormat) {
     List<ApplicationInfo> apps=mContext.getPackageManager().getInstalledApplications(0);
+    if (isRealCheckin) {
+synchronized (mStats.mCheckinFile) {
+        if (mStats.mCheckinFile.exists()) {
+          try {
+            byte[] raw=mStats.mCheckinFile.readFully();
+            if (raw != null) {
+              Parcel in=Parcel.obtain();
+              in.unmarshall(raw,0,raw.length);
+              in.setDataPosition(0);
+              BatteryStatsImpl checkinStats=new BatteryStatsImpl(null,mStats.mHandler);
+              checkinStats.readSummaryFromParcel(in);
+              in.recycle();
+              checkinStats.dumpCheckinLocked(mContext,pw,apps,flags,historyStart);
+              mStats.mCheckinFile.delete();
+              return;
+            }
+          }
+ catch (          IOException e) {
+            Slog.w(TAG,"Failure reading checkin file " + mStats.mCheckinFile.getBaseFile(),e);
+          }
+        }
+      }
+    }
 synchronized (mStats) {
       mStats.dumpCheckinLocked(mContext,pw,apps,flags,historyStart);
       if (writeData) {
