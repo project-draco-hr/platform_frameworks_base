@@ -6,8 +6,8 @@ case DO_CREATE_SESSION:
       InputChannel channel=(InputChannel)args.arg1;
       ITvInputSessionCallback cb=(ITvInputSessionCallback)args.arg2;
       String inputId=(String)args.arg3;
-      Session sessionImpl=onCreateSession(inputId);
       args.recycle();
+      Session sessionImpl=onCreateSession(inputId);
       if (sessionImpl == null) {
         try {
           cb.onSessionCreated(null,null);
@@ -15,37 +15,36 @@ case DO_CREATE_SESSION:
  catch (        RemoteException e) {
           Log.e(TAG,"error in onSessionCreated");
         }
+        return;
+      }
+      sessionImpl.setSessionCallback(cb);
+      ITvInputSession stub=new ITvInputSessionWrapper(TvInputService.this,sessionImpl,channel);
+      if (sessionImpl instanceof HardwareSession) {
+        HardwareSession proxySession=((HardwareSession)sessionImpl);
+        String harewareInputId=proxySession.getHardwareInputId();
+        if (TextUtils.isEmpty(harewareInputId)) {
+          sessionImpl.onRelease();
+          Log.w(TAG,"Hardware input id is not setup yet.");
+          try {
+            cb.onSessionCreated(null,null);
+          }
+ catch (          RemoteException e) {
+            Log.e(TAG,"error in onSessionCreated");
+          }
+          return;
+        }
+        proxySession.mProxySession=stub;
+        proxySession.mProxySessionCallback=cb;
+        proxySession.mServiceHandler=mServiceHandler;
+        TvInputManager manager=(TvInputManager)getSystemService(Context.TV_INPUT_SERVICE);
+        manager.createSession(harewareInputId,proxySession.mHardwareSessionCallback,mServiceHandler);
       }
  else {
-        sessionImpl.setSessionCallback(cb);
-        ITvInputSession stub=new ITvInputSessionWrapper(TvInputService.this,sessionImpl,channel);
-        if (sessionImpl instanceof HardwareSession) {
-          HardwareSession proxySession=((HardwareSession)sessionImpl);
-          String harewareInputId=proxySession.getHardwareInputId();
-          if (!TextUtils.isEmpty(harewareInputId)) {
-            proxySession.mProxySession=stub;
-            proxySession.mProxySessionCallback=cb;
-            TvInputManager manager=(TvInputManager)getSystemService(Context.TV_INPUT_SERVICE);
-            manager.createSession(harewareInputId,proxySession.mHardwareSessionCallback,mServiceHandler);
-          }
- else {
-            sessionImpl.onRelease();
-            Log.w(TAG,"Hardware input id is not setup yet.");
-            try {
-              cb.onSessionCreated(null,null);
-            }
- catch (            RemoteException e) {
-              Log.e(TAG,"error in onSessionCreated");
-            }
-          }
-        }
- else {
-          SomeArgs someArgs=SomeArgs.obtain();
-          someArgs.arg1=stub;
-          someArgs.arg2=cb;
-          someArgs.arg3=null;
-          mServiceHandler.obtainMessage(ServiceHandler.DO_NOTIFY_SESSION_CREATED,someArgs).sendToTarget();
-        }
+        SomeArgs someArgs=SomeArgs.obtain();
+        someArgs.arg1=stub;
+        someArgs.arg2=cb;
+        someArgs.arg3=null;
+        mServiceHandler.obtainMessage(ServiceHandler.DO_NOTIFY_SESSION_CREATED,someArgs).sendToTarget();
       }
       return;
     }
