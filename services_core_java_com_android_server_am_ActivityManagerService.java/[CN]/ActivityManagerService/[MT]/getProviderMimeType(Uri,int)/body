@@ -1,8 +1,17 @@
 {
   enforceNotIsolatedCaller("getProviderMimeType");
-  userId=handleIncomingUser(Binder.getCallingPid(),Binder.getCallingUid(),userId,false,ALLOW_NON_FULL_IN_PROFILE,"getProviderMimeType",null);
   final String name=uri.getAuthority();
-  final long ident=Binder.clearCallingIdentity();
+  int callingUid=Binder.getCallingUid();
+  int callingPid=Binder.getCallingPid();
+  long ident=0;
+  boolean clearedIdentity=false;
+  userId=unsafeConvertIncomingUser(userId);
+  if (UserHandle.getUserId(callingUid) != userId) {
+    if (checkComponentPermission(INTERACT_ACROSS_USERS,callingPid,callingUid,-1,true) == PackageManager.PERMISSION_GRANTED || checkComponentPermission(INTERACT_ACROSS_USERS_FULL,callingPid,callingUid,-1,true) == PackageManager.PERMISSION_GRANTED) {
+      clearedIdentity=true;
+      ident=Binder.clearCallingIdentity();
+    }
+  }
   ContentProviderHolder holder=null;
   try {
     holder=getContentProviderExternalUnchecked(name,null,userId);
@@ -15,10 +24,17 @@
     return null;
   }
  finally {
-    if (holder != null) {
-      removeContentProviderExternalUnchecked(name,null,userId);
+    if (!clearedIdentity) {
+      ident=Binder.clearCallingIdentity();
     }
-    Binder.restoreCallingIdentity(ident);
+    try {
+      if (holder != null) {
+        removeContentProviderExternalUnchecked(name,null,userId);
+      }
+    }
+  finally {
+      Binder.restoreCallingIdentity(ident);
+    }
   }
   return null;
 }
