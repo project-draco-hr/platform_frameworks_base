@@ -1,59 +1,8 @@
 {
-  final int callingUid=Binder.getCallingUid();
-  mPm.enforceCrossUserPermission(callingUid,userId,true,"createSession");
-  if (mPm.isUserRestricted(UserHandle.getUserId(callingUid),UserManager.DISALLOW_INSTALL_APPS)) {
-    throw new SecurityException("User restriction prevents installing");
+  try {
+    return createSessionInternal(params,installerPackageName,userId);
   }
-  if ((callingUid == Process.SHELL_UID) || (callingUid == Process.ROOT_UID)) {
-    installerPackageName="com.android.shell";
-    params.installFlags|=INSTALL_FROM_ADB;
+ catch (  IOException e) {
+    throw ExceptionUtils.wrap(e);
   }
- else {
-    mAppOps.checkPackage(callingUid,installerPackageName);
-    params.installFlags&=~INSTALL_FROM_ADB;
-    params.installFlags&=~INSTALL_ALL_USERS;
-    params.installFlags|=INSTALL_REPLACE_EXISTING;
-  }
-switch (params.mode) {
-case SessionParams.MODE_FULL_INSTALL:
-case SessionParams.MODE_INHERIT_EXISTING:
-    break;
-default :
-  throw new IllegalArgumentException("Params must have valid mode set");
-}
-if (params.appIcon != null) {
-final ActivityManager am=(ActivityManager)mContext.getSystemService(Context.ACTIVITY_SERVICE);
-final int iconSize=am.getLauncherLargeIconSize();
-if ((params.appIcon.getWidth() > iconSize * 2) || (params.appIcon.getHeight() > iconSize * 2)) {
-  params.appIcon=Bitmap.createScaledBitmap(params.appIcon,iconSize,iconSize,true);
-}
-}
-if (params.sizeBytes > 0) {
-try {
-  mPm.freeStorage(params.sizeBytes);
-}
- catch (IOException e) {
-  throw ExceptionUtils.wrap(e);
-}
-}
-final int sessionId;
-final PackageInstallerSession session;
-synchronized (mSessions) {
-final int activeCount=getSessionCount(mSessions,callingUid);
-if (activeCount >= MAX_ACTIVE_SESSIONS) {
-  throw new IllegalStateException("Too many active sessions for UID " + callingUid);
-}
-final int historicalCount=getSessionCount(mHistoricalSessions,callingUid);
-if (historicalCount >= MAX_HISTORICAL_SESSIONS) {
-  throw new IllegalStateException("Too many historical sessions for UID " + callingUid);
-}
-sessionId=allocateSessionIdLocked();
-final long createdMillis=System.currentTimeMillis();
-final File sessionStageDir=prepareSessionStageDir(sessionId);
-session=new PackageInstallerSession(mInternalCallback,mContext,mPm,mInstallThread.getLooper(),sessionId,userId,installerPackageName,params,createdMillis,sessionStageDir,false);
-mSessions.put(sessionId,session);
-}
-mCallbacks.notifySessionCreated(session.sessionId,session.userId);
-writeSessionsAsync();
-return sessionId;
 }
