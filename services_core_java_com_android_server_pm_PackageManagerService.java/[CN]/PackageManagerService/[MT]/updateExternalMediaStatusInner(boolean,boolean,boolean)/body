@@ -1,28 +1,24 @@
 {
-  int uidArr[]=null;
-  HashSet<String> removeCids=new HashSet<String>();
-  HashMap<AsecInstallArgs,String> processCids=new HashMap<AsecInstallArgs,String>();
-  final String list[]=PackageHelper.getSecureContainerList();
-  if (list == null || list.length == 0) {
-    Log.i(TAG,"No secure containers on sdcard");
+  ArrayMap<AsecInstallArgs,String> processCids=new ArrayMap<>();
+  int[] uidArr=EmptyArray.INT;
+  final String[] list=PackageHelper.getSecureContainerList();
+  if (ArrayUtils.isEmpty(list)) {
+    Log.i(TAG,"No secure containers found");
   }
  else {
-    int uidList[]=new int[list.length];
-    int num=0;
 synchronized (mPackages) {
       for (      String cid : list) {
+        if (PackageInstallerService.isStageName(cid))         continue;
         if (DEBUG_SD_INSTALL)         Log.i(TAG,"Processing container " + cid);
         String pkgName=getAsecPackageName(cid);
         if (pkgName == null) {
-          if (DEBUG_SD_INSTALL)           Log.i(TAG,"Container : " + cid + " stale");
-          removeCids.add(cid);
+          Slog.i(TAG,"Found stale container " + cid + " with no package name");
           continue;
         }
         if (DEBUG_SD_INSTALL)         Log.i(TAG,"Looking for pkg : " + pkgName);
         final PackageSetting ps=mSettings.mPackages.get(pkgName);
         if (ps == null) {
-          Log.i(TAG,"Deleting container with no matching settings " + cid);
-          removeCids.add(cid);
+          Slog.i(TAG,"Found stale container " + cid + " with no matching settings");
           continue;
         }
         if (externalStorage && !isMounted && !isExternal(ps)) {
@@ -36,31 +32,21 @@ synchronized (mPackages) {
           processCids.put(args,ps.codePathString);
           final int uid=ps.appId;
           if (uid != -1) {
-            uidList[num++]=uid;
+            uidArr=ArrayUtils.appendInt(uidArr,uid);
           }
         }
  else {
-          Log.i(TAG,"Deleting stale container for " + cid);
-          removeCids.add(cid);
+          Slog.i(TAG,"Found stale container " + cid + ": expected codePath="+ ps.codePathString);
         }
       }
     }
-    if (num > 0) {
-      Arrays.sort(uidList,0,num);
-      uidArr=new int[num];
-      uidArr[0]=uidList[0];
-      int di=0;
-      for (int i=1; i < num; i++) {
-        if (uidList[i - 1] != uidList[i]) {
-          uidArr[di++]=uidList[i];
-        }
-      }
-    }
+    Arrays.sort(uidArr);
   }
   if (isMounted) {
     if (DEBUG_SD_INSTALL)     Log.i(TAG,"Loading packages");
-    loadMediaPackages(processCids,uidArr,removeCids);
+    loadMediaPackages(processCids,uidArr);
     startCleaningPackages();
+    mInstallerService.onSecureContainersAvailable();
   }
  else {
     if (DEBUG_SD_INSTALL)     Log.i(TAG,"Unloading packages");
