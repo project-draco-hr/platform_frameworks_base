@@ -11,17 +11,16 @@
     mSealed=true;
     mCallback.onSessionSealed(this);
   }
-  final File stageDir;
   try {
-    stageDir=getStageDir();
+    resolveStageDir();
   }
  catch (  IOException e) {
-    throw new PackageManagerException(INSTALL_FAILED_CONTAINER_ERROR,"Failed to resolve stage dir",e);
+    throw new PackageManagerException(INSTALL_FAILED_CONTAINER_ERROR,"Failed to resolve stage location",e);
   }
-  validateInstallLocked(stageDir);
+  validateInstallLocked();
   Preconditions.checkNotNull(mPackageName);
   Preconditions.checkNotNull(mSignatures);
-  Preconditions.checkNotNull(mResolvedBaseCodePath);
+  Preconditions.checkNotNull(mResolvedBaseFile);
   if (!mPermissionsAccepted) {
     final Intent intent=new Intent(PackageInstaller.ACTION_CONFIRM_PERMISSIONS);
     intent.setPackage("com.android.packageinstaller");
@@ -33,10 +32,28 @@
     }
     return;
   }
+  if (stageCid != null) {
+    final long finalSize=calculateInstalledSize();
+    resizeContainer(stageCid,finalSize);
+  }
   if (params.mode == SessionParams.MODE_INHERIT_EXISTING) {
-    spliceExistingFilesIntoStage(stageDir);
+    try {
+      if (stageCid != null) {
+        copyFiles(mResolvedInheritedFiles,resolveStageDir());
+      }
+ else {
+        linkFiles(mResolvedInheritedFiles,resolveStageDir());
+      }
+    }
+ catch (    IOException e) {
+      throw new PackageManagerException(INSTALL_FAILED_INSUFFICIENT_STORAGE,"Failed to inherit existing install",e);
+    }
   }
   mCallback.onSessionProgressChanged(this,0.9f);
+  extractNativeLibraries(mResolvedStageDir,params.abiOverride);
+  if (stageCid != null) {
+    finalizeAndFixContainer(stageCid);
+  }
   final IPackageInstallObserver2 localObserver=new IPackageInstallObserver2.Stub(){
     @Override public void onUserActionRequired(    Intent intent){
       throw new IllegalStateException();
@@ -47,5 +64,5 @@
     }
   }
 ;
-  mPm.installStage(mPackageName,this.internalStageDir,this.externalStageCid,localObserver,params,installerPackageName,installerUid,new UserHandle(userId));
+  mPm.installStage(mPackageName,stageDir,stageCid,localObserver,params,installerPackageName,installerUid,new UserHandle(userId));
 }
