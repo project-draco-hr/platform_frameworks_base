@@ -105,16 +105,23 @@ synchronized (mWindowMap) {
         return null;
       }
       frame.intersect(0,0,dw,dh);
-      scale=Math.max(width / (float)frame.width(),height / (float)frame.height());
-      dw=(int)(dw * scale);
-      dh=(int)(dh * scale);
+      Rect crop=new Rect(frame);
+      if (width / (float)frame.width() < height / (float)frame.height()) {
+        int cropWidth=(int)((float)width / (float)height * frame.height());
+        crop.right=crop.left + cropWidth;
+      }
+ else {
+        int cropHeight=(int)((float)height / (float)width * frame.width());
+        crop.bottom=crop.top + cropHeight;
+      }
       rot=getDefaultDisplayContentLocked().getDisplay().getRotation();
       if (rot == Surface.ROTATION_90 || rot == Surface.ROTATION_270) {
-        final int tmp=dw;
-        dw=dh;
-        dh=tmp;
+        final int tmp=width;
+        width=height;
+        height=tmp;
         rot=(rot == Surface.ROTATION_90) ? Surface.ROTATION_270 : Surface.ROTATION_90;
       }
+      convertCropForSurfaceFlinger(crop,rot,dw,dh);
       if (DEBUG_SCREENSHOT) {
         Slog.i(TAG,"Screenshot: " + dw + "x"+ dh+ " from "+ minLayer+ " to "+ maxLayer+ " appToken="+ appToken);
         for (int i=0; i < windows.size(); i++) {
@@ -125,7 +132,7 @@ synchronized (mWindowMap) {
       ScreenRotationAnimation screenRotationAnimation=mAnimator.getScreenRotationAnimationLocked(Display.DEFAULT_DISPLAY);
       final boolean inRotation=screenRotationAnimation != null && screenRotationAnimation.isAnimating();
       if (DEBUG_SCREENSHOT && inRotation)       Slog.v(TAG,"Taking screenshot while rotating");
-      rawss=SurfaceControl.screenshot(new Rect(),dw,dh,minLayer,maxLayer,inRotation);
+      rawss=SurfaceControl.screenshot(crop,width,height,minLayer,maxLayer,inRotation);
       if (rawss == null) {
         Slog.w(TAG,"Screenshot failure taking screenshot for (" + dw + "x"+ dh+ ") to layer "+ maxLayer);
         return null;
@@ -137,10 +144,8 @@ synchronized (mWindowMap) {
   if (DEBUG_SCREENSHOT) {
     bm.eraseColor(0xFF000000);
   }
-  frame.scale(scale);
   Matrix matrix=new Matrix();
-  ScreenRotationAnimation.createRotationMatrix(rot,dw,dh,matrix);
-  matrix.postTranslate(-FloatMath.ceil(frame.left),-FloatMath.ceil(frame.top));
+  ScreenRotationAnimation.createRotationMatrix(rot,width,height,matrix);
   Canvas canvas=new Canvas(bm);
   canvas.drawBitmap(rawss,matrix,null);
   canvas.setBitmap(null);
