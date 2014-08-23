@@ -10,6 +10,7 @@
   boolean askedCompatMode=false;
   int taskType=ActivityRecord.APPLICATION_ACTIVITY_TYPE;
   int userId=0;
+  int effectiveUid=-1;
   String lastDescription=null;
   long firstActiveTime=-1;
   long lastActiveTime=-1;
@@ -51,6 +52,9 @@
     }
  else     if (ATTR_USERID.equals(attrName)) {
       userId=Integer.valueOf(attrValue);
+    }
+ else     if (ATTR_EFFECTIVE_UID.equals(attrName)) {
+      effectiveUid=Integer.valueOf(attrValue);
     }
  else     if (ATTR_TASKTYPE.equals(attrName)) {
       taskType=Integer.valueOf(attrValue);
@@ -121,7 +125,23 @@
   if (lastActiveTime >= 0) {
     taskDescription.setIcon(TaskPersister.restoreImage(createLastTaskDescriptionIconFilename(taskId,lastActiveTime)));
   }
-  final TaskRecord task=new TaskRecord(stackSupervisor.mService,taskId,intent,affinityIntent,affinity,realActivity,origActivity,rootHasReset,autoRemoveRecents,askedCompatMode,taskType,userId,lastDescription,activities,firstActiveTime,lastActiveTime,lastTimeOnTop,neverRelinquishIdentity,taskDescription,taskAffiliation,prevTaskId,nextTaskId,taskAffiliationColor,callingUid,callingPackage);
+  if (effectiveUid <= 0) {
+    Intent checkIntent=intent != null ? intent : affinityIntent;
+    effectiveUid=0;
+    if (checkIntent != null) {
+      IPackageManager pm=AppGlobals.getPackageManager();
+      try {
+        ApplicationInfo ai=pm.getApplicationInfo(checkIntent.getComponent().getPackageName(),PackageManager.GET_UNINSTALLED_PACKAGES | PackageManager.GET_DISABLED_COMPONENTS,userId);
+        if (ai != null) {
+          effectiveUid=ai.uid;
+        }
+      }
+ catch (      RemoteException e) {
+      }
+    }
+    Slog.w(TAG,"Updating task #" + taskId + " for "+ checkIntent+ ": effectiveUid="+ effectiveUid);
+  }
+  final TaskRecord task=new TaskRecord(stackSupervisor.mService,taskId,intent,affinityIntent,affinity,realActivity,origActivity,rootHasReset,autoRemoveRecents,askedCompatMode,taskType,userId,effectiveUid,lastDescription,activities,firstActiveTime,lastActiveTime,lastTimeOnTop,neverRelinquishIdentity,taskDescription,taskAffiliation,prevTaskId,nextTaskId,taskAffiliationColor,callingUid,callingPackage);
   for (int activityNdx=activities.size() - 1; activityNdx >= 0; --activityNdx) {
     activities.get(activityNdx).task=task;
   }
