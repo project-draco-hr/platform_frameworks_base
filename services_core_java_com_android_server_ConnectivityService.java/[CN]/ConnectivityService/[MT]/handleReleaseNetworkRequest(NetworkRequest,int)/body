@@ -8,33 +8,38 @@
     if (DBG)     log("releasing NetworkRequest " + request);
     nri.unlinkDeathRecipient();
     mNetworkRequests.remove(request);
-    NetworkAgentInfo affectedNetwork=mNetworkForRequestId.get(nri.request.requestId);
-    if (affectedNetwork != null) {
-      mNetworkForRequestId.remove(nri.request.requestId);
-      affectedNetwork.networkRequests.remove(nri.request.requestId);
-      if (VDBG) {
-        log(" Removing from current network " + affectedNetwork.name() + ", leaving "+ affectedNetwork.networkRequests.size()+ " requests.");
-      }
-      if (nri.isRequest && nri.request.legacyType != TYPE_NONE) {
-        mLegacyTypeTracker.remove(nri.request.legacyType,affectedNetwork);
-      }
-    }
     if (nri.isRequest) {
+      for (      NetworkAgentInfo nai : mNetworkAgentInfos.values()) {
+        if (nai.networkRequests.get(nri.request.requestId) != null) {
+          nai.networkRequests.remove(nri.request.requestId);
+          if (VDBG) {
+            log(" Removing from current network " + nai.name() + ", leaving "+ nai.networkRequests.size()+ " requests.");
+          }
+          boolean keep=nai.isVPN();
+          for (int i=0; i < nai.networkRequests.size() && !keep; i++) {
+            NetworkRequest r=nai.networkRequests.valueAt(i);
+            if (mNetworkRequests.get(r).isRequest)             keep=true;
+          }
+          if (!keep) {
+            if (DBG)             log("no live requests for " + nai.name() + "; disconnecting");
+            nai.asyncChannel.disconnect();
+          }
+        }
+      }
+      NetworkAgentInfo nai=mNetworkForRequestId.get(nri.request.requestId);
+      if (nai != null) {
+        mNetworkForRequestId.remove(nri.request.requestId);
+        if (nri.request.legacyType != TYPE_NONE) {
+          mLegacyTypeTracker.remove(nri.request.legacyType,nai);
+        }
+      }
       for (      NetworkFactoryInfo nfi : mNetworkFactoryInfos.values()) {
         nfi.asyncChannel.sendMessage(android.net.NetworkFactory.CMD_CANCEL_REQUEST,nri.request);
       }
-      if (affectedNetwork != null) {
-        boolean keep=affectedNetwork.isVPN();
-        for (int i=0; i < affectedNetwork.networkRequests.size() && !keep; i++) {
-          NetworkRequest r=affectedNetwork.networkRequests.valueAt(i);
-          if (mNetworkRequests.get(r).isRequest) {
-            keep=true;
-          }
-        }
-        if (keep == false) {
-          if (DBG)           log("no live requests for " + affectedNetwork.name() + "; disconnecting");
-          affectedNetwork.asyncChannel.disconnect();
-        }
+    }
+ else {
+      for (      NetworkAgentInfo nai : mNetworkAgentInfos.values()) {
+        nai.networkRequests.remove(nri.request.requestId);
       }
     }
     callCallbackForRequest(nri,null,ConnectivityManager.CALLBACK_RELEASED);
