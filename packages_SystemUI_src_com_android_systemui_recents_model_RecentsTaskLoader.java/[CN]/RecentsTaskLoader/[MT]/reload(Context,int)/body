@@ -2,6 +2,7 @@
   RecentsConfiguration config=RecentsConfiguration.getInstance();
   Resources res=context.getResources();
   LinkedHashSet<Task> tasksToLoad=new LinkedHashSet<Task>();
+  ArrayList<Task> tasksToAdd=new ArrayList<Task>();
   TaskStack stack=new TaskStack();
   SpaceNode root=new SpaceNode();
   root.setStack(stack);
@@ -10,48 +11,70 @@
   int taskCount=tasks.size();
   for (int i=0; i < taskCount; i++) {
     ActivityManager.RecentTaskInfo t=tasks.get(i);
-    ActivityInfo info=ssp.getActivityInfo(t.baseIntent.getComponent(),t.userId);
-    if (info == null)     continue;
+    Task.TaskKey taskKey=new Task.TaskKey(t.persistentId,t.baseIntent,t.userId,t.firstActiveTime,t.lastActiveTime);
+    ComponentName cn=t.baseIntent.getComponent();
+    ActivityInfo info=null;
     ActivityManager.TaskDescription av=t.taskDescription;
     String activityLabel=null;
     Drawable activityIcon=mDefaultApplicationIcon;
     int activityColor=config.taskBarViewDefaultBackgroundColor;
+    boolean loadedActivityIcon=false;
     if (av != null) {
-      activityLabel=(av.getLabel() != null ? av.getLabel() : ssp.getActivityLabel(info));
-      activityIcon=(av.getIcon() != null) ? ssp.getBadgedIcon(new BitmapDrawable(res,av.getIcon()),t.userId) : null;
+      activityLabel=av.getLabel();
+      activityIcon=mTaskDescriptionIconCache.getAndInvalidateIfModified(taskKey);
+      if (activityIcon == null) {
+        activityIcon=(av.getIcon() != null) ? ssp.getBadgedIcon(new BitmapDrawable(res,av.getIcon()),t.userId) : null;
+        if (activityIcon != null) {
+          mTaskDescriptionIconCache.put(taskKey,activityIcon);
+        }
+      }
       if (av.getPrimaryColor() != 0) {
         activityColor=av.getPrimaryColor();
       }
+      loadedActivityIcon=(activityIcon != null);
     }
- else {
-      activityLabel=ssp.getActivityLabel(info);
+    if (activityLabel == null) {
+      activityLabel=mActivityLabelCache.getAndInvalidateIfModified(taskKey);
+      if (activityLabel == null) {
+        if (info == null) {
+          info=ssp.getActivityInfo(cn,t.userId);
+        }
+        activityLabel=ssp.getActivityLabel(info);
+        mActivityLabelCache.put(taskKey,activityLabel);
+      }
     }
-    Task task=new Task(t.persistentId,(t.id > -1),t.baseIntent,t.affiliatedTaskId,t.affiliatedTaskColor,activityLabel,activityIcon,activityColor,t.userId,t.firstActiveTime,t.lastActiveTime,(i == (taskCount - 1)),config.lockToAppEnabled);
+    Task task=new Task(taskKey,(t.id > -1),t.affiliatedTaskId,t.affiliatedTaskColor,activityLabel,activityIcon,activityColor,(i == (taskCount - 1)),config.lockToAppEnabled);
     if (i >= (taskCount - preloadCount)) {
-      task.applicationIcon=mApplicationIconCache.getAndInvalidateIfModified(task.key);
-      if (task.applicationIcon == null) {
-        task.applicationIcon=ssp.getActivityIcon(info,task.userId);
-        if (task.applicationIcon != null) {
-          mApplicationIconCache.put(task.key,task.applicationIcon);
+      if (!loadedActivityIcon) {
+        task.applicationIcon=mApplicationIconCache.getAndInvalidateIfModified(taskKey);
+        if (task.applicationIcon == null) {
+          if (info == null) {
+            info=ssp.getActivityInfo(cn,t.userId);
+          }
+          task.applicationIcon=ssp.getActivityIcon(info,taskKey.userId);
+          if (task.applicationIcon != null) {
+            mApplicationIconCache.put(taskKey,task.applicationIcon);
+          }
+        }
+        if (task.applicationIcon == null) {
+          tasksToLoad.add(task);
         }
       }
-      if (task.applicationIcon == null) {
-        tasksToLoad.add(task);
-      }
-      task.thumbnail=mThumbnailCache.getAndInvalidateIfModified(task.key);
+      task.thumbnail=mThumbnailCache.getAndInvalidateIfModified(taskKey);
       if (task.thumbnail == null) {
-        task.thumbnail=ssp.getTaskThumbnail(task.key.id);
+        task.thumbnail=ssp.getTaskThumbnail(taskKey.id);
         if (task.thumbnail != null) {
           task.thumbnail.setHasAlpha(false);
-          mThumbnailCache.put(task.key,task.thumbnail);
+          mThumbnailCache.put(taskKey,task.thumbnail);
         }
       }
       if (task.thumbnail == null) {
         tasksToLoad.add(task);
       }
     }
-    stack.addTask(task);
+    tasksToAdd.add(task);
   }
+  stack.setTasks(tasksToAdd);
   stack.createAffiliatedGroupings(config);
   mLoader.start(context);
   mLoadQueue.addTasks(tasksToLoad);
