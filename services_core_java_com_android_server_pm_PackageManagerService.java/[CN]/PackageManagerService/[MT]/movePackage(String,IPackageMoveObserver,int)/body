@@ -2,11 +2,15 @@
   mContext.enforceCallingOrSelfPermission(android.Manifest.permission.MOVE_PACKAGE,null);
   UserHandle user=new UserHandle(UserHandle.getCallingUserId());
   int returnCode=PackageManager.MOVE_SUCCEEDED;
-  int currFlags=0;
-  int newFlags=0;
+  int currInstallFlags=0;
+  int newInstallFlags=0;
+  File codeFile=null;
+  String installerPackageName=null;
+  String packageAbiOverride=null;
 synchronized (mPackages) {
-    PackageParser.Package pkg=mPackages.get(packageName);
-    if (pkg == null) {
+    final PackageParser.Package pkg=mPackages.get(packageName);
+    final PackageSetting ps=mSettings.mPackages.get(packageName);
+    if (pkg == null || ps == null) {
       returnCode=PackageManager.MOVE_FAILED_DOESNT_EXIST;
     }
  else {
@@ -24,16 +28,16 @@ synchronized (mPackages) {
           returnCode=PackageManager.MOVE_FAILED_INVALID_LOCATION;
         }
  else {
-          newFlags=(flags & PackageManager.MOVE_EXTERNAL_MEDIA) != 0 ? PackageManager.INSTALL_EXTERNAL : PackageManager.INSTALL_INTERNAL;
-          currFlags=isExternal(pkg) ? PackageManager.INSTALL_EXTERNAL : PackageManager.INSTALL_INTERNAL;
-          if (newFlags == currFlags) {
+          newInstallFlags=(flags & PackageManager.MOVE_EXTERNAL_MEDIA) != 0 ? PackageManager.INSTALL_EXTERNAL : PackageManager.INSTALL_INTERNAL;
+          currInstallFlags=isExternal(pkg) ? PackageManager.INSTALL_EXTERNAL : PackageManager.INSTALL_INTERNAL;
+          if (newInstallFlags == currInstallFlags) {
             Slog.w(TAG,"No move required. Trying to move to same location");
             returnCode=PackageManager.MOVE_FAILED_INVALID_LOCATION;
           }
  else {
             if (isForwardLocked(pkg)) {
-              currFlags|=PackageManager.INSTALL_FORWARD_LOCK;
-              newFlags|=PackageManager.INSTALL_FORWARD_LOCK;
+              currInstallFlags|=PackageManager.INSTALL_FORWARD_LOCK;
+              newInstallFlags|=PackageManager.INSTALL_FORWARD_LOCK;
             }
           }
         }
@@ -41,18 +45,43 @@ synchronized (mPackages) {
           pkg.mOperationPending=true;
         }
       }
-    }
-    if (returnCode != PackageManager.MOVE_SUCCEEDED) {
-      processPendingMove(new MoveParams(null,observer,0,packageName,null,-1,user),returnCode);
-    }
- else {
-      Message msg=mHandler.obtainMessage(INIT_COPY);
-      final String[] instructionSets=getAppDexInstructionSets(pkg.applicationInfo);
-      final boolean multiArch=isMultiArch(pkg.applicationInfo);
-      InstallArgs srcArgs=createInstallArgsForExisting(currFlags,pkg.applicationInfo.getCodePath(),pkg.applicationInfo.getResourcePath(),pkg.applicationInfo.nativeLibraryRootDir,instructionSets);
-      MoveParams mp=new MoveParams(srcArgs,observer,newFlags,packageName,instructionSets,pkg.applicationInfo.uid,user);
-      msg.obj=mp;
-      mHandler.sendMessage(msg);
+      codeFile=new File(pkg.codePath);
+      installerPackageName=ps.installerPackageName;
+      packageAbiOverride=ps.cpuAbiOverrideString;
     }
   }
+  if (returnCode != PackageManager.MOVE_SUCCEEDED) {
+    try {
+      observer.packageMoved(packageName,returnCode);
+    }
+ catch (    RemoteException ignored) {
+    }
+    return;
+  }
+  final IPackageInstallObserver2 installObserver=new IPackageInstallObserver2.Stub(){
+    @Override public void onUserActionRequired(    Intent intent) throws RemoteException {
+      throw new IllegalStateException();
+    }
+    @Override public void onPackageInstalled(    String basePackageName,    int returnCode,    String msg,    Bundle extras) throws RemoteException {
+      Slog.d(TAG,"Install result for move: " + PackageManager.installStatusToString(returnCode,msg));
+      final int status=PackageManager.installStatusToPublicStatus(returnCode);
+switch (status) {
+case PackageInstaller.STATUS_SUCCESS:
+        observer.packageMoved(packageName,PackageManager.MOVE_SUCCEEDED);
+      break;
+case PackageInstaller.STATUS_FAILURE_STORAGE:
+    observer.packageMoved(packageName,PackageManager.MOVE_FAILED_INSUFFICIENT_STORAGE);
+  break;
+default :
+observer.packageMoved(packageName,PackageManager.MOVE_FAILED_INTERNAL_ERROR);
+break;
+}
+}
+}
+;
+newInstallFlags|=PackageManager.INSTALL_REPLACE_EXISTING;
+final Message msg=mHandler.obtainMessage(INIT_COPY);
+final OriginInfo origin=OriginInfo.fromExistingFile(codeFile);
+msg.obj=new InstallParams(origin,installObserver,newInstallFlags,installerPackageName,null,user,packageAbiOverride);
+mHandler.sendMessage(msg);
 }
