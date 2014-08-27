@@ -9,7 +9,6 @@ synchronized (this) {
       Slog.w(TAG,"getRecentTasks: caller " + callingUid + " does not hold GET_TASKS; limiting output");
     }
     final boolean detailed=checkCallingPermission(android.Manifest.permission.GET_DETAILED_TASKS) == PackageManager.PERMISSION_GRANTED;
-    IPackageManager pm=AppGlobals.getPackageManager();
     final int N=mRecentTasks.size();
     ArrayList<ActivityManager.RecentTaskInfo> res=new ArrayList<ActivityManager.RecentTaskInfo>(maxNum < N ? maxNum : N);
     final Set<Integer> includedUsers;
@@ -20,48 +19,6 @@ synchronized (this) {
       includedUsers=new HashSet<Integer>();
     }
     includedUsers.add(Integer.valueOf(userId));
-    for (int i=0; i < N; ) {
-      TaskRecord task=mRecentTasks.remove(i);
-      if (mTmpRecents.contains(task)) {
-        continue;
-      }
-      int affiliatedTaskId=task.mAffiliatedTaskId;
-      while (true) {
-        TaskRecord next=task.mNextAffiliate;
-        if (next == null) {
-          break;
-        }
-        if (next.mAffiliatedTaskId != affiliatedTaskId) {
-          Slog.e(TAG,"Error in Recents: next.affiliatedTaskId=" + next.mAffiliatedTaskId + " affiliatedTaskId="+ affiliatedTaskId);
-          task.setNextAffiliate(null);
-          if (next.mPrevAffiliate == task) {
-            next.setPrevAffiliate(null);
-          }
-          break;
-        }
-        if (next.mPrevAffiliate != task) {
-          Slog.e(TAG,"Error in Recents chain prev.mNextAffiliate=" + next.mPrevAffiliate + " task="+ task);
-          next.setPrevAffiliate(null);
-          break;
-        }
-        if (!mRecentTasks.contains(next)) {
-          Slog.e(TAG,"Error in Recents: next=" + next + " not in mRecentTasks");
-          task.setNextAffiliate(null);
-          if (next.mPrevAffiliate == task) {
-            next.setPrevAffiliate(null);
-          }
-          break;
-        }
-        task=next;
-      }
-      do {
-        mRecentTasks.remove(task);
-        mRecentTasks.add(i++,task);
-        mTmpRecents.add(task);
-      }
- while ((task=task.mPrevAffiliate) != null);
-    }
-    mTmpRecents.clear();
     for (int i=0; i < N && maxNum > 0; i++) {
       TaskRecord tr=mRecentTasks.get(i);
       if (!includedUsers.contains(Integer.valueOf(tr.userId))) {
@@ -85,27 +42,13 @@ synchronized (this) {
           if (DEBUG_RECENTS)           Slog.d(TAG,"Skipping, auto-remove without activity: " + tr);
           continue;
         }
+        if ((flags & ActivityManager.RECENT_IGNORE_UNAVAILABLE) != 0 && !tr.isAvailable) {
+          if (DEBUG_RECENTS)           Slog.d(TAG,"Skipping, unavail real act: " + tr);
+          continue;
+        }
         ActivityManager.RecentTaskInfo rti=createRecentTaskInfoFromTaskRecord(tr);
         if (!detailed) {
           rti.baseIntent.replaceExtras((Bundle)null);
-        }
-        if ((flags & ActivityManager.RECENT_IGNORE_UNAVAILABLE) != 0) {
-          try {
-            if (rti.origActivity != null) {
-              if (pm.getActivityInfo(rti.origActivity,0,userId) == null) {
-                if (DEBUG_RECENTS)                 Slog.d(TAG,"Skipping, unavail orig act: " + tr);
-                continue;
-              }
-            }
- else             if (rti.baseIntent != null) {
-              if (pm.queryIntentActivities(rti.baseIntent,null,0,userId) == null) {
-                if (DEBUG_RECENTS)                 Slog.d(TAG,"Skipping, unavail intent: " + tr);
-                continue;
-              }
-            }
-          }
- catch (          RemoteException e) {
-          }
         }
         res.add(rti);
         maxNum--;
