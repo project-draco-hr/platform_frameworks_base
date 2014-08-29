@@ -3,6 +3,7 @@
   ContentProviderConnection conn=null;
   ProviderInfo cpi=null;
 synchronized (this) {
+    long startTime=SystemClock.elapsedRealtime();
     ProcessRecord r=null;
     if (caller != null) {
       r=getRecordForAppLocked(caller);
@@ -11,6 +12,7 @@ synchronized (this) {
       }
     }
     boolean checkCrossUser=true;
+    checkTime(startTime,"getContentProviderImpl: getProviderByName");
     cpr=mProviderMap.getProviderByName(name,userId);
     if (cpr == null && userId != UserHandle.USER_OWNER) {
       cpr=mProviderMap.getProviderByName(name,UserHandle.USER_OWNER);
@@ -30,19 +32,24 @@ synchronized (this) {
     if (providerRunning) {
       cpi=cpr.info;
       String msg;
+      checkTime(startTime,"getContentProviderImpl: before checkContentProviderPermission");
       if ((msg=checkContentProviderPermissionLocked(cpi,r,userId,checkCrossUser)) != null) {
         throw new SecurityException(msg);
       }
+      checkTime(startTime,"getContentProviderImpl: after checkContentProviderPermission");
       if (r != null && cpr.canRunHere(r)) {
         ContentProviderHolder holder=cpr.newHolder(null);
         holder.provider=null;
         return holder;
       }
       final long origId=Binder.clearCallingIdentity();
+      checkTime(startTime,"getContentProviderImpl: incProviderCountLocked");
       conn=incProviderCountLocked(r,cpr,token,stable);
       if (conn != null && (conn.stableCount + conn.unstableCount) == 1) {
         if (cpr.proc != null && r.setAdj <= ProcessList.PERCEPTIBLE_APP_ADJ) {
+          checkTime(startTime,"getContentProviderImpl: before updateLruProcess");
           updateLruProcessLocked(cpr.proc,false,null);
+          checkTime(startTime,"getContentProviderImpl: after updateLruProcess");
         }
       }
       if (cpr.proc != null) {
@@ -52,12 +59,16 @@ synchronized (this) {
             Process.killProcess(cpr.proc.pid);
           }
         }
+        checkTime(startTime,"getContentProviderImpl: before updateOomAdj");
         boolean success=updateOomAdjLocked(cpr.proc);
+        checkTime(startTime,"getContentProviderImpl: after updateOomAdj");
         if (DEBUG_PROVIDER)         Slog.i(TAG,"Adjust success: " + success);
         if (!success) {
           Slog.i(TAG,"Existing provider " + cpr.name.flattenToShortString() + " is crashing; detaching "+ r);
           boolean lastRef=decProviderCountLocked(conn,cpr,token,stable);
+          checkTime(startTime,"getContentProviderImpl: before appDied");
           appDiedLocked(cpr.proc);
+          checkTime(startTime,"getContentProviderImpl: after appDied");
           if (!lastRef) {
             return null;
           }
