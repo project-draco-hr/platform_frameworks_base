@@ -9,23 +9,23 @@ synchronized (mInterfaceLock) {
     result.set(CameraCharacteristics.LENS_INFO_SHADING_MAP_SIZE,getCharacteristics().get(CameraCharacteristics.LENS_INFO_SHADING_MAP_SIZE));
     final CaptureListenerHolder holder=CameraDeviceImpl.this.mCaptureListenerMap.get(requestId);
     boolean isPartialResult=(resultExtras.getPartialResultCount() < mTotalPartialCount);
-    if (!isPartialResult) {
-      mFrameNumberTracker.updateTracker(frameNumber,false);
-    }
     if (holder == null) {
       if (DEBUG) {
         Log.d(TAG,"holder is null, early return at frame " + frameNumber);
       }
+      mFrameNumberTracker.updateTracker(frameNumber,null,isPartialResult);
       return;
     }
     if (isClosed()) {
       if (DEBUG) {
         Log.d(TAG,"camera is closed, early return at frame " + frameNumber);
       }
+      mFrameNumberTracker.updateTracker(frameNumber,null,isPartialResult);
       return;
     }
     final CaptureRequest request=holder.getRequest(resultExtras.getSubsequenceId());
     Runnable resultDispatch=null;
+    CaptureResult finalResult;
     if (isPartialResult) {
       final CaptureResult resultAsCapture=new CaptureResult(result,request,resultExtras);
       resultDispatch=new Runnable(){
@@ -36,9 +36,11 @@ synchronized (mInterfaceLock) {
         }
       }
 ;
+      finalResult=resultAsCapture;
     }
  else {
-      final TotalCaptureResult resultAsCapture=new TotalCaptureResult(result,request,resultExtras);
+      List<CaptureResult> partialResults=mFrameNumberTracker.popPartialResults(frameNumber);
+      final TotalCaptureResult resultAsCapture=new TotalCaptureResult(result,request,resultExtras,partialResults);
       resultDispatch=new Runnable(){
         @Override public void run(){
           if (!CameraDeviceImpl.this.isClosed()) {
@@ -47,8 +49,10 @@ synchronized (mInterfaceLock) {
         }
       }
 ;
+      finalResult=resultAsCapture;
     }
     holder.getHandler().post(resultDispatch);
+    mFrameNumberTracker.updateTracker(frameNumber,finalResult,isPartialResult);
     if (!isPartialResult) {
       checkAndFireSequenceComplete();
     }
