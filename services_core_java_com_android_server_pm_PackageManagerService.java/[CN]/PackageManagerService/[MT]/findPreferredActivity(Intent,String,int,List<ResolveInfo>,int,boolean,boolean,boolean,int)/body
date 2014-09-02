@@ -13,81 +13,92 @@ synchronized (mPackages) {
     if (DEBUG_PREFERRED || debug)     Slog.v(TAG,"Looking for preferred activities...");
     List<PreferredActivity> prefs=pir != null ? pir.queryIntent(intent,resolvedType,(flags & PackageManager.MATCH_DEFAULT_ONLY) != 0,userId) : null;
     if (prefs != null && prefs.size() > 0) {
-      int match=0;
-      if (DEBUG_PREFERRED || debug)       Slog.v(TAG,"Figuring out best match...");
-      final int N=query.size();
-      for (int j=0; j < N; j++) {
-        final ResolveInfo ri=query.get(j);
-        if (DEBUG_PREFERRED || debug)         Slog.v(TAG,"Match for " + ri.activityInfo + ": 0x"+ Integer.toHexString(match));
-        if (ri.match > match) {
-          match=ri.match;
-        }
-      }
-      if (DEBUG_PREFERRED || debug)       Slog.v(TAG,"Best match: 0x" + Integer.toHexString(match));
-      match&=IntentFilter.MATCH_CATEGORY_MASK;
-      final int M=prefs.size();
-      for (int i=0; i < M; i++) {
-        final PreferredActivity pa=prefs.get(i);
-        if (DEBUG_PREFERRED || debug) {
-          Slog.v(TAG,"Checking PreferredActivity ds=" + (pa.countDataSchemes() > 0 ? pa.getDataScheme(0) : "<none>") + "\n  component="+ pa.mPref.mComponent);
-          pa.dump(new LogPrinter(Log.VERBOSE,TAG,Log.LOG_ID_SYSTEM),"  ");
-        }
-        if (pa.mPref.mMatch != match) {
-          if (DEBUG_PREFERRED || debug)           Slog.v(TAG,"Skipping bad match " + Integer.toHexString(pa.mPref.mMatch));
-          continue;
-        }
-        if (always && !pa.mPref.mAlways) {
-          if (DEBUG_PREFERRED || debug)           Slog.v(TAG,"Skipping mAlways=false entry");
-          continue;
-        }
-        final ActivityInfo ai=getActivityInfo(pa.mPref.mComponent,flags | PackageManager.GET_DISABLED_COMPONENTS,userId);
-        if (DEBUG_PREFERRED || debug) {
-          Slog.v(TAG,"Found preferred activity:");
-          if (ai != null) {
-            ai.dump(new LogPrinter(Log.VERBOSE,TAG,Log.LOG_ID_SYSTEM),"  ");
-          }
- else {
-            Slog.v(TAG,"  null");
-          }
-        }
-        if (ai == null) {
-          Slog.w(TAG,"Removing dangling preferred activity: " + pa.mPref.mComponent);
-          pir.removeFilter(pa);
-          continue;
-        }
+      boolean changed=false;
+      try {
+        int match=0;
+        if (DEBUG_PREFERRED || debug)         Slog.v(TAG,"Figuring out best match...");
+        final int N=query.size();
         for (int j=0; j < N; j++) {
           final ResolveInfo ri=query.get(j);
-          if (!ri.activityInfo.applicationInfo.packageName.equals(ai.applicationInfo.packageName)) {
+          if (DEBUG_PREFERRED || debug)           Slog.v(TAG,"Match for " + ri.activityInfo + ": 0x"+ Integer.toHexString(match));
+          if (ri.match > match) {
+            match=ri.match;
+          }
+        }
+        if (DEBUG_PREFERRED || debug)         Slog.v(TAG,"Best match: 0x" + Integer.toHexString(match));
+        match&=IntentFilter.MATCH_CATEGORY_MASK;
+        final int M=prefs.size();
+        for (int i=0; i < M; i++) {
+          final PreferredActivity pa=prefs.get(i);
+          if (DEBUG_PREFERRED || debug) {
+            Slog.v(TAG,"Checking PreferredActivity ds=" + (pa.countDataSchemes() > 0 ? pa.getDataScheme(0) : "<none>") + "\n  component="+ pa.mPref.mComponent);
+            pa.dump(new LogPrinter(Log.VERBOSE,TAG,Log.LOG_ID_SYSTEM),"  ");
+          }
+          if (pa.mPref.mMatch != match) {
+            if (DEBUG_PREFERRED || debug)             Slog.v(TAG,"Skipping bad match " + Integer.toHexString(pa.mPref.mMatch));
             continue;
           }
-          if (!ri.activityInfo.name.equals(ai.name)) {
+          if (always && !pa.mPref.mAlways) {
+            if (DEBUG_PREFERRED || debug)             Slog.v(TAG,"Skipping mAlways=false entry");
             continue;
           }
-          if (removeMatches) {
-            pir.removeFilter(pa);
-            if (DEBUG_PREFERRED) {
-              Slog.v(TAG,"Removing match " + pa.mPref.mComponent);
+          final ActivityInfo ai=getActivityInfo(pa.mPref.mComponent,flags | PackageManager.GET_DISABLED_COMPONENTS,userId);
+          if (DEBUG_PREFERRED || debug) {
+            Slog.v(TAG,"Found preferred activity:");
+            if (ai != null) {
+              ai.dump(new LogPrinter(Log.VERBOSE,TAG,Log.LOG_ID_SYSTEM),"  ");
             }
-            break;
-          }
-          if (always && !pa.mPref.sameSet(query,priority)) {
-            Slog.i(TAG,"Result set changed, dropping preferred activity for " + intent + " type "+ resolvedType);
-            if (DEBUG_PREFERRED) {
-              Slog.v(TAG,"Removing preferred activity since set changed " + pa.mPref.mComponent);
+ else {
+              Slog.v(TAG,"  null");
             }
-            pir.removeFilter(pa);
-            PreferredActivity lastChosen=new PreferredActivity(pa,pa.mPref.mMatch,null,pa.mPref.mComponent,false);
-            pir.addFilter(lastChosen);
-            mSettings.writePackageRestrictionsLPr(userId);
-            return null;
           }
-          if (DEBUG_PREFERRED || debug)           Slog.v(TAG,"Returning preferred activity: " + ri.activityInfo.packageName + "/"+ ri.activityInfo.name);
+          if (ai == null) {
+            Slog.w(TAG,"Removing dangling preferred activity: " + pa.mPref.mComponent);
+            pir.removeFilter(pa);
+            changed=true;
+            continue;
+          }
+          for (int j=0; j < N; j++) {
+            final ResolveInfo ri=query.get(j);
+            if (!ri.activityInfo.applicationInfo.packageName.equals(ai.applicationInfo.packageName)) {
+              continue;
+            }
+            if (!ri.activityInfo.name.equals(ai.name)) {
+              continue;
+            }
+            if (removeMatches) {
+              pir.removeFilter(pa);
+              changed=true;
+              if (DEBUG_PREFERRED) {
+                Slog.v(TAG,"Removing match " + pa.mPref.mComponent);
+              }
+              break;
+            }
+            if (always && !pa.mPref.sameSet(query,priority)) {
+              Slog.i(TAG,"Result set changed, dropping preferred activity for " + intent + " type "+ resolvedType);
+              if (DEBUG_PREFERRED) {
+                Slog.v(TAG,"Removing preferred activity since set changed " + pa.mPref.mComponent);
+              }
+              pir.removeFilter(pa);
+              PreferredActivity lastChosen=new PreferredActivity(pa,pa.mPref.mMatch,null,pa.mPref.mComponent,false);
+              pir.addFilter(lastChosen);
+              changed=true;
+              return null;
+            }
+            if (DEBUG_PREFERRED || debug)             Slog.v(TAG,"Returning preferred activity: " + ri.activityInfo.packageName + "/"+ ri.activityInfo.name);
+            return ri;
+          }
+        }
+      }
+  finally {
+        if (changed) {
+          if (DEBUG_PREFERRED) {
+            Slog.v(TAG,"Preferred activity bookkeeping changed; writing restrictions");
+          }
           mSettings.writePackageRestrictionsLPr(userId);
-          return ri;
         }
       }
     }
-    mSettings.writePackageRestrictionsLPr(userId);
   }
   if (DEBUG_PREFERRED || debug)   Slog.v(TAG,"No preferred activity to return");
   return null;
