@@ -81,7 +81,9 @@ synchronized (this) {
     boolean singleton;
     if (!providerRunning) {
       try {
+        checkTime(startTime,"getContentProviderImpl: before resolveContentProvider");
         cpi=AppGlobals.getPackageManager().resolveContentProvider(name,STOCK_PM_FLAGS | PackageManager.GET_URI_PERMISSION_PATTERNS,userId);
+        checkTime(startTime,"getContentProviderImpl: after resolveContentProvider");
       }
  catch (      RemoteException ex) {
       }
@@ -93,10 +95,13 @@ synchronized (this) {
         userId=UserHandle.USER_OWNER;
       }
       cpi.applicationInfo=getAppInfoForUser(cpi.applicationInfo,userId);
+      checkTime(startTime,"getContentProviderImpl: got app info for user");
       String msg;
+      checkTime(startTime,"getContentProviderImpl: before checkContentProviderPermission");
       if ((msg=checkContentProviderPermissionLocked(cpi,r,userId,!singleton)) != null) {
         throw new SecurityException(msg);
       }
+      checkTime(startTime,"getContentProviderImpl: after checkContentProviderPermission");
       if (!mProcessesReady && !mDidUpdate && !mWaitingUpdate&& !cpi.processName.equals("system")) {
         throw new IllegalArgumentException("Attempt to launch content provider before system ready");
       }
@@ -105,11 +110,15 @@ synchronized (this) {
         return null;
       }
       ComponentName comp=new ComponentName(cpi.packageName,cpi.name);
+      checkTime(startTime,"getContentProviderImpl: before getProviderByClass");
       cpr=mProviderMap.getProviderByClass(comp,userId);
+      checkTime(startTime,"getContentProviderImpl: after getProviderByClass");
       final boolean firstClass=cpr == null;
       if (firstClass) {
         try {
+          checkTime(startTime,"getContentProviderImpl: before getApplicationInfo");
           ApplicationInfo ai=AppGlobals.getPackageManager().getApplicationInfo(cpi.applicationInfo.packageName,STOCK_PM_FLAGS,userId);
+          checkTime(startTime,"getContentProviderImpl: after getApplicationInfo");
           if (ai == null) {
             Slog.w(TAG,"No package info for content provider " + cpi.name);
             return null;
@@ -120,6 +129,7 @@ synchronized (this) {
  catch (        RemoteException ex) {
         }
       }
+      checkTime(startTime,"getContentProviderImpl: now have ContentProviderRecord");
       if (r != null && cpr.canRunHere(r)) {
         return cpr.newHolder(null);
       }
@@ -138,18 +148,22 @@ synchronized (this) {
         final long origId=Binder.clearCallingIdentity();
         try {
           try {
+            checkTime(startTime,"getContentProviderImpl: before set stopped state");
             AppGlobals.getPackageManager().setPackageStoppedState(cpr.appInfo.packageName,false,userId);
+            checkTime(startTime,"getContentProviderImpl: after set stopped state");
           }
  catch (          RemoteException e) {
           }
 catch (          IllegalArgumentException e) {
             Slog.w(TAG,"Failed trying to unstop package " + cpr.appInfo.packageName + ": "+ e);
           }
+          checkTime(startTime,"getContentProviderImpl: looking for process record");
           ProcessRecord proc=getProcessRecordLocked(cpi.processName,cpr.appInfo.uid,false);
           if (proc != null && proc.thread != null) {
             if (DEBUG_PROVIDER) {
               Slog.d(TAG,"Installing in existing process " + proc);
             }
+            checkTime(startTime,"getContentProviderImpl: scheduling install");
             proc.pubProviders.put(cpi.name,cpr);
             try {
               proc.thread.scheduleInstallProvider(cpi);
@@ -158,7 +172,9 @@ catch (          IllegalArgumentException e) {
             }
           }
  else {
+            checkTime(startTime,"getContentProviderImpl: before start process");
             proc=startProcessLocked(cpi.processName,cpr.appInfo,false,0,"content provider",new ComponentName(cpi.applicationInfo.packageName,cpi.name),false,false,false);
+            checkTime(startTime,"getContentProviderImpl: after start process");
             if (proc == null) {
               Slog.w(TAG,"Unable to launch app " + cpi.applicationInfo.packageName + "/"+ cpi.applicationInfo.uid+ " for provider "+ name+ ": process is bad");
               return null;
@@ -171,6 +187,7 @@ catch (          IllegalArgumentException e) {
           Binder.restoreCallingIdentity(origId);
         }
       }
+      checkTime(startTime,"getContentProviderImpl: updating data structures");
       if (firstClass) {
         mProviderMap.putProviderByClass(comp,cpr);
       }
@@ -180,6 +197,7 @@ catch (          IllegalArgumentException e) {
         conn.waiting=true;
       }
     }
+    checkTime(startTime,"getContentProviderImpl: done!");
   }
 synchronized (cpr) {
     while (cpr.provider == null) {
