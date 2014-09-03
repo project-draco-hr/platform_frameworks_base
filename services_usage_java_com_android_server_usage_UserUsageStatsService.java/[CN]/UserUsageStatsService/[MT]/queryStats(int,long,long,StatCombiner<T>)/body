@@ -1,34 +1,43 @@
 {
-  if (bucketType == UsageStatsManager.INTERVAL_BEST) {
-    bucketType=mDatabase.findBestFitBucket(beginTime,endTime);
+  if (intervalType == UsageStatsManager.INTERVAL_BEST) {
+    intervalType=mDatabase.findBestFitBucket(beginTime,endTime);
+    if (intervalType < 0) {
+      intervalType=UsageStatsManager.INTERVAL_DAILY;
+    }
   }
-  if (bucketType < 0 || bucketType >= mCurrentStats.length) {
+  if (intervalType < 0 || intervalType >= mCurrentStats.length) {
     if (DEBUG) {
-      Slog.d(TAG,mLogPrefix + "Bad bucketType used " + bucketType);
+      Slog.d(TAG,mLogPrefix + "Bad intervalType used " + intervalType);
     }
     return null;
   }
-  if (beginTime >= mCurrentStats[bucketType].endTime) {
+  final IntervalStats currentStats=mCurrentStats[intervalType];
+  if (DEBUG) {
+    Slog.d(TAG,mLogPrefix + "SELECT * FROM " + intervalType+ " WHERE beginTime >= "+ beginTime+ " AND endTime < "+ endTime);
+  }
+  if (beginTime >= currentStats.endTime) {
     if (DEBUG) {
-      Slog.d(TAG,mLogPrefix + "Requesting stats after " + beginTime+ " but latest is "+ mCurrentStats[bucketType].endTime);
+      Slog.d(TAG,mLogPrefix + "Requesting stats after " + beginTime+ " but latest is "+ currentStats.endTime);
     }
     return null;
   }
- else   if (beginTime >= mCurrentStats[bucketType].beginTime) {
+  final long truncatedEndTime=Math.min(currentStats.beginTime,endTime);
+  List<T> results=mDatabase.queryUsageStats(intervalType,beginTime,truncatedEndTime,combiner);
+  if (DEBUG) {
+    Slog.d(TAG,"Got " + (results != null ? results.size() : 0) + " results from disk");
+    Slog.d(TAG,"Current stats beginTime=" + currentStats.beginTime + " endTime="+ currentStats.endTime);
+  }
+  if (beginTime < currentStats.endTime && endTime > currentStats.beginTime) {
     if (DEBUG) {
-      Slog.d(TAG,mLogPrefix + "Returning in-memory stats for bucket " + bucketType);
+      Slog.d(TAG,mLogPrefix + "Returning in-memory stats");
     }
-    ArrayList<T> results=new ArrayList<>();
-    combiner.combine(mCurrentStats[bucketType],true,results);
-    return results;
+    if (results == null) {
+      results=new ArrayList<>();
+    }
+    combiner.combine(currentStats,true,results);
   }
-  persistActiveStats();
   if (DEBUG) {
-    Slog.d(TAG,mLogPrefix + "SELECT * FROM " + bucketType+ " WHERE beginTime >= "+ beginTime+ " AND endTime < "+ endTime);
-  }
-  final List<T> results=mDatabase.queryUsageStats(bucketType,beginTime,endTime,combiner);
-  if (DEBUG) {
-    Slog.d(TAG,mLogPrefix + "Results: " + (results == null ? 0 : results.size()));
+    Slog.d(TAG,mLogPrefix + "Results: " + (results != null ? results.size() : 0));
   }
   return results;
 }
