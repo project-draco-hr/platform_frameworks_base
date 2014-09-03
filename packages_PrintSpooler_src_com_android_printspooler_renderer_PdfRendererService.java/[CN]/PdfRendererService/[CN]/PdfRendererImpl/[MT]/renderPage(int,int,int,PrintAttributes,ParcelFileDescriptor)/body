@@ -1,0 +1,55 @@
+{
+  FileOutputStream out=null;
+synchronized (mLock) {
+    try {
+      throwIfNotOpened();
+      PdfRenderer.Page page=mRenderer.openPage(pageIndex);
+      final int srcWidthPts=page.getWidth();
+      final int srcHeightPts=page.getHeight();
+      final int dstWidthPts=pointsFromMils(attributes.getMediaSize().getWidthMils());
+      final int dstHeightPts=pointsFromMils(attributes.getMediaSize().getHeightMils());
+      final boolean scaleContent=mRenderer.shouldScaleForPrinting();
+      final boolean contentLandscape=!attributes.getMediaSize().isPortrait();
+      final float displayScale;
+      Matrix matrix=new Matrix();
+      if (scaleContent) {
+        displayScale=Math.min((float)bitmapWidth / srcWidthPts,(float)bitmapHeight / srcHeightPts);
+      }
+ else {
+        if (contentLandscape) {
+          displayScale=(float)bitmapHeight / dstHeightPts;
+        }
+ else {
+          displayScale=(float)bitmapWidth / dstWidthPts;
+        }
+      }
+      matrix.postScale(displayScale,displayScale);
+      Configuration configuration=PdfRendererService.this.getResources().getConfiguration();
+      if (configuration.getLayoutDirection() == View.LAYOUT_DIRECTION_RTL) {
+        matrix.postTranslate(bitmapWidth - srcWidthPts * displayScale,0);
+      }
+      Margins minMargins=attributes.getMinMargins();
+      final int paddingLeftPts=pointsFromMils(minMargins.getLeftMils());
+      final int paddingTopPts=pointsFromMils(minMargins.getTopMils());
+      final int paddingRightPts=pointsFromMils(minMargins.getRightMils());
+      final int paddingBottomPts=pointsFromMils(minMargins.getBottomMils());
+      Rect clip=new Rect();
+      clip.left=(int)(paddingLeftPts * displayScale);
+      clip.top=(int)(paddingTopPts * displayScale);
+      clip.right=(int)(bitmapWidth - paddingRightPts * displayScale);
+      clip.bottom=(int)(bitmapHeight - paddingBottomPts * displayScale);
+      if (DEBUG) {
+        Log.i(LOG_TAG,"Rendering page:" + pageIndex);
+      }
+      Bitmap bitmap=getBitmapForSize(bitmapWidth,bitmapHeight);
+      page.render(bitmap,clip,matrix,PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY);
+      page.close();
+      out=new FileOutputStream(destination.getFileDescriptor());
+      bitmap.compress(Bitmap.CompressFormat.PNG,0,out);
+    }
+  finally {
+      IoUtils.closeQuietly(out);
+      IoUtils.closeQuietly(destination);
+    }
+  }
+}

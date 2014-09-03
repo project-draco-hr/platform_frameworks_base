@@ -2,49 +2,24 @@
   if (isCancelled()) {
     return mRenderedPage;
   }
-  PdfRenderer.Page page=mRenderer.openPage(mPageIndex);
-  if (isCancelled()) {
-    page.close();
-    return mRenderedPage;
-  }
   Bitmap bitmap=mRenderedPage.content.getBitmap();
-  final int srcWidthPts=page.getWidth();
-  final int srcHeightPts=page.getHeight();
-  final int dstWidthPts=pointsFromMils(mRenderSpec.mediaSize.getWidthMils());
-  final int dstHeightPts=pointsFromMils(mRenderSpec.mediaSize.getHeightMils());
-  final boolean scaleContent=mRenderer.shouldScaleForPrinting();
-  final boolean contentLandscape=!mRenderSpec.mediaSize.isPortrait();
-  final float displayScale;
-  Matrix matrix=new Matrix();
-  if (scaleContent) {
-    displayScale=Math.min((float)bitmap.getWidth() / srcWidthPts,(float)bitmap.getHeight() / srcHeightPts);
+  ParcelFileDescriptor[] pipe=null;
+  try {
+    pipe=ParcelFileDescriptor.createPipe();
+    ParcelFileDescriptor source=pipe[0];
+    ParcelFileDescriptor destination=pipe[1];
+    mRenderer.renderPage(mPageIndex,bitmap.getWidth(),bitmap.getHeight(),mRenderSpec.printAttributes,destination);
+    destination.close();
+    BitmapFactory.Options options=new BitmapFactory.Options();
+    options.inBitmap=bitmap;
+    BitmapFactory.decodeFileDescriptor(source.getFileDescriptor(),null,options);
   }
- else {
-    if (contentLandscape) {
-      displayScale=(float)bitmap.getHeight() / dstHeightPts;
-    }
- else {
-      displayScale=(float)bitmap.getWidth() / dstWidthPts;
-    }
+ catch (  IOException|RemoteException e) {
+    Log.e(LOG_TAG,"Error rendering page:" + mPageIndex,e);
   }
-  matrix.postScale(displayScale,displayScale);
-  Configuration configuration=mContext.getResources().getConfiguration();
-  if (configuration.getLayoutDirection() == View.LAYOUT_DIRECTION_RTL) {
-    matrix.postTranslate(bitmap.getWidth() - srcWidthPts * displayScale,0);
+ finally {
+    IoUtils.closeQuietly(pipe[0]);
+    IoUtils.closeQuietly(pipe[1]);
   }
-  final int paddingLeftPts=pointsFromMils(mRenderSpec.minMargins.getLeftMils());
-  final int paddingTopPts=pointsFromMils(mRenderSpec.minMargins.getTopMils());
-  final int paddingRightPts=pointsFromMils(mRenderSpec.minMargins.getRightMils());
-  final int paddingBottomPts=pointsFromMils(mRenderSpec.minMargins.getBottomMils());
-  Rect clip=new Rect();
-  clip.left=(int)(paddingLeftPts * displayScale);
-  clip.top=(int)(paddingTopPts * displayScale);
-  clip.right=(int)(bitmap.getWidth() - paddingRightPts * displayScale);
-  clip.bottom=(int)(bitmap.getHeight() - paddingBottomPts * displayScale);
-  if (DEBUG) {
-    Log.i(LOG_TAG,"Rendering page:" + mPageIndex + " of "+ mPageCount);
-  }
-  page.render(bitmap,clip,matrix,PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY);
-  page.close();
   return mRenderedPage;
 }
