@@ -1,14 +1,19 @@
 {
+  long startTime=SystemClock.elapsedRealtime();
   if (app.pid > 0 && app.pid != MY_PID) {
+    checkTime(startTime,"startProcess: removing from pids map");
 synchronized (mPidsSelfLocked) {
       mPidsSelfLocked.remove(app.pid);
       mHandler.removeMessages(PROC_START_TIMEOUT_MSG,app);
     }
+    checkTime(startTime,"startProcess: done removing from pids map");
     app.setPid(0);
   }
   if (DEBUG_PROCESSES && mProcessesOnHold.contains(app))   Slog.v(TAG,"startProcessLocked removing on hold: " + app);
   mProcessesOnHold.remove(app);
+  checkTime(startTime,"startProcess: starting to update cpu stats");
   updateCpuStats();
+  checkTime(startTime,"startProcess: done updating cpu stats");
   try {
     int uid=app.uid;
     int[] gids=null;
@@ -16,9 +21,11 @@ synchronized (mPidsSelfLocked) {
     if (!app.isolated) {
       int[] permGids=null;
       try {
+        checkTime(startTime,"startProcess: getting gids from package manager");
         final PackageManager pm=mContext.getPackageManager();
         permGids=pm.getPackageGids(app.info.packageName);
         if (Environment.isExternalStorageEmulated()) {
+          checkTime(startTime,"startProcess: checking external storage perm");
           if (pm.checkPermission(android.Manifest.permission.ACCESS_ALL_EXTERNAL_STORAGE,app.info.packageName) == PERMISSION_GRANTED) {
             mountExternal=Zygote.MOUNT_EXTERNAL_MULTIUSER_ALL;
           }
@@ -40,6 +47,7 @@ synchronized (mPidsSelfLocked) {
       gids[0]=UserHandle.getSharedAppGid(UserHandle.getAppId(uid));
       gids[1]=UserHandle.getUserGid(UserHandle.getUserId(uid));
     }
+    checkTime(startTime,"startProcess: building args");
     if (mFactoryTest != FactoryTest.FACTORY_TEST_OFF) {
       if (mFactoryTest == FactoryTest.FACTORY_TEST_LOW_LEVEL && mTopComponent != null && app.processName.equals(mTopComponent.getPackageName())) {
         uid=0;
@@ -71,15 +79,19 @@ synchronized (mPidsSelfLocked) {
     }
     boolean isActivityProcess=(entryPoint == null);
     if (entryPoint == null)     entryPoint="android.app.ActivityThread";
+    checkTime(startTime,"startProcess: asking zygote to start proc");
     Process.ProcessStartResult startResult=Process.start(entryPoint,app.processName,uid,uid,gids,debugFlags,mountExternal,app.info.targetSdkVersion,app.info.seinfo,requiredAbi,entryPointArgs);
+    checkTime(startTime,"startProcess: returned from zygote!");
     if (app.isolated) {
       mBatteryStatsService.addIsolatedUid(app.uid,app.info.uid);
     }
     mBatteryStatsService.noteProcessStart(app.processName,app.info.uid);
+    checkTime(startTime,"startProcess: done updating battery stats");
     EventLog.writeEvent(EventLogTags.AM_PROC_START,UserHandle.getUserId(uid),startResult.pid,uid,app.processName,hostingType,hostingNameStr != null ? hostingNameStr : "");
     if (app.persistent) {
       Watchdog.getInstance().processStarted(app.processName,startResult.pid);
     }
+    checkTime(startTime,"startProcess: building log message");
     StringBuilder buf=mStringBuilder;
     buf.setLength(0);
     buf.append("Start proc ");
@@ -116,6 +128,7 @@ synchronized (mPidsSelfLocked) {
     app.usingWrapper=startResult.usingWrapper;
     app.removed=false;
     app.killedByAm=false;
+    checkTime(startTime,"startProcess: starting to update pids map");
 synchronized (mPidsSelfLocked) {
       this.mPidsSelfLocked.put(startResult.pid,app);
       if (isActivityProcess) {
@@ -124,6 +137,7 @@ synchronized (mPidsSelfLocked) {
         mHandler.sendMessageDelayed(msg,startResult.usingWrapper ? PROC_START_TIMEOUT_WITH_WRAPPER : PROC_START_TIMEOUT);
       }
     }
+    checkTime(startTime,"startProcess: done updating pids map");
   }
  catch (  RuntimeException e) {
     app.setPid(0);
