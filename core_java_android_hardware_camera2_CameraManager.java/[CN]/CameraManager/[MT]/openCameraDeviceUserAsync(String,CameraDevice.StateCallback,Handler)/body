@@ -1,0 +1,55 @@
+{
+  CameraCharacteristics characteristics=getCameraCharacteristics(cameraId);
+  CameraDevice device=null;
+  try {
+synchronized (mLock) {
+      ICameraDeviceUser cameraUser=null;
+      android.hardware.camera2.impl.CameraDeviceImpl deviceImpl=new android.hardware.camera2.impl.CameraDeviceImpl(cameraId,callback,handler,characteristics);
+      BinderHolder holder=new BinderHolder();
+      ICameraDeviceCallbacks callbacks=deviceImpl.getCallbacks();
+      int id=Integer.parseInt(cameraId);
+      try {
+        if (supportsCamera2ApiLocked(cameraId)) {
+          ICameraService cameraService=getCameraServiceLocked();
+          if (cameraService == null) {
+            throw new CameraRuntimeException(CameraAccessException.CAMERA_DISCONNECTED,"Camera service is currently unavailable");
+          }
+          cameraService.connectDevice(callbacks,id,mContext.getPackageName(),USE_CALLING_UID,holder);
+          cameraUser=ICameraDeviceUser.Stub.asInterface(holder.getBinder());
+        }
+ else {
+          Log.i(TAG,"Using legacy camera HAL.");
+          cameraUser=CameraDeviceUserShim.connectBinderShim(callbacks,id);
+        }
+      }
+ catch (      CameraRuntimeException e) {
+        if (e.getReason() == CameraAccessException.CAMERA_DEPRECATED_HAL) {
+          throw new AssertionError("Should've gone down the shim path");
+        }
+ else         if (e.getReason() == CameraAccessException.CAMERA_IN_USE || e.getReason() == CameraAccessException.MAX_CAMERAS_IN_USE || e.getReason() == CameraAccessException.CAMERA_DISABLED || e.getReason() == CameraAccessException.CAMERA_DISCONNECTED || e.getReason() == CameraAccessException.CAMERA_ERROR) {
+          deviceImpl.setRemoteFailure(e);
+          if (e.getReason() == CameraAccessException.CAMERA_DISABLED || e.getReason() == CameraAccessException.CAMERA_DISCONNECTED) {
+            throw e.asChecked();
+          }
+        }
+ else {
+          throw e;
+        }
+      }
+catch (      RemoteException e) {
+        CameraRuntimeException ce=new CameraRuntimeException(CameraAccessException.CAMERA_DISCONNECTED,"Camera service is currently unavailable",e);
+        deviceImpl.setRemoteFailure(ce);
+        throw ce.asChecked();
+      }
+      deviceImpl.setRemoteDevice(cameraUser);
+      device=deviceImpl;
+    }
+  }
+ catch (  NumberFormatException e) {
+    throw new IllegalArgumentException("Expected cameraId to be numeric, but it was: " + cameraId);
+  }
+catch (  CameraRuntimeException e) {
+    throw e.asChecked();
+  }
+  return device;
+}
