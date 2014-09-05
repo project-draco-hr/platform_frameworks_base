@@ -1,0 +1,56 @@
+{
+  handler=checkHandler(handler,callback);
+  for (  CaptureRequest request : requestList) {
+    if (request.getTargets().isEmpty()) {
+      throw new IllegalArgumentException("Each request must have at least one Surface target");
+    }
+    for (    Surface surface : request.getTargets()) {
+      if (surface == null) {
+        throw new IllegalArgumentException("Null Surface targets are not allowed");
+      }
+    }
+  }
+synchronized (mInterfaceLock) {
+    checkIfCameraClosedOrInError();
+    int requestId;
+    if (repeating) {
+      stopRepeating();
+    }
+    LongParcelable lastFrameNumberRef=new LongParcelable();
+    try {
+      requestId=mRemoteDevice.submitRequestList(requestList,repeating,lastFrameNumberRef);
+      if (DEBUG) {
+        Log.v(TAG,"last frame number " + lastFrameNumberRef.getNumber());
+      }
+    }
+ catch (    CameraRuntimeException e) {
+      throw e.asChecked();
+    }
+catch (    RemoteException e) {
+      return -1;
+    }
+    if (callback != null) {
+      mCaptureCallbackMap.put(requestId,new CaptureCallbackHolder(callback,requestList,handler,repeating));
+    }
+ else {
+      if (DEBUG) {
+        Log.d(TAG,"Listen for request " + requestId + " is null");
+      }
+    }
+    long lastFrameNumber=lastFrameNumberRef.getNumber();
+    if (repeating) {
+      if (mRepeatingRequestId != REQUEST_ID_NONE) {
+        checkEarlyTriggerSequenceComplete(mRepeatingRequestId,lastFrameNumber);
+      }
+      mRepeatingRequestId=requestId;
+    }
+ else {
+      mFrameNumberRequestPairs.add(new SimpleEntry<Long,Integer>(lastFrameNumber,requestId));
+    }
+    if (mIdle) {
+      mDeviceHandler.post(mCallOnActive);
+    }
+    mIdle=false;
+    return requestId;
+  }
+}
