@@ -1,39 +1,38 @@
 {
   final long timeNow=System.currentTimeMillis();
-  Calendar tempCal=mDailyExpiryDate;
-  for (int bucketType=0; bucketType < mCurrentStats.length; bucketType++) {
+  final UnixCalendar tempCal=mDailyExpiryDate;
+  for (int intervalType=0; intervalType < mCurrentStats.length; intervalType++) {
     tempCal.setTimeInMillis(timeNow);
-    UsageStatsUtils.truncateDateTo(bucketType,tempCal);
-    if (mCurrentStats[bucketType] != null && mCurrentStats[bucketType].beginTime == tempCal.getTimeInMillis()) {
+    UnixCalendar.truncateTo(tempCal,intervalType);
+    if (mCurrentStats[intervalType] != null && mCurrentStats[intervalType].beginTime == tempCal.getTimeInMillis()) {
       continue;
     }
-    final long lastBeginTime=mDatabase.getLatestUsageStatsBeginTime(bucketType);
-    if (lastBeginTime >= tempCal.getTimeInMillis()) {
+    final long lastBeginTime=mDatabase.getLatestUsageStatsBeginTime(intervalType);
+    if (lastBeginTime > timeNow) {
+      Slog.e(TAG,mLogPrefix + "Latest usage stats for interval " + intervalType+ " begins in the future");
+      mCurrentStats[intervalType]=null;
+    }
+ else     if (lastBeginTime >= tempCal.getTimeInMillis()) {
       if (DEBUG) {
-        Slog.d(TAG,mLogPrefix + "Loading existing stats (" + lastBeginTime+ ") for bucket "+ bucketType);
+        Slog.d(TAG,mLogPrefix + "Loading existing stats @ " + sDateFormat.format(lastBeginTime)+ "("+ lastBeginTime+ ") for interval "+ intervalType);
       }
-      mCurrentStats[bucketType]=mDatabase.getLatestUsageStats(bucketType);
-      if (DEBUG) {
-        if (mCurrentStats[bucketType] != null) {
-          Slog.d(TAG,mLogPrefix + "Found " + (mCurrentStats[bucketType].events == null ? 0 : mCurrentStats[bucketType].events.size())+ " events");
-        }
-      }
+      mCurrentStats[intervalType]=mDatabase.getLatestUsageStats(intervalType);
     }
  else {
-      mCurrentStats[bucketType]=null;
+      mCurrentStats[intervalType]=null;
     }
-    if (mCurrentStats[bucketType] == null) {
+    if (mCurrentStats[intervalType] == null) {
       if (DEBUG) {
-        Slog.d(TAG,"Creating new stats (" + tempCal.getTimeInMillis() + ") for bucket "+ bucketType);
+        Slog.d(TAG,"Creating new stats @ " + sDateFormat.format(tempCal.getTimeInMillis()) + "("+ tempCal.getTimeInMillis()+ ") for interval "+ intervalType);
       }
-      mCurrentStats[bucketType]=new IntervalStats();
-      mCurrentStats[bucketType].beginTime=tempCal.getTimeInMillis();
-      mCurrentStats[bucketType].endTime=timeNow;
+      mCurrentStats[intervalType]=new IntervalStats();
+      mCurrentStats[intervalType].beginTime=tempCal.getTimeInMillis();
+      mCurrentStats[intervalType].endTime=timeNow;
     }
   }
   mStatsChanged=false;
   mDailyExpiryDate.setTimeInMillis(timeNow);
-  mDailyExpiryDate.add(Calendar.DAY_OF_YEAR,1);
-  UsageStatsUtils.truncateDateTo(UsageStatsManager.INTERVAL_DAILY,mDailyExpiryDate);
-  Slog.i(TAG,mLogPrefix + "Rollover scheduled for " + sDateFormat.format(mDailyExpiryDate.getTime()));
+  mDailyExpiryDate.addDays(1);
+  mDailyExpiryDate.truncateToDay();
+  Slog.i(TAG,mLogPrefix + "Rollover scheduled @ " + sDateFormat.format(mDailyExpiryDate.getTimeInMillis())+ "("+ tempCal.getTimeInMillis()+ ")");
 }
