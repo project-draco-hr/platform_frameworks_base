@@ -21,16 +21,15 @@
       params.appIcon=Bitmap.createScaledBitmap(params.appIcon,iconSize,iconSize,true);
     }
   }
-  final boolean stageInternal;
-  if (params.mode == SessionParams.MODE_FULL_INSTALL) {
+  if (params.mode == SessionParams.MODE_FULL_INSTALL || params.mode == SessionParams.MODE_INHERIT_EXISTING) {
     final long ident=Binder.clearCallingIdentity();
     try {
       final int resolved=PackageHelper.resolveInstallLocation(mContext,params.appPackageName,params.installLocation,params.sizeBytes,params.installFlags);
       if (resolved == PackageHelper.RECOMMEND_INSTALL_INTERNAL) {
-        stageInternal=true;
+        params.setInstallFlagsInternal();
       }
  else       if (resolved == PackageHelper.RECOMMEND_INSTALL_EXTERNAL) {
-        stageInternal=false;
+        params.setInstallFlagsExternal();
       }
  else {
         throw new IOException("No storage with enough free space; res=" + resolved);
@@ -38,28 +37,6 @@
     }
   finally {
       Binder.restoreCallingIdentity(ident);
-    }
-  }
- else   if (params.mode == SessionParams.MODE_INHERIT_EXISTING) {
-    final ApplicationInfo existingApp=mPm.getApplicationInfo(params.appPackageName,0,userId);
-    if (existingApp == null) {
-      throw new IllegalStateException("Missing existing app " + params.appPackageName);
-    }
-    final long existingSize;
-    try {
-      final PackageLite existingPkg=PackageParser.parsePackageLite(new File(existingApp.getCodePath()),0);
-      existingSize=PackageHelper.calculateInstalledSize(existingPkg,false,params.abiOverride);
-    }
- catch (    PackageParserException e) {
-      throw new IllegalStateException("Failed to calculate size of " + params.appPackageName);
-    }
-    if ((existingApp.flags & ApplicationInfo.FLAG_EXTERNAL_STORAGE) == 0) {
-      checkInternalStorage(params.sizeBytes);
-      stageInternal=true;
-    }
- else {
-      checkExternalStorage(params.sizeBytes + existingSize);
-      stageInternal=false;
     }
   }
  else {
@@ -80,13 +57,13 @@ synchronized (mSessions) {
     sessionId=allocateSessionIdLocked();
     File stageDir=null;
     String stageCid=null;
-    if (stageInternal) {
-      stageDir=prepareInternalStageDir(sessionId);
+    if ((params.installFlags & PackageManager.INSTALL_INTERNAL) != 0) {
+      stageDir=buildInternalStageDir(sessionId);
     }
  else {
-      stageCid=prepareExternalStageCid(sessionId,params.sizeBytes);
+      stageCid=buildExternalStageCid(sessionId);
     }
-    session=new PackageInstallerSession(mInternalCallback,mContext,mPm,mInstallThread.getLooper(),sessionId,userId,installerPackageName,params,createdMillis,stageDir,stageCid,false);
+    session=new PackageInstallerSession(mInternalCallback,mContext,mPm,mInstallThread.getLooper(),sessionId,userId,installerPackageName,params,createdMillis,stageDir,stageCid,false,false);
     mSessions.put(sessionId,session);
   }
   mCallbacks.notifySessionCreated(session.sessionId,session.userId);
