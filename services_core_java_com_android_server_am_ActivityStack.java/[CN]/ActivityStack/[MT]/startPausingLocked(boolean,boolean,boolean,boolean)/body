@@ -1,15 +1,18 @@
 {
   if (mPausingActivity != null) {
-    Slog.e(TAG,"Trying to pause when pause is already pending for " + mPausingActivity,new RuntimeException("here").fillInStackTrace());
+    Slog.wtf(TAG,"Going to pause when pause is already pending for " + mPausingActivity);
+    completePauseLocked(false);
   }
   ActivityRecord prev=mResumedActivity;
   if (prev == null) {
-    Slog.e(TAG,"Trying to pause when nothing is resumed",new RuntimeException("here").fillInStackTrace());
-    mStackSupervisor.resumeTopActivitiesLocked();
-    return;
+    if (!resuming) {
+      Slog.wtf(TAG,"Trying to pause when nothing is resumed");
+      mStackSupervisor.resumeTopActivitiesLocked();
+    }
+    return false;
   }
   if (mActivityContainer.mParentActivity == null) {
-    mStackSupervisor.pauseChildStacks(prev,userLeaving,uiSleeping);
+    mStackSupervisor.pauseChildStacks(prev,userLeaving,uiSleeping,resuming,dontWait);
   }
   if (DEBUG_STATES)   Slog.v(TAG,"Moving to PAUSING: " + prev);
  else   if (DEBUG_PAUSE)   Slog.v(TAG,"Start pausing: " + prev);
@@ -31,7 +34,7 @@
     try {
       EventLog.writeEvent(EventLogTags.AM_PAUSE_ACTIVITY,prev.userId,System.identityHashCode(prev),prev.shortComponentName);
       mService.updateUsageStats(prev,false);
-      prev.app.thread.schedulePauseActivity(prev.appToken,prev.finishing,userLeaving,prev.configChangeFlags);
+      prev.app.thread.schedulePauseActivity(prev.appToken,prev.finishing,userLeaving,prev.configChangeFlags,dontWait);
     }
  catch (    Exception e) {
       Slog.w(TAG,"Exception thrown during pause",e);
@@ -55,14 +58,24 @@
  else {
       if (DEBUG_PAUSE)       Slog.v(TAG,"Key dispatch not paused for screen off");
     }
-    Message msg=mHandler.obtainMessage(PAUSE_TIMEOUT_MSG);
-    msg.obj=prev;
-    prev.pauseTime=SystemClock.uptimeMillis();
-    mHandler.sendMessageDelayed(msg,PAUSE_TIMEOUT);
-    if (DEBUG_PAUSE)     Slog.v(TAG,"Waiting for pause to complete...");
+    if (dontWait) {
+      completePauseLocked(false);
+      return false;
+    }
+ else {
+      Message msg=mHandler.obtainMessage(PAUSE_TIMEOUT_MSG);
+      msg.obj=prev;
+      prev.pauseTime=SystemClock.uptimeMillis();
+      mHandler.sendMessageDelayed(msg,PAUSE_TIMEOUT);
+      if (DEBUG_PAUSE)       Slog.v(TAG,"Waiting for pause to complete...");
+      return true;
+    }
   }
  else {
     if (DEBUG_PAUSE)     Slog.v(TAG,"Activity not running, resuming next.");
-    mStackSupervisor.getFocusedStack().resumeTopActivityLocked(null);
+    if (!resuming) {
+      mStackSupervisor.getFocusedStack().resumeTopActivityLocked(null);
+    }
+    return false;
   }
 }
