@@ -2,14 +2,18 @@
   if (mDestroyed) {
     Log.w(TAG,"Ignoring updateSurface: destroyed");
   }
+  boolean fixedSize=false;
   int myWidth=mSurfaceHolder.getRequestedWidth();
   if (myWidth <= 0)   myWidth=ViewGroup.LayoutParams.MATCH_PARENT;
+ else   fixedSize=true;
   int myHeight=mSurfaceHolder.getRequestedHeight();
   if (myHeight <= 0)   myHeight=ViewGroup.LayoutParams.MATCH_PARENT;
+ else   fixedSize=true;
   final boolean creating=!mCreated;
   final boolean surfaceCreating=!mSurfaceCreated;
   final boolean formatChanged=mFormat != mSurfaceHolder.getRequestedFormat();
   boolean sizeChanged=mWidth != myWidth || mHeight != myHeight;
+  boolean insetsChanged=!mCreated;
   final boolean typeChanged=mType != mSurfaceHolder.getRequestedType();
   final boolean flagsChanged=mCurWindowFlags != mWindowFlags || mCurWindowPrivateFlags != mWindowPrivateFlags;
   if (forceRelayout || creating || surfaceCreating|| formatChanged|| sizeChanged|| typeChanged|| flagsChanged|| redrawNeeded|| !mIWallpaperEngine.mShownReported) {
@@ -31,6 +35,21 @@
       mLayout.memoryType=mType;
       mLayout.token=mWindowToken;
       if (!mCreated) {
+        final WindowManager windowService=(WindowManager)getSystemService(Context.WINDOW_SERVICE);
+        TypedArray windowStyle=obtainStyledAttributes(com.android.internal.R.styleable.Window);
+        final Display display=windowService.getDefaultDisplay();
+        final boolean shouldUseBottomOutset=display.getDisplayId() == Display.DEFAULT_DISPLAY;
+        if (shouldUseBottomOutset && windowStyle.hasValue(R.styleable.Window_windowOutsetBottom)) {
+          if (mOutsetBottom == null)           mOutsetBottom=new TypedValue();
+          windowStyle.getValue(R.styleable.Window_windowOutsetBottom,mOutsetBottom);
+        }
+ else {
+          mOutsetBottom=null;
+        }
+        mWindowIsRound=getResources().getBoolean(com.android.internal.R.bool.config_windowIsRound);
+        windowStyle.recycle();
+        mIsEmulator=Build.HARDWARE.contains("goldfish");
+        mIsCircularEmulator=SystemProperties.getBoolean(ViewRootImpl.PROPERTY_EMULATOR_CIRCULAR,false);
         mLayout.type=mIWallpaperEngine.mWindowType;
         mLayout.gravity=Gravity.START | Gravity.TOP;
         mLayout.setTitle(WallpaperService.this.getClass().getName());
@@ -45,18 +64,44 @@
       }
       mSurfaceHolder.mSurfaceLock.lock();
       mDrawingAllowed=true;
+      if (!fixedSize) {
+        mLayout.surfaceInsets.set(mIWallpaperEngine.mDisplayPadding);
+      }
+ else {
+        mLayout.surfaceInsets.set(0,0,0,0);
+      }
       final int relayoutResult=mSession.relayout(mWindow,mWindow.mSeq,mLayout,mWidth,mHeight,View.VISIBLE,0,mWinFrame,mOverscanInsets,mContentInsets,mVisibleInsets,mStableInsets,mConfiguration,mSurfaceHolder.mSurface);
       if (DEBUG)       Log.v(TAG,"New surface: " + mSurfaceHolder.mSurface + ", frame="+ mWinFrame);
       int w=mWinFrame.width();
+      int h=mWinFrame.height();
+      if (!fixedSize) {
+        final Rect padding=mIWallpaperEngine.mDisplayPadding;
+        w+=padding.left + padding.right;
+        h+=padding.top + padding.bottom;
+        mOverscanInsets.left+=padding.left;
+        mOverscanInsets.top+=padding.top;
+        mOverscanInsets.right+=padding.right;
+        mOverscanInsets.bottom+=padding.bottom;
+        mContentInsets.left+=padding.left;
+        mContentInsets.top+=padding.top;
+        mContentInsets.right+=padding.right;
+        mContentInsets.bottom+=padding.bottom;
+        mStableInsets.left+=padding.left;
+        mStableInsets.top+=padding.top;
+        mStableInsets.right+=padding.right;
+        mStableInsets.bottom+=padding.bottom;
+      }
       if (mCurWidth != w) {
         sizeChanged=true;
         mCurWidth=w;
       }
-      int h=mWinFrame.height();
       if (mCurHeight != h) {
         sizeChanged=true;
         mCurHeight=h;
       }
+      insetsChanged|=!mDispatchedOverscanInsets.equals(mOverscanInsets);
+      insetsChanged|=!mDispatchedContentInsets.equals(mContentInsets);
+      insetsChanged|=!mDispatchedStableInsets.equals(mStableInsets);
       mSurfaceHolder.setSurfaceFrameSize(w,h);
       mSurfaceHolder.mSurfaceLock.unlock();
       if (!mSurfaceHolder.mSurface.isValid()) {
@@ -95,6 +140,20 @@
               c.surfaceChanged(mSurfaceHolder,mFormat,mCurWidth,mCurHeight);
             }
           }
+        }
+        if (insetsChanged) {
+          mDispatchedOverscanInsets.set(mOverscanInsets);
+          mDispatchedContentInsets.set(mContentInsets);
+          mDispatchedStableInsets.set(mStableInsets);
+          final boolean isRound=(mIsEmulator && mIsCircularEmulator) || mWindowIsRound;
+          mFinalSystemInsets.set(mDispatchedOverscanInsets);
+          mFinalStableInsets.set(mDispatchedStableInsets);
+          if (mOutsetBottom != null) {
+            final DisplayMetrics metrics=getResources().getDisplayMetrics();
+            mFinalSystemInsets.bottom=((int)mOutsetBottom.getDimension(metrics)) + mIWallpaperEngine.mDisplayPadding.bottom;
+          }
+          WindowInsets insets=new WindowInsets(mFinalSystemInsets,null,mFinalStableInsets,isRound);
+          onApplyWindowInsets(insets);
         }
         if (redrawNeeded) {
           onSurfaceRedrawNeeded(mSurfaceHolder);
