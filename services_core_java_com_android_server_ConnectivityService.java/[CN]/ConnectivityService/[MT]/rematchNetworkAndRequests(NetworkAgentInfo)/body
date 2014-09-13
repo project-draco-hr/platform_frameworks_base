@@ -1,15 +1,9 @@
 {
-  if (newNetwork == null) {
-    loge("Unknown NetworkAgentInfo in handleConnectionValidated");
-    return;
-  }
-  if (newNetwork.validated)   return;
-  newNetwork.validated=true;
   boolean keep=newNetwork.isVPN();
   boolean isNewDefault=false;
-  if (DBG)   log("handleConnectionValidated for " + newNetwork.name());
+  if (DBG)   log("rematching " + newNetwork.name());
   ArrayList<NetworkAgentInfo> affectedNetworks=new ArrayList<NetworkAgentInfo>();
-  if (VDBG)   log(" new Network has: " + newNetwork.networkCapabilities);
+  if (VDBG)   log(" network has: " + newNetwork.networkCapabilities);
   for (  NetworkRequestInfo nri : mNetworkRequests.values()) {
     NetworkAgentInfo currentNetwork=mNetworkForRequestId.get(nri.request.requestId);
     if (newNetwork == currentNetwork) {
@@ -24,9 +18,9 @@
         continue;
       }
       if (VDBG) {
-        log("currentScore = " + (currentNetwork != null ? currentNetwork.currentScore : 0) + ", newScore = "+ newNetwork.currentScore);
+        log("currentScore = " + (currentNetwork != null ? currentNetwork.getCurrentScore() : 0) + ", newScore = "+ newNetwork.getCurrentScore());
       }
-      if (currentNetwork == null || currentNetwork.currentScore < newNetwork.currentScore) {
+      if (currentNetwork == null || currentNetwork.getCurrentScore() < newNetwork.getCurrentScore()) {
         if (currentNetwork != null) {
           if (DBG)           log("   accepting network in place of " + currentNetwork.name());
           currentNetwork.networkRequests.remove(nri.request.requestId);
@@ -42,10 +36,10 @@
           mLegacyTypeTracker.add(nri.request.legacyType,newNetwork);
         }
         keep=true;
-        sendUpdatedScoreToFactories(nri.request,newNetwork.currentScore);
+        sendUpdatedScoreToFactories(nri.request,newNetwork.getCurrentScore());
         if (mDefaultRequest.requestId == nri.request.requestId) {
           isNewDefault=true;
-          updateActiveDefaultNetwork(newNetwork);
+          mActiveDefaultNetwork=newNetwork.networkInfo.getType();
           if (newNetwork.linkProperties != null) {
             updateTcpBufferSizes(newNetwork);
             setDefaultDnsSystemProperties(newNetwork.linkProperties.getDnsServers());
@@ -56,7 +50,7 @@
           if (currentNetwork != null) {
             mLegacyTypeTracker.remove(currentNetwork.networkInfo.getType(),currentNetwork);
           }
-          mDefaultInetConditionPublished=100;
+          mDefaultInetConditionPublished=newNetwork.validated ? 100 : 0;
           mLegacyTypeTracker.add(newNetwork.networkInfo.getType(),newNetwork);
         }
       }
@@ -109,7 +103,7 @@ synchronized (ConnectivityService.this) {
     }
     notifyNetworkCallbacks(newNetwork,ConnectivityManager.CALLBACK_AVAILABLE);
   }
- else {
+ else   if (newNetwork.validated) {
     if (DBG && newNetwork.networkRequests.size() != 0) {
       loge("tearing down network with live requests:");
       for (int i=0; i < newNetwork.networkRequests.size(); i++) {
