@@ -1,6 +1,7 @@
 {
+  bcp47Locale=Locale.forLanguageTag(bcp47Locale).toLanguageTag();
 synchronized (this) {
-    String selectQuery="SELECT  * FROM " + SoundModelContract.TABLE + " WHERE "+ SoundModelContract.KEY_KEYPHRASE_ID+ " = '"+ keyphraseId+ "'";
+    String selectQuery="SELECT  * FROM " + SoundModelContract.TABLE + " WHERE "+ SoundModelContract.KEY_KEYPHRASE_ID+ "= '"+ keyphraseId+ "' AND "+ SoundModelContract.KEY_LOCALE+ "='"+ bcp47Locale+ "'";
     SQLiteDatabase db=getReadableDatabase();
     Cursor c=db.rawQuery(selectQuery,null);
     try {
@@ -8,38 +9,48 @@ synchronized (this) {
         do {
           int type=c.getInt(c.getColumnIndex(SoundModelContract.KEY_TYPE));
           if (type != SoundTrigger.SoundModel.TYPE_KEYPHRASE) {
-            Slog.w(TAG,"Ignoring sound model since it's type is incorrect");
+            if (DBG) {
+              Slog.w(TAG,"Ignoring SoundModel since it's type is incorrect");
+            }
             continue;
           }
           String modelUuid=c.getString(c.getColumnIndex(SoundModelContract.KEY_MODEL_UUID));
           if (modelUuid == null) {
-            Slog.w(TAG,"Ignoring sound model since it doesn't specify an ID");
+            Slog.w(TAG,"Ignoring SoundModel since it doesn't specify an ID");
             continue;
           }
           byte[] data=c.getBlob(c.getColumnIndex(SoundModelContract.KEY_DATA));
           int recognitionModes=c.getInt(c.getColumnIndex(SoundModelContract.KEY_RECOGNITION_MODES));
           int[] users=getArrayForCommaSeparatedString(c.getString(c.getColumnIndex(SoundModelContract.KEY_USERS)));
-          String locale=c.getString(c.getColumnIndex(SoundModelContract.KEY_LOCALE));
+          String modelLocale=c.getString(c.getColumnIndex(SoundModelContract.KEY_LOCALE));
           String text=c.getString(c.getColumnIndex(SoundModelContract.KEY_HINT_TEXT));
           if (users == null) {
-            Slog.w(TAG,"Ignoring keyphrase since it doesn't specify users");
+            Slog.w(TAG,"Ignoring SoundModel since it doesn't specify users");
             continue;
           }
           boolean isAvailableForCurrentUser=false;
-          int currentUser=mUserManager.getUserHandle();
           for (          int user : users) {
-            if (currentUser == user) {
+            if (userHandle == user) {
               isAvailableForCurrentUser=true;
               break;
             }
           }
           if (!isAvailableForCurrentUser) {
-            Slog.w(TAG,"Ignoring keyphrase since it's not for the current user");
+            if (DBG) {
+              Slog.w(TAG,"Ignoring SoundModel since user handles don't match");
+            }
             continue;
           }
+ else {
+            if (DBG)             Slog.d(TAG,"Found a SoundModel for user: " + userHandle);
+          }
           Keyphrase[] keyphrases=new Keyphrase[1];
-          keyphrases[0]=new Keyphrase(keyphraseId,recognitionModes,locale,text,users);
-          return new KeyphraseSoundModel(UUID.fromString(modelUuid),null,data,keyphrases);
+          keyphrases[0]=new Keyphrase(keyphraseId,recognitionModes,modelLocale,text,users);
+          KeyphraseSoundModel model=new KeyphraseSoundModel(UUID.fromString(modelUuid),null,data,keyphrases);
+          if (DBG) {
+            Slog.d(TAG,"Found SoundModel for the given keyphrase/locale/user: " + model);
+          }
+          return model;
         }
  while (c.moveToNext());
       }
