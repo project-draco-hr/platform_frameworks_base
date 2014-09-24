@@ -4,15 +4,17 @@
   int match=0;
   if (ri != null && ri.size() > 1) {
     boolean haveAct=false;
-    boolean haveNonSys=false;
+    ComponentName haveNonSys=null;
     ComponentName[] set=new ComponentName[ri.size()];
     for (int i=0; i < ri.size(); i++) {
       ActivityInfo ai=ri.get(i).activityInfo;
       set[i]=new ComponentName(ai.packageName,ai.name);
       if ((ai.applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) == 0) {
-        if (PackageManagerService.DEBUG_PREFERRED)         Log.d(TAG,"Result " + ai.packageName + "/"+ ai.name+ ": non-system!");
-        haveNonSys=true;
-        break;
+        if (ri.get(i).match >= match) {
+          if (PackageManagerService.DEBUG_PREFERRED)           Log.d(TAG,"Result " + ai.packageName + "/"+ ai.name+ ": non-system!");
+          haveNonSys=set[i];
+          break;
+        }
       }
  else       if (cn.getPackageName().equals(ai.packageName) && cn.getClassName().equals(ai.name)) {
         if (PackageManagerService.DEBUG_PREFERRED)         Log.d(TAG,"Result " + ai.packageName + "/"+ ai.name+ ": default!");
@@ -23,7 +25,7 @@
         if (PackageManagerService.DEBUG_PREFERRED)         Log.d(TAG,"Result " + ai.packageName + "/"+ ai.name+ ": skipped");
       }
     }
-    if (haveAct && !haveNonSys) {
+    if (haveAct && haveNonSys == null) {
       IntentFilter filter=new IntentFilter();
       if (intent.getAction() != null) {
         filter.addAction(intent.getAction());
@@ -59,8 +61,24 @@
       PreferredActivity pa=new PreferredActivity(filter,match,set,cn,true);
       editPreferredActivitiesLPw(userId).addFilter(pa);
     }
- else     if (!haveNonSys) {
-      Slog.w(TAG,"No component found for default preferred activity " + cn);
+ else     if (haveNonSys == null) {
+      StringBuilder sb=new StringBuilder();
+      sb.append("No component ");
+      sb.append(cn.flattenToShortString());
+      sb.append(" found setting preferred ");
+      sb.append(intent);
+      sb.append("; possible matches are ");
+      for (int i=0; i < set.length; i++) {
+        if (i > 0)         sb.append(", ");
+        sb.append(set[i].flattenToShortString());
+      }
+      Slog.w(TAG,sb.toString());
     }
+ else {
+      Slog.i(TAG,"Not setting preferred " + intent + "; found third party match "+ haveNonSys.flattenToShortString());
+    }
+  }
+ else {
+    Slog.w(TAG,"No potential matches found for " + intent + " while setting preferred "+ cn.flattenToShortString());
   }
 }
