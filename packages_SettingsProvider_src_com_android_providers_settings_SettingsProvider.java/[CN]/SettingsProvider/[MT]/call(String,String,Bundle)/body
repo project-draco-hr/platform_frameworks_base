@@ -11,19 +11,26 @@
   SettingsCache cache;
   if (Settings.CALL_METHOD_GET_SYSTEM.equals(method)) {
     if (LOCAL_LOGV)     Slog.v(TAG,"call(system:" + request + ") for "+ callingUser);
-    if (isManagedProfile(callingUser) && sSystemCloneToManagedKeys.contains(request)) {
-      callingUser=UserHandle.USER_OWNER;
+    if (callingUser == UserHandle.USER_OWNER || shouldShadowParentProfile(callingUser,sSystemCloneToManagedKeys,request)) {
+      dbHelper=getOrEstablishDatabase(UserHandle.USER_OWNER);
     }
-    dbHelper=getOrEstablishDatabase(callingUser);
+ else {
+      dbHelper=getOrEstablishDatabase(callingUser);
+    }
     cache=sSystemCaches.get(callingUser);
     return lookupValue(dbHelper,TABLE_SYSTEM,cache,request);
   }
   if (Settings.CALL_METHOD_GET_SECURE.equals(method)) {
     if (LOCAL_LOGV)     Slog.v(TAG,"call(secure:" + request + ") for "+ callingUser);
-    if (isManagedProfile(callingUser) && sSecureCloneToManagedKeys.contains(request)) {
-      callingUser=UserHandle.USER_OWNER;
+    if (shouldShadowParentProfile(callingUser,sSecureCloneToManagedKeys,request)) {
+      if (Secure.LOCATION_PROVIDERS_ALLOWED.equals(request) && mUserManager.hasUserRestriction(UserManager.DISALLOW_SHARE_LOCATION,new UserHandle(callingUser))) {
+        return sSecureCaches.get(callingUser).putIfAbsent(request,"");
+      }
+      dbHelper=getOrEstablishDatabase(UserHandle.USER_OWNER);
     }
-    dbHelper=getOrEstablishDatabase(callingUser);
+ else {
+      dbHelper=getOrEstablishDatabase(callingUser);
+    }
     cache=sSecureCaches.get(callingUser);
     return lookupValue(dbHelper,TABLE_SECURE,cache,request);
   }
@@ -45,10 +52,8 @@
     if (LOCAL_LOGV) {
       Slog.v(TAG,"call_put(system:" + request + "="+ newValue+ ") for "+ callingUser);
     }
-    if (callingUser != UserHandle.USER_OWNER && isManagedProfile(callingUser)) {
-      if (sSystemCloneToManagedKeys.contains(request)) {
-        return null;
-      }
+    if (callingUser != UserHandle.USER_OWNER && shouldShadowParentProfile(callingUser,sSystemCloneToManagedKeys,request)) {
+      return null;
     }
     insertForUser(Settings.System.CONTENT_URI,values,callingUser);
     if (callingUser == UserHandle.USER_OWNER && mManagedProfiles != null && sSystemCloneToManagedKeys.contains(request)) {
@@ -70,10 +75,8 @@
     if (LOCAL_LOGV) {
       Slog.v(TAG,"call_put(secure:" + request + "="+ newValue+ ") for "+ callingUser);
     }
-    if (callingUser != UserHandle.USER_OWNER && isManagedProfile(callingUser)) {
-      if (sSecureCloneToManagedKeys.contains(request)) {
-        return null;
-      }
+    if (callingUser != UserHandle.USER_OWNER && shouldShadowParentProfile(callingUser,sSecureCloneToManagedKeys,request)) {
+      return null;
     }
     insertForUser(Settings.Secure.CONTENT_URI,values,callingUser);
     if (callingUser == UserHandle.USER_OWNER && mManagedProfiles != null && sSecureCloneToManagedKeys.contains(request)) {
