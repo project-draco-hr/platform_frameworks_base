@@ -128,11 +128,24 @@ slowChange=false;
 }
 mAppliedLowPower=true;
 }
-if (state != Display.STATE_OFF) {
+animateScreenStateChange(state,performScreenOffTransition);
+final int actualState=mPowerState.getScreenState();
+if (actualState == Display.STATE_ON || actualState == Display.STATE_DOZE) {
 animateScreenBrightness(brightness,slowChange ? BRIGHTNESS_RAMP_RATE_SLOW : BRIGHTNESS_RAMP_RATE_FAST);
 }
-animateScreenStateChange(state,performScreenOffTransition);
-if (mustNotify && mPendingScreenOnUnblocker == null && !mColorFadeOnAnimator.isStarted() && !mColorFadeOffAnimator.isStarted() && !mScreenBrightnessRampAnimator.isAnimating() && mPowerState.waitUntilClean(mCleanListener)) {
+ else {
+animateScreenBrightness(brightness,0);
+}
+final boolean ready=mPendingScreenOnUnblocker == null && !mColorFadeOnAnimator.isStarted() && !mColorFadeOffAnimator.isStarted() && mPowerState.waitUntilClean(mCleanListener);
+final boolean finished=ready && !mScreenBrightnessRampAnimator.isAnimating();
+if (!finished && !mUnfinishedBusiness) {
+if (DEBUG) {
+Slog.d(TAG,"Unfinished business...");
+}
+mCallbacks.acquireSuspendBlocker();
+mUnfinishedBusiness=true;
+}
+if (ready && mustNotify) {
 synchronized (mLock) {
 if (!mPendingRequestChangedLocked) {
 mDisplayReadyLocked=true;
@@ -142,5 +155,12 @@ Slog.d(TAG,"Display ready!");
 }
 }
 sendOnStateChangedWithWakelock();
+}
+if (finished && mUnfinishedBusiness) {
+if (DEBUG) {
+Slog.d(TAG,"Finished business...");
+}
+mUnfinishedBusiness=false;
+mCallbacks.releaseSuspendBlocker();
 }
 }
