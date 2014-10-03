@@ -6,50 +6,40 @@ synchronized (mPackages) {
     mDeferredDexOpt=null;
   }
   if (pkgs != null) {
-    if (mLazyDexOpt || (!isFirstBoot() && mPackageUsage.isHistoricalPackageUsageAvailable())) {
-      long dexOptLRUThresholdInMinutes;
-      if (mLazyDexOpt) {
-        dexOptLRUThresholdInMinutes=30;
-      }
- else {
-        dexOptLRUThresholdInMinutes=7 * 24 * 60;
-      }
-      long dexOptLRUThresholdInMills=dexOptLRUThresholdInMinutes * 60 * 1000;
-      int total=pkgs.size();
-      int skipped=0;
-      long now=System.currentTimeMillis();
-      for (Iterator<PackageParser.Package> i=pkgs.iterator(); i.hasNext(); ) {
-        PackageParser.Package pkg=i.next();
-        long then=pkg.mLastPackageUsageTimeInMills;
-        if (then + dexOptLRUThresholdInMills < now) {
-          if (DEBUG_DEXOPT) {
-            Log.i(TAG,"Skipping dexopt of " + pkg.packageName + " last resumed: "+ ((then == 0) ? "never" : new Date(then)));
-          }
-          i.remove();
-          skipped++;
-        }
-      }
-      if (DEBUG_DEXOPT) {
-        Log.i(TAG,"Skipped optimizing " + skipped + " of "+ total);
+    ArrayList<PackageParser.Package> sortedPkgs=new ArrayList<PackageParser.Package>();
+    Intent intent=new Intent(Intent.ACTION_PRE_BOOT_COMPLETED);
+    HashSet<String> pkgNames=getPackageNamesForIntent(intent);
+    for (Iterator<PackageParser.Package> it=pkgs.iterator(); it.hasNext(); ) {
+      PackageParser.Package pkg=it.next();
+      if (pkgNames.contains(pkg.packageName)) {
+        sortedPkgs.add(pkg);
+        it.remove();
       }
     }
-    int i=0;
+    for (Iterator<PackageParser.Package> it=pkgs.iterator(); it.hasNext(); ) {
+      PackageParser.Package pkg=it.next();
+      if (isSystemApp(pkg)) {
+        sortedPkgs.add(pkg);
+        it.remove();
+      }
+    }
+    intent=new Intent(Intent.ACTION_BOOT_COMPLETED);
+    pkgNames=getPackageNamesForIntent(intent);
+    for (Iterator<PackageParser.Package> it=pkgs.iterator(); it.hasNext(); ) {
+      PackageParser.Package pkg=it.next();
+      if (pkgNames.contains(pkg.packageName)) {
+        sortedPkgs.add(pkg);
+        it.remove();
+      }
+    }
+    filterRecentlyUsedApps(pkgs);
     for (    PackageParser.Package pkg : pkgs) {
-      i++;
-      if (DEBUG_DEXOPT) {
-        Log.i(TAG,"Optimizing app " + i + " of "+ pkgs.size()+ ": "+ pkg.packageName);
-      }
-      if (!isFirstBoot()) {
-        try {
-          ActivityManagerNative.getDefault().showBootMessage(mContext.getResources().getString(R.string.android_upgrading_apk,i,pkgs.size()),true);
-        }
- catch (        RemoteException e) {
-        }
-      }
-      PackageParser.Package p=pkg;
-synchronized (mInstallLock) {
-        performDexOptLI(p,null,false,false,true);
-      }
+      sortedPkgs.add(pkg);
+    }
+    int i=0;
+    int total=sortedPkgs.size();
+    for (    PackageParser.Package pkg : sortedPkgs) {
+      performBootDexOpt(pkg,++i,total);
     }
   }
 }
