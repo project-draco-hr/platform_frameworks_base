@@ -187,6 +187,7 @@ catch (            IOException e) {
       if (DEBUG_UPGRADE)       Log.v(TAG,"Running installd update commands");
       mInstaller.moveFiles();
       final List<String> possiblyDeletedUpdatedSystemApps=new ArrayList<String>();
+      final ArrayMap<String,File> expectingBetter=new ArrayMap<>();
       if (!mOnlyCore) {
         Iterator<PackageSetting> psit=mSettings.mPackages.values().iterator();
         while (psit.hasNext()) {
@@ -199,6 +200,7 @@ catch (            IOException e) {
             if (mSettings.isDisabledSystemPackageLPr(ps.name)) {
               logCriticalInfo(Log.WARN,"Expecting better updated system app for " + ps.name + "; removing system app.  Last known codePath="+ ps.codePathString+ ", installStatus="+ ps.installStatus+ ", versionCode="+ ps.versionCode+ "; scanned versionCode="+ scannedPkg.mVersionCode);
               removePackageLI(ps,true);
+              expectingBetter.put(ps.name,ps.codePath);
             }
             continue;
           }
@@ -240,6 +242,37 @@ catch (            IOException e) {
             deletedPs.pkgFlags&=~ApplicationInfo.FLAG_SYSTEM;
           }
           logCriticalInfo(Log.WARN,msg);
+        }
+        for (int i=0; i < expectingBetter.size(); i++) {
+          final String packageName=expectingBetter.keyAt(i);
+          if (!mPackages.containsKey(packageName)) {
+            final File scanFile=expectingBetter.valueAt(i);
+            logCriticalInfo(Log.WARN,"Expected better " + packageName + " but never showed up; reverting to system");
+            final int reparseFlags;
+            if (FileUtils.contains(privilegedAppDir,scanFile)) {
+              reparseFlags=PackageParser.PARSE_IS_SYSTEM | PackageParser.PARSE_IS_SYSTEM_DIR | PackageParser.PARSE_IS_PRIVILEGED;
+            }
+ else             if (FileUtils.contains(systemAppDir,scanFile)) {
+              reparseFlags=PackageParser.PARSE_IS_SYSTEM | PackageParser.PARSE_IS_SYSTEM_DIR;
+            }
+ else             if (FileUtils.contains(vendorAppDir,scanFile)) {
+              reparseFlags=PackageParser.PARSE_IS_SYSTEM | PackageParser.PARSE_IS_SYSTEM_DIR;
+            }
+ else             if (FileUtils.contains(oemAppDir,scanFile)) {
+              reparseFlags=PackageParser.PARSE_IS_SYSTEM | PackageParser.PARSE_IS_SYSTEM_DIR;
+            }
+ else {
+              Slog.e(TAG,"Ignoring unexpected fallback path " + scanFile);
+              continue;
+            }
+            mSettings.enableSystemPackageLPw(packageName);
+            try {
+              scanPackageLI(scanFile,reparseFlags,scanFlags,0,null);
+            }
+ catch (            PackageManagerException e) {
+              Slog.e(TAG,"Failed to parse original system package: " + e.getMessage());
+            }
+          }
         }
       }
       updateAllSharedLibrariesLPw();
