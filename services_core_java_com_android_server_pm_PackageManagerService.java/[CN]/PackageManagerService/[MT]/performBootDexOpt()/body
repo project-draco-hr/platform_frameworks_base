@@ -6,50 +6,82 @@ synchronized (mPackages) {
     mDeferredDexOpt=null;
   }
   if (pkgs != null) {
-    if (mLazyDexOpt || (!isFirstBoot() && mPackageUsage.isHistoricalPackageUsageAvailable())) {
-      long dexOptLRUThresholdInMinutes;
-      if (mLazyDexOpt) {
-        dexOptLRUThresholdInMinutes=30;
-      }
- else {
-        dexOptLRUThresholdInMinutes=7 * 24 * 60;
-      }
-      long dexOptLRUThresholdInMills=dexOptLRUThresholdInMinutes * 60 * 1000;
-      int total=pkgs.size();
-      int skipped=0;
-      long now=System.currentTimeMillis();
-      for (Iterator<PackageParser.Package> i=pkgs.iterator(); i.hasNext(); ) {
-        PackageParser.Package pkg=i.next();
-        long then=pkg.mLastPackageUsageTimeInMills;
-        if (then + dexOptLRUThresholdInMills < now) {
-          if (DEBUG_DEXOPT) {
-            Log.i(TAG,"Skipping dexopt of " + pkg.packageName + " last resumed: "+ ((then == 0) ? "never" : new Date(then)));
-          }
-          i.remove();
-          skipped++;
+    ArrayList<PackageParser.Package> sortedPkgs=new ArrayList<PackageParser.Package>();
+    for (Iterator<PackageParser.Package> it=pkgs.iterator(); it.hasNext(); ) {
+      PackageParser.Package pkg=it.next();
+      if (pkg.coreApp) {
+        if (DEBUG_DEXOPT) {
+          Log.i(TAG,"Adding core app " + sortedPkgs.size() + ": "+ pkg.packageName);
         }
-      }
-      if (DEBUG_DEXOPT) {
-        Log.i(TAG,"Skipped optimizing " + skipped + " of "+ total);
+        sortedPkgs.add(pkg);
+        it.remove();
       }
     }
-    int i=0;
+    Intent intent=new Intent(Intent.ACTION_PRE_BOOT_COMPLETED);
+    HashSet<String> pkgNames=getPackageNamesForIntent(intent);
+    for (Iterator<PackageParser.Package> it=pkgs.iterator(); it.hasNext(); ) {
+      PackageParser.Package pkg=it.next();
+      if (pkgNames.contains(pkg.packageName)) {
+        if (DEBUG_DEXOPT) {
+          Log.i(TAG,"Adding pre boot system app " + sortedPkgs.size() + ": "+ pkg.packageName);
+        }
+        sortedPkgs.add(pkg);
+        it.remove();
+      }
+    }
+    for (Iterator<PackageParser.Package> it=pkgs.iterator(); it.hasNext(); ) {
+      PackageParser.Package pkg=it.next();
+      if (isSystemApp(pkg) && !isUpdatedSystemApp(pkg)) {
+        if (DEBUG_DEXOPT) {
+          Log.i(TAG,"Adding system app " + sortedPkgs.size() + ": "+ pkg.packageName);
+        }
+        sortedPkgs.add(pkg);
+        it.remove();
+      }
+    }
+    for (Iterator<PackageParser.Package> it=pkgs.iterator(); it.hasNext(); ) {
+      PackageParser.Package pkg=it.next();
+      if (isUpdatedSystemApp(pkg)) {
+        if (DEBUG_DEXOPT) {
+          Log.i(TAG,"Adding updated system app " + sortedPkgs.size() + ": "+ pkg.packageName);
+        }
+        sortedPkgs.add(pkg);
+        it.remove();
+      }
+    }
+    intent=new Intent(Intent.ACTION_BOOT_COMPLETED);
+    pkgNames=getPackageNamesForIntent(intent);
+    for (Iterator<PackageParser.Package> it=pkgs.iterator(); it.hasNext(); ) {
+      PackageParser.Package pkg=it.next();
+      if (pkgNames.contains(pkg.packageName)) {
+        if (DEBUG_DEXOPT) {
+          Log.i(TAG,"Adding boot app " + sortedPkgs.size() + ": "+ pkg.packageName);
+        }
+        sortedPkgs.add(pkg);
+        it.remove();
+      }
+    }
+    filterRecentlyUsedApps(pkgs);
     for (    PackageParser.Package pkg : pkgs) {
-      i++;
       if (DEBUG_DEXOPT) {
-        Log.i(TAG,"Optimizing app " + i + " of "+ pkgs.size()+ ": "+ pkg.packageName);
+        Log.i(TAG,"Adding app " + sortedPkgs.size() + ": "+ pkg.packageName);
       }
-      if (!isFirstBoot()) {
-        try {
-          ActivityManagerNative.getDefault().showBootMessage(mContext.getResources().getString(R.string.android_upgrading_apk,i,pkgs.size()),true);
-        }
- catch (        RemoteException e) {
-        }
+      sortedPkgs.add(pkg);
+    }
+    int i=0;
+    int total=sortedPkgs.size();
+    File dataDir=Environment.getDataDirectory();
+    long lowThreshold=StorageManager.from(mContext).getStorageLowBytes(dataDir);
+    if (lowThreshold == 0) {
+      throw new IllegalStateException("Invalid low memory threshold");
+    }
+    for (    PackageParser.Package pkg : sortedPkgs) {
+      long usableSpace=dataDir.getUsableSpace();
+      if (usableSpace < lowThreshold) {
+        Log.w(TAG,"Not running dexopt on remaining apps due to low memory: " + usableSpace);
+        break;
       }
-      PackageParser.Package p=pkg;
-synchronized (mInstallLock) {
-        performDexOptLI(p,null,false,false,true);
-      }
+      performBootDexOpt(pkg,++i,total);
     }
   }
 }
