@@ -1,0 +1,80 @@
+{
+  prepareForDumpLocked();
+  dumpLine(pw,0,"i",VERSION_DATA,"11",getParcelVersion(),getStartPlatformVersion(),getEndPlatformVersion());
+  long now=getHistoryBaseTime() + SystemClock.elapsedRealtime();
+  final boolean filtering=(flags & (DUMP_HISTORY_ONLY | DUMP_UNPLUGGED_ONLY | DUMP_CHARGED_ONLY)) != 0;
+  if ((flags & DUMP_INCLUDE_HISTORY) != 0 || (flags & DUMP_HISTORY_ONLY) != 0) {
+    if (startIteratingHistoryLocked()) {
+      try {
+        for (int i=0; i < getHistoryStringPoolSize(); i++) {
+          pw.print(BATTERY_STATS_CHECKIN_VERSION);
+          pw.print(',');
+          pw.print(HISTORY_STRING_POOL);
+          pw.print(',');
+          pw.print(i);
+          pw.print(",");
+          pw.print(getHistoryTagPoolUid(i));
+          pw.print(",\"");
+          String str=getHistoryTagPoolString(i);
+          str=str.replace("\\","\\\\");
+          str=str.replace("\"","\\\"");
+          pw.print(str);
+          pw.print("\"");
+          pw.println();
+        }
+        dumpHistoryLocked(pw,flags,histStart,true);
+      }
+  finally {
+        finishIteratingHistoryLocked();
+      }
+    }
+  }
+  if (filtering && (flags & (DUMP_UNPLUGGED_ONLY | DUMP_CHARGED_ONLY)) == 0) {
+    return;
+  }
+  if (apps != null) {
+    SparseArray<ArrayList<String>> uids=new SparseArray<ArrayList<String>>();
+    for (int i=0; i < apps.size(); i++) {
+      ApplicationInfo ai=apps.get(i);
+      ArrayList<String> pkgs=uids.get(ai.uid);
+      if (pkgs == null) {
+        pkgs=new ArrayList<String>();
+        uids.put(ai.uid,pkgs);
+      }
+      pkgs.add(ai.packageName);
+    }
+    SparseArray<? extends Uid> uidStats=getUidStats();
+    final int NU=uidStats.size();
+    String[] lineArgs=new String[2];
+    for (int i=0; i < NU; i++) {
+      int uid=uidStats.keyAt(i);
+      ArrayList<String> pkgs=uids.get(uid);
+      if (pkgs != null) {
+        for (int j=0; j < pkgs.size(); j++) {
+          lineArgs[0]=Integer.toString(uid);
+          lineArgs[1]=pkgs.get(j);
+          dumpLine(pw,0,"i",UID_DATA,(Object[])lineArgs);
+        }
+      }
+    }
+  }
+  if (!filtering || (flags & DUMP_CHARGED_ONLY) != 0) {
+    dumpDurationSteps(pw,DISCHARGE_STEP_DATA,getDischargeStepDurationsArray(),getNumDischargeStepDurations(),true);
+    String[] lineArgs=new String[1];
+    long timeRemaining=computeBatteryTimeRemaining(SystemClock.elapsedRealtime());
+    if (timeRemaining >= 0) {
+      lineArgs[0]=Long.toString(timeRemaining);
+      dumpLine(pw,0,"i",DISCHARGE_TIME_REMAIN_DATA,(Object[])lineArgs);
+    }
+    dumpDurationSteps(pw,CHARGE_STEP_DATA,getChargeStepDurationsArray(),getNumChargeStepDurations(),true);
+    timeRemaining=computeChargeTimeRemaining(SystemClock.elapsedRealtime());
+    if (timeRemaining >= 0) {
+      lineArgs[0]=Long.toString(timeRemaining);
+      dumpLine(pw,0,"i",CHARGE_TIME_REMAIN_DATA,(Object[])lineArgs);
+    }
+    dumpCheckinLocked(context,pw,STATS_SINCE_CHARGED,-1,(flags & DUMP_DEVICE_WIFI_ONLY) != 0);
+  }
+  if (!filtering || (flags & DUMP_UNPLUGGED_ONLY) != 0) {
+    dumpCheckinLocked(context,pw,STATS_SINCE_UNPLUGGED,-1,(flags & DUMP_DEVICE_WIFI_ONLY) != 0);
+  }
+}

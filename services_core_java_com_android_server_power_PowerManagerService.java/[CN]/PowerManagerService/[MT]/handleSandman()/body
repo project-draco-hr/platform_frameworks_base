@@ -1,0 +1,68 @@
+{
+  final boolean startDreaming;
+  final int wakefulness;
+synchronized (mLock) {
+    mSandmanScheduled=false;
+    wakefulness=mWakefulness;
+    if (mSandmanSummoned && mDisplayReady) {
+      startDreaming=canDreamLocked() || canDozeLocked();
+      mSandmanSummoned=false;
+    }
+ else {
+      startDreaming=false;
+    }
+  }
+  final boolean isDreaming;
+  if (mDreamManager != null) {
+    if (startDreaming) {
+      mDreamManager.stopDream(false);
+      mDreamManager.startDream(wakefulness == WAKEFULNESS_DOZING);
+    }
+    isDreaming=mDreamManager.isDreaming();
+  }
+ else {
+    isDreaming=false;
+  }
+synchronized (mLock) {
+    if (startDreaming && isDreaming) {
+      mBatteryLevelWhenDreamStarted=mBatteryLevel;
+      if (wakefulness == WAKEFULNESS_DOZING) {
+        Slog.i(TAG,"Dozing...");
+      }
+ else {
+        Slog.i(TAG,"Dreaming...");
+      }
+    }
+    if (mSandmanSummoned || mWakefulness != wakefulness) {
+      return;
+    }
+    if (wakefulness == WAKEFULNESS_DREAMING) {
+      if (isDreaming && canDreamLocked()) {
+        if (mDreamsBatteryLevelDrainCutoffConfig >= 0 && mBatteryLevel < mBatteryLevelWhenDreamStarted - mDreamsBatteryLevelDrainCutoffConfig && !isBeingKeptAwakeLocked()) {
+          Slog.i(TAG,"Stopping dream because the battery appears to " + "be draining faster than it is charging.  " + "Battery level when dream started: " + mBatteryLevelWhenDreamStarted + "%.  "+ "Battery level now: "+ mBatteryLevel+ "%.");
+        }
+ else {
+          return;
+        }
+      }
+      if (isItBedTimeYetLocked()) {
+        goToSleepNoUpdateLocked(SystemClock.uptimeMillis(),PowerManager.GO_TO_SLEEP_REASON_TIMEOUT,0,Process.SYSTEM_UID);
+        updatePowerStateLocked();
+      }
+ else {
+        wakeUpNoUpdateLocked(SystemClock.uptimeMillis(),Process.SYSTEM_UID);
+        updatePowerStateLocked();
+      }
+    }
+ else     if (wakefulness == WAKEFULNESS_DOZING) {
+      if (isDreaming) {
+        return;
+      }
+      reallyGoToSleepNoUpdateLocked(SystemClock.uptimeMillis(),Process.SYSTEM_UID);
+      updatePowerStateLocked();
+    }
+  }
+  if (isDreaming) {
+    mDreamManager.stopDream(false);
+  }
+}

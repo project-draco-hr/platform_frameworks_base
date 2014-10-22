@@ -1,0 +1,90 @@
+{
+  final WindowState w=mWin;
+  if (mSurfaceControl == null) {
+    if (w.mOrientationChanging) {
+      if (DEBUG_ORIENTATION) {
+        Slog.v(TAG,"Orientation change skips hidden " + w);
+      }
+      w.mOrientationChanging=false;
+    }
+    return;
+  }
+  boolean displayed=false;
+  computeShownFrameLocked();
+  setSurfaceBoundariesLocked(recoveringMemory);
+  if (mIsWallpaper && !mWin.mWallpaperVisible) {
+    hide();
+  }
+ else   if (w.mAttachedHidden || !w.isOnScreen()) {
+    hide();
+    mAnimator.hideWallpapersLocked(w);
+    if (w.mOrientationChanging) {
+      w.mOrientationChanging=false;
+      if (DEBUG_ORIENTATION)       Slog.v(TAG,"Orientation change skips hidden " + w);
+    }
+  }
+ else   if (mLastLayer != mAnimLayer || mLastAlpha != mShownAlpha || mLastDsDx != mDsDx || mLastDtDx != mDtDx || mLastDsDy != mDsDy || mLastDtDy != mDtDy || w.mLastHScale != w.mHScale || w.mLastVScale != w.mVScale || mLastHidden) {
+    displayed=true;
+    mLastAlpha=mShownAlpha;
+    mLastLayer=mAnimLayer;
+    mLastDsDx=mDsDx;
+    mLastDtDx=mDtDx;
+    mLastDsDy=mDsDy;
+    mLastDtDy=mDtDy;
+    w.mLastHScale=w.mHScale;
+    w.mLastVScale=w.mVScale;
+    if (WindowManagerService.SHOW_TRANSACTIONS)     WindowManagerService.logSurface(w,"alpha=" + mShownAlpha + " layer="+ mAnimLayer+ " matrix=["+ mDsDx+ "*"+ w.mHScale+ ","+ mDtDx+ "*"+ w.mVScale+ "]["+ mDsDy+ "*"+ w.mHScale+ ","+ mDtDy+ "*"+ w.mVScale+ "]",null);
+    if (mSurfaceControl != null) {
+      try {
+        mSurfaceAlpha=mShownAlpha;
+        mSurfaceControl.setAlpha(mShownAlpha);
+        mSurfaceLayer=mAnimLayer;
+        mSurfaceControl.setLayer(mAnimLayer);
+        mSurfaceControl.setMatrix(mDsDx * w.mHScale,mDtDx * w.mVScale,mDsDy * w.mHScale,mDtDy * w.mVScale);
+        if (mLastHidden && mDrawState == HAS_DRAWN) {
+          if (WindowManagerService.SHOW_TRANSACTIONS)           WindowManagerService.logSurface(w,"SHOW (performLayout)",null);
+          if (WindowManagerService.DEBUG_VISIBILITY)           Slog.v(TAG,"Showing " + w + " during relayout");
+          if (showSurfaceRobustlyLocked()) {
+            mLastHidden=false;
+            if (mIsWallpaper) {
+              mService.dispatchWallpaperVisibility(w,true);
+            }
+            mAnimator.setPendingLayoutChanges(w.getDisplayId(),WindowManagerPolicy.FINISH_LAYOUT_REDO_ANIM);
+          }
+ else {
+            w.mOrientationChanging=false;
+          }
+        }
+        if (mSurfaceControl != null) {
+          w.mToken.hasVisible=true;
+        }
+      }
+ catch (      RuntimeException e) {
+        Slog.w(TAG,"Error updating surface in " + w,e);
+        if (!recoveringMemory) {
+          mService.reclaimSomeSurfaceMemoryLocked(this,"update",true);
+        }
+      }
+    }
+  }
+ else {
+    if (DEBUG_ANIM && isAnimating()) {
+      Slog.v(TAG,"prepareSurface: No changes in animation for " + this);
+    }
+    displayed=true;
+  }
+  if (displayed) {
+    if (w.mOrientationChanging) {
+      if (!w.isDrawnLw()) {
+        mAnimator.mBulkUpdateParams&=~SET_ORIENTATION_CHANGE_COMPLETE;
+        mAnimator.mLastWindowFreezeSource=w;
+        if (DEBUG_ORIENTATION)         Slog.v(TAG,"Orientation continue waiting for draw in " + w);
+      }
+ else {
+        w.mOrientationChanging=false;
+        if (DEBUG_ORIENTATION)         Slog.v(TAG,"Orientation change complete in " + w);
+      }
+    }
+    w.mToken.hasVisible=true;
+  }
+}

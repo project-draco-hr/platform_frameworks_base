@@ -1,0 +1,57 @@
+{
+  boolean providersUpdated=false;
+  HashSet<ProviderId> keep=new HashSet<>();
+  Intent intent=new Intent(AppWidgetManager.ACTION_APPWIDGET_UPDATE);
+  intent.setPackage(packageName);
+  List<ResolveInfo> broadcastReceivers=queryIntentReceivers(intent,userId);
+  int N=broadcastReceivers == null ? 0 : broadcastReceivers.size();
+  for (int i=0; i < N; i++) {
+    ResolveInfo ri=broadcastReceivers.get(i);
+    ActivityInfo ai=ri.activityInfo;
+    if ((ai.applicationInfo.flags & ApplicationInfo.FLAG_EXTERNAL_STORAGE) != 0) {
+      continue;
+    }
+    if (packageName.equals(ai.packageName)) {
+      ProviderId providerId=new ProviderId(ai.applicationInfo.uid,new ComponentName(ai.packageName,ai.name));
+      Provider provider=lookupProviderLocked(providerId);
+      if (provider == null) {
+        if (addProviderLocked(ri)) {
+          keep.add(providerId);
+          providersUpdated=true;
+        }
+      }
+ else {
+        Provider parsed=parseProviderInfoXml(providerId,ri);
+        if (parsed != null) {
+          keep.add(providerId);
+          provider.info=parsed.info;
+          final int M=provider.widgets.size();
+          if (M > 0) {
+            int[] appWidgetIds=getWidgetIds(provider.widgets);
+            cancelBroadcasts(provider);
+            registerForBroadcastsLocked(provider,appWidgetIds);
+            for (int j=0; j < M; j++) {
+              Widget widget=provider.widgets.get(j);
+              widget.views=null;
+              scheduleNotifyProviderChangedLocked(widget);
+            }
+            sendUpdateIntentLocked(provider,appWidgetIds);
+            providersUpdated=true;
+          }
+        }
+      }
+    }
+  }
+  N=mProviders.size();
+  for (int i=N - 1; i >= 0; i--) {
+    Provider provider=mProviders.get(i);
+    if (packageName.equals(provider.info.provider.getPackageName()) && provider.getUserId() == userId && !keep.contains(provider.id)) {
+      if (removedProviders != null) {
+        removedProviders.add(provider.id);
+      }
+      deleteProviderLocked(provider);
+      providersUpdated=true;
+    }
+  }
+  return providersUpdated;
+}

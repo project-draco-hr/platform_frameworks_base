@@ -1,0 +1,65 @@
+{
+  final String packageName=app.packageName;
+  if (DEBUG)   Slog.d(TAG,"initiateOneRestore packageName=" + packageName);
+  mBackupDataName=new File(mDataDir,packageName + ".restore");
+  mStageName=new File(mDataDir,packageName + ".stage");
+  mNewStateName=new File(mStateDir,packageName + ".new");
+  mSavedStateName=new File(mStateDir,packageName);
+  boolean staging=!packageName.equals("android");
+  ParcelFileDescriptor stage;
+  File downloadFile=(staging) ? mStageName : mBackupDataName;
+  final int token=generateToken();
+  try {
+    stage=ParcelFileDescriptor.open(downloadFile,ParcelFileDescriptor.MODE_READ_WRITE | ParcelFileDescriptor.MODE_CREATE | ParcelFileDescriptor.MODE_TRUNCATE);
+    if (!SELinux.restorecon(mBackupDataName)) {
+      Slog.e(TAG,"SElinux restorecon failed for " + downloadFile);
+    }
+    if (mTransport.getRestoreData(stage) != BackupTransport.TRANSPORT_OK) {
+      Slog.e(TAG,"Error getting restore data for " + packageName);
+      EventLog.writeEvent(EventLogTags.RESTORE_TRANSPORT_FAILURE);
+      stage.close();
+      downloadFile.delete();
+      executeNextState(UnifiedRestoreState.FINAL);
+      return;
+    }
+    if (staging) {
+      stage.close();
+      stage=ParcelFileDescriptor.open(downloadFile,ParcelFileDescriptor.MODE_READ_ONLY);
+      mBackupData=ParcelFileDescriptor.open(mBackupDataName,ParcelFileDescriptor.MODE_READ_WRITE | ParcelFileDescriptor.MODE_CREATE | ParcelFileDescriptor.MODE_TRUNCATE);
+      BackupDataInput in=new BackupDataInput(stage.getFileDescriptor());
+      BackupDataOutput out=new BackupDataOutput(mBackupData.getFileDescriptor());
+      byte[] buffer=new byte[8192];
+      while (in.readNextHeader()) {
+        final String key=in.getKey();
+        final int size=in.getDataSize();
+        if (key.equals(KEY_WIDGET_STATE)) {
+          if (DEBUG) {
+            Slog.i(TAG,"Restoring widget state for " + packageName);
+          }
+          mWidgetData=new byte[size];
+          in.readEntityData(mWidgetData,0,size);
+        }
+ else {
+          if (size > buffer.length) {
+            buffer=new byte[size];
+          }
+          in.readEntityData(buffer,0,size);
+          out.writeEntityHeader(key,size);
+          out.writeEntityData(buffer,size);
+        }
+      }
+      mBackupData.close();
+    }
+    stage.close();
+    mBackupData=ParcelFileDescriptor.open(mBackupDataName,ParcelFileDescriptor.MODE_READ_ONLY);
+    mNewState=ParcelFileDescriptor.open(mNewStateName,ParcelFileDescriptor.MODE_READ_WRITE | ParcelFileDescriptor.MODE_CREATE | ParcelFileDescriptor.MODE_TRUNCATE);
+    prepareOperationTimeout(token,TIMEOUT_RESTORE_INTERVAL,this);
+    mAgent.doRestore(mBackupData,appVersionCode,mNewState,token,mBackupManagerBinder);
+  }
+ catch (  Exception e) {
+    Slog.e(TAG,"Unable to call app for restore: " + packageName,e);
+    EventLog.writeEvent(EventLogTags.RESTORE_AGENT_FAILURE,packageName,e.toString());
+    keyValueAgentErrorCleanup();
+    executeNextState(UnifiedRestoreState.RUNNING_QUEUE);
+  }
+}

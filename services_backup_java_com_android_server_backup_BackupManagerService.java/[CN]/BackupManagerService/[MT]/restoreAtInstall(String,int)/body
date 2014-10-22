@@ -1,0 +1,50 @@
+{
+  if (Binder.getCallingUid() != Process.SYSTEM_UID) {
+    Slog.w(TAG,"Non-system process uid=" + Binder.getCallingUid() + " attemping install-time restore");
+    return;
+  }
+  boolean skip=false;
+  long restoreSet=getAvailableRestoreToken(packageName);
+  if (DEBUG)   Slog.v(TAG,"restoreAtInstall pkg=" + packageName + " token="+ Integer.toHexString(token)+ " restoreSet="+ Long.toHexString(restoreSet));
+  if (restoreSet == 0) {
+    if (MORE_DEBUG)     Slog.i(TAG,"No restore set");
+    skip=true;
+  }
+  IBackupTransport transport=getTransport(mCurrentTransport);
+  if (transport == null) {
+    if (DEBUG)     Slog.w(TAG,"No transport");
+    skip=true;
+  }
+  if (!mAutoRestore) {
+    if (DEBUG) {
+      Slog.w(TAG,"Non-restorable state: auto=" + mAutoRestore);
+    }
+    skip=true;
+  }
+  if (!skip) {
+    try {
+      String dirName=transport.transportDirName();
+      PackageInfo pkg=new PackageInfo();
+      pkg.packageName=packageName;
+      mWakelock.acquire();
+      if (MORE_DEBUG) {
+        Slog.d(TAG,"Restore at install of " + packageName);
+      }
+      Message msg=mBackupHandler.obtainMessage(MSG_RUN_RESTORE);
+      msg.obj=new RestoreParams(transport,dirName,null,restoreSet,pkg,token);
+      mBackupHandler.sendMessage(msg);
+    }
+ catch (    RemoteException e) {
+      Slog.e(TAG,"Unable to contact transport");
+      skip=true;
+    }
+  }
+  if (skip) {
+    if (DEBUG)     Slog.v(TAG,"Finishing install immediately");
+    try {
+      mPackageManagerBinder.finishPackageInstall(token);
+    }
+ catch (    RemoteException e) {
+    }
+  }
+}

@@ -14,7 +14,6 @@
   WindowManager.LayoutParams lp=mWindowAttributes;
   int desiredWindowWidth;
   int desiredWindowHeight;
-  final View.AttachInfo attachInfo=mAttachInfo;
   final int viewVisibility=getHostVisibility();
   boolean viewVisibilityChanged=mViewVisibility != viewVisibility || mNewSurfaceNeeded;
   WindowManager.LayoutParams params=null;
@@ -53,21 +52,19 @@
       desiredWindowWidth=packageMetrics.widthPixels;
       desiredWindowHeight=packageMetrics.heightPixels;
     }
-    attachInfo.mSurface=mSurface;
-    attachInfo.mUse32BitDrawingCache=true;
-    attachInfo.mHasWindowFocus=false;
-    attachInfo.mWindowVisibility=viewVisibility;
-    attachInfo.mRecomputeGlobalAttributes=false;
+    mAttachInfo.mUse32BitDrawingCache=true;
+    mAttachInfo.mHasWindowFocus=false;
+    mAttachInfo.mWindowVisibility=viewVisibility;
+    mAttachInfo.mRecomputeGlobalAttributes=false;
     viewVisibilityChanged=false;
     mLastConfiguration.setTo(host.getResources().getConfiguration());
     mLastSystemUiVisibility=mAttachInfo.mSystemUiVisibility;
     if (mViewLayoutDirectionInitial == View.LAYOUT_DIRECTION_INHERIT) {
       host.setLayoutDirection(mLastConfiguration.getLayoutDirection());
     }
-    host.dispatchAttachedToWindow(attachInfo,0);
-    attachInfo.mTreeObserver.dispatchOnWindowAttachedChange(true);
-    mFitSystemWindowsInsets.set(mAttachInfo.mContentInsets);
-    host.fitSystemWindows(mFitSystemWindowsInsets);
+    host.dispatchAttachedToWindow(mAttachInfo,0);
+    mAttachInfo.mTreeObserver.dispatchOnWindowAttachedChange(true);
+    dispatchApplyInsets(host);
   }
  else {
     desiredWindowWidth=frame.width();
@@ -80,7 +77,7 @@
     }
   }
   if (viewVisibilityChanged) {
-    attachInfo.mWindowVisibility=viewVisibility;
+    mAttachInfo.mWindowVisibility=viewVisibility;
     host.dispatchWindowVisibilityChanged(viewVisibility);
     if (viewVisibility != View.VISIBLE || mNewSurfaceNeeded) {
       destroyHardwareResources();
@@ -89,7 +86,7 @@
       mHasHadWindowFocus=false;
     }
   }
-  getRunQueue().executeActions(attachInfo.mHandler);
+  getRunQueue().executeActions(mAttachInfo.mHandler);
   boolean insetsChanged=false;
   boolean layoutRequested=mLayoutRequested && !mStopped;
   if (layoutRequested) {
@@ -103,6 +100,9 @@
         insetsChanged=true;
       }
       if (!mPendingContentInsets.equals(mAttachInfo.mContentInsets)) {
+        insetsChanged=true;
+      }
+      if (!mPendingStableInsets.equals(mAttachInfo.mStableInsets)) {
         insetsChanged=true;
       }
       if (!mPendingVisibleInsets.equals(mAttachInfo.mVisibleInsets)) {
@@ -129,17 +129,17 @@
   if (collectViewAttributes()) {
     params=lp;
   }
-  if (attachInfo.mForceReportNewAttributes) {
-    attachInfo.mForceReportNewAttributes=false;
+  if (mAttachInfo.mForceReportNewAttributes) {
+    mAttachInfo.mForceReportNewAttributes=false;
     params=lp;
   }
-  if (mFirst || attachInfo.mViewVisibilityChanged) {
-    attachInfo.mViewVisibilityChanged=false;
+  if (mFirst || mAttachInfo.mViewVisibilityChanged) {
+    mAttachInfo.mViewVisibilityChanged=false;
     int resizeMode=mSoftInputMode & WindowManager.LayoutParams.SOFT_INPUT_MASK_ADJUST;
     if (resizeMode == WindowManager.LayoutParams.SOFT_INPUT_ADJUST_UNSPECIFIED) {
-      final int N=attachInfo.mScrollContainers.size();
+      final int N=mAttachInfo.mScrollContainers.size();
       for (int i=0; i < N; i++) {
-        if (attachInfo.mScrollContainers.get(i).isShown()) {
+        if (mAttachInfo.mScrollContainers.get(i).isShown()) {
           resizeMode=WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE;
         }
       }
@@ -160,11 +160,10 @@
     }
     mAttachInfo.mOverscanRequested=(params.flags & WindowManager.LayoutParams.FLAG_LAYOUT_IN_OVERSCAN) != 0;
   }
-  if (mFitSystemWindowsRequested) {
-    mFitSystemWindowsRequested=false;
-    mFitSystemWindowsInsets.set(mAttachInfo.mContentInsets);
+  if (mApplyInsetsRequested) {
+    mApplyInsetsRequested=false;
     mLastOverscanRequested=mAttachInfo.mOverscanRequested;
-    host.fitSystemWindows(mFitSystemWindowsInsets);
+    dispatchApplyInsets(host);
     if (mLayoutRequested) {
       windowSizeMayChange|=measureHierarchy(host,lp,mView.getContext().getResources(),desiredWindowWidth,desiredWindowHeight);
     }
@@ -173,7 +172,7 @@
     mLayoutRequested=false;
   }
   boolean windowShouldResize=layoutRequested && windowSizeMayChange && ((mWidth != host.getMeasuredWidth() || mHeight != host.getMeasuredHeight()) || (lp.width == ViewGroup.LayoutParams.WRAP_CONTENT && frame.width() < desiredWindowWidth && frame.width() != mWidth) || (lp.height == ViewGroup.LayoutParams.WRAP_CONTENT && frame.height() < desiredWindowHeight && frame.height() != mHeight));
-  final boolean computesInternalInsets=attachInfo.mTreeObserver.hasComputeInternalInsetsListeners() || attachInfo.mHasNonEmptyGivenInternalInsets;
+  final boolean computesInternalInsets=mAttachInfo.mTreeObserver.hasComputeInternalInsetsListeners() || mAttachInfo.mHasNonEmptyGivenInternalInsets;
   boolean insetsPending=false;
   int relayoutResult=0;
   if (mFirst || windowShouldResize || insetsChanged|| viewVisibilityChanged|| params != null) {
@@ -191,12 +190,15 @@
       if (DEBUG_LAYOUT) {
         Log.i(TAG,"host=w:" + host.getMeasuredWidth() + ", h:"+ host.getMeasuredHeight()+ ", params="+ params);
       }
+      if (mAttachInfo.mHardwareRenderer != null) {
+        mAttachInfo.mHardwareRenderer.pauseSurface(mSurface);
+      }
       final int surfaceGenerationId=mSurface.getGenerationId();
       relayoutResult=relayoutWindow(params,viewVisibility,insetsPending);
       if (!mDrawDuringWindowsAnimating && (relayoutResult & WindowManagerGlobal.RELAYOUT_RES_ANIMATING) != 0) {
         mWindowsAnimating=true;
       }
-      if (DEBUG_LAYOUT)       Log.v(TAG,"relayout: frame=" + frame.toShortString() + " overscan="+ mPendingOverscanInsets.toShortString()+ " content="+ mPendingContentInsets.toShortString()+ " visible="+ mPendingVisibleInsets.toShortString()+ " surface="+ mSurface);
+      if (DEBUG_LAYOUT)       Log.v(TAG,"relayout: frame=" + frame.toShortString() + " overscan="+ mPendingOverscanInsets.toShortString()+ " content="+ mPendingContentInsets.toShortString()+ " visible="+ mPendingVisibleInsets.toShortString()+ " visible="+ mPendingStableInsets.toShortString()+ " surface="+ mSurface);
       if (mPendingConfiguration.seq != 0) {
         if (DEBUG_CONFIGURATION)         Log.v(TAG,"Visible with new config: " + mPendingConfiguration);
         updateConfiguration(mPendingConfiguration,!mFirst);
@@ -205,58 +207,10 @@
       final boolean overscanInsetsChanged=!mPendingOverscanInsets.equals(mAttachInfo.mOverscanInsets);
       contentInsetsChanged=!mPendingContentInsets.equals(mAttachInfo.mContentInsets);
       final boolean visibleInsetsChanged=!mPendingVisibleInsets.equals(mAttachInfo.mVisibleInsets);
+      final boolean stableInsetsChanged=!mPendingStableInsets.equals(mAttachInfo.mStableInsets);
       if (contentInsetsChanged) {
-        if (mWidth > 0 && mHeight > 0 && lp != null && ((lp.systemUiVisibility | lp.subtreeSystemUiVisibility) & View.SYSTEM_UI_LAYOUT_FLAGS) == 0 && mSurface != null && mSurface.isValid() && !mAttachInfo.mTurnOffWindowResizeAnim && mAttachInfo.mHardwareRenderer != null && mAttachInfo.mHardwareRenderer.isEnabled() && mAttachInfo.mHardwareRenderer.validate() && lp != null && !PixelFormat.formatHasAlpha(lp.format)) {
+        if (mWidth > 0 && mHeight > 0 && lp != null && ((lp.systemUiVisibility | lp.subtreeSystemUiVisibility) & View.SYSTEM_UI_LAYOUT_FLAGS) == 0 && mSurface != null && mSurface.isValid() && !mAttachInfo.mTurnOffWindowResizeAnim && mAttachInfo.mHardwareRenderer != null && mAttachInfo.mHardwareRenderer.isEnabled() && lp != null && !PixelFormat.formatHasAlpha(lp.format) && !mBlockResizeBuffer) {
           disposeResizeBuffer();
-          boolean completed=false;
-          HardwareCanvas hwRendererCanvas=mAttachInfo.mHardwareRenderer.getCanvas();
-          HardwareCanvas layerCanvas=null;
-          try {
-            if (mResizeBuffer == null) {
-              mResizeBuffer=mAttachInfo.mHardwareRenderer.createHardwareLayer(mWidth,mHeight,false);
-            }
- else             if (mResizeBuffer.getWidth() != mWidth || mResizeBuffer.getHeight() != mHeight) {
-              mResizeBuffer.resize(mWidth,mHeight);
-            }
-            layerCanvas=mResizeBuffer.start(hwRendererCanvas);
-            final int restoreCount=layerCanvas.save();
-            int yoff;
-            final boolean scrolling=mScroller != null && mScroller.computeScrollOffset();
-            if (scrolling) {
-              yoff=mScroller.getCurrY();
-              mScroller.abortAnimation();
-            }
- else {
-              yoff=mScrollY;
-            }
-            layerCanvas.translate(0,-yoff);
-            if (mTranslator != null) {
-              mTranslator.translateCanvas(layerCanvas);
-            }
-            DisplayList displayList=mView.mDisplayList;
-            if (displayList != null && displayList.isValid()) {
-              layerCanvas.drawDisplayList(displayList,null,DisplayList.FLAG_CLIP_CHILDREN);
-            }
- else {
-              mView.draw(layerCanvas);
-            }
-            drawAccessibilityFocusedDrawableIfNeeded(layerCanvas);
-            mResizeBufferStartTime=SystemClock.uptimeMillis();
-            mResizeBufferDuration=mView.getResources().getInteger(com.android.internal.R.integer.config_mediumAnimTime);
-            completed=true;
-            layerCanvas.restoreToCount(restoreCount);
-          }
- catch (          OutOfMemoryError e) {
-            Log.w(TAG,"Not enough memory for content change anim buffer",e);
-          }
- finally {
-            if (mResizeBuffer != null) {
-              mResizeBuffer.end(hwRendererCanvas);
-              if (!completed) {
-                disposeResizeBuffer();
-              }
-            }
-          }
         }
         mAttachInfo.mContentInsets.set(mPendingContentInsets);
         if (DEBUG_LAYOUT)         Log.v(TAG,"Content insets changing to: " + mAttachInfo.mContentInsets);
@@ -266,12 +220,16 @@
         if (DEBUG_LAYOUT)         Log.v(TAG,"Overscan insets changing to: " + mAttachInfo.mOverscanInsets);
         contentInsetsChanged=true;
       }
-      if (contentInsetsChanged || mLastSystemUiVisibility != mAttachInfo.mSystemUiVisibility || mFitSystemWindowsRequested || mLastOverscanRequested != mAttachInfo.mOverscanRequested) {
+      if (stableInsetsChanged) {
+        mAttachInfo.mStableInsets.set(mPendingStableInsets);
+        if (DEBUG_LAYOUT)         Log.v(TAG,"Decor insets changing to: " + mAttachInfo.mStableInsets);
+        contentInsetsChanged=true;
+      }
+      if (contentInsetsChanged || mLastSystemUiVisibility != mAttachInfo.mSystemUiVisibility || mApplyInsetsRequested || mLastOverscanRequested != mAttachInfo.mOverscanRequested) {
         mLastSystemUiVisibility=mAttachInfo.mSystemUiVisibility;
         mLastOverscanRequested=mAttachInfo.mOverscanRequested;
-        mFitSystemWindowsRequested=false;
-        mFitSystemWindowsInsets.set(mAttachInfo.mContentInsets);
-        host.fitSystemWindows(mFitSystemWindowsInsets);
+        mApplyInsetsRequested=false;
+        dispatchApplyInsets(host);
       }
       if (visibleInsetsChanged) {
         mAttachInfo.mVisibleInsets.set(mPendingVisibleInsets);
@@ -284,7 +242,7 @@
           mPreviousTransparentRegion.setEmpty();
           if (mAttachInfo.mHardwareRenderer != null) {
             try {
-              hwInitialized=mAttachInfo.mHardwareRenderer.initialize(mHolder.getSurface());
+              hwInitialized=mAttachInfo.mHardwareRenderer.initialize(mSurface);
             }
  catch (            OutOfResourcesException e) {
               handleOutOfResourcesException(e);
@@ -303,14 +261,13 @@
         }
         disposeResizeBuffer();
         if (mAttachInfo.mHardwareRenderer != null && mAttachInfo.mHardwareRenderer.isEnabled()) {
-          mAttachInfo.mHardwareRenderer.destroyHardwareResources(mView);
-          mAttachInfo.mHardwareRenderer.destroy(true);
+          mAttachInfo.mHardwareRenderer.destroy();
         }
       }
  else       if (surfaceGenerationId != mSurface.getGenerationId() && mSurfaceHolder == null && mAttachInfo.mHardwareRenderer != null) {
         mFullRedrawNeeded=true;
         try {
-          mAttachInfo.mHardwareRenderer.updateSurface(mHolder.getSurface());
+          mAttachInfo.mHardwareRenderer.updateSurface(mSurface);
         }
  catch (        OutOfResourcesException e) {
           handleOutOfResourcesException(e);
@@ -321,8 +278,8 @@
  catch (    RemoteException e) {
     }
     if (DEBUG_ORIENTATION)     Log.v(TAG,"Relayout returned: frame=" + frame + ", surface="+ mSurface);
-    attachInfo.mWindowLeft=frame.left;
-    attachInfo.mWindowTop=frame.top;
+    mAttachInfo.mWindowLeft=frame.left;
+    mAttachInfo.mWindowTop=frame.top;
     if (mWidth != frame.width() || mHeight != frame.height()) {
       mWidth=frame.width();
       mHeight=frame.height();
@@ -377,9 +334,10 @@
     }
     if (mAttachInfo.mHardwareRenderer != null && mAttachInfo.mHardwareRenderer.isEnabled()) {
       if (hwInitialized || mWidth != mAttachInfo.mHardwareRenderer.getWidth() || mHeight != mAttachInfo.mHardwareRenderer.getHeight()) {
-        mAttachInfo.mHardwareRenderer.setup(mWidth,mHeight);
+        final Rect surfaceInsets=params != null ? params.surfaceInsets : null;
+        mAttachInfo.mHardwareRenderer.setup(mWidth,mHeight,surfaceInsets);
         if (!hwInitialized) {
-          mAttachInfo.mHardwareRenderer.invalidate(mHolder.getSurface());
+          mAttachInfo.mHardwareRenderer.invalidate(mSurface);
           mFullRedrawNeeded=true;
         }
       }
@@ -413,17 +371,17 @@
     }
   }
  else {
-    final boolean windowMoved=(attachInfo.mWindowLeft != frame.left || attachInfo.mWindowTop != frame.top);
+    final boolean windowMoved=(mAttachInfo.mWindowLeft != frame.left || mAttachInfo.mWindowTop != frame.top);
     if (windowMoved) {
       if (mTranslator != null) {
         mTranslator.translateRectInScreenToAppWinFrame(frame);
       }
-      attachInfo.mWindowLeft=frame.left;
-      attachInfo.mWindowTop=frame.top;
+      mAttachInfo.mWindowLeft=frame.left;
+      mAttachInfo.mWindowTop=frame.top;
     }
   }
   final boolean didLayout=layoutRequested && !mStopped;
-  boolean triggerGlobalLayoutListener=didLayout || attachInfo.mRecomputeGlobalAttributes;
+  boolean triggerGlobalLayoutListener=didLayout || mAttachInfo.mRecomputeGlobalAttributes;
   if (didLayout) {
     performLayout(lp,desiredWindowWidth,desiredWindowHeight);
     if ((host.mPrivateFlags & View.PFLAG_REQUEST_TRANSPARENT_REGIONS) != 0) {
@@ -450,14 +408,14 @@
     }
   }
   if (triggerGlobalLayoutListener) {
-    attachInfo.mRecomputeGlobalAttributes=false;
-    attachInfo.mTreeObserver.dispatchOnGlobalLayout();
+    mAttachInfo.mRecomputeGlobalAttributes=false;
+    mAttachInfo.mTreeObserver.dispatchOnGlobalLayout();
   }
   if (computesInternalInsets) {
-    final ViewTreeObserver.InternalInsetsInfo insets=attachInfo.mGivenInternalInsets;
+    final ViewTreeObserver.InternalInsetsInfo insets=mAttachInfo.mGivenInternalInsets;
     insets.reset();
-    attachInfo.mTreeObserver.dispatchOnComputeInternalInsets(insets);
-    attachInfo.mHasNonEmptyGivenInternalInsets=!insets.isEmpty();
+    mAttachInfo.mTreeObserver.dispatchOnComputeInternalInsets(insets);
+    mAttachInfo.mHasNonEmptyGivenInternalInsets=!insets.isEmpty();
     if (insetsPending || !mLastGivenInsets.equals(insets)) {
       mLastGivenInsets.set(insets);
       final Rect contentInsets;
@@ -517,7 +475,7 @@
   if ((relayoutResult & WindowManagerGlobal.RELAYOUT_RES_FIRST_TIME) != 0) {
     mReportNextDraw=true;
   }
-  boolean cancelDraw=attachInfo.mTreeObserver.dispatchOnPreDraw() || viewVisibility != View.VISIBLE;
+  boolean cancelDraw=mAttachInfo.mTreeObserver.dispatchOnPreDraw() || viewVisibility != View.VISIBLE;
   if (!cancelDraw && !newSurface) {
     if (!skipDraw || mReportNextDraw) {
       if (mPendingTransitions != null && mPendingTransitions.size() > 0) {

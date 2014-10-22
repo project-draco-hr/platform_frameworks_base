@@ -1,57 +1,62 @@
 {
-  int value=Settings.Global.getInt(mRunner.getContext().getContentResolver(),Settings.Global.WIFI_SLEEP_POLICY,-1);
-  log("wifi sleep policy is: " + value);
-  if (value != Settings.Global.WIFI_SLEEP_POLICY_DEFAULT) {
-    Settings.Global.putInt(mRunner.getContext().getContentResolver(),Settings.Global.WIFI_SLEEP_POLICY,Settings.Global.WIFI_SLEEP_POLICY_DEFAULT);
-    log("set wifi sleep policy to default value");
-  }
+  Settings.Global.putInt(mRunner.getContext().getContentResolver(),Settings.Global.WIFI_SCAN_ALWAYS_AVAILABLE,0);
+  Settings.Global.putInt(mRunner.getContext().getContentResolver(),Settings.Global.WIFI_SLEEP_POLICY,Settings.Global.WIFI_SLEEP_POLICY_NEVER);
   Settings.Global.putLong(mRunner.getContext().getContentResolver(),Settings.Global.WIFI_IDLE_MS,WIFI_IDLE_MS);
-  WifiConfiguration config=new WifiConfiguration();
-  config.SSID=mSsid;
-  config.allowedKeyManagement.set(KeyMgmt.WPA_PSK);
-  if (mPassword.matches("[0-9A-Fa-f]{64}")) {
-    config.preSharedKey=mPassword;
+  WifiConfiguration config;
+  if (mPassword == null) {
+    config=WifiConfigurationHelper.createOpenConfig(mSsid);
   }
  else {
-    config.preSharedKey='"' + mPassword + '"';
+    config=WifiConfigurationHelper.createPskConfig(mSsid,mPassword);
   }
-  config.ipAssignment=IpAssignment.DHCP;
-  config.proxySettings=ProxySettings.NONE;
   assertTrue("Failed to connect to Wi-Fi network: " + mSsid,connectToWifiWithConfiguration(config));
-  assertTrue(waitForWifiState(WifiManager.WIFI_STATE_ENABLED,SHORT_TIMEOUT));
-  assertTrue(waitForNetworkState(ConnectivityManager.TYPE_WIFI,State.CONNECTED,WIFI_CONNECTION_TIMEOUT));
+  assertTrue("wifi not connected",waitForNetworkState(ConnectivityManager.TYPE_WIFI,State.CONNECTED,WIFI_CONNECTION_TIMEOUT));
   assertTrue("Wi-Fi is connected, but no data connection.",pingTest(null));
-  int i;
-  long sum=0;
-  for (i=0; i < mReconnectIterations; i++) {
+  long i, sum=0, avgReconnectTime=0;
+  for (i=1; i <= mReconnectIterations; i++) {
     writeOutput(String.format("iteration %d out of %d",i,mReconnectIterations));
-    log("iteration: " + i);
+    logv("iteration: " + i);
     turnScreenOff();
+    long start=SystemClock.uptimeMillis();
     PowerManager pm=(PowerManager)mRunner.getContext().getSystemService(Context.POWER_SERVICE);
-    assertFalse(pm.isScreenOn());
-    sleep(WIFI_IDLE_MS + WIFI_SHUTDOWN_DELAY,"Interruped while wait for wifi to be idle");
-    assertTrue("Wait for Wi-Fi to idle timeout",waitForNetworkState(ConnectivityManager.TYPE_WIFI,State.DISCONNECTED,6 * SHORT_TIMEOUT));
-    if (!mWifiOnlyFlag) {
-      assertTrue("Wait for cellular connection timeout",waitForNetworkState(ConnectivityManager.TYPE_MOBILE,State.CONNECTED,2 * LONG_TIMEOUT));
+    while (pm.isInteractive() && ((SystemClock.uptimeMillis() - start) < SCREEN_OFF_TIMER)) {
+      SystemClock.sleep(100);
     }
-    sleep(mWifiSleepTime,"Interrupted while device is in sleep mode");
-    assertEquals("Wi-Fi is reconnected",State.DISCONNECTED,mCM.getNetworkInfo(ConnectivityManager.TYPE_WIFI).getState());
-    if (!mWifiOnlyFlag) {
-      assertEquals("Cellular connection is down",State.CONNECTED,mCM.getNetworkInfo(ConnectivityManager.TYPE_MOBILE).getState());
-      assertTrue("Mobile is connected, but no data connection.",pingTest(null));
+    assertFalse("screen still on",pm.isInteractive());
+    SystemClock.sleep(WIFI_IDLE_MS + WIFI_SHUTDOWN_DELAY);
+    if (mWifiOnlyFlag) {
+      assertTrue("expected wifi disconnect, still has active connection",waitUntilNoActiveNetworkConnection(2 * LONG_TIMEOUT));
+    }
+ else {
+      assertTrue("no fallback on mobile or wifi didn't disconnect",waitForNetworkState(ConnectivityManager.TYPE_MOBILE,State.CONNECTED,2 * LONG_TIMEOUT));
+    }
+    SystemClock.sleep(mWifiSleepTime);
+    if (mWifiOnlyFlag) {
+      NetworkInfo ni=mCm.getActiveNetworkInfo();
+      if (ni != null) {
+        Log.e(mLogTag,"has active network while in wifi sleep: " + ni.toString());
+        fail("active network detected");
+      }
+    }
+ else {
+      assertEquals("mobile not connected",State.CONNECTED,mCm.getNetworkInfo(ConnectivityManager.TYPE_MOBILE).getState());
+      assertTrue("no connectivity over mobile",pingTest(null));
     }
     turnScreenOn();
-    sleep(2 * 1000,"wait 2 seconds for lock screen");
-    mRunner.sendKeyDownUpSync(KeyEvent.KEYCODE_MENU);
-    long startTime=System.currentTimeMillis();
-    assertTrue("Wait for Wi-Fi enable timeout after wake up",waitForWifiState(WifiManager.WIFI_STATE_ENABLED,SHORT_TIMEOUT));
-    assertTrue("Wait for Wi-Fi connection timeout after wake up",waitForNetworkState(ConnectivityManager.TYPE_WIFI,State.CONNECTED,WIFI_CONNECTION_TIMEOUT));
-    long connectionTime=System.currentTimeMillis() - startTime;
+    long startTime=SystemClock.uptimeMillis();
+    assertTrue("screen on: wifi not enabled before timeout",waitForWifiState(WifiManager.WIFI_STATE_ENABLED,SHORT_TIMEOUT));
+    assertTrue("screen on: wifi not connected before timeout",waitForNetworkState(ConnectivityManager.TYPE_WIFI,State.CONNECTED,LONG_TIMEOUT));
+    long connectionTime=SystemClock.uptimeMillis() - startTime;
     sum+=connectionTime;
-    log("average reconnection time is: " + sum / (i + 1));
+    avgReconnectTime=sum / i;
+    logv("average reconnection time is: " + avgReconnectTime);
     assertTrue("Reconnect to Wi-Fi network, but no data connection.",pingTest(null));
   }
-  if (i == mReconnectIterations) {
+  Bundle result=new Bundle();
+  result.putLong("actual-iterations",i - 1);
+  result.putLong("avg-reconnect-time",avgReconnectTime);
+  getInstrumentation().sendStatus(Activity.RESULT_FIRST_USER,result);
+  if (i == mReconnectIterations + 1) {
     writeOutput(String.format("iteration %d out of %d",i,mReconnectIterations));
   }
 }

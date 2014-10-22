@@ -1,0 +1,57 @@
+{
+  sendStartRestore(mAcceptSet.size());
+  if (mIsSystemRestore) {
+    AppWidgetBackupBridge.restoreStarting(UserHandle.USER_OWNER);
+  }
+  try {
+    String transportDir=mTransport.transportDirName();
+    mStateDir=new File(mBaseStateDir,transportDir);
+    PackageInfo pmPackage=new PackageInfo();
+    pmPackage.packageName=PACKAGE_MANAGER_SENTINEL;
+    mAcceptSet.add(0,pmPackage);
+    PackageInfo[] packages=mAcceptSet.toArray(new PackageInfo[0]);
+    mStatus=mTransport.startRestore(mToken,packages);
+    if (mStatus != BackupTransport.TRANSPORT_OK) {
+      Slog.e(TAG,"Transport error " + mStatus + "; no restore possible");
+      mStatus=BackupTransport.TRANSPORT_ERROR;
+      executeNextState(UnifiedRestoreState.FINAL);
+      return;
+    }
+    RestoreDescription desc=mTransport.nextRestorePackage();
+    if (desc == null) {
+      Slog.e(TAG,"No restore metadata available; halting");
+      mStatus=BackupTransport.TRANSPORT_ERROR;
+      executeNextState(UnifiedRestoreState.FINAL);
+      return;
+    }
+    if (!PACKAGE_MANAGER_SENTINEL.equals(desc.getPackageName())) {
+      Slog.e(TAG,"Required metadata but got " + desc.getPackageName());
+      mStatus=BackupTransport.TRANSPORT_ERROR;
+      executeNextState(UnifiedRestoreState.FINAL);
+      return;
+    }
+    mCurrentPackage=new PackageInfo();
+    mCurrentPackage.packageName=PACKAGE_MANAGER_SENTINEL;
+    mPmAgent=new PackageManagerBackupAgent(mPackageManager,null);
+    mAgent=IBackupAgent.Stub.asInterface(mPmAgent.onBind());
+    if (MORE_DEBUG) {
+      Slog.v(TAG,"initiating restore for PMBA");
+    }
+    initiateOneRestore(mCurrentPackage,0);
+    if (!mPmAgent.hasMetadata()) {
+      Slog.e(TAG,"No restore metadata available, so not restoring");
+      EventLog.writeEvent(EventLogTags.RESTORE_AGENT_FAILURE,PACKAGE_MANAGER_SENTINEL,"Package manager restore metadata missing");
+      mStatus=BackupTransport.TRANSPORT_ERROR;
+      mBackupHandler.removeMessages(MSG_BACKUP_RESTORE_STEP,this);
+      executeNextState(UnifiedRestoreState.FINAL);
+      return;
+    }
+  }
+ catch (  RemoteException e) {
+    Slog.e(TAG,"Unable to contact transport for restore");
+    mStatus=BackupTransport.TRANSPORT_ERROR;
+    mBackupHandler.removeMessages(MSG_BACKUP_RESTORE_STEP,this);
+    executeNextState(UnifiedRestoreState.FINAL);
+    return;
+  }
+}

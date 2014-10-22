@@ -20,6 +20,9 @@
   if (!readCheckedInt(in,PSS_COUNT,"pss count")) {
     return;
   }
+  if (!readCheckedInt(in,SYS_MEM_USAGE_COUNT,"sys mem usage count")) {
+    return;
+  }
   if (!readCheckedInt(in,LONGS_SIZE,"longs size")) {
     return;
   }
@@ -28,8 +31,9 @@
   buildTimePeriodStartClockStr();
   mTimePeriodStartRealtime=in.readLong();
   mTimePeriodEndRealtime=in.readLong();
+  mTimePeriodStartUptime=in.readLong();
+  mTimePeriodEndUptime=in.readLong();
   mRuntime=in.readString();
-  mWebView=in.readString();
   mFlags=in.readInt();
   final int NLONGS=in.readInt();
   final int NEXTLONG=in.readInt();
@@ -45,6 +49,11 @@
   readCompactedLongArray(in,version,longs,NEXTLONG);
   mLongs.add(longs);
   readCompactedLongArray(in,version,mMemFactorDurations,mMemFactorDurations.length);
+  mSysMemUsageTable=readTableFromParcel(in,TAG,"sys mem usage");
+  if (mSysMemUsageTable == BAD_TABLE) {
+    return;
+  }
+  mSysMemUsageTableSize=mSysMemUsageTable != null ? mSysMemUsageTable.length : 0;
   int NPROC=in.readInt();
   if (NPROC < 0) {
     mReadError="bad process count: " + NPROC;
@@ -52,7 +61,7 @@
   }
   while (NPROC > 0) {
     NPROC--;
-    String procName=readCommonString(in,version);
+    final String procName=readCommonString(in,version);
     if (procName == null) {
       mReadError="bad process name";
       return;
@@ -64,16 +73,17 @@
     }
     while (NUID > 0) {
       NUID--;
-      int uid=in.readInt();
+      final int uid=in.readInt();
       if (uid < 0) {
         mReadError="bad uid: " + uid;
         return;
       }
-      String pkgName=readCommonString(in,version);
+      final String pkgName=readCommonString(in,version);
       if (pkgName == null) {
         mReadError="bad process package name";
         return;
       }
+      final int vers=in.readInt();
       ProcessState proc=hadData ? mProcesses.get(procName,uid) : null;
       if (proc != null) {
         if (!proc.readFromParcel(in,false)) {
@@ -81,7 +91,7 @@
         }
       }
  else {
-        proc=new ProcessState(this,pkgName,uid,procName);
+        proc=new ProcessState(this,pkgName,uid,vers,procName);
         if (!proc.readFromParcel(in,true)) {
           return;
         }
@@ -98,7 +108,7 @@
   }
   while (NPKG > 0) {
     NPKG--;
-    String pkgName=readCommonString(in,version);
+    final String pkgName=readCommonString(in,version);
     if (pkgName == null) {
       mReadError="bad package name";
       return;
@@ -110,76 +120,90 @@
     }
     while (NUID > 0) {
       NUID--;
-      int uid=in.readInt();
+      final int uid=in.readInt();
       if (uid < 0) {
         mReadError="bad uid: " + uid;
         return;
       }
-      PackageState pkgState=new PackageState(pkgName,uid);
-      mPackages.put(pkgName,uid,pkgState);
-      int NPROCS=in.readInt();
-      if (NPROCS < 0) {
-        mReadError="bad package process count: " + NPROCS;
+      int NVERS=in.readInt();
+      if (NVERS < 0) {
+        mReadError="bad versions count: " + NVERS;
         return;
       }
-      while (NPROCS > 0) {
-        NPROCS--;
-        String procName=readCommonString(in,version);
-        if (procName == null) {
-          mReadError="bad package process name";
+      while (NVERS > 0) {
+        NVERS--;
+        final int vers=in.readInt();
+        PackageState pkgState=new PackageState(pkgName,uid);
+        SparseArray<PackageState> vpkg=mPackages.get(pkgName,uid);
+        if (vpkg == null) {
+          vpkg=new SparseArray<PackageState>();
+          mPackages.put(pkgName,uid,vpkg);
+        }
+        vpkg.put(vers,pkgState);
+        int NPROCS=in.readInt();
+        if (NPROCS < 0) {
+          mReadError="bad package process count: " + NPROCS;
           return;
         }
-        int hasProc=in.readInt();
-        if (DEBUG_PARCEL)         Slog.d(TAG,"Reading package " + pkgName + " "+ uid+ " process "+ procName+ " hasProc="+ hasProc);
-        ProcessState commonProc=mProcesses.get(procName,uid);
-        if (DEBUG_PARCEL)         Slog.d(TAG,"Got common proc " + procName + " "+ uid+ ": "+ commonProc);
-        if (commonProc == null) {
-          mReadError="no common proc: " + procName;
-          return;
-        }
-        if (hasProc != 0) {
-          ProcessState proc=hadData ? pkgState.mProcesses.get(procName) : null;
-          if (proc != null) {
-            if (!proc.readFromParcel(in,false)) {
-              return;
+        while (NPROCS > 0) {
+          NPROCS--;
+          String procName=readCommonString(in,version);
+          if (procName == null) {
+            mReadError="bad package process name";
+            return;
+          }
+          int hasProc=in.readInt();
+          if (DEBUG_PARCEL)           Slog.d(TAG,"Reading package " + pkgName + " "+ uid+ " process "+ procName+ " hasProc="+ hasProc);
+          ProcessState commonProc=mProcesses.get(procName,uid);
+          if (DEBUG_PARCEL)           Slog.d(TAG,"Got common proc " + procName + " "+ uid+ ": "+ commonProc);
+          if (commonProc == null) {
+            mReadError="no common proc: " + procName;
+            return;
+          }
+          if (hasProc != 0) {
+            ProcessState proc=hadData ? pkgState.mProcesses.get(procName) : null;
+            if (proc != null) {
+              if (!proc.readFromParcel(in,false)) {
+                return;
+              }
             }
+ else {
+              proc=new ProcessState(commonProc,pkgName,uid,vers,procName,0);
+              if (!proc.readFromParcel(in,true)) {
+                return;
+              }
+            }
+            if (DEBUG_PARCEL)             Slog.d(TAG,"Adding package " + pkgName + " process: "+ procName+ " "+ uid+ " "+ proc);
+            pkgState.mProcesses.put(procName,proc);
           }
  else {
-            proc=new ProcessState(commonProc,pkgName,uid,procName,0);
-            if (!proc.readFromParcel(in,true)) {
-              return;
-            }
+            if (DEBUG_PARCEL)             Slog.d(TAG,"Adding package " + pkgName + " process: "+ procName+ " "+ uid+ " "+ commonProc);
+            pkgState.mProcesses.put(procName,commonProc);
           }
-          if (DEBUG_PARCEL)           Slog.d(TAG,"Adding package " + pkgName + " process: "+ procName+ " "+ uid+ " "+ proc);
-          pkgState.mProcesses.put(procName,proc);
         }
- else {
-          if (DEBUG_PARCEL)           Slog.d(TAG,"Adding package " + pkgName + " process: "+ procName+ " "+ uid+ " "+ commonProc);
-          pkgState.mProcesses.put(procName,commonProc);
-        }
-      }
-      int NSRVS=in.readInt();
-      if (NSRVS < 0) {
-        mReadError="bad package service count: " + NSRVS;
-        return;
-      }
-      while (NSRVS > 0) {
-        NSRVS--;
-        String serviceName=in.readString();
-        if (serviceName == null) {
-          mReadError="bad package service name";
+        int NSRVS=in.readInt();
+        if (NSRVS < 0) {
+          mReadError="bad package service count: " + NSRVS;
           return;
         }
-        String processName=version > 9 ? readCommonString(in,version) : null;
-        ServiceState serv=hadData ? pkgState.mServices.get(serviceName) : null;
-        if (serv == null) {
-          serv=new ServiceState(this,pkgName,serviceName,processName,null);
+        while (NSRVS > 0) {
+          NSRVS--;
+          String serviceName=in.readString();
+          if (serviceName == null) {
+            mReadError="bad package service name";
+            return;
+          }
+          String processName=version > 9 ? readCommonString(in,version) : null;
+          ServiceState serv=hadData ? pkgState.mServices.get(serviceName) : null;
+          if (serv == null) {
+            serv=new ServiceState(this,pkgName,serviceName,processName,null);
+          }
+          if (!serv.readFromParcel(in)) {
+            return;
+          }
+          if (DEBUG_PARCEL)           Slog.d(TAG,"Adding package " + pkgName + " service: "+ serviceName+ " "+ uid+ " "+ serv);
+          pkgState.mServices.put(serviceName,serv);
         }
-        if (!serv.readFromParcel(in)) {
-          return;
-        }
-        if (DEBUG_PARCEL)         Slog.d(TAG,"Adding package " + pkgName + " service: "+ serviceName+ " "+ uid+ " "+ serv);
-        pkgState.mServices.put(serviceName,serv);
       }
     }
   }

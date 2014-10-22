@@ -1,0 +1,62 @@
+{
+  final int callingUid=Binder.getCallingUid();
+  final long callingIdent=Binder.clearCallingIdentity();
+  try {
+synchronized (this) {
+      ActivityRecord r=ActivityRecord.isInStackLocked(activityToken);
+      if (r == null) {
+        throw new IllegalArgumentException("Activity does not exist; token=" + activityToken);
+      }
+      ComponentName comp=intent.getComponent();
+      if (comp == null) {
+        throw new IllegalArgumentException("Intent " + intent + " must specify explicit component");
+      }
+      if (thumbnail.getWidth() != mThumbnailWidth || thumbnail.getHeight() != mThumbnailHeight) {
+        throw new IllegalArgumentException("Bad thumbnail size: got " + thumbnail.getWidth() + "x"+ thumbnail.getHeight()+ ", require "+ mThumbnailWidth+ "x"+ mThumbnailHeight);
+      }
+      if (intent.getSelector() != null) {
+        intent.setSelector(null);
+      }
+      if (intent.getSourceBounds() != null) {
+        intent.setSourceBounds(null);
+      }
+      if ((intent.getFlags() & Intent.FLAG_ACTIVITY_NEW_DOCUMENT) != 0) {
+        if ((intent.getFlags() & Intent.FLAG_ACTIVITY_RETAIN_IN_RECENTS) == 0) {
+          intent.addFlags(Intent.FLAG_ACTIVITY_RETAIN_IN_RECENTS);
+        }
+      }
+ else       if ((intent.getFlags() & Intent.FLAG_ACTIVITY_NEW_TASK) != 0) {
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+      }
+      if (!comp.equals(mLastAddedTaskComponent) || callingUid != mLastAddedTaskUid) {
+        mLastAddedTaskActivity=null;
+      }
+      ActivityInfo ainfo=mLastAddedTaskActivity;
+      if (ainfo == null) {
+        ainfo=mLastAddedTaskActivity=AppGlobals.getPackageManager().getActivityInfo(comp,0,UserHandle.getUserId(callingUid));
+        if (ainfo.applicationInfo.uid != callingUid) {
+          throw new SecurityException("Can't add task for another application: target uid=" + ainfo.applicationInfo.uid + ", calling uid="+ callingUid);
+        }
+      }
+      TaskRecord task=new TaskRecord(this,mStackSupervisor.getNextTaskId(),ainfo,intent,description);
+      int trimIdx=trimRecentsForTask(task,false);
+      if (trimIdx >= 0) {
+        return -1;
+      }
+      final int N=mRecentTasks.size();
+      if (N >= (ActivityManager.getMaxRecentTasksStatic() - 1)) {
+        final TaskRecord tr=mRecentTasks.remove(N - 1);
+        tr.removedFromRecents(mTaskPersister);
+      }
+      task.inRecents=true;
+      mRecentTasks.add(task);
+      r.task.stack.addTask(task,false,false);
+      task.setLastThumbnail(thumbnail);
+      task.freeLastThumbnail();
+      return task.taskId;
+    }
+  }
+  finally {
+    Binder.restoreCallingIdentity(callingIdent);
+  }
+}

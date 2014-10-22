@@ -1,0 +1,72 @@
+{
+  if (DEBUG_URI_PERMISSION)   Slog.v(TAG,"Checking URI perm to data=" + (intent != null ? intent.getData() : null) + " clip="+ (intent != null ? intent.getClipData() : null)+ " from "+ intent+ "; flags=0x"+ Integer.toHexString(intent != null ? intent.getFlags() : 0));
+  if (targetPkg == null) {
+    throw new NullPointerException("targetPkg");
+  }
+  if (intent == null) {
+    return null;
+  }
+  Uri data=intent.getData();
+  ClipData clip=intent.getClipData();
+  if (data == null && clip == null) {
+    return null;
+  }
+  int contentUserHint=intent.getContentUserHint();
+  if (contentUserHint == UserHandle.USER_CURRENT) {
+    contentUserHint=UserHandle.getUserId(callingUid);
+  }
+  final IPackageManager pm=AppGlobals.getPackageManager();
+  int targetUid;
+  if (needed != null) {
+    targetUid=needed.targetUid;
+  }
+ else {
+    try {
+      targetUid=pm.getPackageUid(targetPkg,targetUserId);
+    }
+ catch (    RemoteException ex) {
+      return null;
+    }
+    if (targetUid < 0) {
+      if (DEBUG_URI_PERMISSION) {
+        Slog.v(TAG,"Can't grant URI permission no uid for: " + targetPkg + " on user "+ targetUserId);
+      }
+      return null;
+    }
+  }
+  if (data != null) {
+    GrantUri grantUri=GrantUri.resolve(contentUserHint,data);
+    targetUid=checkGrantUriPermissionLocked(callingUid,targetPkg,grantUri,mode,targetUid);
+    if (targetUid > 0) {
+      if (needed == null) {
+        needed=new NeededUriGrants(targetPkg,targetUid,mode);
+      }
+      needed.add(grantUri);
+    }
+  }
+  if (clip != null) {
+    for (int i=0; i < clip.getItemCount(); i++) {
+      Uri uri=clip.getItemAt(i).getUri();
+      if (uri != null) {
+        GrantUri grantUri=GrantUri.resolve(contentUserHint,uri);
+        targetUid=checkGrantUriPermissionLocked(callingUid,targetPkg,grantUri,mode,targetUid);
+        if (targetUid > 0) {
+          if (needed == null) {
+            needed=new NeededUriGrants(targetPkg,targetUid,mode);
+          }
+          needed.add(grantUri);
+        }
+      }
+ else {
+        Intent clipIntent=clip.getItemAt(i).getIntent();
+        if (clipIntent != null) {
+          NeededUriGrants newNeeded=checkGrantUriPermissionFromIntentLocked(callingUid,targetPkg,clipIntent,mode,needed,targetUserId);
+          if (newNeeded != null) {
+            needed=newNeeded;
+          }
+        }
+      }
+    }
+  }
+  return needed;
+}

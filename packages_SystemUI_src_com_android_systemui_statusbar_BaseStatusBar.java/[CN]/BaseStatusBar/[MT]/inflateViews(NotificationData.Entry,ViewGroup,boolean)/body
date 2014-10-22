@@ -1,0 +1,164 @@
+{
+  PackageManager pmUser=getPackageManagerForUser(entry.notification.getUser().getIdentifier());
+  int maxHeight=mRowMaxHeight;
+  final StatusBarNotification sbn=entry.notification;
+  RemoteViews contentView=sbn.getNotification().contentView;
+  RemoteViews bigContentView=sbn.getNotification().bigContentView;
+  if (isHeadsUp) {
+    maxHeight=mContext.getResources().getDimensionPixelSize(R.dimen.notification_mid_height);
+    bigContentView=sbn.getNotification().headsUpContentView;
+  }
+  if (contentView == null) {
+    return false;
+  }
+  if (DEBUG) {
+    Log.v(TAG,"publicNotification: " + sbn.getNotification().publicVersion);
+  }
+  Notification publicNotification=sbn.getNotification().publicVersion;
+  ExpandableNotificationRow row;
+  boolean hasUserChangedExpansion=false;
+  boolean userExpanded=false;
+  boolean userLocked=false;
+  if (entry.row != null) {
+    row=entry.row;
+    hasUserChangedExpansion=row.hasUserChangedExpansion();
+    userExpanded=row.isUserExpanded();
+    userLocked=row.isUserLocked();
+    entry.reset();
+    if (hasUserChangedExpansion) {
+      row.setUserExpanded(userExpanded);
+    }
+  }
+ else {
+    LayoutInflater inflater=(LayoutInflater)mContext.getSystemService(Context.LAYOUT_INFLATER_SERVICE);
+    row=(ExpandableNotificationRow)inflater.inflate(R.layout.status_bar_notification_row,parent,false);
+    row.setExpansionLogger(this,entry.notification.getKey());
+  }
+  workAroundBadLayerDrawableOpacity(row);
+  View vetoButton=updateNotificationVetoButton(row,sbn);
+  vetoButton.setContentDescription(mContext.getString(R.string.accessibility_remove_notification));
+  NotificationContentView expanded=(NotificationContentView)row.findViewById(R.id.expanded);
+  NotificationContentView expandedPublic=(NotificationContentView)row.findViewById(R.id.expandedPublic);
+  row.setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
+  PendingIntent contentIntent=sbn.getNotification().contentIntent;
+  if (contentIntent != null) {
+    final View.OnClickListener listener=makeClicker(contentIntent,sbn.getKey(),isHeadsUp);
+    row.setOnClickListener(listener);
+  }
+ else {
+    row.setOnClickListener(null);
+  }
+  View contentViewLocal=null;
+  View bigContentViewLocal=null;
+  try {
+    contentViewLocal=contentView.apply(mContext,expanded,mOnClickHandler);
+    if (bigContentView != null) {
+      bigContentViewLocal=bigContentView.apply(mContext,expanded,mOnClickHandler);
+    }
+  }
+ catch (  RuntimeException e) {
+    final String ident=sbn.getPackageName() + "/0x" + Integer.toHexString(sbn.getId());
+    Log.e(TAG,"couldn't inflate view for notification " + ident,e);
+    return false;
+  }
+  if (contentViewLocal != null) {
+    contentViewLocal.setIsRootNamespace(true);
+    expanded.setContractedChild(contentViewLocal);
+  }
+  if (bigContentViewLocal != null) {
+    bigContentViewLocal.setIsRootNamespace(true);
+    expanded.setExpandedChild(bigContentViewLocal);
+  }
+  View publicViewLocal=null;
+  if (publicNotification != null) {
+    try {
+      publicViewLocal=publicNotification.contentView.apply(mContext,expandedPublic,mOnClickHandler);
+      if (publicViewLocal != null) {
+        publicViewLocal.setIsRootNamespace(true);
+        expandedPublic.setContractedChild(publicViewLocal);
+      }
+    }
+ catch (    RuntimeException e) {
+      final String ident=sbn.getPackageName() + "/0x" + Integer.toHexString(sbn.getId());
+      Log.e(TAG,"couldn't inflate public view for notification " + ident,e);
+      publicViewLocal=null;
+    }
+  }
+  try {
+    ApplicationInfo info=pmUser.getApplicationInfo(sbn.getPackageName(),0);
+    entry.targetSdk=info.targetSdkVersion;
+  }
+ catch (  NameNotFoundException ex) {
+    Log.e(TAG,"Failed looking up ApplicationInfo for " + sbn.getPackageName(),ex);
+  }
+  if (publicViewLocal == null) {
+    publicViewLocal=LayoutInflater.from(mContext).inflate(R.layout.notification_public_default,expandedPublic,false);
+    publicViewLocal.setIsRootNamespace(true);
+    expandedPublic.setContractedChild(publicViewLocal);
+    final TextView title=(TextView)publicViewLocal.findViewById(R.id.title);
+    try {
+      title.setText(pmUser.getApplicationLabel(pmUser.getApplicationInfo(entry.notification.getPackageName(),0)));
+    }
+ catch (    NameNotFoundException e) {
+      title.setText(entry.notification.getPackageName());
+    }
+    final ImageView icon=(ImageView)publicViewLocal.findViewById(R.id.icon);
+    final ImageView profileBadge=(ImageView)publicViewLocal.findViewById(R.id.profile_badge_line3);
+    final StatusBarIcon ic=new StatusBarIcon(entry.notification.getPackageName(),entry.notification.getUser(),entry.notification.getNotification().icon,entry.notification.getNotification().iconLevel,entry.notification.getNotification().number,entry.notification.getNotification().tickerText);
+    Drawable iconDrawable=StatusBarIconView.getIcon(mContext,ic);
+    icon.setImageDrawable(iconDrawable);
+    if (entry.targetSdk >= Build.VERSION_CODES.LOLLIPOP || mNotificationColorUtil.isGrayscaleIcon(iconDrawable)) {
+      icon.setBackgroundResource(com.android.internal.R.drawable.notification_icon_legacy_bg);
+      int padding=mContext.getResources().getDimensionPixelSize(com.android.internal.R.dimen.notification_large_icon_circle_padding);
+      icon.setPadding(padding,padding,padding,padding);
+      if (sbn.getNotification().color != Notification.COLOR_DEFAULT) {
+        icon.getBackground().setColorFilter(sbn.getNotification().color,PorterDuff.Mode.SRC_ATOP);
+      }
+    }
+    if (profileBadge != null) {
+      Drawable profileDrawable=mContext.getPackageManager().getUserBadgeForDensity(entry.notification.getUser(),0);
+      if (profileDrawable != null) {
+        profileBadge.setImageDrawable(profileDrawable);
+        profileBadge.setVisibility(View.VISIBLE);
+      }
+ else {
+        profileBadge.setVisibility(View.GONE);
+      }
+    }
+    final View privateTime=contentViewLocal.findViewById(com.android.internal.R.id.time);
+    final DateTimeView time=(DateTimeView)publicViewLocal.findViewById(R.id.time);
+    if (privateTime != null && privateTime.getVisibility() == View.VISIBLE) {
+      time.setVisibility(View.VISIBLE);
+      time.setTime(entry.notification.getNotification().when);
+    }
+    final TextView text=(TextView)publicViewLocal.findViewById(R.id.text);
+    if (text != null) {
+      text.setText(R.string.notification_hidden_text);
+      text.setTextAppearance(mContext,R.style.TextAppearance_Material_Notification_Parenthetical);
+    }
+    int topPadding=Notification.Builder.calculateTopPadding(mContext,false,mContext.getResources().getConfiguration().fontScale);
+    title.setPadding(0,topPadding,0,0);
+    entry.autoRedacted=true;
+  }
+  row.setClearable(sbn.isClearable());
+  if (MULTIUSER_DEBUG) {
+    TextView debug=(TextView)row.findViewById(R.id.debug_info);
+    if (debug != null) {
+      debug.setVisibility(View.VISIBLE);
+      debug.setText("CU " + mCurrentUserId + " NU "+ entry.notification.getUserId());
+    }
+  }
+  entry.row=row;
+  entry.row.setHeightRange(mRowMinHeight,maxHeight);
+  entry.row.setOnActivatedListener(this);
+  entry.expanded=contentViewLocal;
+  entry.expandedPublic=publicViewLocal;
+  entry.setBigContentView(bigContentViewLocal);
+  applyColorsAndBackgrounds(sbn,entry);
+  if (hasUserChangedExpansion) {
+    row.setUserExpanded(userExpanded);
+  }
+  row.setUserLocked(userLocked);
+  row.setStatusBarNotification(entry.notification);
+  return true;
+}

@@ -1,0 +1,37 @@
+{
+  validatePermission(android.Manifest.permission.SHUTDOWN);
+  Slog.i(TAG,"Shutting down");
+synchronized (mVolumesLock) {
+    MountShutdownLatch mountShutdownLatch=new MountShutdownLatch(observer,mVolumeStates.size());
+    for (    String path : mVolumeStates.keySet()) {
+      String state=mVolumeStates.get(path);
+      if (state.equals(Environment.MEDIA_SHARED)) {
+        setUsbMassStorageEnabled(false);
+      }
+ else       if (state.equals(Environment.MEDIA_CHECKING)) {
+        int retries=30;
+        while (state.equals(Environment.MEDIA_CHECKING) && (retries-- >= 0)) {
+          try {
+            Thread.sleep(1000);
+          }
+ catch (          InterruptedException iex) {
+            Slog.e(TAG,"Interrupted while waiting for media",iex);
+            break;
+          }
+          state=Environment.getExternalStorageState();
+        }
+        if (retries == 0) {
+          Slog.e(TAG,"Timed out waiting for media to check");
+        }
+      }
+      if (state.equals(Environment.MEDIA_MOUNTED)) {
+        ShutdownCallBack ucb=new ShutdownCallBack(path,mountShutdownLatch);
+        mHandler.sendMessage(mHandler.obtainMessage(H_UNMOUNT_PM_UPDATE,ucb));
+      }
+ else       if (observer != null) {
+        mountShutdownLatch.countDown();
+        Slog.i(TAG,"Unmount completed: " + path + ", result code: "+ StorageResultCode.OperationSucceeded);
+      }
+    }
+  }
+}

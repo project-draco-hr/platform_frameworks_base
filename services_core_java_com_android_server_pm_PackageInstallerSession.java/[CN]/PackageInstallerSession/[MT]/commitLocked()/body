@@ -1,0 +1,71 @@
+{
+  if (mDestroyed) {
+    throw new PackageManagerException(INSTALL_FAILED_INTERNAL_ERROR,"Session destroyed");
+  }
+  if (!mSealed) {
+    throw new PackageManagerException(INSTALL_FAILED_INTERNAL_ERROR,"Session not sealed");
+  }
+  try {
+    resolveStageDir();
+  }
+ catch (  IOException e) {
+    throw new PackageManagerException(INSTALL_FAILED_CONTAINER_ERROR,"Failed to resolve stage location",e);
+  }
+  validateInstallLocked();
+  Preconditions.checkNotNull(mPackageName);
+  Preconditions.checkNotNull(mSignatures);
+  Preconditions.checkNotNull(mResolvedBaseFile);
+  if (!mPermissionsAccepted) {
+    final Intent intent=new Intent(PackageInstaller.ACTION_CONFIRM_PERMISSIONS);
+    intent.setPackage("com.android.packageinstaller");
+    intent.putExtra(PackageInstaller.EXTRA_SESSION_ID,sessionId);
+    try {
+      mRemoteObserver.onUserActionRequired(intent);
+    }
+ catch (    RemoteException ignored) {
+    }
+    close();
+    return;
+  }
+  if (stageCid != null) {
+    final long finalSize=calculateInstalledSize();
+    resizeContainer(stageCid,finalSize);
+  }
+  if (params.mode == SessionParams.MODE_INHERIT_EXISTING) {
+    try {
+      if (stageCid != null) {
+        copyFiles(mResolvedInheritedFiles,resolveStageDir());
+      }
+ else {
+        linkFiles(mResolvedInheritedFiles,resolveStageDir());
+      }
+    }
+ catch (    IOException e) {
+      throw new PackageManagerException(INSTALL_FAILED_INSUFFICIENT_STORAGE,"Failed to inherit existing install",e);
+    }
+  }
+  mInternalProgress=0.5f;
+  computeProgressLocked(true);
+  extractNativeLibraries(mResolvedStageDir,params.abiOverride);
+  if (stageCid != null) {
+    finalizeAndFixContainer(stageCid);
+  }
+  final IPackageInstallObserver2 localObserver=new IPackageInstallObserver2.Stub(){
+    @Override public void onUserActionRequired(    Intent intent){
+      throw new IllegalStateException();
+    }
+    @Override public void onPackageInstalled(    String basePackageName,    int returnCode,    String msg,    Bundle extras){
+      destroyInternal();
+      dispatchSessionFinished(returnCode,msg,extras);
+    }
+  }
+;
+  final UserHandle user;
+  if ((params.installFlags & PackageManager.INSTALL_ALL_USERS) != 0) {
+    user=UserHandle.ALL;
+  }
+ else {
+    user=new UserHandle(userId);
+  }
+  mPm.installStage(mPackageName,stageDir,stageCid,localObserver,params,installerPackageName,installerUid,user);
+}

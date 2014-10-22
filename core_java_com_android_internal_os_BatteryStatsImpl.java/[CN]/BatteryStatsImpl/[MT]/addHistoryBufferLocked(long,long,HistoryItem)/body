@@ -1,0 +1,53 @@
+{
+  if (!mHaveBatteryLevel || !mRecordingHistory) {
+    return;
+  }
+  final long timeDiff=(mHistoryBaseTime + elapsedRealtimeMs) - mHistoryLastWritten.time;
+  final int diffStates=mHistoryLastWritten.states ^ cur.states;
+  final int diffStates2=mHistoryLastWritten.states2 ^ cur.states2;
+  final int lastDiffStates=mHistoryLastWritten.states ^ mHistoryLastLastWritten.states;
+  final int lastDiffStates2=mHistoryLastWritten.states2 ^ mHistoryLastLastWritten.states2;
+  if (DEBUG)   Slog.i(TAG,"ADD: tdelta=" + timeDiff + " diff="+ Integer.toHexString(diffStates)+ " lastDiff="+ Integer.toHexString(lastDiffStates)+ " diff2="+ Integer.toHexString(diffStates2)+ " lastDiff2="+ Integer.toHexString(lastDiffStates2));
+  if (mHistoryBufferLastPos >= 0 && mHistoryLastWritten.cmd == HistoryItem.CMD_UPDATE && timeDiff < 1000 && (diffStates & lastDiffStates) == 0 && (diffStates2 & lastDiffStates2) == 0 && (mHistoryLastWritten.wakelockTag == null || cur.wakelockTag == null) && (mHistoryLastWritten.wakeReasonTag == null || cur.wakeReasonTag == null) && (mHistoryLastWritten.eventCode == HistoryItem.EVENT_NONE || cur.eventCode == HistoryItem.EVENT_NONE) && mHistoryLastWritten.batteryLevel == cur.batteryLevel && mHistoryLastWritten.batteryStatus == cur.batteryStatus && mHistoryLastWritten.batteryHealth == cur.batteryHealth && mHistoryLastWritten.batteryPlugType == cur.batteryPlugType && mHistoryLastWritten.batteryTemperature == cur.batteryTemperature && mHistoryLastWritten.batteryVoltage == cur.batteryVoltage) {
+    if (DEBUG)     Slog.i(TAG,"ADD: rewinding back to " + mHistoryBufferLastPos);
+    mHistoryBuffer.setDataSize(mHistoryBufferLastPos);
+    mHistoryBuffer.setDataPosition(mHistoryBufferLastPos);
+    mHistoryBufferLastPos=-1;
+    elapsedRealtimeMs=mHistoryLastWritten.time - mHistoryBaseTime;
+    if (mHistoryLastWritten.wakelockTag != null) {
+      cur.wakelockTag=cur.localWakelockTag;
+      cur.wakelockTag.setTo(mHistoryLastWritten.wakelockTag);
+    }
+    if (mHistoryLastWritten.wakeReasonTag != null) {
+      cur.wakeReasonTag=cur.localWakeReasonTag;
+      cur.wakeReasonTag.setTo(mHistoryLastWritten.wakeReasonTag);
+    }
+    if (mHistoryLastWritten.eventCode != HistoryItem.EVENT_NONE) {
+      cur.eventCode=mHistoryLastWritten.eventCode;
+      cur.eventTag=cur.localEventTag;
+      cur.eventTag.setTo(mHistoryLastWritten.eventTag);
+    }
+    mHistoryLastWritten.setTo(mHistoryLastLastWritten);
+  }
+  final int dataSize=mHistoryBuffer.dataSize();
+  if (dataSize >= MAX_HISTORY_BUFFER) {
+    if (!mHistoryOverflow) {
+      mHistoryOverflow=true;
+      addHistoryBufferLocked(elapsedRealtimeMs,uptimeMs,HistoryItem.CMD_UPDATE,cur);
+      addHistoryBufferLocked(elapsedRealtimeMs,uptimeMs,HistoryItem.CMD_OVERFLOW,cur);
+      return;
+    }
+    if (mHistoryLastWritten.batteryLevel == cur.batteryLevel && (dataSize >= MAX_MAX_HISTORY_BUFFER || ((mHistoryLastWritten.states ^ cur.states) & HistoryItem.MOST_INTERESTING_STATES) == 0 || ((mHistoryLastWritten.states2 ^ cur.states2) & HistoryItem.MOST_INTERESTING_STATES2) == 0)) {
+      return;
+    }
+    addHistoryBufferLocked(elapsedRealtimeMs,uptimeMs,HistoryItem.CMD_UPDATE,cur);
+    return;
+  }
+  if (dataSize == 0) {
+    cur.currentTime=System.currentTimeMillis();
+    mLastRecordedClockTime=cur.currentTime;
+    mLastRecordedClockRealtime=elapsedRealtimeMs;
+    addHistoryBufferLocked(elapsedRealtimeMs,uptimeMs,HistoryItem.CMD_RESET,cur);
+  }
+  addHistoryBufferLocked(elapsedRealtimeMs,uptimeMs,HistoryItem.CMD_UPDATE,cur);
+}

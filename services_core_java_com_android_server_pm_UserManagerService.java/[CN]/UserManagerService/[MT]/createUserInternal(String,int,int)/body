@@ -1,0 +1,62 @@
+{
+  if (getUserRestrictions(UserHandle.getCallingUserId()).getBoolean(UserManager.DISALLOW_ADD_USER,false)) {
+    Log.w(LOG_TAG,"Cannot add user. DISALLOW_ADD_USER is enabled.");
+    return null;
+  }
+  final boolean isGuest=(flags & UserInfo.FLAG_GUEST) != 0;
+  final long ident=Binder.clearCallingIdentity();
+  UserInfo userInfo=null;
+  try {
+synchronized (mInstallLock) {
+synchronized (mPackagesLock) {
+        UserInfo parent=null;
+        if (parentId != UserHandle.USER_NULL) {
+          parent=getUserInfoLocked(parentId);
+          if (parent == null)           return null;
+        }
+        if (!isGuest && isUserLimitReachedLocked()) {
+          return null;
+        }
+        if (isGuest && findCurrentGuestUserLocked() != null) {
+          return null;
+        }
+        if ((flags & UserInfo.FLAG_MANAGED_PROFILE) != 0 && numberOfUsersOfTypeLocked(UserInfo.FLAG_MANAGED_PROFILE,true) >= MAX_MANAGED_PROFILES) {
+          return null;
+        }
+        int userId=getNextAvailableIdLocked();
+        userInfo=new UserInfo(userId,name,null,flags);
+        File userPath=new File(mBaseUserPath,Integer.toString(userId));
+        userInfo.serialNumber=mNextSerialNumber++;
+        long now=System.currentTimeMillis();
+        userInfo.creationTime=(now > EPOCH_PLUS_30_YEARS) ? now : 0;
+        userInfo.partial=true;
+        Environment.getUserSystemDirectory(userInfo.id).mkdirs();
+        mUsers.put(userId,userInfo);
+        writeUserListLocked();
+        if (parent != null) {
+          if (parent.profileGroupId == UserInfo.NO_PROFILE_GROUP_ID) {
+            parent.profileGroupId=parent.id;
+            writeUserLocked(parent);
+          }
+          userInfo.profileGroupId=parent.profileGroupId;
+        }
+        writeUserLocked(userInfo);
+        mPm.createNewUserLILPw(userId,userPath);
+        userInfo.partial=false;
+        writeUserLocked(userInfo);
+        updateUserIdsLocked();
+        Bundle restrictions=new Bundle();
+        mUserRestrictions.append(userId,restrictions);
+      }
+    }
+    if (userInfo != null) {
+      Intent addedIntent=new Intent(Intent.ACTION_USER_ADDED);
+      addedIntent.putExtra(Intent.EXTRA_USER_HANDLE,userInfo.id);
+      mContext.sendBroadcastAsUser(addedIntent,UserHandle.ALL,android.Manifest.permission.MANAGE_USERS);
+    }
+  }
+  finally {
+    Binder.restoreCallingIdentity(ident);
+  }
+  return userInfo;
+}

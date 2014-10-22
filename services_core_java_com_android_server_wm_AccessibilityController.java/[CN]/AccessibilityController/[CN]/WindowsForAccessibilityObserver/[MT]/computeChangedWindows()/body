@@ -1,0 +1,107 @@
+{
+  if (DEBUG) {
+    Slog.i(LOG_TAG,"computeChangedWindows()");
+  }
+synchronized (mWindowManagerService.mWindowMap) {
+    if (mWindowManagerService.mCurrentFocus == null) {
+      return;
+    }
+    WindowManager windowManager=(WindowManager)mContext.getSystemService(Context.WINDOW_SERVICE);
+    windowManager.getDefaultDisplay().getRealSize(mTempPoint);
+    final int screenWidth=mTempPoint.x;
+    final int screenHeight=mTempPoint.y;
+    Region unaccountedSpace=mTempRegion;
+    unaccountedSpace.set(0,0,screenWidth,screenHeight);
+    SparseArray<WindowState> visibleWindows=mTempWindowStates;
+    populateVisibleWindowsOnScreenLocked(visibleWindows);
+    List<WindowInfo> windows=new ArrayList<WindowInfo>();
+    Set<IBinder> addedWindows=mTempBinderSet;
+    addedWindows.clear();
+    boolean focusedWindowAdded=false;
+    final int visibleWindowCount=visibleWindows.size();
+    for (int i=visibleWindowCount - 1; i >= 0; i--) {
+      WindowState windowState=visibleWindows.valueAt(i);
+      Rect boundsInScreen=mTempRect;
+      computeWindowBoundsInScreen(windowState,boundsInScreen);
+      final int flags=windowState.mAttrs.flags;
+      if ((flags & WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE) != 0) {
+        continue;
+      }
+      if (unaccountedSpace.quickReject(boundsInScreen)) {
+        continue;
+      }
+      if (isReportedWindowType(windowState.mAttrs.type)) {
+        WindowInfo window=obtainPopulatedWindowInfo(windowState,boundsInScreen);
+        addedWindows.add(window.token);
+        windows.add(window);
+        if (windowState.isFocused()) {
+          focusedWindowAdded=true;
+        }
+      }
+      unaccountedSpace.op(boundsInScreen,unaccountedSpace,Region.Op.REVERSE_DIFFERENCE);
+      if (unaccountedSpace.isEmpty()) {
+        break;
+      }
+      if ((flags & (WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL)) == 0) {
+        break;
+      }
+    }
+    if (!focusedWindowAdded) {
+      for (int i=visibleWindowCount - 1; i >= 0; i--) {
+        WindowState windowState=visibleWindows.valueAt(i);
+        if (windowState.isFocused()) {
+          Rect boundsInScreen=mTempRect;
+          computeWindowBoundsInScreen(windowState,boundsInScreen);
+          WindowInfo window=obtainPopulatedWindowInfo(windowState,boundsInScreen);
+          addedWindows.add(window.token);
+          windows.add(window);
+          break;
+        }
+      }
+    }
+    final int windowCount=windows.size();
+    for (int i=0; i < windowCount; i++) {
+      WindowInfo window=windows.get(i);
+      if (!addedWindows.contains(window.parentToken)) {
+        window.parentToken=null;
+      }
+      if (window.childTokens != null) {
+        final int childTokenCount=window.childTokens.size();
+        for (int j=childTokenCount - 1; j >= 0; j--) {
+          if (!addedWindows.contains(window.childTokens.get(j))) {
+            window.childTokens.remove(j);
+          }
+        }
+      }
+    }
+    visibleWindows.clear();
+    addedWindows.clear();
+    boolean windowsChanged=false;
+    if (mOldWindows.size() != windows.size()) {
+      windowsChanged=true;
+    }
+ else     if (!mOldWindows.isEmpty() || !windows.isEmpty()) {
+      for (int i=0; i < windowCount; i++) {
+        WindowInfo oldWindow=mOldWindows.get(i);
+        WindowInfo newWindow=windows.get(i);
+        if (windowChangedNoLayer(oldWindow,newWindow)) {
+          windowsChanged=true;
+          break;
+        }
+      }
+    }
+    if (windowsChanged) {
+      if (DEBUG) {
+        Log.i(LOG_TAG,"Windows changed:" + windows);
+      }
+      cacheWindows(windows);
+      mHandler.obtainMessage(MyHandler.MESSAGE_NOTIFY_WINDOWS_CHANGED,windows).sendToTarget();
+    }
+ else {
+      if (DEBUG) {
+        Log.i(LOG_TAG,"No windows changed.");
+      }
+      clearAndRecycleWindows(windows);
+    }
+  }
+}

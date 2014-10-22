@@ -6,24 +6,35 @@
   }
   readHistory(in,true);
   mStartCount=in.readInt();
-  mBatteryUptime=in.readLong();
-  mBatteryRealtime=in.readLong();
   mUptime=in.readLong();
   mRealtime=in.readLong();
+  mStartClockTime=in.readLong();
+  mStartPlatformVersion=in.readString();
+  mEndPlatformVersion=in.readString();
+  mOnBatteryTimeBase.readSummaryFromParcel(in);
+  mOnBatteryScreenOffTimeBase.readSummaryFromParcel(in);
   mDischargeUnplugLevel=in.readInt();
+  mDischargePlugLevel=in.readInt();
   mDischargeCurrentLevel=in.readInt();
+  mCurrentBatteryLevel=in.readInt();
   mLowDischargeAmountSinceCharge=in.readInt();
   mHighDischargeAmountSinceCharge=in.readInt();
   mDischargeAmountScreenOnSinceCharge=in.readInt();
   mDischargeAmountScreenOffSinceCharge=in.readInt();
+  mNumDischargeStepDurations=in.readInt();
+  in.readLongArray(mDischargeStepDurations);
+  mNumChargeStepDurations=in.readInt();
+  in.readLongArray(mChargeStepDurations);
   mStartCount++;
-  mScreenOn=false;
+  mScreenState=Display.STATE_UNKNOWN;
   mScreenOnTimer.readSummaryFromParcelLocked(in);
   for (int i=0; i < NUM_SCREEN_BRIGHTNESS_BINS; i++) {
     mScreenBrightnessTimer[i].readSummaryFromParcelLocked(in);
   }
-  mInputEventCounter.readSummaryFromParcelLocked(in);
+  mInteractive=false;
+  mInteractiveTimer.readSummaryFromParcelLocked(in);
   mPhoneOn=false;
+  mLowPowerModeEnabledTimer.readSummaryFromParcelLocked(in);
   mPhoneOnTimer.readSummaryFromParcelLocked(in);
   for (int i=0; i < SignalStrength.NUM_SIGNAL_STRENGTH_BINS; i++) {
     mPhoneSignalStrengthsTimer[i].readSummaryFromParcelLocked(in);
@@ -33,14 +44,35 @@
     mPhoneDataConnectionsTimer[i].readSummaryFromParcelLocked(in);
   }
   for (int i=0; i < NUM_NETWORK_ACTIVITY_TYPES; i++) {
-    mNetworkActivityCounters[i].readSummaryFromParcelLocked(in);
+    mNetworkByteActivityCounters[i].readSummaryFromParcelLocked(in);
+    mNetworkPacketActivityCounters[i].readSummaryFromParcelLocked(in);
   }
+  mMobileRadioPowerState=DataConnectionRealTimeInfo.DC_POWER_STATE_LOW;
+  mMobileRadioActiveTimer.readSummaryFromParcelLocked(in);
+  mMobileRadioActivePerAppTimer.readSummaryFromParcelLocked(in);
+  mMobileRadioActiveAdjustedTime.readSummaryFromParcelLocked(in);
+  mMobileRadioActiveUnknownTime.readSummaryFromParcelLocked(in);
+  mMobileRadioActiveUnknownCount.readSummaryFromParcelLocked(in);
   mWifiOn=false;
   mWifiOnTimer.readSummaryFromParcelLocked(in);
   mGlobalWifiRunning=false;
   mGlobalWifiRunningTimer.readSummaryFromParcelLocked(in);
+  for (int i=0; i < NUM_WIFI_STATES; i++) {
+    mWifiStateTimer[i].readSummaryFromParcelLocked(in);
+  }
+  for (int i=0; i < NUM_WIFI_SUPPL_STATES; i++) {
+    mWifiSupplStateTimer[i].readSummaryFromParcelLocked(in);
+  }
+  for (int i=0; i < NUM_WIFI_SIGNAL_STRENGTH_BINS; i++) {
+    mWifiSignalStrengthsTimer[i].readSummaryFromParcelLocked(in);
+  }
   mBluetoothOn=false;
   mBluetoothOnTimer.readSummaryFromParcelLocked(in);
+  for (int i=0; i < NUM_BLUETOOTH_STATES; i++) {
+    mBluetoothStateTimer[i].readSummaryFromParcelLocked(in);
+  }
+  mFlashlightOn=false;
+  mFlashlightOnTimer.readSummaryFromParcelLocked(in);
   int NKW=in.readInt();
   if (NKW > 10000) {
     Slog.w(TAG,"File corrupt: too many kernel wake locks " + NKW);
@@ -52,7 +84,21 @@
       getKernelWakelockTimerLocked(kwltName).readSummaryFromParcelLocked(in);
     }
   }
+  int NWR=in.readInt();
+  if (NWR > 10000) {
+    Slog.w(TAG,"File corrupt: too many wakeup reasons " + NWR);
+    return;
+  }
+  for (int iwr=0; iwr < NWR; iwr++) {
+    if (in.readInt() != 0) {
+      String reasonName=in.readString();
+      getWakeupReasonTimerLocked(reasonName).readSummaryFromParcelLocked(in);
+    }
+  }
   sNumSpeedSteps=in.readInt();
+  if (sNumSpeedSteps < 0 || sNumSpeedSteps > 100) {
+    throw new BadParcelableException("Bad speed steps in data: " + sNumSpeedSteps);
+  }
   final int NU=in.readInt();
   if (NU > 10000) {
     Slog.w(TAG,"File corrupt: too many uids " + NU);
@@ -85,16 +131,21 @@
     if (in.readInt() != 0) {
       u.mWifiMulticastTimer.readSummaryFromParcelLocked(in);
     }
-    u.mAudioTurnedOn=false;
     if (in.readInt() != 0) {
       u.createAudioTurnedOnTimerLocked().readSummaryFromParcelLocked(in);
     }
-    u.mVideoTurnedOn=false;
     if (in.readInt() != 0) {
       u.createVideoTurnedOnTimerLocked().readSummaryFromParcelLocked(in);
     }
     if (in.readInt() != 0) {
       u.createForegroundActivityTimerLocked().readSummaryFromParcelLocked(in);
+    }
+    u.mProcessState=Uid.PROCESS_STATE_NONE;
+    for (int i=0; i < Uid.NUM_PROCESS_STATE; i++) {
+      if (in.readInt() != 0) {
+        u.makeProcessState(i,null);
+        u.mProcessStateTimer[i].readSummaryFromParcelLocked(in);
+      }
     }
     if (in.readInt() != 0) {
       u.createVibratorOnTimerLocked().readSummaryFromParcelLocked(in);
@@ -108,12 +159,15 @@
       }
     }
     if (in.readInt() != 0) {
-      if (u.mNetworkActivityCounters == null) {
+      if (u.mNetworkByteActivityCounters == null) {
         u.initNetworkActivityLocked();
       }
       for (int i=0; i < NUM_NETWORK_ACTIVITY_TYPES; i++) {
-        u.mNetworkActivityCounters[i].readSummaryFromParcelLocked(in);
+        u.mNetworkByteActivityCounters[i].readSummaryFromParcelLocked(in);
+        u.mNetworkPacketActivityCounters[i].readSummaryFromParcelLocked(in);
       }
+      u.mMobileRadioActiveTime.readSummaryFromParcelLocked(in);
+      u.mMobileRadioActiveCount.readSummaryFromParcelLocked(in);
     }
     int NW=in.readInt();
     if (NW > 100) {
@@ -122,15 +176,25 @@
     }
     for (int iw=0; iw < NW; iw++) {
       String wlName=in.readString();
-      if (in.readInt() != 0) {
-        u.getWakeTimerLocked(wlName,WAKE_TYPE_FULL).readSummaryFromParcelLocked(in);
-      }
-      if (in.readInt() != 0) {
-        u.getWakeTimerLocked(wlName,WAKE_TYPE_PARTIAL).readSummaryFromParcelLocked(in);
-      }
-      if (in.readInt() != 0) {
-        u.getWakeTimerLocked(wlName,WAKE_TYPE_WINDOW).readSummaryFromParcelLocked(in);
-      }
+      u.readWakeSummaryFromParcelLocked(wlName,in);
+    }
+    int NS=in.readInt();
+    if (NS > 100) {
+      Slog.w(TAG,"File corrupt: too many syncs " + NS);
+      return;
+    }
+    for (int is=0; is < NS; is++) {
+      String name=in.readString();
+      u.readSyncSummaryFromParcelLocked(name,in);
+    }
+    int NJ=in.readInt();
+    if (NJ > 100) {
+      Slog.w(TAG,"File corrupt: too many job timers " + NJ);
+      return;
+    }
+    for (int ij=0; ij < NJ; ij++) {
+      String name=in.readString();
+      u.readJobSummaryFromParcelLocked(name,in);
     }
     int NP=in.readInt();
     if (NP > 1000) {
@@ -163,7 +227,7 @@
       p.mSpeedBins=new SamplingCounter[NSB];
       for (int i=0; i < NSB; i++) {
         if (in.readInt() != 0) {
-          p.mSpeedBins[i]=new SamplingCounter(mUnpluggables);
+          p.mSpeedBins[i]=new SamplingCounter(mOnBatteryTimeBase);
           p.mSpeedBins[i].readSummaryFromParcelLocked(in);
         }
       }
@@ -180,7 +244,7 @@
       String pkgName=in.readString();
       Uid.Pkg p=u.getPackageStatsLocked(pkgName);
       p.mWakeups=p.mLoadedWakeups=in.readInt();
-      final int NS=in.readInt();
+      NS=in.readInt();
       if (NS > 1000) {
         Slog.w(TAG,"File corrupt: too many services " + NS);
         return;

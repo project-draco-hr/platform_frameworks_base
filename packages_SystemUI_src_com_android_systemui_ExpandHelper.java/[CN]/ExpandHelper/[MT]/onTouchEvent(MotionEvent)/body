@@ -1,64 +1,89 @@
 {
+  if (!isEnabled()) {
+    return false;
+  }
+  trackVelocity(ev);
   final int action=ev.getActionMasked();
   if (DEBUG_SCALE)   Log.d(TAG,"touch: act=" + MotionEvent.actionToString(action) + " expanding="+ mExpanding+ (0 != (mExpansionStyle & BLINDS) ? " (blinds)" : "")+ (0 != (mExpansionStyle & PULL) ? " (pull)" : "")+ (0 != (mExpansionStyle & STRETCH) ? " (stretch)" : ""));
   mSGD.onTouchEvent(ev);
+  final int x=(int)mSGD.getFocusX();
+  final int y=(int)mSGD.getFocusY();
+  if (mOnlyMovements) {
+    mLastMotionY=ev.getRawY();
+    return false;
+  }
 switch (action) {
+case MotionEvent.ACTION_DOWN:
+    mWatchingForPull=mScrollAdapter != null && isInside(mScrollAdapter.getHostView(),x,y);
+  mResizedView=findView(x,y);
+mInitialTouchY=ev.getY();
+break;
 case MotionEvent.ACTION_MOVE:
 {
-      if (0 != (mExpansionStyle & BLINDS)) {
-        final float rawHeight=ev.getY() - mInitialTouchY + mOldHeight;
-        final float newHeight=clamp(rawHeight);
-        final boolean wasClosed=(mOldHeight == mSmallSize);
-        boolean isFinished=false;
-        if (rawHeight > mNaturalHeight) {
-          isFinished=true;
-        }
-        if (rawHeight < mSmallSize) {
-          isFinished=true;
-        }
-        final float pull=Math.abs(ev.getY() - mInitialTouchY);
-        if (mHasPopped || pull > mPopLimit) {
-          if (!mHasPopped) {
-            vibrate(mPopDuration);
-            mHasPopped=true;
-          }
-        }
-        if (mHasPopped) {
-          mScaler.setHeight(newHeight);
-          setGlow(GLOW_BASE);
-        }
- else {
-          setGlow(calculateGlow(4f * pull,0f));
-        }
-        final int x=(int)mSGD.getFocusX();
-        final int y=(int)mSGD.getFocusY();
-        View underFocus=findView(x,y);
-        if (isFinished && underFocus != null && underFocus != mCurrView) {
-          finishExpanding(false);
-          startExpanding(underFocus,BLINDS);
-          mInitialTouchY=y;
-          mHasPopped=false;
-        }
-        return true;
-      }
-      if (mExpanding) {
-        updateExpansion();
-        return true;
-      }
-      break;
+if (mWatchingForPull) {
+final float yDiff=ev.getRawY() - mInitialTouchY;
+if (yDiff > mTouchSlop) {
+  if (DEBUG)   Log.v(TAG,"got venetian gesture (dy=" + yDiff + "px)");
+  mWatchingForPull=false;
+  if (mResizedView != null && !isFullyExpanded(mResizedView)) {
+    if (startExpanding(mResizedView,BLINDS)) {
+      mInitialTouchY=ev.getRawY();
+      mLastMotionY=ev.getRawY();
+      mHasPopped=false;
     }
+  }
+}
+}
+if (mExpanding && 0 != (mExpansionStyle & BLINDS)) {
+final float rawHeight=ev.getRawY() - mLastMotionY + mCurrentHeight;
+final float newHeight=clamp(rawHeight);
+boolean isFinished=false;
+boolean expanded=false;
+if (rawHeight > mNaturalHeight) {
+  isFinished=true;
+  expanded=true;
+}
+if (rawHeight < mSmallSize) {
+  isFinished=true;
+  expanded=false;
+}
+if (!mHasPopped) {
+  vibrate(mPopDuration);
+  mHasPopped=true;
+}
+mScaler.setHeight(newHeight);
+mLastMotionY=ev.getRawY();
+if (isFinished) {
+  mCallback.setUserExpandedChild(mResizedView,expanded);
+  mCallback.expansionStateChanged(false);
+  return false;
+}
+ else {
+  mCallback.expansionStateChanged(true);
+}
+return true;
+}
+if (mExpanding) {
+updateExpansion();
+mLastMotionY=ev.getRawY();
+return true;
+}
+break;
+}
 case MotionEvent.ACTION_POINTER_UP:
 case MotionEvent.ACTION_POINTER_DOWN:
-  if (DEBUG)   Log.d(TAG,"pointer change");
+if (DEBUG) Log.d(TAG,"pointer change");
 mInitialTouchY+=mSGD.getFocusY() - mLastFocusY;
 mInitialTouchSpan+=mSGD.getCurrentSpan() - mLastSpanY;
 break;
 case MotionEvent.ACTION_UP:
 case MotionEvent.ACTION_CANCEL:
 if (DEBUG) Log.d(TAG,"up/cancel");
-finishExpanding(false);
+finishExpanding(false,getCurrentVelocity());
 clearView();
 break;
 }
-return true;
+mLastMotionY=ev.getRawY();
+maybeRecycleVelocityTracker(ev);
+return mResizedView != null;
 }

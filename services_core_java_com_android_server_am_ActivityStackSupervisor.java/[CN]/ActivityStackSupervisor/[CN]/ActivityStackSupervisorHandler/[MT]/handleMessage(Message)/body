@@ -1,0 +1,175 @@
+{
+switch (msg.what) {
+case IDLE_TIMEOUT_MSG:
+{
+      if (DEBUG_IDLE)       Slog.d(TAG,"handleMessage: IDLE_TIMEOUT_MSG: r=" + msg.obj);
+      if (mService.mDidDexOpt) {
+        mService.mDidDexOpt=false;
+        Message nmsg=mHandler.obtainMessage(IDLE_TIMEOUT_MSG);
+        nmsg.obj=msg.obj;
+        mHandler.sendMessageDelayed(nmsg,IDLE_TIMEOUT);
+        return;
+      }
+      activityIdleInternal((ActivityRecord)msg.obj);
+    }
+  break;
+case IDLE_NOW_MSG:
+{
+  if (DEBUG_IDLE)   Slog.d(TAG,"handleMessage: IDLE_NOW_MSG: r=" + msg.obj);
+  activityIdleInternal((ActivityRecord)msg.obj);
+}
+break;
+case RESUME_TOP_ACTIVITY_MSG:
+{
+synchronized (mService) {
+resumeTopActivitiesLocked();
+}
+}
+break;
+case SLEEP_TIMEOUT_MSG:
+{
+synchronized (mService) {
+if (mService.isSleepingOrShuttingDown()) {
+Slog.w(TAG,"Sleep timeout!  Sleeping now.");
+mSleepTimeout=true;
+checkReadyForSleepLocked();
+}
+}
+}
+break;
+case LAUNCH_TIMEOUT_MSG:
+{
+if (mService.mDidDexOpt) {
+mService.mDidDexOpt=false;
+mHandler.sendEmptyMessageDelayed(LAUNCH_TIMEOUT_MSG,LAUNCH_TIMEOUT);
+return;
+}
+synchronized (mService) {
+if (mLaunchingActivity.isHeld()) {
+Slog.w(TAG,"Launch timeout has expired, giving up wake lock!");
+if (VALIDATE_WAKE_LOCK_CALLER && Binder.getCallingUid() != Process.myUid()) {
+throw new IllegalStateException("Calling must be system uid");
+}
+mLaunchingActivity.release();
+}
+}
+}
+break;
+case HANDLE_DISPLAY_ADDED:
+{
+handleDisplayAddedLocked(msg.arg1);
+}
+break;
+case HANDLE_DISPLAY_CHANGED:
+{
+handleDisplayChangedLocked(msg.arg1);
+}
+break;
+case HANDLE_DISPLAY_REMOVED:
+{
+handleDisplayRemovedLocked(msg.arg1);
+}
+break;
+case CONTAINER_CALLBACK_VISIBILITY:
+{
+final ActivityContainer container=(ActivityContainer)msg.obj;
+final IActivityContainerCallback callback=container.mCallback;
+if (callback != null) {
+try {
+callback.setVisible(container.asBinder(),msg.arg1 == 1);
+}
+ catch (RemoteException e) {
+}
+}
+}
+break;
+case LOCK_TASK_START_MSG:
+{
+try {
+if (mLockTaskNotify == null) {
+mLockTaskNotify=new LockTaskNotify(mService.mContext);
+}
+mLockTaskNotify.show(true);
+mLockTaskIsLocked=msg.arg2 == 0;
+if (getStatusBarService() != null) {
+int flags=StatusBarManager.DISABLE_MASK ^ StatusBarManager.DISABLE_BACK;
+if (!mLockTaskIsLocked) {
+flags^=StatusBarManager.DISABLE_HOME | StatusBarManager.DISABLE_RECENT;
+}
+getStatusBarService().disable(flags,mToken,mService.mContext.getPackageName());
+}
+mWindowManager.disableKeyguard(mToken,LOCK_TASK_TAG);
+if (getDevicePolicyManager() != null) {
+getDevicePolicyManager().notifyLockTaskModeChanged(true,(String)msg.obj,msg.arg1);
+}
+}
+ catch (RemoteException ex) {
+throw new RuntimeException(ex);
+}
+}
+break;
+case LOCK_TASK_END_MSG:
+{
+try {
+if (getStatusBarService() != null) {
+getStatusBarService().disable(StatusBarManager.DISABLE_NONE,mToken,mService.mContext.getPackageName());
+}
+mWindowManager.reenableKeyguard(mToken);
+if (getDevicePolicyManager() != null) {
+getDevicePolicyManager().notifyLockTaskModeChanged(false,null,msg.arg1);
+}
+if (mLockTaskNotify == null) {
+mLockTaskNotify=new LockTaskNotify(mService.mContext);
+}
+mLockTaskNotify.show(false);
+try {
+boolean shouldLockKeyguard=Settings.System.getInt(mService.mContext.getContentResolver(),Settings.System.LOCK_TO_APP_EXIT_LOCKED) != 0;
+if (!mLockTaskIsLocked && shouldLockKeyguard) {
+mWindowManager.lockNow(null);
+mWindowManager.dismissKeyguard();
+new LockPatternUtils(mService.mContext).requireCredentialEntry(UserHandle.USER_ALL);
+}
+}
+ catch (SettingNotFoundException e) {
+}
+}
+ catch (RemoteException ex) {
+throw new RuntimeException(ex);
+}
+}
+break;
+case CONTAINER_CALLBACK_TASK_LIST_EMPTY:
+{
+final ActivityContainer container=(ActivityContainer)msg.obj;
+final IActivityContainerCallback callback=container.mCallback;
+if (callback != null) {
+try {
+callback.onAllActivitiesComplete(container.asBinder());
+}
+ catch (RemoteException e) {
+}
+}
+}
+break;
+case CONTAINER_TASK_LIST_EMPTY_TIMEOUT:
+{
+synchronized (mService) {
+Slog.w(TAG,"Timeout waiting for all activities in task to finish. " + msg.obj);
+final ActivityContainer container=(ActivityContainer)msg.obj;
+container.mStack.finishAllActivitiesLocked(true);
+container.onTaskListEmptyLocked();
+}
+}
+break;
+case LAUNCH_TASK_BEHIND_COMPLETE:
+{
+synchronized (mService) {
+ActivityRecord r=ActivityRecord.forToken((IBinder)msg.obj);
+if (r != null) {
+handleLaunchTaskBehindCompleteLocked(r);
+}
+}
+}
+break;
+}
+}

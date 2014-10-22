@@ -1,0 +1,33 @@
+{
+  final FileBridge bridge;
+synchronized (mLock) {
+    assertPreparedAndNotSealed("openWrite");
+    bridge=new FileBridge();
+    mBridges.add(bridge);
+  }
+  try {
+    if (!FileUtils.isValidExtFilename(name)) {
+      throw new IllegalArgumentException("Invalid name: " + name);
+    }
+    final File target=new File(resolveStageDir(),name);
+    final FileDescriptor targetFd=Libcore.os.open(target.getAbsolutePath(),O_CREAT | O_WRONLY,0644);
+    Os.chmod(target.getAbsolutePath(),0644);
+    if (lengthBytes > 0) {
+      final StructStat stat=Libcore.os.fstat(targetFd);
+      final long deltaBytes=lengthBytes - stat.st_size;
+      if (stageDir != null && deltaBytes > 0) {
+        mPm.freeStorage(deltaBytes);
+      }
+      Libcore.os.posix_fallocate(targetFd,0,lengthBytes);
+    }
+    if (offsetBytes > 0) {
+      Libcore.os.lseek(targetFd,offsetBytes,OsConstants.SEEK_SET);
+    }
+    bridge.setTargetFile(targetFd);
+    bridge.start();
+    return new ParcelFileDescriptor(bridge.getClientSocket());
+  }
+ catch (  ErrnoException e) {
+    throw e.rethrowAsIOException();
+  }
+}

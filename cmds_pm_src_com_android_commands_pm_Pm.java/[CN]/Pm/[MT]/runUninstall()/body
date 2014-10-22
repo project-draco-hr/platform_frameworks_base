@@ -1,9 +1,21 @@
 {
-  int unInstallFlags=PackageManager.DELETE_ALL_USERS;
+  int flags=0;
+  int userId=UserHandle.USER_ALL;
   String opt;
   while ((opt=nextOption()) != null) {
     if (opt.equals("-k")) {
-      unInstallFlags|=PackageManager.DELETE_KEEP_DATA;
+      flags|=PackageManager.DELETE_KEEP_DATA;
+    }
+ else     if (opt.equals("--user")) {
+      String param=nextArg();
+      if (isNumber(param)) {
+        userId=Integer.parseInt(param);
+      }
+ else {
+        showUsage();
+        System.err.println("Error: Invalid user: " + param);
+        return;
+      }
     }
  else {
       System.err.println("Error: Unknown option: " + opt);
@@ -16,11 +28,38 @@
     showUsage();
     return;
   }
-  boolean result=deletePackage(pkg,unInstallFlags);
-  if (result) {
+  if (userId == UserHandle.USER_ALL) {
+    userId=UserHandle.USER_OWNER;
+    flags|=PackageManager.DELETE_ALL_USERS;
+  }
+ else {
+    PackageInfo info;
+    try {
+      info=mPm.getPackageInfo(pkg,0,userId);
+    }
+ catch (    RemoteException e) {
+      System.err.println(e.toString());
+      System.err.println(PM_NOT_RUNNING_ERR);
+      return;
+    }
+    if (info == null) {
+      System.err.println("Failure - not installed for " + userId);
+      return;
+    }
+    final boolean isSystem=(info.applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) != 0;
+    if (isSystem) {
+      flags|=PackageManager.DELETE_SYSTEM_APP;
+    }
+  }
+  final LocalIntentReceiver receiver=new LocalIntentReceiver();
+  mInstaller.uninstall(pkg,flags,receiver.getIntentSender(),userId);
+  final Intent result=receiver.getResult();
+  final int status=result.getIntExtra(PackageInstaller.EXTRA_STATUS,PackageInstaller.STATUS_FAILURE);
+  if (status == PackageInstaller.STATUS_SUCCESS) {
     System.out.println("Success");
   }
  else {
-    System.out.println("Failure");
+    Log.e(TAG,"Failure details: " + result.getExtras());
+    System.out.println("Failure [" + result.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE) + "]");
   }
 }

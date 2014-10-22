@@ -1,0 +1,115 @@
+{
+  if (!newNetwork.created)   loge("ERROR: uncreated network being rematched.");
+  if (nascent && !newNetwork.validated)   loge("ERROR: nascent network not validated.");
+  boolean keep=newNetwork.isVPN();
+  boolean isNewDefault=false;
+  if (DBG)   log("rematching " + newNetwork.name());
+  ArrayList<NetworkAgentInfo> affectedNetworks=new ArrayList<NetworkAgentInfo>();
+  if (VDBG)   log(" network has: " + newNetwork.networkCapabilities);
+  for (  NetworkRequestInfo nri : mNetworkRequests.values()) {
+    NetworkAgentInfo currentNetwork=mNetworkForRequestId.get(nri.request.requestId);
+    if (newNetwork == currentNetwork) {
+      if (DBG) {
+        log("Network " + newNetwork.name() + " was already satisfying"+ " request "+ nri.request.requestId+ ". No change.");
+      }
+      keep=true;
+      continue;
+    }
+    if (VDBG)     log("  checking if request is satisfied: " + nri.request);
+    if (nri.request.networkCapabilities.satisfiedByNetworkCapabilities(newNetwork.networkCapabilities)) {
+      if (!nri.isRequest) {
+        newNetwork.addRequest(nri.request);
+        continue;
+      }
+      if (VDBG) {
+        log("currentScore = " + (currentNetwork != null ? currentNetwork.getCurrentScore() : 0) + ", newScore = "+ newNetwork.getCurrentScore());
+      }
+      if (currentNetwork == null || currentNetwork.getCurrentScore() < newNetwork.getCurrentScore()) {
+        if (currentNetwork != null) {
+          if (DBG)           log("   accepting network in place of " + currentNetwork.name());
+          currentNetwork.networkRequests.remove(nri.request.requestId);
+          currentNetwork.networkLingered.add(nri.request);
+          affectedNetworks.add(currentNetwork);
+        }
+ else {
+          if (DBG)           log("   accepting network in place of null");
+        }
+        mNetworkForRequestId.put(nri.request.requestId,newNetwork);
+        newNetwork.addRequest(nri.request);
+        if (nri.isRequest && nri.request.legacyType != TYPE_NONE) {
+          mLegacyTypeTracker.add(nri.request.legacyType,newNetwork);
+        }
+        keep=true;
+        sendUpdatedScoreToFactories(nri.request,newNetwork.getCurrentScore());
+        if (mDefaultRequest.requestId == nri.request.requestId) {
+          isNewDefault=true;
+          mActiveDefaultNetwork=newNetwork.networkInfo.getType();
+          if (newNetwork.linkProperties != null) {
+            updateTcpBufferSizes(newNetwork);
+            setDefaultDnsSystemProperties(newNetwork.linkProperties.getDnsServers());
+          }
+ else {
+            setDefaultDnsSystemProperties(new ArrayList<InetAddress>());
+          }
+          if (currentNetwork != null) {
+            mLegacyTypeTracker.remove(currentNetwork.networkInfo.getType(),currentNetwork);
+          }
+          mDefaultInetConditionPublished=newNetwork.validated ? 100 : 0;
+          mLegacyTypeTracker.add(newNetwork.networkInfo.getType(),newNetwork);
+          notifyLockdownVpn(newNetwork);
+        }
+      }
+    }
+  }
+  for (  NetworkAgentInfo nai : affectedNetworks) {
+    boolean teardown=!nai.isVPN() && nai.validated;
+    for (int i=0; i < nai.networkRequests.size() && teardown; i++) {
+      NetworkRequest nr=nai.networkRequests.valueAt(i);
+      try {
+        if (isRequest(nr)) {
+          teardown=false;
+        }
+      }
+ catch (      Exception e) {
+        loge("Request " + nr + " not found in mNetworkRequests.");
+        loge("  it came from request list  of " + nai.name());
+      }
+    }
+    if (teardown) {
+      nai.networkMonitor.sendMessage(NetworkMonitor.CMD_NETWORK_LINGER);
+      notifyNetworkCallbacks(nai,ConnectivityManager.CALLBACK_LOSING);
+    }
+ else {
+      nai.networkLingered.clear();
+      if (VDBG)       log("Lingered for " + nai.name() + " cleared");
+    }
+  }
+  if (keep) {
+    if (isNewDefault) {
+      makeDefault(newNetwork);
+synchronized (ConnectivityService.this) {
+        if (mNetTransitionWakeLock.isHeld()) {
+          mHandler.sendMessageDelayed(mHandler.obtainMessage(EVENT_CLEAR_NET_TRANSITION_WAKELOCK,mNetTransitionWakeLockSerialNumber,0),1000);
+        }
+      }
+    }
+    try {
+      final IBatteryStats bs=BatteryStatsService.getService();
+      final int type=newNetwork.networkInfo.getType();
+      final String baseIface=newNetwork.linkProperties.getInterfaceName();
+      bs.noteNetworkInterfaceType(baseIface,type);
+      for (      LinkProperties stacked : newNetwork.linkProperties.getStackedLinks()) {
+        final String stackedIface=stacked.getInterfaceName();
+        bs.noteNetworkInterfaceType(stackedIface,type);
+        NetworkStatsFactory.noteStackedIface(stackedIface,baseIface);
+      }
+    }
+ catch (    RemoteException ignored) {
+    }
+    notifyNetworkCallbacks(newNetwork,ConnectivityManager.CALLBACK_AVAILABLE);
+  }
+ else   if (nascent) {
+    if (DBG)     log("Validated network turns out to be unwanted.  Tear it down.");
+    teardownUnneededNetwork(newNetwork);
+  }
+}

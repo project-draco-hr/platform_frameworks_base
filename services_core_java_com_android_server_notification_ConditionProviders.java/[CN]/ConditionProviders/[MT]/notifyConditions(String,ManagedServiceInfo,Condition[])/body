@@ -1,0 +1,52 @@
+{
+synchronized (mMutex) {
+    if (DEBUG)     Slog.d(TAG,"notifyConditions pkg=" + pkg + " info="+ info+ " conditions="+ (conditions == null ? null : Arrays.asList(conditions)));
+    conditions=validateConditions(pkg,conditions);
+    if (conditions == null || conditions.length == 0)     return;
+    final int N=conditions.length;
+    for (    IConditionListener listener : mListeners.values()) {
+      try {
+        listener.onConditionsReceived(conditions);
+      }
+ catch (      RemoteException e) {
+        Slog.w(TAG,"Error sending conditions to listener " + listener,e);
+      }
+    }
+    for (int i=0; i < N; i++) {
+      final Condition c=conditions[i];
+      final ConditionRecord r=getRecordLocked(c.id,info.component);
+      r.info=info;
+      r.condition=c;
+      if (r.isManual) {
+        if (c.state == Condition.STATE_FALSE || c.state == Condition.STATE_ERROR) {
+          final boolean failed=c.state == Condition.STATE_ERROR;
+          if (failed) {
+            Slog.w(TAG,"Exit zen: manual condition failed: " + c);
+          }
+ else           if (DEBUG) {
+            Slog.d(TAG,"Exit zen: manual condition false: " + c);
+          }
+          mZenModeHelper.setZenMode(Settings.Global.ZEN_MODE_OFF,"manualConditionExit");
+          unsubscribeLocked(r);
+          r.isManual=false;
+        }
+      }
+      if (r.isAutomatic) {
+        if (c.state == Condition.STATE_FALSE || c.state == Condition.STATE_ERROR) {
+          final boolean failed=c.state == Condition.STATE_ERROR;
+          if (failed) {
+            Slog.w(TAG,"Exit zen: automatic condition failed: " + c);
+          }
+ else           if (DEBUG) {
+            Slog.d(TAG,"Exit zen: automatic condition false: " + c);
+          }
+          mZenModeHelper.setZenMode(Settings.Global.ZEN_MODE_OFF,"automaticConditionExit");
+        }
+ else         if (c.state == Condition.STATE_TRUE) {
+          Slog.d(TAG,"Enter zen: automatic condition true: " + c);
+          mZenModeHelper.setZenMode(Settings.Global.ZEN_MODE_IMPORTANT_INTERRUPTIONS,"automaticConditionEnter");
+        }
+      }
+    }
+  }
+}

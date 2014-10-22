@@ -1,0 +1,82 @@
+{
+  int upType=ConnectivityManager.TYPE_NONE;
+  String iface=null;
+  updateConfiguration();
+synchronized (mPublicSync) {
+    if (VDBG) {
+      Log.d(TAG,"chooseUpstreamType has upstream iface types:");
+      for (      Integer netType : mUpstreamIfaceTypes) {
+        Log.d(TAG," " + netType);
+      }
+    }
+    for (    Integer netType : mUpstreamIfaceTypes) {
+      NetworkInfo info=getConnectivityManager().getNetworkInfo(netType.intValue());
+      if ((info != null) && info.isConnected()) {
+        upType=netType.intValue();
+        break;
+      }
+    }
+  }
+  if (DBG) {
+    Log.d(TAG,"chooseUpstreamType(" + tryCell + "), preferredApn ="+ mPreferredUpstreamMobileApn+ ", got type="+ upType);
+  }
+  if (upType == ConnectivityManager.TYPE_MOBILE_DUN || upType == ConnectivityManager.TYPE_MOBILE_HIPRI) {
+    turnOnUpstreamMobileConnection(upType);
+  }
+ else   if (upType != ConnectivityManager.TYPE_NONE) {
+    turnOffUpstreamMobileConnection();
+  }
+  if (upType == ConnectivityManager.TYPE_NONE) {
+    boolean tryAgainLater=true;
+    if ((tryCell == TRY_TO_SETUP_MOBILE_CONNECTION) && (turnOnUpstreamMobileConnection(mPreferredUpstreamMobileApn) == true)) {
+      tryAgainLater=false;
+    }
+    if (tryAgainLater) {
+      sendMessageDelayed(CMD_RETRY_UPSTREAM,UPSTREAM_SETTLE_TIME_MS);
+    }
+  }
+ else {
+    LinkProperties linkProperties=getConnectivityManager().getLinkProperties(upType);
+    if (linkProperties != null) {
+      Log.i(TAG,"Finding IPv4 upstream interface on: " + linkProperties);
+      RouteInfo ipv4Default=RouteInfo.selectBestRoute(linkProperties.getAllRoutes(),Inet4Address.ANY);
+      if (ipv4Default != null) {
+        iface=ipv4Default.getInterface();
+        Log.i(TAG,"Found interface " + ipv4Default.getInterface());
+      }
+ else {
+        Log.i(TAG,"No IPv4 upstream interface, giving up.");
+      }
+    }
+    if (iface != null) {
+      String[] dnsServers=mDefaultDnsServers;
+      Collection<InetAddress> dnses=linkProperties.getDnsServers();
+      if (dnses != null) {
+        ArrayList<InetAddress> v4Dnses=new ArrayList<InetAddress>(dnses.size());
+        for (        InetAddress dnsAddress : dnses) {
+          if (dnsAddress instanceof Inet4Address) {
+            v4Dnses.add(dnsAddress);
+          }
+        }
+        if (v4Dnses.size() > 0) {
+          dnsServers=NetworkUtils.makeStrings(v4Dnses);
+        }
+      }
+      try {
+        Network network=getConnectivityManager().getNetworkForType(upType);
+        if (network == null) {
+          Log.e(TAG,"No Network for upstream type " + upType + "!");
+        }
+        if (VDBG) {
+          Log.d(TAG,"Setting DNS forwarders: Network=" + network + ", dnsServers="+ Arrays.toString(dnsServers));
+        }
+        mNMService.setDnsForwarders(network,dnsServers);
+      }
+ catch (      Exception e) {
+        Log.e(TAG,"Setting DNS forwarders failed!");
+        transitionTo(mSetDnsForwardersErrorState);
+      }
+    }
+  }
+  notifyTetheredOfNewUpstreamIface(iface);
+}

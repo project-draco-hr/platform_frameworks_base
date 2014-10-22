@@ -1,0 +1,72 @@
+{
+  final String[] instructionSets=targetInstructionSets != null ? targetInstructionSets : getAppDexInstructionSets(pkg.applicationInfo);
+  if (done != null) {
+    done.add(pkg.packageName);
+    if (pkg.usesLibraries != null) {
+      performDexOptLibsLI(pkg.usesLibraries,instructionSets,forceDex,defer,done);
+    }
+    if (pkg.usesOptionalLibraries != null) {
+      performDexOptLibsLI(pkg.usesOptionalLibraries,instructionSets,forceDex,defer,done);
+    }
+  }
+  if ((pkg.applicationInfo.flags & ApplicationInfo.FLAG_HAS_CODE) == 0) {
+    return DEX_OPT_SKIPPED;
+  }
+  final boolean vmSafeMode=(pkg.applicationInfo.flags & ApplicationInfo.FLAG_VM_SAFE_MODE) != 0;
+  final List<String> paths=pkg.getAllCodePathsExcludingResourceOnly();
+  boolean performedDexOpt=false;
+  final String[] dexCodeInstructionSets=getDexCodeInstructionSets(instructionSets);
+  for (  String dexCodeInstructionSet : dexCodeInstructionSets) {
+    if (!forceDex && pkg.mDexOptPerformed.contains(dexCodeInstructionSet)) {
+      continue;
+    }
+    for (    String path : paths) {
+      try {
+        final byte isDexOptNeeded=DexFile.isDexOptNeededInternal(path,pkg.packageName,dexCodeInstructionSet,defer);
+        if (forceDex || (!defer && isDexOptNeeded == DexFile.DEXOPT_NEEDED)) {
+          Log.i(TAG,"Running dexopt on: " + path + " pkg="+ pkg.applicationInfo.packageName+ " isa="+ dexCodeInstructionSet+ " vmSafeMode="+ vmSafeMode);
+          final int sharedGid=UserHandle.getSharedAppGid(pkg.applicationInfo.uid);
+          final int ret=mInstaller.dexopt(path,sharedGid,!isForwardLocked(pkg),pkg.packageName,dexCodeInstructionSet,vmSafeMode);
+          if (ret < 0) {
+            return DEX_OPT_FAILED;
+          }
+          performedDexOpt=true;
+        }
+ else         if (!defer && isDexOptNeeded == DexFile.PATCHOAT_NEEDED) {
+          Log.i(TAG,"Running patchoat on: " + pkg.applicationInfo.packageName);
+          final int sharedGid=UserHandle.getSharedAppGid(pkg.applicationInfo.uid);
+          final int ret=mInstaller.patchoat(path,sharedGid,!isForwardLocked(pkg),pkg.packageName,dexCodeInstructionSet);
+          if (ret < 0) {
+            return DEX_OPT_FAILED;
+          }
+          performedDexOpt=true;
+        }
+        if (defer && isDexOptNeeded != DexFile.UP_TO_DATE) {
+          if (mDeferredDexOpt == null) {
+            mDeferredDexOpt=new HashSet<PackageParser.Package>();
+          }
+          mDeferredDexOpt.add(pkg);
+          return DEX_OPT_DEFERRED;
+        }
+      }
+ catch (      FileNotFoundException e) {
+        Slog.w(TAG,"Apk not found for dexopt: " + path);
+        return DEX_OPT_FAILED;
+      }
+catch (      IOException e) {
+        Slog.w(TAG,"IOException reading apk: " + path,e);
+        return DEX_OPT_FAILED;
+      }
+catch (      StaleDexCacheError e) {
+        Slog.w(TAG,"StaleDexCacheError when reading apk: " + path,e);
+        return DEX_OPT_FAILED;
+      }
+catch (      Exception e) {
+        Slog.w(TAG,"Exception when doing dexopt : ",e);
+        return DEX_OPT_FAILED;
+      }
+    }
+    pkg.mDexOptPerformed.add(dexCodeInstructionSet);
+  }
+  return performedDexOpt ? DEX_OPT_PERFORMED : DEX_OPT_SKIPPED;
+}

@@ -1,0 +1,77 @@
+{
+  UnifiedRestoreState nextState=UnifiedRestoreState.FINAL;
+  try {
+    mRestoreDescription=mTransport.nextRestorePackage();
+    final String pkgName=(mRestoreDescription != null) ? mRestoreDescription.getPackageName() : null;
+    if (pkgName == null) {
+      Slog.e(TAG,"Failure getting next package name");
+      EventLog.writeEvent(EventLogTags.RESTORE_TRANSPORT_FAILURE);
+      nextState=UnifiedRestoreState.FINAL;
+      return;
+    }
+ else     if (mRestoreDescription == RestoreDescription.NO_MORE_PACKAGES) {
+      if (DEBUG) {
+        Slog.v(TAG,"No more packages; finishing restore");
+      }
+      int millis=(int)(SystemClock.elapsedRealtime() - mStartRealtime);
+      EventLog.writeEvent(EventLogTags.RESTORE_SUCCESS,mCount,millis);
+      nextState=UnifiedRestoreState.FINAL;
+      return;
+    }
+    if (DEBUG) {
+      Slog.i(TAG,"Next restore package: " + mRestoreDescription);
+    }
+    sendOnRestorePackage(pkgName);
+    Metadata metaInfo=mPmAgent.getRestoredMetadata(pkgName);
+    if (metaInfo == null) {
+      Slog.e(TAG,"No metadata for " + pkgName);
+      EventLog.writeEvent(EventLogTags.RESTORE_AGENT_FAILURE,pkgName,"Package metadata missing");
+      nextState=UnifiedRestoreState.RUNNING_QUEUE;
+      return;
+    }
+    try {
+      mCurrentPackage=mPackageManager.getPackageInfo(pkgName,PackageManager.GET_SIGNATURES);
+    }
+ catch (    NameNotFoundException e) {
+      Slog.e(TAG,"Package not present: " + pkgName);
+      EventLog.writeEvent(EventLogTags.RESTORE_AGENT_FAILURE,pkgName,"Package missing on device");
+      nextState=UnifiedRestoreState.RUNNING_QUEUE;
+      return;
+    }
+    if (metaInfo.versionCode > mCurrentPackage.versionCode) {
+      if ((mCurrentPackage.applicationInfo.flags & ApplicationInfo.FLAG_RESTORE_ANY_VERSION) == 0) {
+        String message="Version " + metaInfo.versionCode + " > installed version "+ mCurrentPackage.versionCode;
+        Slog.w(TAG,"Package " + pkgName + ": "+ message);
+        EventLog.writeEvent(EventLogTags.RESTORE_AGENT_FAILURE,pkgName,message);
+        nextState=UnifiedRestoreState.RUNNING_QUEUE;
+        return;
+      }
+ else {
+        if (DEBUG)         Slog.v(TAG,"Version " + metaInfo.versionCode + " > installed "+ mCurrentPackage.versionCode+ " but restoreAnyVersion");
+      }
+    }
+    if (DEBUG)     Slog.v(TAG,"Package " + pkgName + " restore version ["+ metaInfo.versionCode+ "] is compatible with installed version ["+ mCurrentPackage.versionCode+ "]");
+    mWidgetData=null;
+    final int type=mRestoreDescription.getDataType();
+    if (type == RestoreDescription.TYPE_KEY_VALUE) {
+      nextState=UnifiedRestoreState.RESTORE_KEYVALUE;
+    }
+ else     if (type == RestoreDescription.TYPE_FULL_STREAM) {
+      nextState=UnifiedRestoreState.RESTORE_FULL;
+    }
+ else {
+      Slog.e(TAG,"Unrecognized restore type " + type);
+      nextState=UnifiedRestoreState.RUNNING_QUEUE;
+      return;
+    }
+  }
+ catch (  RemoteException e) {
+    Slog.e(TAG,"Can't get next target from transport; ending restore");
+    EventLog.writeEvent(EventLogTags.RESTORE_TRANSPORT_FAILURE);
+    nextState=UnifiedRestoreState.FINAL;
+    return;
+  }
+ finally {
+    executeNextState(nextState);
+  }
+}

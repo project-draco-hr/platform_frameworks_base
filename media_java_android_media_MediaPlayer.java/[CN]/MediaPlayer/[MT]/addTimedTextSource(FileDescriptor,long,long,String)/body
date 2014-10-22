@@ -1,20 +1,85 @@
 {
-  if (!availableMimeTypeForExternalSource(mimeType)) {
-    throw new IllegalArgumentException("Illegal mimeType for timed text source: " + mimeType);
+  if (!availableMimeTypeForExternalSource(mime)) {
+    throw new IllegalArgumentException("Illegal mimeType for timed text source: " + mime);
   }
-  Parcel request=Parcel.obtain();
-  Parcel reply=Parcel.obtain();
+  FileDescriptor fd2;
   try {
-    request.writeInterfaceToken(IMEDIA_PLAYER);
-    request.writeInt(INVOKE_ID_ADD_EXTERNAL_SOURCE_FD);
-    request.writeFileDescriptor(fd);
-    request.writeLong(offset);
-    request.writeLong(length);
-    request.writeString(mimeType);
-    invoke(request,reply);
+    fd2=Libcore.os.dup(fd);
   }
-  finally {
-    request.recycle();
-    reply.recycle();
+ catch (  ErrnoException ex) {
+    Log.e(TAG,ex.getMessage(),ex);
+    throw new RuntimeException(ex);
   }
+  final MediaFormat fFormat=new MediaFormat();
+  fFormat.setString(MediaFormat.KEY_MIME,mime);
+  fFormat.setInteger(MediaFormat.KEY_IS_TIMED_TEXT,1);
+  Context context=ActivityThread.currentApplication();
+  if (mSubtitleController == null) {
+    mSubtitleController=new SubtitleController(context,mTimeProvider,this);
+    mSubtitleController.setAnchor(new Anchor(){
+      @Override public void setSubtitleWidget(      RenderingWidget subtitleWidget){
+      }
+      @Override public Looper getSubtitleLooper(){
+        return Looper.getMainLooper();
+      }
+    }
+);
+  }
+  if (!mSubtitleController.hasRendererFor(fFormat)) {
+    mSubtitleController.registerRenderer(new SRTRenderer(context,mEventHandler));
+  }
+  final SubtitleTrack track=mSubtitleController.addTrack(fFormat);
+  mOutOfBandSubtitleTracks.add(track);
+  final FileDescriptor fd3=fd2;
+  final long offset2=offset;
+  final long length2=length;
+  final HandlerThread thread=new HandlerThread("TimedTextReadThread",Process.THREAD_PRIORITY_BACKGROUND + Process.THREAD_PRIORITY_MORE_FAVORABLE);
+  thread.start();
+  Handler handler=new Handler(thread.getLooper());
+  handler.post(new Runnable(){
+    private int addTrack(){
+      InputStream is=null;
+      final ByteArrayOutputStream bos=new ByteArrayOutputStream();
+      try {
+        Libcore.os.lseek(fd3,offset2,OsConstants.SEEK_SET);
+        byte[] buffer=new byte[4096];
+        for (long total=0; total < length2; ) {
+          int bytesToRead=(int)Math.min(buffer.length,length2 - total);
+          int bytes=IoBridge.read(fd3,buffer,0,bytesToRead);
+          if (bytes < 0) {
+            break;
+          }
+ else {
+            bos.write(buffer,0,bytes);
+            total+=bytes;
+          }
+        }
+        track.onData(bos.toByteArray(),true,~0);
+        return MEDIA_INFO_EXTERNAL_METADATA_UPDATE;
+      }
+ catch (      Exception e) {
+        Log.e(TAG,e.getMessage(),e);
+        return MEDIA_INFO_TIMED_TEXT_ERROR;
+      }
+ finally {
+        if (is != null) {
+          try {
+            is.close();
+          }
+ catch (          IOException e) {
+            Log.e(TAG,e.getMessage(),e);
+          }
+        }
+      }
+    }
+    public void run(){
+      int res=addTrack();
+      if (mEventHandler != null) {
+        Message m=mEventHandler.obtainMessage(MEDIA_INFO,res,0,null);
+        mEventHandler.sendMessage(m);
+      }
+      thread.getLooper().quitSafely();
+    }
+  }
+);
 }

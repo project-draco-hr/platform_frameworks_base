@@ -1,0 +1,70 @@
+{
+  SparseArray<Bitmap> bitmaps=new SparseArray<>(mUsers.size());
+  final int N=mUsers.size();
+  for (int i=0; i < N; i++) {
+    UserRecord r=mUsers.get(i);
+    if (r == null || r.info == null || r.info.id == forcePictureLoadForId || r.picture == null) {
+      continue;
+    }
+    bitmaps.put(r.info.id,r.picture);
+  }
+  final boolean addUsersWhenLocked=mAddUsersWhenLocked;
+  new AsyncTask<SparseArray<Bitmap>,Void,ArrayList<UserRecord>>(){
+    @SuppressWarnings("unchecked") @Override protected ArrayList<UserRecord> doInBackground(    SparseArray<Bitmap>... params){
+      final SparseArray<Bitmap> bitmaps=params[0];
+      List<UserInfo> infos=mUserManager.getUsers(true);
+      if (infos == null) {
+        return null;
+      }
+      ArrayList<UserRecord> records=new ArrayList<>(infos.size());
+      int currentId=ActivityManager.getCurrentUser();
+      UserRecord guestRecord=null;
+      int avatarSize=mContext.getResources().getDimensionPixelSize(R.dimen.max_avatar_size);
+      for (      UserInfo info : infos) {
+        boolean isCurrent=currentId == info.id;
+        if (info.isGuest()) {
+          guestRecord=new UserRecord(info,null,true,isCurrent,false,false);
+        }
+ else         if (info.supportsSwitchTo()) {
+          Bitmap picture=bitmaps.get(info.id);
+          if (picture == null) {
+            picture=mUserManager.getUserIcon(info.id);
+          }
+          if (picture != null) {
+            picture=BitmapHelper.createCircularClip(picture,avatarSize,avatarSize);
+          }
+          int index=isCurrent ? 0 : records.size();
+          records.add(index,new UserRecord(info,picture,false,isCurrent,false,false));
+        }
+      }
+      boolean ownerCanCreateUsers=!mUserManager.hasUserRestriction(UserManager.DISALLOW_ADD_USER,UserHandle.OWNER);
+      boolean currentUserCanCreateUsers=(currentId == UserHandle.USER_OWNER) && ownerCanCreateUsers;
+      boolean anyoneCanCreateUsers=ownerCanCreateUsers && addUsersWhenLocked;
+      boolean canCreateGuest=(currentUserCanCreateUsers || anyoneCanCreateUsers) && guestRecord == null;
+      boolean canCreateUser=(currentUserCanCreateUsers || anyoneCanCreateUsers) && mUserManager.canAddMoreUsers();
+      boolean createIsRestricted=!addUsersWhenLocked;
+      if (!mSimpleUserSwitcher) {
+        if (guestRecord == null) {
+          if (canCreateGuest) {
+            records.add(new UserRecord(null,null,true,false,false,createIsRestricted));
+          }
+        }
+ else {
+          int index=guestRecord.isCurrent ? 0 : records.size();
+          records.add(index,guestRecord);
+        }
+      }
+      if (!mSimpleUserSwitcher && canCreateUser) {
+        records.add(new UserRecord(null,null,false,false,true,createIsRestricted));
+      }
+      return records;
+    }
+    @Override protected void onPostExecute(    ArrayList<UserRecord> userRecords){
+      if (userRecords != null) {
+        mUsers=userRecords;
+        notifyAdapters();
+      }
+    }
+  }
+.execute((SparseArray)bitmaps);
+}

@@ -1,0 +1,41 @@
+{
+synchronized (this) {
+    if (clip != null && clip.getItemCount() <= 0) {
+      throw new IllegalArgumentException("No items");
+    }
+    final int callingUid=Binder.getCallingUid();
+    if (mAppOps.noteOp(AppOpsManager.OP_WRITE_CLIPBOARD,callingUid,callingPackage) != AppOpsManager.MODE_ALLOWED) {
+      return;
+    }
+    checkDataOwnerLocked(clip,callingUid);
+    final int userId=UserHandle.getUserId(callingUid);
+    PerUserClipboard clipboard=getClipboard(userId);
+    revokeUris(clipboard);
+    setPrimaryClipInternal(clipboard,clip);
+    List<UserInfo> related=getRelatedProfiles(userId);
+    if (related != null) {
+      int size=related.size();
+      if (size > 1) {
+        boolean canCopy=false;
+        try {
+          canCopy=!mUm.getUserRestrictions(userId).getBoolean(UserManager.DISALLOW_CROSS_PROFILE_COPY_PASTE);
+        }
+ catch (        RemoteException e) {
+          Slog.e(TAG,"Remote Exception calling UserManager: " + e);
+        }
+        if (!canCopy) {
+          clip=null;
+        }
+ else {
+          clip.fixUrisLight(userId);
+        }
+        for (int i=0; i < size; i++) {
+          int id=related.get(i).id;
+          if (id != userId) {
+            setPrimaryClipInternal(getClipboard(id),clip);
+          }
+        }
+      }
+    }
+  }
+}

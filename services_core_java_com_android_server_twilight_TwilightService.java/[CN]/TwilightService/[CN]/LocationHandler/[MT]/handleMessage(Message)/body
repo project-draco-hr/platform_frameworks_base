@@ -1,0 +1,70 @@
+{
+switch (msg.what) {
+case MSG_PROCESS_NEW_LOCATION:
+{
+      final Location location=(Location)msg.obj;
+      final boolean hasMoved=hasMoved(mLocation,location);
+      final boolean hasBetterAccuracy=mLocation == null || location.getAccuracy() < mLocation.getAccuracy();
+      if (DEBUG) {
+        Slog.d(TAG,"Processing new location: " + location + ", hasMoved="+ hasMoved+ ", hasBetterAccuracy="+ hasBetterAccuracy);
+      }
+      if (hasMoved || hasBetterAccuracy) {
+        setLocation(location);
+      }
+      break;
+    }
+case MSG_GET_NEW_LOCATION_UPDATE:
+  if (!mNetworkListenerEnabled) {
+    return;
+  }
+if ((mLastNetworkRegisterTime + MIN_LOCATION_UPDATE_MS) >= SystemClock.elapsedRealtime()) {
+  return;
+}
+mNetworkListenerEnabled=false;
+mLocationManager.removeUpdates(mEmptyLocationListener);
+case MSG_ENABLE_LOCATION_UPDATES:
+boolean networkLocationEnabled;
+try {
+networkLocationEnabled=mLocationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER);
+}
+ catch (Exception e) {
+networkLocationEnabled=false;
+}
+if (!mNetworkListenerEnabled && networkLocationEnabled) {
+mNetworkListenerEnabled=true;
+mLastNetworkRegisterTime=SystemClock.elapsedRealtime();
+mLocationManager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER,LOCATION_UPDATE_MS,0,mEmptyLocationListener);
+if (!mDidFirstInit) {
+mDidFirstInit=true;
+if (mLocation == null) {
+retrieveLocation();
+}
+}
+}
+boolean passiveLocationEnabled;
+try {
+passiveLocationEnabled=mLocationManager.isProviderEnabled(LocationManager.PASSIVE_PROVIDER);
+}
+ catch (Exception e) {
+passiveLocationEnabled=false;
+}
+if (!mPassiveListenerEnabled && passiveLocationEnabled) {
+mPassiveListenerEnabled=true;
+mLocationManager.requestLocationUpdates(LocationManager.PASSIVE_PROVIDER,0,LOCATION_UPDATE_DISTANCE_METER,mLocationListener);
+}
+if (!(mNetworkListenerEnabled && mPassiveListenerEnabled)) {
+mLastUpdateInterval*=1.5;
+if (mLastUpdateInterval == 0) {
+mLastUpdateInterval=LOCATION_UPDATE_ENABLE_INTERVAL_MIN;
+}
+ else if (mLastUpdateInterval > LOCATION_UPDATE_ENABLE_INTERVAL_MAX) {
+mLastUpdateInterval=LOCATION_UPDATE_ENABLE_INTERVAL_MAX;
+}
+sendEmptyMessageDelayed(MSG_ENABLE_LOCATION_UPDATES,mLastUpdateInterval);
+}
+break;
+case MSG_DO_TWILIGHT_UPDATE:
+updateTwilightState();
+break;
+}
+}

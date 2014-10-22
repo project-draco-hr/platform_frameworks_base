@@ -1,0 +1,122 @@
+{
+  if (LOGV)   Slog.v(TAG,"readPolicyLocked()");
+  mNetworkPolicy.clear();
+  mUidPolicy.clear();
+  FileInputStream fis=null;
+  try {
+    fis=mPolicyFile.openRead();
+    final XmlPullParser in=Xml.newPullParser();
+    in.setInput(fis,null);
+    int type;
+    int version=VERSION_INIT;
+    while ((type=in.next()) != END_DOCUMENT) {
+      final String tag=in.getName();
+      if (type == START_TAG) {
+        if (TAG_POLICY_LIST.equals(tag)) {
+          version=readIntAttribute(in,ATTR_VERSION);
+          if (version >= VERSION_ADDED_RESTRICT_BACKGROUND) {
+            mRestrictBackground=readBooleanAttribute(in,ATTR_RESTRICT_BACKGROUND);
+          }
+ else {
+            mRestrictBackground=false;
+          }
+        }
+ else         if (TAG_NETWORK_POLICY.equals(tag)) {
+          final int networkTemplate=readIntAttribute(in,ATTR_NETWORK_TEMPLATE);
+          final String subscriberId=in.getAttributeValue(null,ATTR_SUBSCRIBER_ID);
+          final String networkId;
+          if (version >= VERSION_ADDED_NETWORK_ID) {
+            networkId=in.getAttributeValue(null,ATTR_NETWORK_ID);
+          }
+ else {
+            networkId=null;
+          }
+          final int cycleDay=readIntAttribute(in,ATTR_CYCLE_DAY);
+          final String cycleTimezone;
+          if (version >= VERSION_ADDED_TIMEZONE) {
+            cycleTimezone=in.getAttributeValue(null,ATTR_CYCLE_TIMEZONE);
+          }
+ else {
+            cycleTimezone=Time.TIMEZONE_UTC;
+          }
+          final long warningBytes=readLongAttribute(in,ATTR_WARNING_BYTES);
+          final long limitBytes=readLongAttribute(in,ATTR_LIMIT_BYTES);
+          final long lastLimitSnooze;
+          if (version >= VERSION_SPLIT_SNOOZE) {
+            lastLimitSnooze=readLongAttribute(in,ATTR_LAST_LIMIT_SNOOZE);
+          }
+ else           if (version >= VERSION_ADDED_SNOOZE) {
+            lastLimitSnooze=readLongAttribute(in,ATTR_LAST_SNOOZE);
+          }
+ else {
+            lastLimitSnooze=SNOOZE_NEVER;
+          }
+          final boolean metered;
+          if (version >= VERSION_ADDED_METERED) {
+            metered=readBooleanAttribute(in,ATTR_METERED);
+          }
+ else {
+switch (networkTemplate) {
+case MATCH_MOBILE_3G_LOWER:
+case MATCH_MOBILE_4G:
+case MATCH_MOBILE_ALL:
+              metered=true;
+            break;
+default :
+          metered=false;
+      }
+    }
+    final long lastWarningSnooze;
+    if (version >= VERSION_SPLIT_SNOOZE) {
+      lastWarningSnooze=readLongAttribute(in,ATTR_LAST_WARNING_SNOOZE);
+    }
+ else {
+      lastWarningSnooze=SNOOZE_NEVER;
+    }
+    final boolean inferred;
+    if (version >= VERSION_ADDED_INFERRED) {
+      inferred=readBooleanAttribute(in,ATTR_INFERRED);
+    }
+ else {
+      inferred=false;
+    }
+    final NetworkTemplate template=new NetworkTemplate(networkTemplate,subscriberId,networkId);
+    mNetworkPolicy.put(template,new NetworkPolicy(template,cycleDay,cycleTimezone,warningBytes,limitBytes,lastWarningSnooze,lastLimitSnooze,metered,inferred));
+  }
+ else   if (TAG_UID_POLICY.equals(tag)) {
+    final int uid=readIntAttribute(in,ATTR_UID);
+    final int policy=readIntAttribute(in,ATTR_POLICY);
+    if (UserHandle.isApp(uid)) {
+      setUidPolicyUncheckedLocked(uid,policy,false);
+    }
+ else {
+      Slog.w(TAG,"unable to apply policy to UID " + uid + "; ignoring");
+    }
+  }
+ else   if (TAG_APP_POLICY.equals(tag)) {
+    final int appId=readIntAttribute(in,ATTR_APP_ID);
+    final int policy=readIntAttribute(in,ATTR_POLICY);
+    final int uid=UserHandle.getUid(UserHandle.USER_OWNER,appId);
+    if (UserHandle.isApp(uid)) {
+      setUidPolicyUncheckedLocked(uid,policy,false);
+    }
+ else {
+      Slog.w(TAG,"unable to apply policy to UID " + uid + "; ignoring");
+    }
+  }
+}
+}
+}
+ catch (FileNotFoundException e) {
+upgradeLegacyBackgroundData();
+}
+catch (IOException e) {
+Log.wtf(TAG,"problem reading network policy",e);
+}
+catch (XmlPullParserException e) {
+Log.wtf(TAG,"problem reading network policy",e);
+}
+ finally {
+IoUtils.closeQuietly(fis);
+}
+}

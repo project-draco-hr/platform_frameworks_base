@@ -1,0 +1,62 @@
+{
+  if (!checkCallingPermission(android.Manifest.permission.MANAGE_APP_TOKENS,"setAppVisibility()")) {
+    throw new SecurityException("Requires MANAGE_APP_TOKENS permission");
+  }
+  AppWindowToken wtoken;
+synchronized (mWindowMap) {
+    wtoken=findAppWindowToken(token);
+    if (wtoken == null) {
+      Slog.w(TAG,"Attempted to set visibility of non-existing app token: " + token);
+      return;
+    }
+    if (DEBUG_APP_TRANSITIONS || DEBUG_ORIENTATION)     Slog.v(TAG,"setAppVisibility(" + token + ", visible="+ visible+ "): "+ mAppTransition+ " hidden="+ wtoken.hidden+ " hiddenRequested="+ wtoken.hiddenRequested,HIDE_STACK_CRAWLS ? null : new RuntimeException("here").fillInStackTrace());
+    if (okToDisplay() && mAppTransition.isTransitionSet()) {
+      wtoken.hiddenRequested=!visible;
+      if (!wtoken.startingDisplayed) {
+        if (DEBUG_APP_TRANSITIONS)         Slog.v(TAG,"Setting dummy animation on: " + wtoken);
+        wtoken.mAppAnimator.setDummyAnimation();
+      }
+      mOpeningApps.remove(wtoken);
+      mClosingApps.remove(wtoken);
+      wtoken.waitingToShow=wtoken.waitingToHide=false;
+      wtoken.inPendingTransaction=true;
+      if (visible) {
+        mOpeningApps.add(wtoken);
+        wtoken.startingMoved=false;
+        wtoken.mEnteringAnimation=true;
+        if (wtoken.hidden) {
+          wtoken.allDrawn=false;
+          wtoken.deferClearAllDrawn=false;
+          wtoken.waitingToShow=true;
+          if (wtoken.clientHidden) {
+            wtoken.clientHidden=false;
+            wtoken.sendAppVisibilityToClients();
+          }
+        }
+      }
+ else {
+        mClosingApps.add(wtoken);
+        wtoken.mEnteringAnimation=false;
+        if (!wtoken.hidden) {
+          wtoken.waitingToHide=true;
+        }
+      }
+      if (mAppTransition.getAppTransition() == AppTransition.TRANSIT_TASK_OPEN_BEHIND) {
+        final WindowState win=findFocusedWindowLocked(getDefaultDisplayContentLocked());
+        if (win != null) {
+          final AppWindowToken focusedToken=win.mAppToken;
+          if (focusedToken != null) {
+            if (DEBUG_APP_TRANSITIONS)             Slog.d(TAG,"TRANSIT_TASK_OPEN_BEHIND, " + " adding " + focusedToken + " to mOpeningApps");
+            focusedToken.hidden=true;
+            mOpeningApps.add(focusedToken);
+          }
+        }
+      }
+      return;
+    }
+    final long origId=Binder.clearCallingIdentity();
+    setTokenVisibilityLocked(wtoken,null,visible,AppTransition.TRANSIT_UNSET,true,wtoken.voiceInteraction);
+    wtoken.updateReportedVisibilityLocked();
+    Binder.restoreCallingIdentity(origId);
+  }
+}

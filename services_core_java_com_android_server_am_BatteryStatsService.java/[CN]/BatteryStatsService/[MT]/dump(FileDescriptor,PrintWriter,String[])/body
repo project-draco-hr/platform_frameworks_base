@@ -1,0 +1,150 @@
+{
+  if (mContext.checkCallingOrSelfPermission(android.Manifest.permission.DUMP) != PackageManager.PERMISSION_GRANTED) {
+    pw.println("Permission Denial: can't dump BatteryStats from from pid=" + Binder.getCallingPid() + ", uid="+ Binder.getCallingUid()+ " without permission "+ android.Manifest.permission.DUMP);
+    return;
+  }
+  int flags=0;
+  boolean useCheckinFormat=false;
+  boolean isRealCheckin=false;
+  boolean noOutput=false;
+  boolean writeData=false;
+  long historyStart=-1;
+  int reqUid=-1;
+  if (args != null) {
+    for (int i=0; i < args.length; i++) {
+      String arg=args[i];
+      if ("--checkin".equals(arg)) {
+        useCheckinFormat=true;
+        isRealCheckin=true;
+      }
+ else       if ("--history".equals(arg)) {
+        flags|=BatteryStats.DUMP_HISTORY_ONLY;
+      }
+ else       if ("--history-start".equals(arg)) {
+        flags|=BatteryStats.DUMP_HISTORY_ONLY;
+        i++;
+        if (i >= args.length) {
+          pw.println("Missing time argument for --history-since");
+          dumpHelp(pw);
+          return;
+        }
+        historyStart=Long.parseLong(args[i]);
+        writeData=true;
+      }
+ else       if ("-c".equals(arg)) {
+        useCheckinFormat=true;
+        flags|=BatteryStats.DUMP_INCLUDE_HISTORY;
+      }
+ else       if ("--unplugged".equals(arg)) {
+        flags|=BatteryStats.DUMP_UNPLUGGED_ONLY;
+      }
+ else       if ("--charged".equals(arg)) {
+        flags|=BatteryStats.DUMP_CHARGED_ONLY;
+      }
+ else       if ("--reset".equals(arg)) {
+synchronized (mStats) {
+          mStats.resetAllStatsCmdLocked();
+          pw.println("Battery stats reset.");
+          noOutput=true;
+        }
+      }
+ else       if ("--write".equals(arg)) {
+synchronized (mStats) {
+          mStats.writeSyncLocked();
+          pw.println("Battery stats written.");
+          noOutput=true;
+        }
+      }
+ else       if ("--enable".equals(arg) || "enable".equals(arg)) {
+        i=doEnableOrDisable(pw,i,args,true);
+        if (i < 0) {
+          return;
+        }
+        pw.println("Enabled: " + args[i]);
+        return;
+      }
+ else       if ("--disable".equals(arg) || "disable".equals(arg)) {
+        i=doEnableOrDisable(pw,i,args,false);
+        if (i < 0) {
+          return;
+        }
+        pw.println("Disabled: " + args[i]);
+        return;
+      }
+ else       if ("-h".equals(arg)) {
+        dumpHelp(pw);
+        return;
+      }
+ else       if ("-a".equals(arg)) {
+        flags|=BatteryStats.DUMP_VERBOSE;
+      }
+ else       if (arg.length() > 0 && arg.charAt(0) == '-') {
+        pw.println("Unknown option: " + arg);
+        dumpHelp(pw);
+        return;
+      }
+ else {
+        try {
+          reqUid=mContext.getPackageManager().getPackageUid(arg,UserHandle.getCallingUserId());
+        }
+ catch (        PackageManager.NameNotFoundException e) {
+          pw.println("Unknown package: " + arg);
+          dumpHelp(pw);
+          return;
+        }
+      }
+    }
+  }
+  if (noOutput) {
+    return;
+  }
+  if (BatteryStatsHelper.checkWifiOnly(mContext)) {
+    flags|=BatteryStats.DUMP_DEVICE_WIFI_ONLY;
+  }
+  if (reqUid >= 0) {
+    if ((flags & (BatteryStats.DUMP_HISTORY_ONLY | BatteryStats.DUMP_UNPLUGGED_ONLY | BatteryStats.DUMP_CHARGED_ONLY)) == 0) {
+      flags|=BatteryStats.DUMP_CHARGED_ONLY;
+      flags&=~BatteryStats.DUMP_INCLUDE_HISTORY;
+    }
+  }
+  if (useCheckinFormat) {
+    List<ApplicationInfo> apps=mContext.getPackageManager().getInstalledApplications(0);
+    if (isRealCheckin) {
+synchronized (mStats.mCheckinFile) {
+        if (mStats.mCheckinFile.exists()) {
+          try {
+            byte[] raw=mStats.mCheckinFile.readFully();
+            if (raw != null) {
+              Parcel in=Parcel.obtain();
+              in.unmarshall(raw,0,raw.length);
+              in.setDataPosition(0);
+              BatteryStatsImpl checkinStats=new BatteryStatsImpl(null,mStats.mHandler);
+              checkinStats.readSummaryFromParcel(in);
+              in.recycle();
+              checkinStats.dumpCheckinLocked(mContext,pw,apps,flags,historyStart);
+              mStats.mCheckinFile.delete();
+              return;
+            }
+          }
+ catch (          IOException e) {
+            Slog.w(TAG,"Failure reading checkin file " + mStats.mCheckinFile.getBaseFile(),e);
+          }
+        }
+      }
+    }
+synchronized (mStats) {
+      mStats.dumpCheckinLocked(mContext,pw,apps,flags,historyStart);
+      if (writeData) {
+        mStats.writeAsyncLocked();
+      }
+    }
+  }
+ else {
+synchronized (mStats) {
+      mStats.dumpLocked(mContext,pw,flags,reqUid,historyStart);
+      if (writeData) {
+        mStats.writeAsyncLocked();
+      }
+    }
+  }
+}

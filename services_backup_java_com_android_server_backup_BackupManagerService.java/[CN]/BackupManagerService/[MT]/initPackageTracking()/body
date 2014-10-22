@@ -1,0 +1,84 @@
+{
+  if (MORE_DEBUG)   Slog.v(TAG,"` tracking");
+  mTokenFile=new File(mBaseStateDir,"ancestral");
+  try {
+    RandomAccessFile tf=new RandomAccessFile(mTokenFile,"r");
+    int version=tf.readInt();
+    if (version == CURRENT_ANCESTRAL_RECORD_VERSION) {
+      mAncestralToken=tf.readLong();
+      mCurrentToken=tf.readLong();
+      int numPackages=tf.readInt();
+      if (numPackages >= 0) {
+        mAncestralPackages=new HashSet<String>();
+        for (int i=0; i < numPackages; i++) {
+          String pkgName=tf.readUTF();
+          mAncestralPackages.add(pkgName);
+        }
+      }
+    }
+    tf.close();
+  }
+ catch (  FileNotFoundException fnf) {
+    Slog.v(TAG,"No ancestral data");
+  }
+catch (  IOException e) {
+    Slog.w(TAG,"Unable to read token file",e);
+  }
+  mEverStored=new File(mBaseStateDir,"processed");
+  File tempProcessedFile=new File(mBaseStateDir,"processed.new");
+  if (tempProcessedFile.exists()) {
+    tempProcessedFile.delete();
+  }
+  if (mEverStored.exists()) {
+    RandomAccessFile temp=null;
+    RandomAccessFile in=null;
+    try {
+      temp=new RandomAccessFile(tempProcessedFile,"rws");
+      in=new RandomAccessFile(mEverStored,"r");
+      while (true) {
+        PackageInfo info;
+        String pkg=in.readUTF();
+        try {
+          info=mPackageManager.getPackageInfo(pkg,0);
+          mEverStoredApps.add(pkg);
+          temp.writeUTF(pkg);
+          if (MORE_DEBUG)           Slog.v(TAG,"   + " + pkg);
+        }
+ catch (        NameNotFoundException e) {
+          if (MORE_DEBUG)           Slog.v(TAG,"   - " + pkg);
+        }
+      }
+    }
+ catch (    EOFException e) {
+      if (!tempProcessedFile.renameTo(mEverStored)) {
+        Slog.e(TAG,"Error renaming " + tempProcessedFile + " to "+ mEverStored);
+      }
+    }
+catch (    IOException e) {
+      Slog.e(TAG,"Error in processed file",e);
+    }
+ finally {
+      try {
+        if (temp != null)         temp.close();
+      }
+ catch (      IOException e) {
+      }
+      try {
+        if (in != null)         in.close();
+      }
+ catch (      IOException e) {
+      }
+    }
+  }
+  mFullBackupQueue=readFullBackupSchedule();
+  IntentFilter filter=new IntentFilter();
+  filter.addAction(Intent.ACTION_PACKAGE_ADDED);
+  filter.addAction(Intent.ACTION_PACKAGE_REMOVED);
+  filter.addAction(Intent.ACTION_PACKAGE_CHANGED);
+  filter.addDataScheme("package");
+  mContext.registerReceiver(mBroadcastReceiver,filter);
+  IntentFilter sdFilter=new IntentFilter();
+  sdFilter.addAction(Intent.ACTION_EXTERNAL_APPLICATIONS_AVAILABLE);
+  sdFilter.addAction(Intent.ACTION_EXTERNAL_APPLICATIONS_UNAVAILABLE);
+  mContext.registerReceiver(mBroadcastReceiver,sdFilter);
+}

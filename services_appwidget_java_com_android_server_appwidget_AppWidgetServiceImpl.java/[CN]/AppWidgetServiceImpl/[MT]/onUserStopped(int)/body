@@ -1,0 +1,60 @@
+{
+synchronized (mLock) {
+    boolean providersChanged=false;
+    boolean crossProfileWidgetsChanged=false;
+    final int widgetCount=mWidgets.size();
+    for (int i=widgetCount - 1; i >= 0; i--) {
+      Widget widget=mWidgets.get(i);
+      final boolean hostInUser=widget.host.getUserId() == userId;
+      final boolean hasProvider=widget.provider != null;
+      final boolean providerInUser=hasProvider && widget.provider.getUserId() == userId;
+      if (hostInUser && (!hasProvider || providerInUser)) {
+        mWidgets.remove(i);
+        widget.host.widgets.remove(widget);
+        widget.host=null;
+        if (hasProvider) {
+          widget.provider.widgets.remove(widget);
+          widget.provider=null;
+        }
+      }
+    }
+    final int hostCount=mHosts.size();
+    for (int i=hostCount - 1; i >= 0; i--) {
+      Host host=mHosts.get(i);
+      if (host.getUserId() == userId) {
+        crossProfileWidgetsChanged|=!host.widgets.isEmpty();
+        deleteHostLocked(host);
+      }
+    }
+    final int providerCount=mProviders.size();
+    for (int i=providerCount - 1; i >= 0; i--) {
+      Provider provider=mProviders.get(i);
+      if (provider.getUserId() == userId) {
+        crossProfileWidgetsChanged|=!provider.widgets.isEmpty();
+        providersChanged=true;
+        deleteProviderLocked(provider);
+      }
+    }
+    final int grantCount=mPackagesWithBindWidgetPermission.size();
+    for (int i=grantCount - 1; i >= 0; i--) {
+      Pair<Integer,String> packageId=mPackagesWithBindWidgetPermission.valueAt(i);
+      if (packageId.first == userId) {
+        mPackagesWithBindWidgetPermission.removeAt(i);
+      }
+    }
+    final int userIndex=mLoadedUserIds.indexOfKey(userId);
+    if (userIndex >= 0) {
+      mLoadedUserIds.removeAt(userIndex);
+    }
+    final int nextIdIndex=mNextAppWidgetIds.indexOfKey(userId);
+    if (nextIdIndex >= 0) {
+      mNextAppWidgetIds.removeAt(nextIdIndex);
+    }
+    if (providersChanged) {
+      scheduleNotifyGroupHostsForProvidersChangedLocked(userId);
+    }
+    if (crossProfileWidgetsChanged) {
+      saveGroupStateAsync(userId);
+    }
+  }
+}

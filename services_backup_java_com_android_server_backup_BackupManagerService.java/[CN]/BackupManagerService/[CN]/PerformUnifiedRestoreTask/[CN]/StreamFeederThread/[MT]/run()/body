@@ -1,0 +1,91 @@
+{
+  UnifiedRestoreState nextState=UnifiedRestoreState.RUNNING_QUEUE;
+  int status=BackupTransport.TRANSPORT_OK;
+  EventLog.writeEvent(EventLogTags.FULL_RESTORE_PACKAGE,mCurrentPackage.packageName);
+  mEngine=new FullRestoreEngine(null,mCurrentPackage,false,false);
+  EngineThread eThread=new EngineThread(mEngine,mEnginePipes[0]);
+  ParcelFileDescriptor eWriteEnd=mEnginePipes[1];
+  ParcelFileDescriptor tReadEnd=mTransportPipes[0];
+  ParcelFileDescriptor tWriteEnd=mTransportPipes[1];
+  int bufferSize=32 * 1024;
+  byte[] buffer=new byte[bufferSize];
+  FileOutputStream engineOut=new FileOutputStream(eWriteEnd.getFileDescriptor());
+  FileInputStream transportIn=new FileInputStream(tReadEnd.getFileDescriptor());
+  new Thread(eThread,"unified-restore-engine").start();
+  try {
+    while (status == BackupTransport.TRANSPORT_OK) {
+      int result=mTransport.getNextFullRestoreDataChunk(tWriteEnd);
+      if (result > 0) {
+        if (MORE_DEBUG) {
+          Slog.v(TAG,"  <- transport provided chunk size " + result);
+        }
+        if (result > bufferSize) {
+          bufferSize=result;
+          buffer=new byte[bufferSize];
+        }
+        int toCopy=result;
+        while (toCopy > 0) {
+          int n=transportIn.read(buffer,0,toCopy);
+          engineOut.write(buffer,0,n);
+          toCopy-=n;
+          if (MORE_DEBUG) {
+            Slog.v(TAG,"  -> wrote " + n + " to engine, left="+ toCopy);
+          }
+        }
+      }
+ else       if (result == BackupTransport.NO_MORE_DATA) {
+        if (MORE_DEBUG) {
+          Slog.i(TAG,"Got clean full-restore EOF for " + mCurrentPackage.packageName);
+        }
+        status=BackupTransport.TRANSPORT_OK;
+        break;
+      }
+ else {
+        Slog.e(TAG,"Error " + result + " streaming restore for "+ mCurrentPackage.packageName);
+        EventLog.writeEvent(EventLogTags.RESTORE_TRANSPORT_FAILURE);
+        status=result;
+      }
+    }
+    if (MORE_DEBUG)     Slog.v(TAG,"Done copying to engine, falling through");
+  }
+ catch (  IOException e) {
+    Slog.e(TAG,"Unable to route data for restore");
+    EventLog.writeEvent(EventLogTags.RESTORE_AGENT_FAILURE,mCurrentPackage.packageName,"I/O error on pipes");
+    status=BackupTransport.AGENT_ERROR;
+  }
+catch (  RemoteException e) {
+    Slog.e(TAG,"Transport failed during restore");
+    EventLog.writeEvent(EventLogTags.RESTORE_TRANSPORT_FAILURE);
+    status=BackupTransport.TRANSPORT_ERROR;
+  }
+ finally {
+    IoUtils.closeQuietly(mEnginePipes[1]);
+    IoUtils.closeQuietly(mTransportPipes[0]);
+    IoUtils.closeQuietly(mTransportPipes[1]);
+    eThread.waitForResult();
+    if (MORE_DEBUG) {
+      Slog.i(TAG,"engine thread finished; proceeding");
+    }
+    IoUtils.closeQuietly(mEnginePipes[0]);
+    if (status == BackupTransport.TRANSPORT_OK) {
+      nextState=UnifiedRestoreState.RUNNING_QUEUE;
+    }
+ else {
+      try {
+        mTransport.abortFullRestore();
+      }
+ catch (      RemoteException e) {
+        status=BackupTransport.TRANSPORT_ERROR;
+      }
+      clearApplicationDataSynchronous(mCurrentPackage.packageName);
+      if (status == BackupTransport.TRANSPORT_ERROR) {
+        nextState=UnifiedRestoreState.FINAL;
+      }
+ else {
+        nextState=UnifiedRestoreState.RUNNING_QUEUE;
+      }
+    }
+    executeNextState(nextState);
+    setRunning(false);
+  }
+}

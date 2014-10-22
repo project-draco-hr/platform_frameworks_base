@@ -1,0 +1,47 @@
+{
+  if (providers == null) {
+    return;
+  }
+  enforceNotIsolatedCaller("publishContentProviders");
+synchronized (this) {
+    final ProcessRecord r=getRecordForAppLocked(caller);
+    if (DEBUG_MU)     Slog.v(TAG_MU,"ProcessRecord uid = " + r.uid);
+    if (r == null) {
+      throw new SecurityException("Unable to find app for caller " + caller + " (pid="+ Binder.getCallingPid()+ ") when publishing content providers");
+    }
+    final long origId=Binder.clearCallingIdentity();
+    final int N=providers.size();
+    for (int i=0; i < N; i++) {
+      ContentProviderHolder src=providers.get(i);
+      if (src == null || src.info == null || src.provider == null) {
+        continue;
+      }
+      ContentProviderRecord dst=r.pubProviders.get(src.info.name);
+      if (DEBUG_MU)       Slog.v(TAG_MU,"ContentProviderRecord uid = " + dst.uid);
+      if (dst != null) {
+        ComponentName comp=new ComponentName(dst.info.packageName,dst.info.name);
+        mProviderMap.putProviderByClass(comp,dst);
+        String names[]=dst.info.authority.split(";");
+        for (int j=0; j < names.length; j++) {
+          mProviderMap.putProviderByName(names[j],dst);
+        }
+        int NL=mLaunchingProviders.size();
+        int j;
+        for (j=0; j < NL; j++) {
+          if (mLaunchingProviders.get(j) == dst) {
+            mLaunchingProviders.remove(j);
+            j--;
+            NL--;
+          }
+        }
+synchronized (dst) {
+          dst.provider=src.provider;
+          dst.proc=r;
+          dst.notifyAll();
+        }
+        updateOomAdjLocked(r);
+      }
+    }
+    Binder.restoreCallingIdentity(origId);
+  }
+}

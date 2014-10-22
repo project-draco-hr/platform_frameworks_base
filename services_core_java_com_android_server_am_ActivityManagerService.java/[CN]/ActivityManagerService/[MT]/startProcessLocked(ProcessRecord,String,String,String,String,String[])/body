@@ -1,0 +1,155 @@
+{
+  long startTime=SystemClock.elapsedRealtime();
+  if (app.pid > 0 && app.pid != MY_PID) {
+    checkTime(startTime,"startProcess: removing from pids map");
+synchronized (mPidsSelfLocked) {
+      mPidsSelfLocked.remove(app.pid);
+      mHandler.removeMessages(PROC_START_TIMEOUT_MSG,app);
+    }
+    checkTime(startTime,"startProcess: done removing from pids map");
+    app.setPid(0);
+  }
+  if (DEBUG_PROCESSES && mProcessesOnHold.contains(app))   Slog.v(TAG,"startProcessLocked removing on hold: " + app);
+  mProcessesOnHold.remove(app);
+  checkTime(startTime,"startProcess: starting to update cpu stats");
+  updateCpuStats();
+  checkTime(startTime,"startProcess: done updating cpu stats");
+  try {
+    int uid=app.uid;
+    int[] gids=null;
+    int mountExternal=Zygote.MOUNT_EXTERNAL_NONE;
+    if (!app.isolated) {
+      int[] permGids=null;
+      try {
+        checkTime(startTime,"startProcess: getting gids from package manager");
+        final PackageManager pm=mContext.getPackageManager();
+        permGids=pm.getPackageGids(app.info.packageName);
+        if (Environment.isExternalStorageEmulated()) {
+          checkTime(startTime,"startProcess: checking external storage perm");
+          if (pm.checkPermission(android.Manifest.permission.ACCESS_ALL_EXTERNAL_STORAGE,app.info.packageName) == PERMISSION_GRANTED) {
+            mountExternal=Zygote.MOUNT_EXTERNAL_MULTIUSER_ALL;
+          }
+ else {
+            mountExternal=Zygote.MOUNT_EXTERNAL_MULTIUSER;
+          }
+        }
+      }
+ catch (      PackageManager.NameNotFoundException e) {
+        Slog.w(TAG,"Unable to retrieve gids",e);
+      }
+      if (permGids == null) {
+        gids=new int[2];
+      }
+ else {
+        gids=new int[permGids.length + 2];
+        System.arraycopy(permGids,0,gids,2,permGids.length);
+      }
+      gids[0]=UserHandle.getSharedAppGid(UserHandle.getAppId(uid));
+      gids[1]=UserHandle.getUserGid(UserHandle.getUserId(uid));
+    }
+    checkTime(startTime,"startProcess: building args");
+    if (mFactoryTest != FactoryTest.FACTORY_TEST_OFF) {
+      if (mFactoryTest == FactoryTest.FACTORY_TEST_LOW_LEVEL && mTopComponent != null && app.processName.equals(mTopComponent.getPackageName())) {
+        uid=0;
+      }
+      if (mFactoryTest == FactoryTest.FACTORY_TEST_HIGH_LEVEL && (app.info.flags & ApplicationInfo.FLAG_FACTORY_TEST) != 0) {
+        uid=0;
+      }
+    }
+    int debugFlags=0;
+    if ((app.info.flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0) {
+      debugFlags|=Zygote.DEBUG_ENABLE_DEBUGGER;
+      debugFlags|=Zygote.DEBUG_ENABLE_CHECKJNI;
+    }
+    if ((app.info.flags & ApplicationInfo.FLAG_VM_SAFE_MODE) != 0 || mSafeMode == true) {
+      debugFlags|=Zygote.DEBUG_ENABLE_SAFEMODE;
+    }
+    if ("1".equals(SystemProperties.get("debug.checkjni"))) {
+      debugFlags|=Zygote.DEBUG_ENABLE_CHECKJNI;
+    }
+    if ("1".equals(SystemProperties.get("debug.jni.logging"))) {
+      debugFlags|=Zygote.DEBUG_ENABLE_JNI_LOGGING;
+    }
+    if ("1".equals(SystemProperties.get("debug.assert"))) {
+      debugFlags|=Zygote.DEBUG_ENABLE_ASSERT;
+    }
+    String requiredAbi=(abiOverride != null) ? abiOverride : app.info.primaryCpuAbi;
+    if (requiredAbi == null) {
+      requiredAbi=Build.SUPPORTED_ABIS[0];
+    }
+    String instructionSet=null;
+    if (app.info.primaryCpuAbi != null) {
+      instructionSet=VMRuntime.getInstructionSet(app.info.primaryCpuAbi);
+    }
+    boolean isActivityProcess=(entryPoint == null);
+    if (entryPoint == null)     entryPoint="android.app.ActivityThread";
+    checkTime(startTime,"startProcess: asking zygote to start proc");
+    Process.ProcessStartResult startResult=Process.start(entryPoint,app.processName,uid,uid,gids,debugFlags,mountExternal,app.info.targetSdkVersion,app.info.seinfo,requiredAbi,instructionSet,app.info.dataDir,entryPointArgs);
+    checkTime(startTime,"startProcess: returned from zygote!");
+    if (app.isolated) {
+      mBatteryStatsService.addIsolatedUid(app.uid,app.info.uid);
+    }
+    mBatteryStatsService.noteProcessStart(app.processName,app.info.uid);
+    checkTime(startTime,"startProcess: done updating battery stats");
+    EventLog.writeEvent(EventLogTags.AM_PROC_START,UserHandle.getUserId(uid),startResult.pid,uid,app.processName,hostingType,hostingNameStr != null ? hostingNameStr : "");
+    if (app.persistent) {
+      Watchdog.getInstance().processStarted(app.processName,startResult.pid);
+    }
+    checkTime(startTime,"startProcess: building log message");
+    StringBuilder buf=mStringBuilder;
+    buf.setLength(0);
+    buf.append("Start proc ");
+    buf.append(app.processName);
+    if (!isActivityProcess) {
+      buf.append(" [");
+      buf.append(entryPoint);
+      buf.append("]");
+    }
+    buf.append(" for ");
+    buf.append(hostingType);
+    if (hostingNameStr != null) {
+      buf.append(" ");
+      buf.append(hostingNameStr);
+    }
+    buf.append(": pid=");
+    buf.append(startResult.pid);
+    buf.append(" uid=");
+    buf.append(uid);
+    buf.append(" gids={");
+    if (gids != null) {
+      for (int gi=0; gi < gids.length; gi++) {
+        if (gi != 0)         buf.append(", ");
+        buf.append(gids[gi]);
+      }
+    }
+    buf.append("}");
+    if (requiredAbi != null) {
+      buf.append(" abi=");
+      buf.append(requiredAbi);
+    }
+    Slog.i(TAG,buf.toString());
+    app.setPid(startResult.pid);
+    app.usingWrapper=startResult.usingWrapper;
+    app.removed=false;
+    app.killed=false;
+    app.killedByAm=false;
+    checkTime(startTime,"startProcess: starting to update pids map");
+synchronized (mPidsSelfLocked) {
+      this.mPidsSelfLocked.put(startResult.pid,app);
+      if (isActivityProcess) {
+        Message msg=mHandler.obtainMessage(PROC_START_TIMEOUT_MSG);
+        msg.obj=app;
+        mHandler.sendMessageDelayed(msg,startResult.usingWrapper ? PROC_START_TIMEOUT_WITH_WRAPPER : PROC_START_TIMEOUT);
+      }
+    }
+    checkTime(startTime,"startProcess: done updating pids map");
+  }
+ catch (  RuntimeException e) {
+    app.setPid(0);
+    mBatteryStatsService.noteProcessFinish(app.processName,app.info.uid);
+    if (app.isolated) {
+      mBatteryStatsService.removeIsolatedUid(app.uid,app.info.uid);
+    }
+    Slog.e(TAG,"Failure starting process " + app.processName,e);
+  }
+}

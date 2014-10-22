@@ -1,0 +1,38 @@
+{
+  final String name=app.processName;
+  final int uid=app.uid;
+  if (DEBUG_PROCESSES)   Slog.d(TAG,"Force removing proc " + app.toShortString() + " ("+ name+ "/"+ uid+ ")");
+  mProcessNames.remove(name,uid);
+  mIsolatedProcesses.remove(app.uid);
+  if (mHeavyWeightProcess == app) {
+    mHandler.sendMessage(mHandler.obtainMessage(CANCEL_HEAVY_NOTIFICATION_MSG,mHeavyWeightProcess.userId,0));
+    mHeavyWeightProcess=null;
+  }
+  boolean needRestart=false;
+  if (app.pid > 0 && app.pid != MY_PID) {
+    int pid=app.pid;
+synchronized (mPidsSelfLocked) {
+      mPidsSelfLocked.remove(pid);
+      mHandler.removeMessages(PROC_START_TIMEOUT_MSG,app);
+    }
+    mBatteryStatsService.noteProcessFinish(app.processName,app.info.uid);
+    if (app.isolated) {
+      mBatteryStatsService.removeIsolatedUid(app.uid,app.info.uid);
+    }
+    app.kill(reason,true);
+    handleAppDiedLocked(app,true,allowRestart);
+    removeLruProcessLocked(app);
+    if (app.persistent && !app.isolated) {
+      if (!callerWillRestart) {
+        addAppLocked(app.info,false,null);
+      }
+ else {
+        needRestart=true;
+      }
+    }
+  }
+ else {
+    mRemovedProcesses.add(app);
+  }
+  return needRestart;
+}

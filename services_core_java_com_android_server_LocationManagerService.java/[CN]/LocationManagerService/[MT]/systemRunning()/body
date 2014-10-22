@@ -1,0 +1,53 @@
+{
+synchronized (mLock) {
+    if (D)     Log.d(TAG,"systemReady()");
+    mPackageManager=mContext.getPackageManager();
+    mPowerManager=(PowerManager)mContext.getSystemService(Context.POWER_SERVICE);
+    mLocationHandler=new LocationWorkerHandler(BackgroundThread.get().getLooper());
+    mLocationFudger=new LocationFudger(mContext,mLocationHandler);
+    mBlacklist=new LocationBlacklist(mContext,mLocationHandler);
+    mBlacklist.init();
+    mGeofenceManager=new GeofenceManager(mContext,mBlacklist);
+    AppOpsManager.OnOpChangedListener callback=new AppOpsManager.OnOpChangedInternalListener(){
+      public void onOpChanged(      int op,      String packageName){
+synchronized (mLock) {
+          for (          Receiver receiver : mReceivers.values()) {
+            receiver.updateMonitoring(true);
+          }
+          applyAllProviderRequirementsLocked();
+        }
+      }
+    }
+;
+    mAppOps.startWatchingMode(AppOpsManager.OP_COARSE_LOCATION,null,callback);
+    mUserManager=(UserManager)mContext.getSystemService(Context.USER_SERVICE);
+    updateUserProfiles(mCurrentUserId);
+    loadProvidersLocked();
+    updateProvidersLocked();
+  }
+  mContext.getContentResolver().registerContentObserver(Settings.Secure.getUriFor(Settings.Secure.LOCATION_PROVIDERS_ALLOWED),true,new ContentObserver(mLocationHandler){
+    @Override public void onChange(    boolean selfChange){
+synchronized (mLock) {
+        updateProvidersLocked();
+      }
+    }
+  }
+,UserHandle.USER_ALL);
+  mPackageMonitor.register(mContext,mLocationHandler.getLooper(),true);
+  IntentFilter intentFilter=new IntentFilter();
+  intentFilter.addAction(Intent.ACTION_USER_SWITCHED);
+  intentFilter.addAction(Intent.ACTION_MANAGED_PROFILE_ADDED);
+  intentFilter.addAction(Intent.ACTION_MANAGED_PROFILE_REMOVED);
+  mContext.registerReceiverAsUser(new BroadcastReceiver(){
+    @Override public void onReceive(    Context context,    Intent intent){
+      String action=intent.getAction();
+      if (Intent.ACTION_USER_SWITCHED.equals(action)) {
+        switchUser(intent.getIntExtra(Intent.EXTRA_USER_HANDLE,0));
+      }
+ else       if (Intent.ACTION_MANAGED_PROFILE_ADDED.equals(action) || Intent.ACTION_MANAGED_PROFILE_REMOVED.equals(action)) {
+        updateUserProfiles(mCurrentUserId);
+      }
+    }
+  }
+,UserHandle.ALL,intentFilter,null,mLocationHandler);
+}

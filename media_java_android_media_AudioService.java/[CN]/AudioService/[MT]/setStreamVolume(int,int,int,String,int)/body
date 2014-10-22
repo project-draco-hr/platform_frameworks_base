@@ -1,0 +1,61 @@
+{
+  if (mUseFixedVolume) {
+    return;
+  }
+  ensureValidStreamType(streamType);
+  int streamTypeAlias=mStreamVolumeAlias[streamType];
+  VolumeStreamState streamState=mStreamStates[streamTypeAlias];
+  final int device=getDeviceForStream(streamType);
+  int oldIndex;
+  if ((device & AudioSystem.DEVICE_OUT_ALL_A2DP) == 0 && (flags & AudioManager.FLAG_BLUETOOTH_ABS_VOLUME) != 0) {
+    return;
+  }
+  if (mAppOps.noteOp(STEAM_VOLUME_OPS[streamTypeAlias],uid,callingPackage) != AppOpsManager.MODE_ALLOWED) {
+    return;
+  }
+synchronized (mSafeMediaVolumeState) {
+    mPendingVolumeCommand=null;
+    oldIndex=streamState.getIndex(device);
+    index=rescaleIndex(index * 10,streamType,streamTypeAlias);
+    if (streamTypeAlias == AudioSystem.STREAM_MUSIC && (device & AudioSystem.DEVICE_OUT_ALL_A2DP) != 0 && (flags & AudioManager.FLAG_BLUETOOTH_ABS_VOLUME) == 0) {
+synchronized (mA2dpAvrcpLock) {
+        if (mA2dp != null && mAvrcpAbsVolSupported) {
+          mA2dp.setAvrcpAbsoluteVolume(index / 10);
+        }
+      }
+    }
+    if (mHdmiManager != null) {
+synchronized (mHdmiManager) {
+        if (mHdmiTvClient != null && streamTypeAlias == AudioSystem.STREAM_MUSIC && (flags & AudioManager.FLAG_HDMI_SYSTEM_AUDIO_VOLUME) == 0 && oldIndex != index) {
+          int maxIndex=getStreamMaxVolume(streamType);
+synchronized (mHdmiTvClient) {
+            if (mHdmiSystemAudioSupported) {
+              mHdmiTvClient.setSystemAudioVolume((oldIndex + 5) / 10,(index + 5) / 10,maxIndex);
+            }
+          }
+        }
+      }
+    }
+    flags&=~AudioManager.FLAG_FIXED_VOLUME;
+    if ((streamTypeAlias == AudioSystem.STREAM_MUSIC) && ((device & mFixedVolumeDevices) != 0)) {
+      flags|=AudioManager.FLAG_FIXED_VOLUME;
+      if (index != 0) {
+        if (mSafeMediaVolumeState == SAFE_MEDIA_VOLUME_ACTIVE && (device & mSafeMediaVolumeDevices) != 0) {
+          index=mSafeMediaVolumeIndex;
+        }
+ else {
+          index=streamState.getMaxIndex();
+        }
+      }
+    }
+    if (!checkSafeMediaVolume(streamTypeAlias,index,device)) {
+      mVolumeController.postDisplaySafeVolumeWarning(flags);
+      mPendingVolumeCommand=new StreamVolumeCommand(streamType,index,flags,device);
+    }
+ else {
+      onSetStreamVolume(streamType,index,flags,device);
+      index=mStreamStates[streamType].getIndex(device);
+    }
+  }
+  sendVolumeUpdate(streamType,oldIndex,index,flags);
+}

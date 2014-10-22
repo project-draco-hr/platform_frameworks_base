@@ -1,0 +1,77 @@
+{
+  final UserHandle user=new UserHandle(UserHandle.getCallingUserId());
+  final int userHandle=user.getIdentifier();
+synchronized (this) {
+    if (who == null) {
+      throw new NullPointerException("ComponentName is null");
+    }
+    ActiveAdmin activeAdmin=getActiveAdminForCallerLocked(who,DeviceAdminInfo.USES_POLICY_PROFILE_OWNER);
+    boolean isDeviceOwner=isDeviceOwner(activeAdmin.info.getPackageName());
+    if (!isDeviceOwner && userHandle != UserHandle.USER_OWNER && DEVICE_OWNER_USER_RESTRICTIONS.contains(key)) {
+      throw new SecurityException("Profile owners cannot set user restriction " + key);
+    }
+    boolean alreadyRestricted=mUserManager.hasUserRestriction(key,user);
+    IAudioService iAudioService=null;
+    if (UserManager.DISALLOW_UNMUTE_MICROPHONE.equals(key) || UserManager.DISALLOW_ADJUST_VOLUME.equals(key)) {
+      iAudioService=IAudioService.Stub.asInterface(ServiceManager.getService(Context.AUDIO_SERVICE));
+    }
+    if (enabled && !alreadyRestricted) {
+      try {
+        if (UserManager.DISALLOW_UNMUTE_MICROPHONE.equals(key)) {
+          iAudioService.setMicrophoneMute(true,who.getPackageName());
+        }
+ else         if (UserManager.DISALLOW_ADJUST_VOLUME.equals(key)) {
+          iAudioService.setMasterMute(true,0,who.getPackageName(),null);
+        }
+      }
+ catch (      RemoteException re) {
+        Slog.e(LOG_TAG,"Failed to talk to AudioService.",re);
+      }
+    }
+    long id=Binder.clearCallingIdentity();
+    try {
+      if (enabled && !alreadyRestricted) {
+        if (UserManager.DISALLOW_CONFIG_WIFI.equals(key)) {
+          Settings.Secure.putIntForUser(mContext.getContentResolver(),Settings.Secure.WIFI_NETWORKS_AVAILABLE_NOTIFICATION_ON,0,userHandle);
+        }
+ else         if (UserManager.DISALLOW_USB_FILE_TRANSFER.equals(key)) {
+          UsbManager manager=(UsbManager)mContext.getSystemService(Context.USB_SERVICE);
+          manager.setCurrentFunction("none",false);
+        }
+ else         if (UserManager.DISALLOW_SHARE_LOCATION.equals(key)) {
+          Settings.Secure.putIntForUser(mContext.getContentResolver(),Settings.Secure.LOCATION_MODE,Settings.Secure.LOCATION_MODE_OFF,userHandle);
+          Settings.Secure.putStringForUser(mContext.getContentResolver(),Settings.Secure.LOCATION_PROVIDERS_ALLOWED,"",userHandle);
+        }
+ else         if (UserManager.DISALLOW_DEBUGGING_FEATURES.equals(key)) {
+          if (userHandle == UserHandle.USER_OWNER) {
+            Settings.Global.putStringForUser(mContext.getContentResolver(),Settings.Global.ADB_ENABLED,"0",userHandle);
+          }
+        }
+ else         if (UserManager.ENSURE_VERIFY_APPS.equals(key)) {
+          Settings.Global.putStringForUser(mContext.getContentResolver(),Settings.Global.PACKAGE_VERIFIER_ENABLE,"1",userHandle);
+          Settings.Global.putStringForUser(mContext.getContentResolver(),Settings.Global.PACKAGE_VERIFIER_INCLUDE_ADB,"1",userHandle);
+        }
+ else         if (UserManager.DISALLOW_INSTALL_UNKNOWN_SOURCES.equals(key)) {
+          Settings.Secure.putIntForUser(mContext.getContentResolver(),Settings.Secure.INSTALL_NON_MARKET_APPS,0,userHandle);
+        }
+      }
+      mUserManager.setUserRestriction(key,enabled,user);
+    }
+  finally {
+      restoreCallingIdentity(id);
+    }
+    if (!enabled && alreadyRestricted) {
+      try {
+        if (UserManager.DISALLOW_UNMUTE_MICROPHONE.equals(key)) {
+          iAudioService.setMicrophoneMute(false,who.getPackageName());
+        }
+ else         if (UserManager.DISALLOW_ADJUST_VOLUME.equals(key)) {
+          iAudioService.setMasterMute(false,0,who.getPackageName(),null);
+        }
+      }
+ catch (      RemoteException re) {
+        Slog.e(LOG_TAG,"Failed to talk to AudioService.",re);
+      }
+    }
+  }
+}

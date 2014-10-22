@@ -10,22 +10,40 @@
 );
     android.ddm.DdmHandleAppName.setAppName("<pre-initialized>",UserHandle.myUserId());
     RuntimeInit.setApplicationObject(mAppThread.asBinder());
-    IActivityManager mgr=ActivityManagerNative.getDefault();
+    final IActivityManager mgr=ActivityManagerNative.getDefault();
     try {
       mgr.attachApplication(mAppThread);
     }
  catch (    RemoteException ex) {
     }
+    BinderInternal.addGcWatcher(new Runnable(){
+      @Override public void run(){
+        if (!mSomeActivitiesChanged) {
+          return;
+        }
+        Runtime runtime=Runtime.getRuntime();
+        long dalvikMax=runtime.maxMemory();
+        long dalvikUsed=runtime.totalMemory() - runtime.freeMemory();
+        if (dalvikUsed > ((3 * dalvikMax) / 4)) {
+          if (DEBUG_MEMORY_TRIM)           Slog.d(TAG,"Dalvik max=" + (dalvikMax / 1024) + " total="+ (runtime.totalMemory() / 1024)+ " used="+ (dalvikUsed / 1024));
+          mSomeActivitiesChanged=false;
+          try {
+            mgr.releaseSomeActivities(mAppThread);
+          }
+ catch (          RemoteException e) {
+          }
+        }
+      }
+    }
+);
   }
  else {
     android.ddm.DdmHandleAppName.setAppName("system_process",UserHandle.myUserId());
     try {
       mInstrumentation=new Instrumentation();
       ContextImpl context=ContextImpl.createAppContext(this,getSystemContext().mPackageInfo);
-      Application app=Instrumentation.newApplication(Application.class,context);
-      mAllApplications.add(app);
-      mInitialApplication=app;
-      app.onCreate();
+      mInitialApplication=context.mPackageInfo.makeApplication(true,null);
+      mInitialApplication.onCreate();
     }
  catch (    Exception e) {
       throw new RuntimeException("Unable to instantiate Application():" + e.toString(),e);

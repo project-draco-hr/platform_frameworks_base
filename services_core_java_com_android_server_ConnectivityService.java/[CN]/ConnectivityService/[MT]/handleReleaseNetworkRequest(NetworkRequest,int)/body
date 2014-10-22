@@ -1,0 +1,47 @@
+{
+  NetworkRequestInfo nri=mNetworkRequests.get(request);
+  if (nri != null) {
+    if (Process.SYSTEM_UID != callingUid && nri.mUid != callingUid) {
+      if (DBG)       log("Attempt to release unowned NetworkRequest " + request);
+      return;
+    }
+    if (DBG)     log("releasing NetworkRequest " + request);
+    nri.unlinkDeathRecipient();
+    mNetworkRequests.remove(request);
+    if (nri.isRequest) {
+      for (      NetworkAgentInfo nai : mNetworkAgentInfos.values()) {
+        if (nai.networkRequests.get(nri.request.requestId) != null) {
+          nai.networkRequests.remove(nri.request.requestId);
+          if (DBG) {
+            log(" Removing from current network " + nai.name() + ", leaving "+ nai.networkRequests.size()+ " requests.");
+          }
+          boolean keep=nai.isVPN();
+          for (int i=0; i < nai.networkRequests.size() && !keep; i++) {
+            NetworkRequest r=nai.networkRequests.valueAt(i);
+            if (isRequest(r))             keep=true;
+          }
+          if (!keep) {
+            if (DBG)             log("no live requests for " + nai.name() + "; disconnecting");
+            nai.asyncChannel.disconnect();
+          }
+        }
+      }
+      NetworkAgentInfo nai=mNetworkForRequestId.get(nri.request.requestId);
+      if (nai != null) {
+        mNetworkForRequestId.remove(nri.request.requestId);
+        if (nri.request.legacyType != TYPE_NONE) {
+          mLegacyTypeTracker.remove(nri.request.legacyType,nai);
+        }
+      }
+      for (      NetworkFactoryInfo nfi : mNetworkFactoryInfos.values()) {
+        nfi.asyncChannel.sendMessage(android.net.NetworkFactory.CMD_CANCEL_REQUEST,nri.request);
+      }
+    }
+ else {
+      for (      NetworkAgentInfo nai : mNetworkAgentInfos.values()) {
+        nai.networkRequests.remove(nri.request.requestId);
+      }
+    }
+    callCallbackForRequest(nri,null,ConnectivityManager.CALLBACK_RELEASED);
+  }
+}

@@ -1,0 +1,56 @@
+{
+  if (DEBUG_AUDIO) {
+    Slog.d(TAG,"usb:UsbHostManager.endUsbDeviceAdded()");
+  }
+  if (mNewInterface != null) {
+    mNewInterface.setEndpoints(mNewEndpoints.toArray(new UsbEndpoint[mNewEndpoints.size()]));
+  }
+  if (mNewConfiguration != null) {
+    mNewConfiguration.setInterfaces(mNewInterfaces.toArray(new UsbInterface[mNewInterfaces.size()]));
+  }
+  final int kUsbClassId_Audio=0x01;
+  boolean isAudioDevice=false;
+  for (int ntrfaceIndex=0; !isAudioDevice && ntrfaceIndex < mNewInterfaces.size(); ntrfaceIndex++) {
+    UsbInterface ntrface=mNewInterfaces.get(ntrfaceIndex);
+    if (ntrface.getInterfaceClass() == kUsbClassId_Audio) {
+      isAudioDevice=true;
+    }
+  }
+synchronized (mLock) {
+    if (mNewDevice != null) {
+      mNewDevice.setConfigurations(mNewConfigurations.toArray(new UsbConfiguration[mNewConfigurations.size()]));
+      mDevices.put(mNewDevice.getDeviceName(),mNewDevice);
+      Slog.d(TAG,"Added device " + mNewDevice);
+      getCurrentSettings().deviceAttached(mNewDevice);
+    }
+ else {
+      Slog.e(TAG,"mNewDevice is null in endUsbDeviceAdded");
+    }
+    mNewDevice=null;
+    mNewConfigurations=null;
+    mNewInterfaces=null;
+    mNewEndpoints=null;
+  }
+  if (!isAudioDevice) {
+    return;
+  }
+  AlsaCardsParser cardsParser=new AlsaCardsParser();
+  cardsParser.scan();
+  AlsaDevicesParser devicesParser=new AlsaDevicesParser();
+  devicesParser.scan();
+  mConnectedUsbCard=cardsParser.getNumCardRecords() - 1;
+  mConnectedUsbDeviceNum=0;
+  mConnectedHasPlayback=devicesParser.hasPlaybackDevices(mConnectedUsbCard);
+  mConnectedHasCapture=devicesParser.hasCaptureDevices(mConnectedUsbCard);
+  mConnectedHasMIDI=devicesParser.hasMIDIDevices(mConnectedUsbCard);
+  if (mConnectedHasPlayback && !waitForAlsaFile(mConnectedUsbCard,mConnectedUsbDeviceNum,false)) {
+    return;
+  }
+  if (mConnectedHasCapture && !waitForAlsaFile(mConnectedUsbCard,mConnectedUsbDeviceNum,true)) {
+    return;
+  }
+  if (DEBUG_AUDIO) {
+    Slog.d(TAG,"usb: hasPlayback:" + mConnectedHasPlayback + " hasCapture:"+ mConnectedHasCapture);
+  }
+  sendDeviceNotification(mConnectedUsbCard,mConnectedUsbDeviceNum,true,mConnectedHasPlayback,mConnectedHasCapture,mConnectedHasMIDI);
+}

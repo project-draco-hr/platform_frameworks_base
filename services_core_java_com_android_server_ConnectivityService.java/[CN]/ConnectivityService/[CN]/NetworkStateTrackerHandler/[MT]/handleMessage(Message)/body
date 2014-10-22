@@ -1,0 +1,189 @@
+{
+  NetworkInfo info;
+switch (msg.what) {
+case AsyncChannel.CMD_CHANNEL_HALF_CONNECTED:
+{
+      handleAsyncChannelHalfConnect(msg);
+      break;
+    }
+case AsyncChannel.CMD_CHANNEL_DISCONNECT:
+{
+    NetworkAgentInfo nai=mNetworkAgentInfos.get(msg.replyTo);
+    if (nai != null)     nai.asyncChannel.disconnect();
+    break;
+  }
+case AsyncChannel.CMD_CHANNEL_DISCONNECTED:
+{
+  handleAsyncChannelDisconnected(msg);
+  break;
+}
+case NetworkAgent.EVENT_NETWORK_CAPABILITIES_CHANGED:
+{
+NetworkAgentInfo nai=mNetworkAgentInfos.get(msg.replyTo);
+if (nai == null) {
+  loge("EVENT_NETWORK_CAPABILITIES_CHANGED from unknown NetworkAgent");
+}
+ else {
+  updateCapabilities(nai,(NetworkCapabilities)msg.obj);
+}
+break;
+}
+case NetworkAgent.EVENT_NETWORK_PROPERTIES_CHANGED:
+{
+NetworkAgentInfo nai=mNetworkAgentInfos.get(msg.replyTo);
+if (nai == null) {
+loge("NetworkAgent not found for EVENT_NETWORK_PROPERTIES_CHANGED");
+}
+ else {
+if (VDBG) {
+  log("Update of LinkProperties for " + nai.name() + "; created="+ nai.created);
+}
+LinkProperties oldLp=nai.linkProperties;
+synchronized (nai) {
+  nai.linkProperties=(LinkProperties)msg.obj;
+}
+if (nai.created) updateLinkProperties(nai,oldLp);
+}
+break;
+}
+case NetworkAgent.EVENT_NETWORK_INFO_CHANGED:
+{
+NetworkAgentInfo nai=mNetworkAgentInfos.get(msg.replyTo);
+if (nai == null) {
+loge("EVENT_NETWORK_INFO_CHANGED from unknown NetworkAgent");
+break;
+}
+info=(NetworkInfo)msg.obj;
+updateNetworkInfo(nai,info);
+break;
+}
+case NetworkAgent.EVENT_NETWORK_SCORE_CHANGED:
+{
+NetworkAgentInfo nai=mNetworkAgentInfos.get(msg.replyTo);
+if (nai == null) {
+loge("EVENT_NETWORK_SCORE_CHANGED from unknown NetworkAgent");
+break;
+}
+Integer score=(Integer)msg.obj;
+if (score != null) updateNetworkScore(nai,score.intValue());
+break;
+}
+case NetworkAgent.EVENT_UID_RANGES_ADDED:
+{
+NetworkAgentInfo nai=mNetworkAgentInfos.get(msg.replyTo);
+if (nai == null) {
+loge("EVENT_UID_RANGES_ADDED from unknown NetworkAgent");
+break;
+}
+try {
+mNetd.addVpnUidRanges(nai.network.netId,(UidRange[])msg.obj);
+}
+ catch (Exception e) {
+loge("Exception in addVpnUidRanges: " + e);
+}
+break;
+}
+case NetworkAgent.EVENT_UID_RANGES_REMOVED:
+{
+NetworkAgentInfo nai=mNetworkAgentInfos.get(msg.replyTo);
+if (nai == null) {
+loge("EVENT_UID_RANGES_REMOVED from unknown NetworkAgent");
+break;
+}
+try {
+mNetd.removeVpnUidRanges(nai.network.netId,(UidRange[])msg.obj);
+}
+ catch (Exception e) {
+loge("Exception in removeVpnUidRanges: " + e);
+}
+break;
+}
+case NetworkAgent.EVENT_SET_EXPLICITLY_SELECTED:
+{
+NetworkAgentInfo nai=mNetworkAgentInfos.get(msg.replyTo);
+if (nai == null) {
+loge("EVENT_SET_EXPLICITLY_SELECTED from unknown NetworkAgent");
+break;
+}
+if (nai.created && !nai.networkMisc.explicitlySelected) {
+loge("ERROR: created network explicitly selected.");
+}
+nai.networkMisc.explicitlySelected=true;
+break;
+}
+case NetworkMonitor.EVENT_NETWORK_TESTED:
+{
+NetworkAgentInfo nai=(NetworkAgentInfo)msg.obj;
+if (isLiveNetworkAgent(nai,"EVENT_NETWORK_VALIDATED")) {
+boolean valid=(msg.arg1 == NetworkMonitor.NETWORK_TEST_RESULT_VALID);
+if (valid) {
+if (DBG) log("Validated " + nai.name());
+final boolean previouslyValidated=nai.validated;
+final int previousScore=nai.getCurrentScore();
+nai.validated=true;
+rematchNetworkAndRequests(nai,!previouslyValidated);
+if (nai.getCurrentScore() != previousScore) {
+sendUpdatedScoreToFactories(nai);
+}
+}
+updateInetCondition(nai,valid);
+nai.asyncChannel.sendMessage(android.net.NetworkAgent.CMD_REPORT_NETWORK_STATUS,(valid ? NetworkAgent.VALID_NETWORK : NetworkAgent.INVALID_NETWORK),0,null);
+}
+break;
+}
+case NetworkMonitor.EVENT_NETWORK_LINGER_COMPLETE:
+{
+NetworkAgentInfo nai=(NetworkAgentInfo)msg.obj;
+if (isLiveNetworkAgent(nai,"EVENT_NETWORK_LINGER_COMPLETE")) {
+handleLingerComplete(nai);
+}
+break;
+}
+case NetworkMonitor.EVENT_PROVISIONING_NOTIFICATION:
+{
+if (msg.arg1 == 0) {
+setProvNotificationVisibleIntent(false,msg.arg2,0,null,null);
+}
+ else {
+NetworkAgentInfo nai=null;
+synchronized (mNetworkForNetId) {
+nai=mNetworkForNetId.get(msg.arg2);
+}
+if (nai == null) {
+loge("EVENT_PROVISIONING_NOTIFICATION from unknown NetworkMonitor");
+break;
+}
+setProvNotificationVisibleIntent(true,msg.arg2,nai.networkInfo.getType(),nai.networkInfo.getExtraInfo(),(PendingIntent)msg.obj);
+}
+break;
+}
+case NetworkStateTracker.EVENT_STATE_CHANGED:
+{
+info=(NetworkInfo)msg.obj;
+NetworkInfo.State state=info.getState();
+if (VDBG || (state == NetworkInfo.State.CONNECTED) || (state == NetworkInfo.State.DISCONNECTED)|| (state == NetworkInfo.State.SUSPENDED)) {
+log("ConnectivityChange for " + info.getTypeName() + ": "+ state+ "/"+ info.getDetailedState());
+}
+EventLogTags.writeConnectivityStateChanged(info.getType(),info.getSubtype(),info.getDetailedState().ordinal());
+if (info.isConnectedToProvisioningNetwork()) {
+LinkProperties lp=getLinkPropertiesForTypeInternal(info.getType());
+if (DBG) {
+log("EVENT_STATE_CHANGED: connected to provisioning network, lp=" + lp);
+}
+}
+ else if (state == NetworkInfo.State.DISCONNECTED) {
+}
+ else if (state == NetworkInfo.State.SUSPENDED) {
+}
+ else if (state == NetworkInfo.State.CONNECTED) {
+}
+notifyLockdownVpn(null);
+break;
+}
+case NetworkStateTracker.EVENT_CONFIGURATION_CHANGED:
+{
+info=(NetworkInfo)msg.obj;
+break;
+}
+}
+}

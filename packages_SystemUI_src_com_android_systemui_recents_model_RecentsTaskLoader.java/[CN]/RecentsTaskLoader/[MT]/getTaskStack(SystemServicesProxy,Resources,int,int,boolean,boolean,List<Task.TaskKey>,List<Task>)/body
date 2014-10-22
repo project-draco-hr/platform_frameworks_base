@@ -1,0 +1,58 @@
+{
+  RecentsConfiguration config=RecentsConfiguration.getInstance();
+  List<ActivityManager.RecentTaskInfo> tasks=getRecentTasks(ssp,isTopTaskHome);
+  HashMap<Task.ComponentNameKey,ActivityInfoHandle> activityInfoCache=new HashMap<Task.ComponentNameKey,ActivityInfoHandle>();
+  ArrayList<Task> tasksToAdd=new ArrayList<Task>();
+  TaskStack stack=new TaskStack();
+  int taskCount=tasks.size();
+  for (int i=0; i < taskCount; i++) {
+    ActivityManager.RecentTaskInfo t=tasks.get(i);
+    Task.TaskKey taskKey=new Task.TaskKey(t.persistentId,t.baseIntent,t.userId,t.firstActiveTime,t.lastActiveTime);
+    Task.ComponentNameKey cnKey=taskKey.getComponentNameKey();
+    ActivityInfoHandle infoHandle;
+    boolean hasCachedActivityInfo=false;
+    if (activityInfoCache.containsKey(cnKey)) {
+      infoHandle=activityInfoCache.get(cnKey);
+      hasCachedActivityInfo=true;
+    }
+ else {
+      infoHandle=new ActivityInfoHandle();
+    }
+    boolean preloadTask=false;
+    if (preloadTaskId > 0) {
+      preloadTask=(t.id == preloadTaskId);
+    }
+ else     if (preloadTaskCount > 0) {
+      preloadTask=(i >= (taskCount - preloadTaskCount));
+    }
+    String activityLabel=getAndUpdateActivityLabel(taskKey,t.taskDescription,ssp,infoHandle);
+    Drawable activityIcon=getAndUpdateActivityIcon(taskKey,t.taskDescription,ssp,res,infoHandle,preloadTask);
+    int activityColor=getActivityPrimaryColor(t.taskDescription,config);
+    if (!hasCachedActivityInfo && infoHandle.info != null) {
+      activityInfoCache.put(cnKey,infoHandle);
+    }
+    Bitmap icon=t.taskDescription != null ? t.taskDescription.getInMemoryIcon() : null;
+    String iconFilename=t.taskDescription != null ? t.taskDescription.getIconFilename() : null;
+    Task task=new Task(taskKey,(t.id > -1),t.affiliatedTaskId,t.affiliatedTaskColor,activityLabel,activityIcon,activityColor,(i == (taskCount - 1)),config.lockToAppEnabled,icon,iconFilename);
+    if (preloadTask && loadTaskThumbnails) {
+      task.thumbnail=mThumbnailCache.getAndInvalidateIfModified(taskKey);
+      if (task.thumbnail == null) {
+        task.thumbnail=ssp.getTaskThumbnail(taskKey.id);
+        if (task.thumbnail != null) {
+          task.thumbnail.setHasAlpha(false);
+          mThumbnailCache.put(taskKey,task.thumbnail);
+        }
+      }
+      if (task.thumbnail == null && tasksToLoadOut != null) {
+        tasksToLoadOut.add(task);
+      }
+    }
+    if (taskKeysOut != null) {
+      taskKeysOut.add(taskKey);
+    }
+    tasksToAdd.add(task);
+  }
+  stack.setTasks(tasksToAdd);
+  stack.createAffiliatedGroupings(config);
+  return stack;
+}

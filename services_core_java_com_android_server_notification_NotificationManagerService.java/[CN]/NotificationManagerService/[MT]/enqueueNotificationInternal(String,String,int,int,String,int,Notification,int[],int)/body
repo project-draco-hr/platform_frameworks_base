@@ -1,0 +1,106 @@
+{
+  if (DBG) {
+    Slog.v(TAG,"enqueueNotificationInternal: pkg=" + pkg + " id="+ id+ " notification="+ notification);
+  }
+  checkCallerIsSystemOrSameApp(pkg);
+  final boolean isSystemNotification=isUidSystem(callingUid) || ("android".equals(pkg));
+  final boolean isNotificationFromListener=mListeners.isListenerPackage(pkg);
+  final int userId=ActivityManager.handleIncomingUser(callingPid,callingUid,incomingUserId,true,false,"enqueueNotification",pkg);
+  final UserHandle user=new UserHandle(userId);
+  if (!isSystemNotification && !isNotificationFromListener) {
+synchronized (mNotificationList) {
+      int count=0;
+      final int N=mNotificationList.size();
+      for (int i=0; i < N; i++) {
+        final NotificationRecord r=mNotificationList.get(i);
+        if (r.sbn.getPackageName().equals(pkg) && r.sbn.getUserId() == userId) {
+          count++;
+          if (count >= MAX_PACKAGE_NOTIFICATIONS) {
+            Slog.e(TAG,"Package has already posted " + count + " notifications.  Not showing more.  package="+ pkg);
+            return;
+          }
+        }
+      }
+    }
+  }
+  if (!pkg.equals("com.android.providers.downloads") || Log.isLoggable("DownloadManager",Log.VERBOSE)) {
+    EventLogTags.writeNotificationEnqueue(callingUid,callingPid,pkg,id,tag,userId,notification.toString());
+  }
+  if (pkg == null || notification == null) {
+    throw new IllegalArgumentException("null not allowed: pkg=" + pkg + " id="+ id+ " notification="+ notification);
+  }
+  if (notification.icon != 0) {
+    if (!notification.isValid()) {
+      throw new IllegalArgumentException("Invalid notification (): pkg=" + pkg + " id="+ id+ " notification="+ notification);
+    }
+  }
+  mHandler.post(new Runnable(){
+    @Override public void run(){
+synchronized (mNotificationList) {
+        notification.priority=clamp(notification.priority,Notification.PRIORITY_MIN,Notification.PRIORITY_MAX);
+        if (0 != (notification.flags & Notification.FLAG_HIGH_PRIORITY)) {
+          if (notification.priority < Notification.PRIORITY_MAX) {
+            notification.priority=Notification.PRIORITY_MAX;
+          }
+        }
+ else         if (SCORE_ONGOING_HIGHER && 0 != (notification.flags & Notification.FLAG_ONGOING_EVENT)) {
+          if (notification.priority < Notification.PRIORITY_HIGH) {
+            notification.priority=Notification.PRIORITY_HIGH;
+          }
+        }
+        final int score=notification.priority * NOTIFICATION_PRIORITY_MULTIPLIER;
+        final StatusBarNotification n=new StatusBarNotification(pkg,opPkg,id,tag,callingUid,callingPid,score,notification,user);
+        NotificationRecord r=new NotificationRecord(n,score);
+        NotificationRecord old=mNotificationsByKey.get(n.getKey());
+        if (old != null) {
+          r.copyRankingInformation(old);
+        }
+        mRankingHelper.extractSignals(r);
+        if (ENABLE_BLOCKED_NOTIFICATIONS && !noteNotificationOp(pkg,callingUid)) {
+          if (!isSystemNotification) {
+            r.score=JUNK_SCORE;
+            Slog.e(TAG,"Suppressing notification from package " + pkg + " by user request.");
+          }
+        }
+        if (r.score < SCORE_DISPLAY_THRESHOLD) {
+          return;
+        }
+        if (old != null && old.getNotification().isGroupSummary() && (!notification.isGroupSummary() || !old.getGroupKey().equals(r.getGroupKey()))) {
+          cancelGroupChildrenLocked(old,callingUid,callingPid,null);
+        }
+        int index=indexOfNotificationLocked(n.getKey());
+        if (index < 0) {
+          mNotificationList.add(r);
+          mUsageStats.registerPostedByApp(r);
+        }
+ else {
+          old=mNotificationList.get(index);
+          mNotificationList.set(index,r);
+          mUsageStats.registerUpdatedByApp(r,old);
+          notification.flags|=old.getNotification().flags & Notification.FLAG_FOREGROUND_SERVICE;
+          r.isUpdate=true;
+        }
+        mNotificationsByKey.put(n.getKey(),r);
+        if ((notification.flags & Notification.FLAG_FOREGROUND_SERVICE) != 0) {
+          notification.flags|=Notification.FLAG_ONGOING_EVENT | Notification.FLAG_NO_CLEAR;
+        }
+        applyZenModeLocked(r);
+        mRankingHelper.sort(mNotificationList);
+        if (notification.icon != 0) {
+          StatusBarNotification oldSbn=(old != null) ? old.sbn : null;
+          mListeners.notifyPostedLocked(n,oldSbn);
+        }
+ else {
+          Slog.e(TAG,"Not posting notification with icon==0: " + notification);
+          if (old != null && !old.isCanceled) {
+            mListeners.notifyRemovedLocked(n);
+          }
+          Slog.e(TAG,"WARNING: In a future release this will crash the app: " + n.getPackageName());
+        }
+        buzzBeepBlinkLocked(r);
+      }
+    }
+  }
+);
+  idOut[0]=id;
+}

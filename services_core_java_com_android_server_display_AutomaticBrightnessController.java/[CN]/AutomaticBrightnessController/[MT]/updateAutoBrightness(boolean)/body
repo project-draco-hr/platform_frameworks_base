@@ -1,0 +1,44 @@
+{
+  if (!mAmbientLuxValid) {
+    return;
+  }
+  float value=mScreenAutoBrightnessSpline.interpolate(mAmbientLux);
+  float gamma=1.0f;
+  if (USE_SCREEN_AUTO_BRIGHTNESS_ADJUSTMENT && mScreenAutoBrightnessAdjustment != 0.0f) {
+    final float adjGamma=MathUtils.pow(SCREEN_AUTO_BRIGHTNESS_ADJUSTMENT_MAX_GAMMA,Math.min(1.0f,Math.max(-1.0f,-mScreenAutoBrightnessAdjustment)));
+    gamma*=adjGamma;
+    if (DEBUG) {
+      Slog.d(TAG,"updateAutoBrightness: adjGamma=" + adjGamma);
+    }
+  }
+  if (USE_TWILIGHT_ADJUSTMENT) {
+    TwilightState state=mTwilight.getCurrentState();
+    if (state != null && state.isNight()) {
+      final long now=System.currentTimeMillis();
+      final float earlyGamma=getTwilightGamma(now,state.getYesterdaySunset(),state.getTodaySunrise());
+      final float lateGamma=getTwilightGamma(now,state.getTodaySunset(),state.getTomorrowSunrise());
+      gamma*=earlyGamma * lateGamma;
+      if (DEBUG) {
+        Slog.d(TAG,"updateAutoBrightness: earlyGamma=" + earlyGamma + ", lateGamma="+ lateGamma);
+      }
+    }
+  }
+  if (gamma != 1.0f) {
+    final float in=value;
+    value=MathUtils.pow(value,gamma);
+    if (DEBUG) {
+      Slog.d(TAG,"updateAutoBrightness: gamma=" + gamma + ", in="+ in+ ", out="+ value);
+    }
+  }
+  int newScreenAutoBrightness=clampScreenBrightness(Math.round(value * PowerManager.BRIGHTNESS_ON));
+  if (mScreenAutoBrightness != newScreenAutoBrightness) {
+    if (DEBUG) {
+      Slog.d(TAG,"updateAutoBrightness: mScreenAutoBrightness=" + mScreenAutoBrightness + ", newScreenAutoBrightness="+ newScreenAutoBrightness);
+    }
+    mScreenAutoBrightness=newScreenAutoBrightness;
+    mLastScreenAutoBrightnessGamma=gamma;
+    if (sendUpdate) {
+      mCallbacks.updateBrightness();
+    }
+  }
+}

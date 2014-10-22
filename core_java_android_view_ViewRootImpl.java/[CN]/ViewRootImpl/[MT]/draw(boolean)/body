@@ -16,25 +16,24 @@ synchronized (sFirstDrawHandlers) {
     }
   }
   scrollToRectOrFocus(null,false);
-  final AttachInfo attachInfo=mAttachInfo;
-  if (attachInfo.mViewScrollChanged) {
-    attachInfo.mViewScrollChanged=false;
-    attachInfo.mTreeObserver.dispatchOnScrollChanged();
+  if (mAttachInfo.mViewScrollChanged) {
+    mAttachInfo.mViewScrollChanged=false;
+    mAttachInfo.mTreeObserver.dispatchOnScrollChanged();
   }
-  int yoff;
   boolean animating=mScroller != null && mScroller.computeScrollOffset();
+  final int curScrollY;
   if (animating) {
-    yoff=mScroller.getCurrY();
+    curScrollY=mScroller.getCurrY();
   }
  else {
-    yoff=mScrollY;
+    curScrollY=mScrollY;
   }
-  if (mCurScrollY != yoff) {
-    mCurScrollY=yoff;
+  if (mCurScrollY != curScrollY) {
+    mCurScrollY=curScrollY;
     fullRedrawNeeded=true;
   }
-  final float appScale=attachInfo.mApplicationScale;
-  final boolean scalingRequired=attachInfo.mScalingRequired;
+  final float appScale=mAttachInfo.mApplicationScale;
+  final boolean scalingRequired=mAttachInfo.mScalingRequired;
   int resizeAlpha=0;
   if (mResizeBuffer != null) {
     long deltaTime=SystemClock.uptimeMillis() - mResizeBufferStartTime;
@@ -60,27 +59,40 @@ synchronized (sFirstDrawHandlers) {
     return;
   }
   if (fullRedrawNeeded) {
-    attachInfo.mIgnoreDirtyState=true;
+    mAttachInfo.mIgnoreDirtyState=true;
     dirty.set(0,0,(int)(mWidth * appScale + 0.5f),(int)(mHeight * appScale + 0.5f));
   }
   if (DEBUG_ORIENTATION || DEBUG_DRAW) {
     Log.v(TAG,"Draw " + mView + "/"+ mWindowAttributes.getTitle()+ ": dirty={"+ dirty.left+ ","+ dirty.top+ ","+ dirty.right+ ","+ dirty.bottom+ "} surface="+ surface+ " surface.isValid()="+ surface.isValid()+ ", appScale:"+ appScale+ ", width="+ mWidth+ ", height="+ mHeight);
   }
-  invalidateDisplayLists();
-  attachInfo.mTreeObserver.dispatchOnDraw();
+  mAttachInfo.mTreeObserver.dispatchOnDraw();
+  int xOffset=0;
+  int yOffset=curScrollY;
+  final WindowManager.LayoutParams params=mWindowAttributes;
+  final Rect surfaceInsets=params != null ? params.surfaceInsets : null;
+  if (surfaceInsets != null) {
+    xOffset-=surfaceInsets.left;
+    yOffset-=surfaceInsets.top;
+    dirty.offset(surfaceInsets.left,surfaceInsets.right);
+  }
   if (!dirty.isEmpty() || mIsAnimating) {
-    if (attachInfo.mHardwareRenderer != null && attachInfo.mHardwareRenderer.isEnabled()) {
+    if (mAttachInfo.mHardwareRenderer != null && mAttachInfo.mHardwareRenderer.isEnabled()) {
       mIsAnimating=false;
-      mHardwareYOffset=yoff;
+      boolean invalidateRoot=false;
+      if (mHardwareYOffset != yOffset || mHardwareXOffset != xOffset) {
+        mHardwareYOffset=yOffset;
+        mHardwareXOffset=xOffset;
+        mAttachInfo.mHardwareRenderer.invalidateRoot();
+      }
       mResizeAlpha=resizeAlpha;
-      mCurrentDirty.set(dirty);
       dirty.setEmpty();
-      attachInfo.mHardwareRenderer.draw(mView,attachInfo,this,animating ? null : mCurrentDirty);
+      mBlockResizeBuffer=false;
+      mAttachInfo.mHardwareRenderer.draw(mView,mAttachInfo,this);
     }
  else {
-      if (attachInfo.mHardwareRenderer != null && !attachInfo.mHardwareRenderer.isEnabled() && attachInfo.mHardwareRenderer.isRequested()) {
+      if (mAttachInfo.mHardwareRenderer != null && !mAttachInfo.mHardwareRenderer.isEnabled() && mAttachInfo.mHardwareRenderer.isRequested()) {
         try {
-          attachInfo.mHardwareRenderer.initializeIfNeeded(mWidth,mHeight,mHolder.getSurface());
+          mAttachInfo.mHardwareRenderer.initializeIfNeeded(mWidth,mHeight,mSurface,surfaceInsets);
         }
  catch (        OutOfResourcesException e) {
           handleOutOfResourcesException(e);
@@ -90,7 +102,7 @@ synchronized (sFirstDrawHandlers) {
         scheduleTraversals();
         return;
       }
-      if (!drawSoftware(surface,attachInfo,yoff,scalingRequired,dirty)) {
+      if (!drawSoftware(surface,mAttachInfo,xOffset,yOffset,scalingRequired,dirty)) {
         return;
       }
     }

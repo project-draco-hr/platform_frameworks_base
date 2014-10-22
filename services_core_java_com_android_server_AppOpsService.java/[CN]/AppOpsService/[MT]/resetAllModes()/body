@@ -1,0 +1,55 @@
+{
+  int callingUid=Binder.getCallingUid();
+  mContext.enforcePermission(android.Manifest.permission.UPDATE_APP_OPS_STATS,Binder.getCallingPid(),callingUid,null);
+  HashMap<Callback,ArrayList<Pair<String,Integer>>> callbacks=null;
+synchronized (this) {
+    boolean changed=false;
+    for (int i=mUidOps.size() - 1; i >= 0; i--) {
+      HashMap<String,Ops> packages=mUidOps.valueAt(i);
+      if (UserHandle.getUserId(callingUid) != UserHandle.getUserId(mUidOps.keyAt(i))) {
+        continue;
+      }
+      Iterator<Map.Entry<String,Ops>> it=packages.entrySet().iterator();
+      while (it.hasNext()) {
+        Map.Entry<String,Ops> ent=it.next();
+        String packageName=ent.getKey();
+        Ops pkgOps=ent.getValue();
+        for (int j=pkgOps.size() - 1; j >= 0; j--) {
+          Op curOp=pkgOps.valueAt(j);
+          if (AppOpsManager.opAllowsReset(curOp.op) && curOp.mode != AppOpsManager.opToDefaultMode(curOp.op)) {
+            curOp.mode=AppOpsManager.opToDefaultMode(curOp.op);
+            changed=true;
+            callbacks=addCallbacks(callbacks,packageName,curOp.op,mOpModeWatchers.get(curOp.op));
+            callbacks=addCallbacks(callbacks,packageName,curOp.op,mPackageModeWatchers.get(packageName));
+            if (curOp.time == 0 && curOp.rejectTime == 0) {
+              pkgOps.removeAt(j);
+            }
+          }
+        }
+        if (pkgOps.size() == 0) {
+          it.remove();
+        }
+      }
+      if (packages.size() == 0) {
+        mUidOps.removeAt(i);
+      }
+    }
+    if (changed) {
+      scheduleWriteNowLocked();
+    }
+  }
+  if (callbacks != null) {
+    for (    Map.Entry<Callback,ArrayList<Pair<String,Integer>>> ent : callbacks.entrySet()) {
+      Callback cb=ent.getKey();
+      ArrayList<Pair<String,Integer>> reports=ent.getValue();
+      for (int i=0; i < reports.size(); i++) {
+        Pair<String,Integer> rep=reports.get(i);
+        try {
+          cb.mCallback.opChanged(rep.second,rep.first);
+        }
+ catch (        RemoteException e) {
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,63 @@
+{
+  if (filter.countActions() != 1) {
+    throw new IllegalArgumentException("replacePreferredActivity expects filter to have only 1 action.");
+  }
+  if (filter.countDataAuthorities() != 0 || filter.countDataPaths() != 0 || filter.countDataSchemes() > 1 || filter.countDataTypes() != 0) {
+    throw new IllegalArgumentException("replacePreferredActivity expects filter to have no data authorities, " + "paths, or types; and at most one scheme.");
+  }
+  final int callingUid=Binder.getCallingUid();
+  enforceCrossUserPermission(callingUid,userId,true,false,"replace preferred activity");
+synchronized (mPackages) {
+    if (mContext.checkCallingOrSelfPermission(android.Manifest.permission.SET_PREFERRED_APPLICATIONS) != PackageManager.PERMISSION_GRANTED) {
+      if (getUidTargetSdkVersionLockedLPr(callingUid) < Build.VERSION_CODES.FROYO) {
+        Slog.w(TAG,"Ignoring replacePreferredActivity() from uid " + Binder.getCallingUid());
+        return;
+      }
+      mContext.enforceCallingOrSelfPermission(android.Manifest.permission.SET_PREFERRED_APPLICATIONS,null);
+    }
+    PreferredIntentResolver pir=mSettings.mPreferredActivities.get(userId);
+    if (pir != null) {
+      ArrayList<PreferredActivity> existing=pir.findFilters(filter);
+      if (existing != null && existing.size() == 1) {
+        PreferredActivity cur=existing.get(0);
+        if (DEBUG_PREFERRED) {
+          Slog.i(TAG,"Checking replace of preferred:");
+          filter.dump(new LogPrinter(Log.INFO,TAG),"  ");
+          if (!cur.mPref.mAlways) {
+            Slog.i(TAG,"  -- CUR; not mAlways!");
+          }
+ else {
+            Slog.i(TAG,"  -- CUR: mMatch=" + cur.mPref.mMatch);
+            Slog.i(TAG,"  -- CUR: mSet=" + Arrays.toString(cur.mPref.mSetComponents));
+            Slog.i(TAG,"  -- CUR: mComponent=" + cur.mPref.mShortComponent);
+            Slog.i(TAG,"  -- NEW: mMatch=" + (match & IntentFilter.MATCH_CATEGORY_MASK));
+            Slog.i(TAG,"  -- CUR: mSet=" + Arrays.toString(set));
+            Slog.i(TAG,"  -- CUR: mComponent=" + activity.flattenToShortString());
+          }
+        }
+        if (cur.mPref.mAlways && cur.mPref.mComponent.equals(activity) && cur.mPref.mMatch == (match & IntentFilter.MATCH_CATEGORY_MASK) && cur.mPref.sameSet(set)) {
+          if (DEBUG_PREFERRED) {
+            Slog.i(TAG,"Replacing with same preferred activity " + cur.mPref.mShortComponent + " for user "+ userId+ ":");
+            filter.dump(new LogPrinter(Log.INFO,TAG),"  ");
+          }
+          return;
+        }
+      }
+      if (existing != null) {
+        if (DEBUG_PREFERRED) {
+          Slog.i(TAG,existing.size() + " existing preferred matches for:");
+          filter.dump(new LogPrinter(Log.INFO,TAG),"  ");
+        }
+        for (int i=0; i < existing.size(); i++) {
+          PreferredActivity pa=existing.get(i);
+          if (DEBUG_PREFERRED) {
+            Slog.i(TAG,"Removing existing preferred activity " + pa.mPref.mComponent + ":");
+            pa.dump(new LogPrinter(Log.INFO,TAG),"  ");
+          }
+          pir.removeFilter(pa);
+        }
+      }
+    }
+    addPreferredActivityInternal(filter,match,set,activity,true,userId,"Replacing preferred");
+  }
+}

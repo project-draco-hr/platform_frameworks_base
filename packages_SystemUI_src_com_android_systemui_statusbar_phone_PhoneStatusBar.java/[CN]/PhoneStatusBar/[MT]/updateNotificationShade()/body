@@ -1,0 +1,69 @@
+{
+  if (mStackScroller == null)   return;
+  if (isCollapsing()) {
+    addPostCollapseAction(new Runnable(){
+      @Override public void run(){
+        updateNotificationShade();
+      }
+    }
+);
+    return;
+  }
+  ArrayList<Entry> activeNotifications=mNotificationData.getActiveNotifications();
+  ArrayList<ExpandableNotificationRow> toShow=new ArrayList<>(activeNotifications.size());
+  final int N=activeNotifications.size();
+  for (int i=0; i < N; i++) {
+    Entry ent=activeNotifications.get(i);
+    int vis=ent.notification.getNotification().visibility;
+    final boolean hideSensitive=!userAllowsPrivateNotificationsInPublic(ent.notification.getUserId());
+    boolean sensitiveNote=vis == Notification.VISIBILITY_PRIVATE;
+    boolean sensitivePackage=packageHasVisibilityOverride(ent.notification.getKey());
+    boolean sensitive=(sensitiveNote && hideSensitive) || sensitivePackage;
+    boolean showingPublic=sensitive && isLockscreenPublicMode();
+    ent.row.setSensitive(sensitive);
+    if (ent.autoRedacted && ent.legacy) {
+      if (showingPublic) {
+        ent.row.setShowingLegacyBackground(false);
+      }
+ else {
+        ent.row.setShowingLegacyBackground(true);
+      }
+    }
+    toShow.add(ent.row);
+  }
+  ArrayList<View> toRemove=new ArrayList<View>();
+  for (int i=0; i < mStackScroller.getChildCount(); i++) {
+    View child=mStackScroller.getChildAt(i);
+    if (!toShow.contains(child) && child instanceof ExpandableNotificationRow) {
+      toRemove.add(child);
+    }
+  }
+  for (  View remove : toRemove) {
+    mStackScroller.removeView(remove);
+  }
+  for (int i=0; i < toShow.size(); i++) {
+    View v=toShow.get(i);
+    if (v.getParent() == null) {
+      mStackScroller.addView(v);
+    }
+  }
+  int j=0;
+  for (int i=0; i < mStackScroller.getChildCount(); i++) {
+    View child=mStackScroller.getChildAt(i);
+    if (!(child instanceof ExpandableNotificationRow)) {
+      continue;
+    }
+    if (child == toShow.get(j)) {
+      j++;
+      continue;
+    }
+    mStackScroller.changeViewPosition(toShow.get(j),i);
+    j++;
+  }
+  updateRowStates();
+  updateSpeedbump();
+  updateClearAll();
+  updateEmptyShadeView();
+  mNotificationPanel.setQsExpansionEnabled(isDeviceProvisioned() && (!mUserSwitcherController.isSimpleUserSwitcher() || mUserSetup));
+  mShadeUpdates.check();
+}

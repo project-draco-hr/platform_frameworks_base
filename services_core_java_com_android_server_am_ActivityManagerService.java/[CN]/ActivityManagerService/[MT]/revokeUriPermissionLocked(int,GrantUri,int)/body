@@ -1,0 +1,57 @@
+{
+  if (DEBUG_URI_PERMISSION)   Slog.v(TAG,"Revoking all granted permissions to " + grantUri);
+  final IPackageManager pm=AppGlobals.getPackageManager();
+  final String authority=grantUri.uri.getAuthority();
+  final ProviderInfo pi=getProviderInfoLocked(authority,grantUri.sourceUserId);
+  if (pi == null) {
+    Slog.w(TAG,"No content provider found for permission revoke: " + grantUri.toSafeString());
+    return;
+  }
+  if (!checkHoldingPermissionsLocked(pm,pi,grantUri,callingUid,modeFlags)) {
+    final ArrayMap<GrantUri,UriPermission> perms=mGrantedUriPermissions.get(callingUid);
+    if (perms != null) {
+      boolean persistChanged=false;
+      for (Iterator<UriPermission> it=perms.values().iterator(); it.hasNext(); ) {
+        final UriPermission perm=it.next();
+        if (perm.uri.sourceUserId == grantUri.sourceUserId && perm.uri.uri.isPathPrefixMatch(grantUri.uri)) {
+          if (DEBUG_URI_PERMISSION)           Slog.v(TAG,"Revoking non-owned " + perm.targetUid + " permission to "+ perm.uri);
+          persistChanged|=perm.revokeModes(modeFlags | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION,false);
+          if (perm.modeFlags == 0) {
+            it.remove();
+          }
+        }
+      }
+      if (perms.isEmpty()) {
+        mGrantedUriPermissions.remove(callingUid);
+      }
+      if (persistChanged) {
+        schedulePersistUriGrants();
+      }
+    }
+    return;
+  }
+  boolean persistChanged=false;
+  int N=mGrantedUriPermissions.size();
+  for (int i=0; i < N; i++) {
+    final int targetUid=mGrantedUriPermissions.keyAt(i);
+    final ArrayMap<GrantUri,UriPermission> perms=mGrantedUriPermissions.valueAt(i);
+    for (Iterator<UriPermission> it=perms.values().iterator(); it.hasNext(); ) {
+      final UriPermission perm=it.next();
+      if (perm.uri.sourceUserId == grantUri.sourceUserId && perm.uri.uri.isPathPrefixMatch(grantUri.uri)) {
+        if (DEBUG_URI_PERMISSION)         Slog.v(TAG,"Revoking " + perm.targetUid + " permission to "+ perm.uri);
+        persistChanged|=perm.revokeModes(modeFlags | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION,true);
+        if (perm.modeFlags == 0) {
+          it.remove();
+        }
+      }
+    }
+    if (perms.isEmpty()) {
+      mGrantedUriPermissions.remove(targetUid);
+      N--;
+      i--;
+    }
+  }
+  if (persistChanged) {
+    schedulePersistUriGrants();
+  }
+}

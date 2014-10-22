@@ -1,0 +1,95 @@
+{
+  if (Log.isLoggable(TAG,Log.VERBOSE)) {
+    Log.v(TAG,"getAuthToken: " + account + ", response "+ response+ ", authTokenType "+ authTokenType+ ", notifyOnAuthFailure "+ notifyOnAuthFailure+ ", expectActivityLaunch "+ expectActivityLaunch+ ", caller's uid "+ Binder.getCallingUid()+ ", pid "+ Binder.getCallingPid());
+  }
+  if (response == null)   throw new IllegalArgumentException("response is null");
+  try {
+    if (account == null) {
+      Slog.w(TAG,"getAuthToken called with null account");
+      response.onError(AccountManager.ERROR_CODE_BAD_ARGUMENTS,"account is null");
+      return;
+    }
+    if (authTokenType == null) {
+      Slog.w(TAG,"getAuthToken called with null authTokenType");
+      response.onError(AccountManager.ERROR_CODE_BAD_ARGUMENTS,"authTokenType is null");
+      return;
+    }
+  }
+ catch (  RemoteException e) {
+    Slog.w(TAG,"Failed to report error back to the client." + e);
+    return;
+  }
+  checkBinderPermission(Manifest.permission.USE_CREDENTIALS);
+  final UserAccounts accounts=getUserAccountsForCaller();
+  final RegisteredServicesCache.ServiceInfo<AuthenticatorDescription> authenticatorInfo;
+  authenticatorInfo=mAuthenticatorCache.getServiceInfo(AuthenticatorDescription.newKey(account.type),accounts.userId);
+  final boolean customTokens=authenticatorInfo != null && authenticatorInfo.type.customTokens;
+  final int callerUid=Binder.getCallingUid();
+  final boolean permissionGranted=customTokens || permissionIsGranted(account,authTokenType,callerUid);
+  final Bundle loginOptions=(loginOptionsIn == null) ? new Bundle() : loginOptionsIn;
+  loginOptions.putInt(AccountManager.KEY_CALLER_UID,callerUid);
+  loginOptions.putInt(AccountManager.KEY_CALLER_PID,Binder.getCallingPid());
+  if (notifyOnAuthFailure) {
+    loginOptions.putBoolean(AccountManager.KEY_NOTIFY_ON_FAILURE,true);
+  }
+  long identityToken=clearCallingIdentity();
+  try {
+    if (!customTokens && permissionGranted) {
+      String authToken=readAuthTokenInternal(accounts,account,authTokenType);
+      if (authToken != null) {
+        Bundle result=new Bundle();
+        result.putString(AccountManager.KEY_AUTHTOKEN,authToken);
+        result.putString(AccountManager.KEY_ACCOUNT_NAME,account.name);
+        result.putString(AccountManager.KEY_ACCOUNT_TYPE,account.type);
+        onResult(response,result);
+        return;
+      }
+    }
+    new Session(accounts,response,account.type,expectActivityLaunch,false){
+      @Override protected String toDebugString(      long now){
+        if (loginOptions != null)         loginOptions.keySet();
+        return super.toDebugString(now) + ", getAuthToken" + ", "+ account+ ", authTokenType "+ authTokenType+ ", loginOptions "+ loginOptions+ ", notifyOnAuthFailure "+ notifyOnAuthFailure;
+      }
+      @Override public void run() throws RemoteException {
+        if (!permissionGranted) {
+          mAuthenticator.getAuthTokenLabel(this,authTokenType);
+        }
+ else {
+          mAuthenticator.getAuthToken(this,account,authTokenType,loginOptions);
+        }
+      }
+      @Override public void onResult(      Bundle result){
+        if (result != null) {
+          if (result.containsKey(AccountManager.KEY_AUTH_TOKEN_LABEL)) {
+            Intent intent=newGrantCredentialsPermissionIntent(account,callerUid,new AccountAuthenticatorResponse(this),authTokenType,result.getString(AccountManager.KEY_AUTH_TOKEN_LABEL));
+            Bundle bundle=new Bundle();
+            bundle.putParcelable(AccountManager.KEY_INTENT,intent);
+            onResult(bundle);
+            return;
+          }
+          String authToken=result.getString(AccountManager.KEY_AUTHTOKEN);
+          if (authToken != null) {
+            String name=result.getString(AccountManager.KEY_ACCOUNT_NAME);
+            String type=result.getString(AccountManager.KEY_ACCOUNT_TYPE);
+            if (TextUtils.isEmpty(type) || TextUtils.isEmpty(name)) {
+              onError(AccountManager.ERROR_CODE_INVALID_RESPONSE,"the type and name should not be empty");
+              return;
+            }
+            if (!customTokens) {
+              saveAuthTokenToDatabase(mAccounts,new Account(name,type),authTokenType,authToken);
+            }
+          }
+          Intent intent=result.getParcelable(AccountManager.KEY_INTENT);
+          if (intent != null && notifyOnAuthFailure && !customTokens) {
+            doNotification(mAccounts,account,result.getString(AccountManager.KEY_AUTH_FAILED_MESSAGE),intent,accounts.userId);
+          }
+        }
+        super.onResult(result);
+      }
+    }
+.bind();
+  }
+  finally {
+    restoreCallingIdentity(identityToken);
+  }
+}

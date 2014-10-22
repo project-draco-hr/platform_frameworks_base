@@ -1,0 +1,44 @@
+{
+  if (inputChannelMask == AudioFormat.CHANNEL_INVALID) {
+    throw (new IllegalArgumentException("Virtualizer: illegal CHANNEL_INVALID channel mask"));
+  }
+  int channelMask=inputChannelMask == AudioFormat.CHANNEL_OUT_DEFAULT ? AudioFormat.CHANNEL_OUT_STEREO : inputChannelMask;
+  int nbChannels=AudioFormat.channelCountFromOutChannelMask(channelMask);
+  if ((angles != null) && (angles.length < (nbChannels * 3))) {
+    Log.e(TAG,"Size of array for angles cannot accomodate number of channels in mask (" + nbChannels + ")");
+    throw (new IllegalArgumentException("Virtualizer: array for channel / angle pairs is too small: is " + angles.length + ", should be "+ (nbChannels * 3)));
+  }
+  ByteBuffer paramsConverter=ByteBuffer.allocate(3 * 4);
+  paramsConverter.order(ByteOrder.nativeOrder());
+  paramsConverter.putInt(PARAM_VIRTUAL_SPEAKER_ANGLES);
+  paramsConverter.putInt(AudioFormat.convertChannelOutMaskToNativeMask(channelMask));
+  paramsConverter.putInt(AudioDevice.convertDeviceTypeToInternalDevice(deviceType));
+  byte[] result=new byte[nbChannels * 4 * 3];
+  int status=getParameter(paramsConverter.array(),result);
+  if (DEBUG) {
+    Log.v(TAG,"getAngles(0x" + Integer.toHexString(inputChannelMask) + ", 0x"+ Integer.toHexString(deviceType)+ ") returns "+ status);
+  }
+  if (status >= 0) {
+    if (angles != null) {
+      ByteBuffer resultConverter=ByteBuffer.wrap(result);
+      resultConverter.order(ByteOrder.nativeOrder());
+      for (int i=0; i < nbChannels; i++) {
+        angles[3 * i]=AudioFormat.convertNativeChannelMaskToOutMask(resultConverter.getInt((i * 4 * 3)));
+        angles[3 * i + 1]=resultConverter.getInt(i * 4 * 3 + 4);
+        angles[3 * i + 2]=resultConverter.getInt(i * 4 * 3 + 8);
+        if (DEBUG) {
+          Log.v(TAG,"channel 0x" + Integer.toHexString(angles[3 * i]).toUpperCase() + " at az="+ angles[3 * i + 1]+ "deg"+ " elev="+ angles[3 * i + 2]+ "deg");
+        }
+      }
+    }
+    return true;
+  }
+ else   if (status == AudioEffect.ERROR_BAD_VALUE) {
+    return false;
+  }
+ else {
+    checkStatus(status);
+  }
+  Log.e(TAG,"unexpected status code " + status + " after getParameter(PARAM_VIRTUAL_SPEAKER_ANGLES)");
+  return false;
+}

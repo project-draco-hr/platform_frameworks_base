@@ -1,0 +1,95 @@
+{
+  if (!mInitialized) {
+    return;
+  }
+  mCurrentTime=SystemClock.uptimeMillis();
+  mBulkUpdateParams=SET_ORIENTATION_CHANGE_COMPLETE;
+  boolean wasAnimating=mAnimating;
+  mAnimating=false;
+  if (WindowManagerService.DEBUG_WINDOW_TRACE) {
+    Slog.i(TAG,"!!! animate: entry time=" + mCurrentTime);
+  }
+  if (WindowManagerService.SHOW_TRANSACTIONS)   Slog.i(TAG,">>> OPEN TRANSACTION animateLocked");
+  SurfaceControl.openTransaction();
+  SurfaceControl.setAnimationTransaction();
+  try {
+    final int numDisplays=mDisplayContentsAnimators.size();
+    for (int i=0; i < numDisplays; i++) {
+      final int displayId=mDisplayContentsAnimators.keyAt(i);
+      updateAppWindowsLocked(displayId);
+      DisplayContentsAnimator displayAnimator=mDisplayContentsAnimators.valueAt(i);
+      final ScreenRotationAnimation screenRotationAnimation=displayAnimator.mScreenRotationAnimation;
+      if (screenRotationAnimation != null && screenRotationAnimation.isAnimating()) {
+        if (screenRotationAnimation.stepAnimationLocked(mCurrentTime)) {
+          mAnimating=true;
+        }
+ else {
+          mBulkUpdateParams|=SET_UPDATE_ROTATION;
+          screenRotationAnimation.kill();
+          displayAnimator.mScreenRotationAnimation=null;
+          if (mService.mAccessibilityController != null && displayId == Display.DEFAULT_DISPLAY) {
+            mService.mAccessibilityController.onRotationChangedLocked(mService.getDefaultDisplayContentLocked(),mService.mRotation);
+          }
+        }
+      }
+      updateWindowsLocked(displayId);
+      updateWallpaperLocked(displayId);
+      final WindowList windows=mService.getWindowListLocked(displayId);
+      final int N=windows.size();
+      for (int j=0; j < N; j++) {
+        windows.get(j).mWinAnimator.prepareSurfaceLocked(true);
+      }
+    }
+    for (int i=0; i < numDisplays; i++) {
+      final int displayId=mDisplayContentsAnimators.keyAt(i);
+      testTokenMayBeDrawnLocked(displayId);
+      final ScreenRotationAnimation screenRotationAnimation=mDisplayContentsAnimators.valueAt(i).mScreenRotationAnimation;
+      if (screenRotationAnimation != null) {
+        screenRotationAnimation.updateSurfacesInTransaction();
+      }
+      mAnimating|=mService.getDisplayContentLocked(displayId).animateDimLayers();
+      if (mService.mAccessibilityController != null && displayId == Display.DEFAULT_DISPLAY) {
+        mService.mAccessibilityController.drawMagnifiedRegionBorderIfNeededLocked();
+      }
+    }
+    if (mAnimating) {
+      mService.scheduleAnimationLocked();
+    }
+    mService.setFocusedStackLayer();
+    if (mService.mWatermark != null) {
+      mService.mWatermark.drawIfNeeded();
+    }
+  }
+ catch (  RuntimeException e) {
+    Slog.wtf(TAG,"Unhandled exception in Window Manager",e);
+  }
+ finally {
+    SurfaceControl.closeTransaction();
+    if (WindowManagerService.SHOW_TRANSACTIONS)     Slog.i(TAG,"<<< CLOSE TRANSACTION animateLocked");
+  }
+  boolean hasPendingLayoutChanges=false;
+  final int numDisplays=mService.mDisplayContents.size();
+  for (int displayNdx=0; displayNdx < numDisplays; ++displayNdx) {
+    final DisplayContent displayContent=mService.mDisplayContents.valueAt(displayNdx);
+    final int pendingChanges=getPendingLayoutChanges(displayContent.getDisplayId());
+    if ((pendingChanges & WindowManagerPolicy.FINISH_LAYOUT_REDO_WALLPAPER) != 0) {
+      mBulkUpdateParams|=SET_WALLPAPER_ACTION_PENDING;
+    }
+    if (pendingChanges != 0) {
+      hasPendingLayoutChanges=true;
+    }
+  }
+  boolean doRequest=false;
+  if (mBulkUpdateParams != 0) {
+    doRequest=mService.copyAnimToLayoutParamsLocked();
+  }
+  if (hasPendingLayoutChanges || doRequest) {
+    mService.requestTraversalLocked();
+  }
+  if (!mAnimating && wasAnimating) {
+    mService.requestTraversalLocked();
+  }
+  if (WindowManagerService.DEBUG_WINDOW_TRACE) {
+    Slog.i(TAG,"!!! animate: exit mAnimating=" + mAnimating + " mBulkUpdateParams="+ Integer.toHexString(mBulkUpdateParams)+ " mPendingLayoutChanges(DEFAULT_DISPLAY)="+ Integer.toHexString(getPendingLayoutChanges(Display.DEFAULT_DISPLAY)));
+  }
+}

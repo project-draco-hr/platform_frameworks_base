@@ -1,0 +1,133 @@
+{
+  ActivityRecord top=topRunningActivityLocked(null);
+  if (top == null) {
+    return;
+  }
+  if (DEBUG_VISBILITY)   Slog.v(TAG,"ensureActivitiesVisible behind " + top + " configChanges=0x"+ Integer.toHexString(configChanges));
+  if (mTranslucentActivityWaiting != top) {
+    mUndrawnActivitiesBelowTopTranslucent.clear();
+    if (mTranslucentActivityWaiting != null) {
+      notifyActivityDrawnLocked(null);
+      mTranslucentActivityWaiting=null;
+    }
+    mHandler.removeMessages(TRANSLUCENT_TIMEOUT_MSG);
+  }
+  boolean aboveTop=true;
+  boolean behindFullscreen=!isStackVisible();
+  for (int taskNdx=mTaskHistory.size() - 1; taskNdx >= 0; --taskNdx) {
+    final TaskRecord task=mTaskHistory.get(taskNdx);
+    final ArrayList<ActivityRecord> activities=task.mActivities;
+    for (int activityNdx=activities.size() - 1; activityNdx >= 0; --activityNdx) {
+      final ActivityRecord r=activities.get(activityNdx);
+      if (r.finishing) {
+        continue;
+      }
+      if (aboveTop && r != top) {
+        continue;
+      }
+      aboveTop=false;
+      if (!behindFullscreen || r.mLaunchTaskBehind) {
+        if (DEBUG_VISBILITY)         Slog.v(TAG,"Make visible? " + r + " finishing="+ r.finishing+ " state="+ r.state);
+        if (r != starting) {
+          ensureActivityConfigurationLocked(r,0);
+        }
+        if (r.app == null || r.app.thread == null) {
+          if (DEBUG_VISBILITY)           Slog.v(TAG,"Start and freeze screen for " + r);
+          if (r != starting) {
+            r.startFreezingScreenLocked(r.app,configChanges);
+          }
+          if (!r.visible || r.mLaunchTaskBehind) {
+            if (DEBUG_VISBILITY)             Slog.v(TAG,"Starting and making visible: " + r);
+            setVisibile(r,true);
+          }
+          if (r != starting) {
+            mStackSupervisor.startSpecificActivityLocked(r,false,false);
+          }
+        }
+ else         if (r.visible) {
+          if (DEBUG_VISBILITY)           Slog.v(TAG,"Skipping: already visible at " + r);
+          r.stopFreezingScreenLocked(false);
+          try {
+            if (r.returningOptions != null) {
+              r.app.thread.scheduleOnNewActivityOptions(r.appToken,r.returningOptions);
+            }
+          }
+ catch (          RemoteException e) {
+          }
+        }
+ else {
+          r.visible=true;
+          if (r.state != ActivityState.RESUMED && r != starting) {
+            if (DEBUG_VISBILITY)             Slog.v(TAG,"Making visible and scheduling visibility: " + r);
+            try {
+              if (mTranslucentActivityWaiting != null) {
+                r.updateOptionsLocked(r.returningOptions);
+                mUndrawnActivitiesBelowTopTranslucent.add(r);
+              }
+              setVisibile(r,true);
+              r.sleeping=false;
+              r.app.pendingUiClean=true;
+              r.app.thread.scheduleWindowVisibility(r.appToken,true);
+              r.stopFreezingScreenLocked(false);
+            }
+ catch (            Exception e) {
+              Slog.w(TAG,"Exception thrown making visibile: " + r.intent.getComponent(),e);
+            }
+          }
+        }
+        configChanges|=r.configChangeFlags;
+        if (r.fullscreen) {
+          if (DEBUG_VISBILITY)           Slog.v(TAG,"Fullscreen: at " + r);
+          behindFullscreen=true;
+        }
+ else         if (!isHomeStack() && r.frontOfTask && task.isOverHomeStack()) {
+          if (DEBUG_VISBILITY)           Slog.v(TAG,"Showing home: at " + r);
+          behindFullscreen=true;
+        }
+      }
+ else {
+        if (DEBUG_VISBILITY)         Slog.v(TAG,"Make invisible? " + r + " finishing="+ r.finishing+ " state="+ r.state+ " behindFullscreen="+ behindFullscreen);
+        if (r.visible) {
+          if (DEBUG_VISBILITY)           Slog.v(TAG,"Making invisible: " + r);
+          try {
+            setVisibile(r,false);
+switch (r.state) {
+case STOPPING:
+case STOPPED:
+              if (r.app != null && r.app.thread != null) {
+                if (DEBUG_VISBILITY)                 Slog.v(TAG,"Scheduling invisibility: " + r);
+                r.app.thread.scheduleWindowVisibility(r.appToken,false);
+              }
+            break;
+case INITIALIZING:
+case RESUMED:
+case PAUSING:
+case PAUSED:
+          if (getVisibleBehindActivity() == r) {
+            releaseBackgroundResources();
+          }
+ else {
+            if (!mStackSupervisor.mStoppingActivities.contains(r)) {
+              mStackSupervisor.mStoppingActivities.add(r);
+            }
+            mStackSupervisor.scheduleIdleLocked();
+          }
+        break;
+default :
+      break;
+  }
+}
+ catch (Exception e) {
+  Slog.w(TAG,"Exception thrown making hidden: " + r.intent.getComponent(),e);
+}
+}
+ else {
+if (DEBUG_VISBILITY) Slog.v(TAG,"Already invisible: " + r);
+}
+}
+}
+}
+if (mTranslucentActivityWaiting != null && mUndrawnActivitiesBelowTopTranslucent.isEmpty()) {
+notifyActivityDrawnLocked(null);
+}
+}

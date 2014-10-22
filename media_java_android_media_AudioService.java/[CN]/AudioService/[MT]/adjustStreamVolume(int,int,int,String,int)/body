@@ -1,0 +1,89 @@
+{
+  if (mUseFixedVolume) {
+    return;
+  }
+  if (DEBUG_VOL)   Log.d(TAG,"adjustStreamVolume() stream=" + streamType + ", dir="+ direction+ ", flags="+ flags);
+  ensureValidDirection(direction);
+  ensureValidStreamType(streamType);
+  int streamTypeAlias=mStreamVolumeAlias[streamType];
+  VolumeStreamState streamState=mStreamStates[streamTypeAlias];
+  final int device=getDeviceForStream(streamTypeAlias);
+  int aliasIndex=streamState.getIndex(device);
+  boolean adjustVolume=true;
+  int step;
+  if ((device & AudioSystem.DEVICE_OUT_ALL_A2DP) == 0 && (flags & AudioManager.FLAG_BLUETOOTH_ABS_VOLUME) != 0) {
+    return;
+  }
+  if (mAppOps.noteOp(STEAM_VOLUME_OPS[streamTypeAlias],uid,callingPackage) != AppOpsManager.MODE_ALLOWED) {
+    return;
+  }
+synchronized (mSafeMediaVolumeState) {
+    mPendingVolumeCommand=null;
+  }
+  flags&=~AudioManager.FLAG_FIXED_VOLUME;
+  if ((streamTypeAlias == AudioSystem.STREAM_MUSIC) && ((device & mFixedVolumeDevices) != 0)) {
+    flags|=AudioManager.FLAG_FIXED_VOLUME;
+    if (mSafeMediaVolumeState == SAFE_MEDIA_VOLUME_ACTIVE && (device & mSafeMediaVolumeDevices) != 0) {
+      step=mSafeMediaVolumeIndex;
+    }
+ else {
+      step=streamState.getMaxIndex();
+    }
+    if (aliasIndex != 0) {
+      aliasIndex=step;
+    }
+  }
+ else {
+    step=rescaleIndex(10,streamType,streamTypeAlias);
+  }
+  if (((flags & AudioManager.FLAG_ALLOW_RINGER_MODES) != 0) || (streamTypeAlias == getMasterStreamType())) {
+    int ringerMode=getRingerMode();
+    if (ringerMode == AudioManager.RINGER_MODE_VIBRATE) {
+      flags&=~AudioManager.FLAG_VIBRATE;
+    }
+    final int result=checkForRingerModeChange(aliasIndex,direction,step);
+    adjustVolume=(result & FLAG_ADJUST_VOLUME) != 0;
+    if ((result & AudioManager.FLAG_SHOW_SILENT_HINT) != 0) {
+      flags|=AudioManager.FLAG_SHOW_SILENT_HINT;
+    }
+  }
+  int oldIndex=mStreamStates[streamType].getIndex(device);
+  if (adjustVolume && (direction != AudioManager.ADJUST_SAME)) {
+    if (streamTypeAlias == AudioSystem.STREAM_MUSIC && (device & AudioSystem.DEVICE_OUT_ALL_A2DP) != 0 && (flags & AudioManager.FLAG_BLUETOOTH_ABS_VOLUME) == 0) {
+synchronized (mA2dpAvrcpLock) {
+        if (mA2dp != null && mAvrcpAbsVolSupported) {
+          mA2dp.adjustAvrcpAbsoluteVolume(direction);
+        }
+      }
+    }
+    if ((direction == AudioManager.ADJUST_RAISE) && !checkSafeMediaVolume(streamTypeAlias,aliasIndex + step,device)) {
+      Log.e(TAG,"adjustStreamVolume() safe volume index = " + oldIndex);
+      mVolumeController.postDisplaySafeVolumeWarning(flags);
+    }
+ else     if (streamState.adjustIndex(direction * step,device)) {
+      sendMsg(mAudioHandler,MSG_SET_DEVICE_VOLUME,SENDMSG_QUEUE,device,0,streamState,0);
+    }
+    int newIndex=mStreamStates[streamType].getIndex(device);
+    if (mHdmiManager != null) {
+synchronized (mHdmiManager) {
+        if (mHdmiTvClient != null && streamTypeAlias == AudioSystem.STREAM_MUSIC && (flags & AudioManager.FLAG_HDMI_SYSTEM_AUDIO_VOLUME) == 0 && oldIndex != newIndex) {
+          int maxIndex=getStreamMaxVolume(streamType);
+synchronized (mHdmiTvClient) {
+            if (mHdmiSystemAudioSupported) {
+              mHdmiTvClient.setSystemAudioVolume((oldIndex + 5) / 10,(newIndex + 5) / 10,maxIndex);
+            }
+          }
+        }
+        if (mHdmiCecSink && streamTypeAlias == AudioSystem.STREAM_MUSIC && oldIndex != newIndex) {
+synchronized (mHdmiPlaybackClient) {
+            int keyCode=(direction == -1) ? KeyEvent.KEYCODE_VOLUME_DOWN : KeyEvent.KEYCODE_VOLUME_UP;
+            mHdmiPlaybackClient.sendKeyEvent(keyCode,true);
+            mHdmiPlaybackClient.sendKeyEvent(keyCode,false);
+          }
+        }
+      }
+    }
+  }
+  int index=mStreamStates[streamType].getIndex(device);
+  sendVolumeUpdate(streamType,oldIndex,index,flags);
+}

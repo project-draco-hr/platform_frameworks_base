@@ -1,0 +1,59 @@
+{
+  if (!checkCallingPermission(android.Manifest.permission.MANAGE_APP_TOKENS,"removeAppToken()")) {
+    throw new SecurityException("Requires MANAGE_APP_TOKENS permission");
+  }
+  AppWindowToken wtoken=null;
+  AppWindowToken startingToken=null;
+  boolean delayed=false;
+  final long origId=Binder.clearCallingIdentity();
+synchronized (mWindowMap) {
+    WindowToken basewtoken=mTokenMap.remove(token);
+    if (basewtoken != null && (wtoken=basewtoken.appWindowToken) != null) {
+      if (DEBUG_APP_TRANSITIONS)       Slog.v(TAG,"Removing app token: " + wtoken);
+      delayed=setTokenVisibilityLocked(wtoken,null,false,AppTransition.TRANSIT_UNSET,true,wtoken.voiceInteraction);
+      wtoken.inPendingTransaction=false;
+      mOpeningApps.remove(wtoken);
+      wtoken.waitingToShow=false;
+      if (mClosingApps.contains(wtoken)) {
+        delayed=true;
+      }
+ else       if (mAppTransition.isTransitionSet()) {
+        mClosingApps.add(wtoken);
+        wtoken.waitingToHide=true;
+        delayed=true;
+      }
+      if (DEBUG_APP_TRANSITIONS)       Slog.v(TAG,"Removing app " + wtoken + " delayed="+ delayed+ " animation="+ wtoken.mAppAnimator.animation+ " animating="+ wtoken.mAppAnimator.animating);
+      if (DEBUG_ADD_REMOVE || DEBUG_TOKEN_MOVEMENT)       Slog.v(TAG,"removeAppToken: " + wtoken + " delayed="+ delayed+ " Callers="+ Debug.getCallers(4));
+      final TaskStack stack=mTaskIdToTask.get(wtoken.groupId).mStack;
+      if (delayed) {
+        if (DEBUG_ADD_REMOVE || DEBUG_TOKEN_MOVEMENT)         Slog.v(TAG,"removeAppToken make exiting: " + wtoken);
+        stack.mExitingAppTokens.add(wtoken);
+        wtoken.mDeferRemoval=true;
+      }
+ else {
+        wtoken.mAppAnimator.clearAnimation();
+        wtoken.mAppAnimator.animating=false;
+        removeAppFromTaskLocked(wtoken);
+      }
+      wtoken.removed=true;
+      if (wtoken.startingData != null) {
+        startingToken=wtoken;
+      }
+      unsetAppFreezingScreenLocked(wtoken,true,true);
+      if (mFocusedApp == wtoken) {
+        if (DEBUG_FOCUS_LIGHT)         Slog.v(TAG,"Removing focused app token:" + wtoken);
+        mFocusedApp=null;
+        updateFocusedWindowLocked(UPDATE_FOCUS_NORMAL,true);
+        mInputMonitor.setFocusedAppLw(null);
+      }
+    }
+ else {
+      Slog.w(TAG,"Attempted to remove non-existing app token: " + token);
+    }
+    if (!delayed && wtoken != null) {
+      wtoken.updateReportedVisibilityLocked();
+    }
+    scheduleRemoveStartingWindowLocked(startingToken);
+  }
+  Binder.restoreCallingIdentity(origId);
+}

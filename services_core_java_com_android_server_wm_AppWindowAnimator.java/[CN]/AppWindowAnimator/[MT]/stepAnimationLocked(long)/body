@@ -1,0 +1,72 @@
+{
+  if (mService.okToDisplay()) {
+    if (animation == sDummyAnimation) {
+      return false;
+    }
+    if ((mAppToken.allDrawn || animating || mAppToken.startingDisplayed) && animation != null) {
+      if (!animating) {
+        if (WindowManagerService.DEBUG_ANIM)         Slog.v(TAG,"Starting animation in " + mAppToken + " @ "+ currentTime+ " scale="+ mService.getTransitionAnimationScaleLocked()+ " allDrawn="+ mAppToken.allDrawn+ " animating="+ animating);
+        animation.setStartTime(currentTime);
+        animating=true;
+        if (thumbnail != null) {
+          thumbnail.show();
+          thumbnailAnimation.setStartTime(currentTime);
+        }
+      }
+      if (stepAnimation(currentTime)) {
+        if (thumbnail != null) {
+          stepThumbnailAnimation(currentTime);
+        }
+        return true;
+      }
+    }
+  }
+ else   if (animation != null) {
+    animating=true;
+    animation=null;
+  }
+  hasTransformation=false;
+  if (!animating && animation == null) {
+    return false;
+  }
+  mAnimator.setAppLayoutChanges(this,WindowManagerPolicy.FINISH_LAYOUT_REDO_ANIM,"AppWindowToken");
+  clearAnimation();
+  animating=false;
+  if (animLayerAdjustment != 0) {
+    animLayerAdjustment=0;
+    updateLayers();
+  }
+  if (mService.mInputMethodTarget != null && mService.mInputMethodTarget.mAppToken == mAppToken) {
+    mService.moveInputMethodWindowsIfNeededLocked(true);
+  }
+  if (WindowManagerService.DEBUG_ANIM)   Slog.v(TAG,"Animation done in " + mAppToken + ": reportedVisible="+ mAppToken.reportedVisible);
+  transformation.clear();
+  final int N=mAllAppWinAnimators.size();
+  for (int i=0; i < N; i++) {
+    final WindowStateAnimator winAnim=mAllAppWinAnimators.get(i);
+    if (mAppToken.mLaunchTaskBehind) {
+      winAnim.mWin.mExiting=true;
+    }
+    winAnim.finishExit();
+  }
+  if (mAppToken.mLaunchTaskBehind) {
+    try {
+      mService.mActivityManager.notifyLaunchTaskBehindComplete(mAppToken.token);
+    }
+ catch (    RemoteException e) {
+    }
+    mAppToken.mLaunchTaskBehind=false;
+  }
+ else {
+    mAppToken.updateReportedVisibilityLocked();
+    if (mAppToken.mEnteringAnimation) {
+      mAppToken.mEnteringAnimation=false;
+      try {
+        mService.mActivityManager.notifyEnterAnimationComplete(mAppToken.token);
+      }
+ catch (      RemoteException e) {
+      }
+    }
+  }
+  return false;
+}

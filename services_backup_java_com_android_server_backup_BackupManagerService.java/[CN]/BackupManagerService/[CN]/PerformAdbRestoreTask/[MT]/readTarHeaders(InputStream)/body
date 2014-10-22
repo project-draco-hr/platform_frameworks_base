@@ -1,0 +1,79 @@
+{
+  byte[] block=new byte[512];
+  FileMetadata info=null;
+  boolean gotHeader=readTarHeader(instream,block);
+  if (gotHeader) {
+    try {
+      info=new FileMetadata();
+      info.size=extractRadix(block,124,12,8);
+      info.mtime=extractRadix(block,136,12,8);
+      info.mode=extractRadix(block,100,8,8);
+      info.path=extractString(block,345,155);
+      String path=extractString(block,0,100);
+      if (path.length() > 0) {
+        if (info.path.length() > 0)         info.path+='/';
+        info.path+=path;
+      }
+      int typeChar=block[156];
+      if (typeChar == 'x') {
+        gotHeader=readPaxExtendedHeader(instream,info);
+        if (gotHeader) {
+          gotHeader=readTarHeader(instream,block);
+        }
+        if (!gotHeader)         throw new IOException("Bad or missing pax header");
+        typeChar=block[156];
+      }
+switch (typeChar) {
+case '0':
+        info.type=BackupAgent.TYPE_FILE;
+      break;
+case '5':
+{
+      info.type=BackupAgent.TYPE_DIRECTORY;
+      if (info.size != 0) {
+        Slog.w(TAG,"Directory entry with nonzero size in header");
+        info.size=0;
+      }
+      break;
+    }
+case 0:
+{
+    if (DEBUG)     Slog.w(TAG,"Saw type=0 in tar header block, info=" + info);
+    return null;
+  }
+default :
+{
+  Slog.e(TAG,"Unknown tar entity type: " + typeChar);
+  throw new IOException("Unknown entity type " + typeChar);
+}
+}
+if (FullBackup.SHARED_PREFIX.regionMatches(0,info.path,0,FullBackup.SHARED_PREFIX.length())) {
+info.path=info.path.substring(FullBackup.SHARED_PREFIX.length());
+info.packageName=SHARED_BACKUP_AGENT_PACKAGE;
+info.domain=FullBackup.SHARED_STORAGE_TOKEN;
+if (DEBUG) Slog.i(TAG,"File in shared storage: " + info.path);
+}
+ else if (FullBackup.APPS_PREFIX.regionMatches(0,info.path,0,FullBackup.APPS_PREFIX.length())) {
+info.path=info.path.substring(FullBackup.APPS_PREFIX.length());
+int slash=info.path.indexOf('/');
+if (slash < 0) throw new IOException("Illegal semantic path in " + info.path);
+info.packageName=info.path.substring(0,slash);
+info.path=info.path.substring(slash + 1);
+if (!info.path.equals(BACKUP_MANIFEST_FILENAME) && !info.path.equals(BACKUP_METADATA_FILENAME)) {
+slash=info.path.indexOf('/');
+if (slash < 0) throw new IOException("Illegal semantic path in non-manifest " + info.path);
+info.domain=info.path.substring(0,slash);
+info.path=info.path.substring(slash + 1);
+}
+}
+}
+ catch (IOException e) {
+if (DEBUG) {
+Slog.e(TAG,"Parse error in header: " + e.getMessage());
+HEXLOG(block);
+}
+throw e;
+}
+}
+return info;
+}

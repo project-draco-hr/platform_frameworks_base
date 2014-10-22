@@ -1,6 +1,8 @@
 {
 synchronized (this) {
-    boolean onBattery=plugType == BATTERY_PLUGGED_NONE;
+    final boolean onBattery=plugType == BATTERY_PLUGGED_NONE;
+    final long uptime=SystemClock.uptimeMillis();
+    final long elapsedRealtime=SystemClock.elapsedRealtime();
     int oldStatus=mHistoryCur.batteryStatus;
     if (!mHaveBatteryLevel) {
       mHaveBatteryLevel=true;
@@ -16,7 +18,20 @@ synchronized (this) {
     }
     if (onBattery) {
       mDischargeCurrentLevel=level;
-      mRecordingHistory=true;
+      if (!mRecordingHistory) {
+        mRecordingHistory=true;
+        startRecordingHistory(elapsedRealtime,uptime,true);
+      }
+    }
+ else     if (level < 96) {
+      if (!mRecordingHistory) {
+        mRecordingHistory=true;
+        startRecordingHistory(elapsedRealtime,uptime,true);
+      }
+    }
+    mCurrentBatteryLevel=level;
+    if (mDischargePlugLevel < 0) {
+      mDischargePlugLevel=level;
     }
     if (onBattery != mOnBattery) {
       mHistoryCur.batteryLevel=(byte)level;
@@ -25,7 +40,7 @@ synchronized (this) {
       mHistoryCur.batteryPlugType=(byte)plugType;
       mHistoryCur.batteryTemperature=(short)temp;
       mHistoryCur.batteryVoltage=(char)volt;
-      setOnBatteryLocked(onBattery,oldStatus,level);
+      setOnBatteryLocked(elapsedRealtime,uptime,onBattery,oldStatus,level);
     }
  else {
       boolean changed=false;
@@ -54,11 +69,32 @@ synchronized (this) {
         changed=true;
       }
       if (changed) {
-        addHistoryRecordLocked(SystemClock.elapsedRealtime());
+        addHistoryRecordLocked(elapsedRealtime,uptime);
+      }
+      long modeBits=(((long)mInitStepMode) << STEP_LEVEL_INITIAL_MODE_SHIFT) | (((long)mModStepMode) << STEP_LEVEL_MODIFIED_MODE_SHIFT) | (((long)(level & 0xff)) << STEP_LEVEL_LEVEL_SHIFT);
+      if (onBattery) {
+        if (mLastDischargeStepLevel != level && mMinDischargeStepLevel > level) {
+          mNumDischargeStepDurations=addLevelSteps(mDischargeStepDurations,mNumDischargeStepDurations,mLastDischargeStepTime,mLastDischargeStepLevel - level,modeBits,elapsedRealtime);
+          mLastDischargeStepLevel=level;
+          mMinDischargeStepLevel=level;
+          mLastDischargeStepTime=elapsedRealtime;
+          mInitStepMode=mCurStepMode;
+          mModStepMode=0;
+        }
+      }
+ else {
+        if (mLastChargeStepLevel != level && mMaxChargeStepLevel < level) {
+          mNumChargeStepDurations=addLevelSteps(mChargeStepDurations,mNumChargeStepDurations,mLastChargeStepTime,level - mLastChargeStepLevel,modeBits,elapsedRealtime);
+          mLastChargeStepLevel=level;
+          mMaxChargeStepLevel=level;
+          mLastChargeStepTime=elapsedRealtime;
+          mInitStepMode=mCurStepMode;
+          mModStepMode=0;
+        }
       }
     }
     if (!onBattery && status == BatteryManager.BATTERY_STATUS_FULL) {
-      mRecordingHistory=false;
+      mRecordingHistory=DEBUG;
     }
   }
 }

@@ -1,0 +1,43 @@
+{
+  if (mDestroyed || !mBinding) {
+    mContext.unbindService(mServiceConnection);
+    return;
+  }
+  mBinding=false;
+  mPrintService=IPrintService.Stub.asInterface(service);
+  try {
+    service.linkToDeath(RemotePrintService.this,0);
+  }
+ catch (  RemoteException re) {
+    handleBinderDied();
+    return;
+  }
+  try {
+    mPrintService.setClient(mPrintServiceClient);
+  }
+ catch (  RemoteException re) {
+    Slog.e(LOG_TAG,"Error setting client for: " + service,re);
+    handleBinderDied();
+    return;
+  }
+  if (mServiceDied && mHasPrinterDiscoverySession) {
+    handleCreatePrinterDiscoverySession();
+  }
+  if (mServiceDied && mDiscoveryPriorityList != null) {
+    handleStartPrinterDiscovery(mDiscoveryPriorityList);
+  }
+  if (mServiceDied && mTrackedPrinterList != null) {
+    final int trackedPrinterCount=mTrackedPrinterList.size();
+    for (int i=0; i < trackedPrinterCount; i++) {
+      handleStartPrinterStateTracking(mTrackedPrinterList.get(i));
+    }
+  }
+  while (!mPendingCommands.isEmpty()) {
+    Runnable pendingCommand=mPendingCommands.remove(0);
+    pendingCommand.run();
+  }
+  if (!mHasPrinterDiscoverySession && !mHasActivePrintJobs) {
+    ensureUnbound();
+  }
+  mServiceDied=false;
+}

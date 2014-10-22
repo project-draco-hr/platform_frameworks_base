@@ -1,0 +1,67 @@
+{
+  final TaskRecord tr=taskForIdLocked(taskId);
+  if (tr == null) {
+    Slog.i(TAG,"moveTaskToBack: bad taskId=" + taskId);
+    return false;
+  }
+  Slog.i(TAG,"moveTaskToBack: " + tr);
+  mStackSupervisor.endLockTaskModeIfTaskEnding(tr);
+  if (mStackSupervisor.isFrontStack(this) && mService.mController != null) {
+    ActivityRecord next=topRunningActivityLocked(null,taskId);
+    if (next == null) {
+      next=topRunningActivityLocked(null,0);
+    }
+    if (next != null) {
+      boolean moveOK=true;
+      try {
+        moveOK=mService.mController.activityResuming(next.packageName);
+      }
+ catch (      RemoteException e) {
+        mService.mController=null;
+        Watchdog.getInstance().setActivityController(null);
+      }
+      if (!moveOK) {
+        return false;
+      }
+    }
+  }
+  if (DEBUG_TRANSITION)   Slog.v(TAG,"Prepare to back transition: task=" + taskId);
+  mTaskHistory.remove(tr);
+  mTaskHistory.add(0,tr);
+  updateTaskMovement(tr,false);
+  int numTasks=mTaskHistory.size();
+  for (int taskNdx=numTasks - 1; taskNdx >= 1; --taskNdx) {
+    final TaskRecord task=mTaskHistory.get(taskNdx);
+    if (task.isOverHomeStack()) {
+      break;
+    }
+    if (taskNdx == 1) {
+      task.setTaskToReturnTo(HOME_ACTIVITY_TYPE);
+    }
+  }
+  if (reason != null && (reason.intent.getFlags() & Intent.FLAG_ACTIVITY_NO_ANIMATION) != 0) {
+    mWindowManager.prepareAppTransition(AppTransition.TRANSIT_NONE,false);
+    ActivityRecord r=topRunningActivityLocked(null);
+    if (r != null) {
+      mNoAnimActivities.add(r);
+    }
+  }
+ else {
+    mWindowManager.prepareAppTransition(AppTransition.TRANSIT_TASK_TO_BACK,false);
+  }
+  mWindowManager.moveTaskToBottom(taskId);
+  if (VALIDATE_TOKENS) {
+    validateAppTokensLocked();
+  }
+  final TaskRecord task=mResumedActivity != null ? mResumedActivity.task : null;
+  if (task == tr && tr.isOverHomeStack() || numTasks <= 1 && isOnHomeDisplay()) {
+    if (!mService.mBooting && !mService.mBooted) {
+      return false;
+    }
+    final int taskToReturnTo=tr.getTaskToReturnTo();
+    tr.setTaskToReturnTo(APPLICATION_ACTIVITY_TYPE);
+    return mStackSupervisor.resumeHomeStackTask(taskToReturnTo,null);
+  }
+  mStackSupervisor.resumeTopActivitiesLocked();
+  return true;
+}

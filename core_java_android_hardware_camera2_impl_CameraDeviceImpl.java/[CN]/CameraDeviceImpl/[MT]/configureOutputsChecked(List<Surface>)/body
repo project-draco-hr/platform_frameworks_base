@@ -1,0 +1,61 @@
+{
+  if (outputs == null) {
+    outputs=new ArrayList<Surface>();
+  }
+  boolean success=false;
+synchronized (mInterfaceLock) {
+    checkIfCameraClosedOrInError();
+    HashSet<Surface> addSet=new HashSet<Surface>(outputs);
+    List<Integer> deleteList=new ArrayList<Integer>();
+    for (int i=0; i < mConfiguredOutputs.size(); ++i) {
+      int streamId=mConfiguredOutputs.keyAt(i);
+      Surface s=mConfiguredOutputs.valueAt(i);
+      if (!outputs.contains(s)) {
+        deleteList.add(streamId);
+      }
+ else {
+        addSet.remove(s);
+      }
+    }
+    mDeviceHandler.post(mCallOnBusy);
+    stopRepeating();
+    try {
+      waitUntilIdle();
+      mRemoteDevice.beginConfigure();
+      for (      Integer streamId : deleteList) {
+        mRemoteDevice.deleteStream(streamId);
+        mConfiguredOutputs.delete(streamId);
+      }
+      for (      Surface s : addSet) {
+        int streamId=mRemoteDevice.createStream(0,0,0,s);
+        mConfiguredOutputs.put(streamId,s);
+      }
+      try {
+        mRemoteDevice.endConfigure();
+      }
+ catch (      IllegalArgumentException e) {
+        Log.w(TAG,"Stream configuration failed");
+        return false;
+      }
+      success=true;
+    }
+ catch (    CameraRuntimeException e) {
+      if (e.getReason() == CAMERA_IN_USE) {
+        throw new IllegalStateException("The camera is currently busy." + " You must wait until the previous operation completes.");
+      }
+      throw e.asChecked();
+    }
+catch (    RemoteException e) {
+      return false;
+    }
+ finally {
+      if (success && outputs.size() > 0) {
+        mDeviceHandler.post(mCallOnIdle);
+      }
+ else {
+        mDeviceHandler.post(mCallOnUnconfigured);
+      }
+    }
+  }
+  return success;
+}

@@ -1,0 +1,65 @@
+{
+  Intent intent=target.intent;
+  ActivityInfo info=target.info;
+  ComponentName cls=intent.getComponent();
+  if (info.targetActivity != null) {
+    cls=new ComponentName(info.packageName,info.targetActivity);
+  }
+  final int userId=UserHandle.getUserId(info.applicationInfo.uid);
+  boolean isDocument=intent != null & intent.isDocument();
+  Uri documentData=isDocument ? intent.getData() : null;
+  if (DEBUG_TASKS)   Slog.d(TAG,"Looking for task of " + target + " in "+ this);
+  for (int taskNdx=mTaskHistory.size() - 1; taskNdx >= 0; --taskNdx) {
+    final TaskRecord task=mTaskHistory.get(taskNdx);
+    if (task.voiceSession != null) {
+      if (DEBUG_TASKS)       Slog.d(TAG,"Skipping " + task + ": voice session");
+      continue;
+    }
+    if (task.userId != userId) {
+      if (DEBUG_TASKS)       Slog.d(TAG,"Skipping " + task + ": different user");
+      continue;
+    }
+    final ActivityRecord r=task.getTopActivity();
+    if (r == null || r.finishing || r.userId != userId || r.launchMode == ActivityInfo.LAUNCH_SINGLE_INSTANCE) {
+      if (DEBUG_TASKS)       Slog.d(TAG,"Skipping " + task + ": mismatch root "+ r);
+      continue;
+    }
+    final Intent taskIntent=task.intent;
+    final Intent affinityIntent=task.affinityIntent;
+    final boolean taskIsDocument;
+    final Uri taskDocumentData;
+    if (taskIntent != null && taskIntent.isDocument()) {
+      taskIsDocument=true;
+      taskDocumentData=taskIntent.getData();
+    }
+ else     if (affinityIntent != null && affinityIntent.isDocument()) {
+      taskIsDocument=true;
+      taskDocumentData=affinityIntent.getData();
+    }
+ else {
+      taskIsDocument=false;
+      taskDocumentData=null;
+    }
+    if (DEBUG_TASKS)     Slog.d(TAG,"Comparing existing cls=" + taskIntent.getComponent().flattenToShortString() + "/aff="+ r.task.rootAffinity+ " to new cls="+ intent.getComponent().flattenToShortString()+ "/aff="+ info.taskAffinity);
+    if (!isDocument && !taskIsDocument && task.rootAffinity != null) {
+      if (task.rootAffinity.equals(target.taskAffinity)) {
+        if (DEBUG_TASKS)         Slog.d(TAG,"Found matching affinity!");
+        return r;
+      }
+    }
+ else     if (taskIntent != null && taskIntent.getComponent() != null && taskIntent.getComponent().compareTo(cls) == 0 && Objects.equals(documentData,taskDocumentData)) {
+      if (DEBUG_TASKS)       Slog.d(TAG,"Found matching class!");
+      if (DEBUG_TASKS)       Slog.d(TAG,"For Intent " + intent + " bringing to top: "+ r.intent);
+      return r;
+    }
+ else     if (affinityIntent != null && affinityIntent.getComponent() != null && affinityIntent.getComponent().compareTo(cls) == 0 && Objects.equals(documentData,taskDocumentData)) {
+      if (DEBUG_TASKS)       Slog.d(TAG,"Found matching class!");
+      if (DEBUG_TASKS)       Slog.d(TAG,"For Intent " + intent + " bringing to top: "+ r.intent);
+      return r;
+    }
+ else     if (DEBUG_TASKS) {
+      Slog.d(TAG,"Not a match: " + task);
+    }
+  }
+  return null;
+}

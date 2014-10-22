@@ -1,6 +1,7 @@
 {
   String action=intent.getAction();
-  int device;
+  int outDevice;
+  int inDevice;
   int state;
   if (action.equals(Intent.ACTION_DOCK_EVENT)) {
     int dockState=intent.getIntExtra(Intent.EXTRA_DOCK_STATE,Intent.EXTRA_DOCK_STATE_UNDOCKED);
@@ -29,7 +30,8 @@ mDockState=dockState;
 }
  else if (action.equals(BluetoothHeadset.ACTION_CONNECTION_STATE_CHANGED)) {
 state=intent.getIntExtra(BluetoothProfile.EXTRA_STATE,BluetoothProfile.STATE_DISCONNECTED);
-device=AudioSystem.DEVICE_OUT_BLUETOOTH_SCO;
+outDevice=AudioSystem.DEVICE_OUT_BLUETOOTH_SCO;
+inDevice=AudioSystem.DEVICE_IN_BLUETOOTH_SCO_HEADSET;
 String address=null;
 BluetoothDevice btDevice=intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
 if (btDevice == null) {
@@ -41,10 +43,10 @@ if (btClass != null) {
 switch (btClass.getDeviceClass()) {
 case BluetoothClass.Device.AUDIO_VIDEO_WEARABLE_HEADSET:
 case BluetoothClass.Device.AUDIO_VIDEO_HANDSFREE:
-device=AudioSystem.DEVICE_OUT_BLUETOOTH_SCO_HEADSET;
+outDevice=AudioSystem.DEVICE_OUT_BLUETOOTH_SCO_HEADSET;
 break;
 case BluetoothClass.Device.AUDIO_VIDEO_CAR_AUDIO:
-device=AudioSystem.DEVICE_OUT_BLUETOOTH_SCO_CARKIT;
+outDevice=AudioSystem.DEVICE_OUT_BLUETOOTH_SCO_CARKIT;
 break;
 }
 }
@@ -52,7 +54,8 @@ if (!BluetoothAdapter.checkBluetoothAddress(address)) {
 address="";
 }
 boolean connected=(state == BluetoothProfile.STATE_CONNECTED);
-if (handleDeviceConnection(connected,device,address)) {
+boolean success=handleDeviceConnection(connected,outDevice,address) && handleDeviceConnection(connected,inDevice,address);
+if (success) {
 synchronized (mScoClients) {
 if (connected) {
 mBluetoothHeadsetDevice=btDevice;
@@ -64,14 +67,34 @@ resetBluetoothSco();
 }
 }
 }
- else if (action.equals(Intent.ACTION_USB_AUDIO_ACCESSORY_PLUG) || action.equals(Intent.ACTION_USB_AUDIO_DEVICE_PLUG)) {
+ else if (action.equals(AudioManager.ACTION_USB_AUDIO_ACCESSORY_PLUG)) {
 state=intent.getIntExtra("state",0);
 int alsaCard=intent.getIntExtra("card",-1);
 int alsaDevice=intent.getIntExtra("device",-1);
 String params=(alsaCard == -1 && alsaDevice == -1 ? "" : "card=" + alsaCard + ";device="+ alsaDevice);
-device=action.equals(Intent.ACTION_USB_AUDIO_ACCESSORY_PLUG) ? AudioSystem.DEVICE_OUT_USB_ACCESSORY : AudioSystem.DEVICE_OUT_USB_DEVICE;
-Log.v(TAG,"Broadcast Receiver: Got " + (action.equals(Intent.ACTION_USB_AUDIO_ACCESSORY_PLUG) ? "ACTION_USB_AUDIO_ACCESSORY_PLUG" : "ACTION_USB_AUDIO_DEVICE_PLUG") + ", state = "+ state+ ", card: "+ alsaCard+ ", device: "+ alsaDevice);
-setWiredDeviceConnectionState(device,state,params);
+outDevice=AudioSystem.DEVICE_OUT_USB_ACCESSORY;
+setWiredDeviceConnectionState(outDevice,state,params);
+}
+ else if (action.equals(AudioManager.ACTION_USB_AUDIO_DEVICE_PLUG)) {
+int isDisabled=Settings.Secure.getInt(mContentResolver,Settings.Secure.USB_AUDIO_AUTOMATIC_ROUTING_DISABLED,0);
+if (isDisabled != 0) {
+return;
+}
+state=intent.getIntExtra("state",0);
+int alsaCard=intent.getIntExtra("card",-1);
+int alsaDevice=intent.getIntExtra("device",-1);
+boolean hasPlayback=intent.getBooleanExtra("hasPlayback",false);
+boolean hasCapture=intent.getBooleanExtra("hasCapture",false);
+boolean hasMIDI=intent.getBooleanExtra("hasMIDI",false);
+String params=(alsaCard == -1 && alsaDevice == -1 ? "" : "card=" + alsaCard + ";device="+ alsaDevice);
+if (hasPlayback) {
+outDevice=AudioSystem.DEVICE_OUT_USB_DEVICE;
+setWiredDeviceConnectionState(outDevice,state,params);
+}
+if (hasCapture) {
+inDevice=AudioSystem.DEVICE_IN_USB_DEVICE;
+setWiredDeviceConnectionState(inDevice,state,params);
+}
 }
  else if (action.equals(BluetoothHeadset.ACTION_AUDIO_STATE_CHANGED)) {
 boolean broadcast=false;
@@ -108,22 +131,6 @@ Intent newIntent=new Intent(AudioManager.ACTION_SCO_AUDIO_STATE_CHANGED);
 newIntent.putExtra(AudioManager.EXTRA_SCO_AUDIO_STATE,scoAudioState);
 sendStickyBroadcastToAll(newIntent);
 }
-}
- else if (action.equals(Intent.ACTION_BOOT_COMPLETED)) {
-mBootCompleted=true;
-sendMsg(mAudioHandler,MSG_LOAD_SOUND_EFFECTS,SENDMSG_QUEUE,0,0,null,0);
-mKeyguardManager=(KeyguardManager)mContext.getSystemService(Context.KEYGUARD_SERVICE);
-mScoConnectionState=AudioManager.SCO_AUDIO_STATE_ERROR;
-resetBluetoothSco();
-getBluetoothHeadset();
-Intent newIntent=new Intent(AudioManager.ACTION_SCO_AUDIO_STATE_CHANGED);
-newIntent.putExtra(AudioManager.EXTRA_SCO_AUDIO_STATE,AudioManager.SCO_AUDIO_STATE_DISCONNECTED);
-sendStickyBroadcastToAll(newIntent);
-BluetoothAdapter adapter=BluetoothAdapter.getDefaultAdapter();
-if (adapter != null) {
-adapter.getProfileProxy(mContext,mBluetoothProfileServiceListener,BluetoothProfile.A2DP);
-}
-sendMsg(mAudioHandler,MSG_CONFIGURE_SAFE_MEDIA_VOLUME_FORCED,SENDMSG_REPLACE,0,0,null,SAFE_VOLUME_CONFIGURE_TIMEOUT_MS);
 }
  else if (action.equals(Intent.ACTION_SCREEN_ON)) {
 if (mMonitorRotation) {

@@ -1,0 +1,76 @@
+{
+  UserState userState=getUserStateLocked(userId);
+  userState.packageSet.clear();
+  if (DEBUG)   Slog.d(TAG,"buildTvInputList");
+  PackageManager pm=mContext.getPackageManager();
+  List<ResolveInfo> services=pm.queryIntentServices(new Intent(TvInputService.SERVICE_INTERFACE),PackageManager.GET_SERVICES | PackageManager.GET_META_DATA);
+  List<TvInputInfo> inputList=new ArrayList<TvInputInfo>();
+  for (  ResolveInfo ri : services) {
+    ServiceInfo si=ri.serviceInfo;
+    if (!android.Manifest.permission.BIND_TV_INPUT.equals(si.permission)) {
+      Slog.w(TAG,"Skipping TV input " + si.name + ": it does not require the permission "+ android.Manifest.permission.BIND_TV_INPUT);
+      continue;
+    }
+    ComponentName component=new ComponentName(si.packageName,si.name);
+    if (hasHardwarePermission(pm,component)) {
+      ServiceState serviceState=userState.serviceStateMap.get(component);
+      if (serviceState == null) {
+        serviceState=new ServiceState(component,userId);
+        userState.serviceStateMap.put(component,serviceState);
+        updateServiceConnectionLocked(component,userId);
+      }
+ else {
+        inputList.addAll(serviceState.inputList);
+      }
+    }
+ else {
+      try {
+        inputList.add(TvInputInfo.createTvInputInfo(mContext,ri));
+      }
+ catch (      XmlPullParserException|IOException e) {
+        Slog.e(TAG,"failed to load TV input " + si.name,e);
+        continue;
+      }
+    }
+    userState.packageSet.add(si.packageName);
+  }
+  Map<String,TvInputState> inputMap=new HashMap<String,TvInputState>();
+  for (  TvInputInfo info : inputList) {
+    if (DEBUG) {
+      Slog.d(TAG,"add " + info.getId());
+    }
+    TvInputState state=userState.inputMap.get(info.getId());
+    if (state == null) {
+      state=new TvInputState();
+    }
+    state.info=info;
+    inputMap.put(info.getId(),state);
+  }
+  for (  String inputId : inputMap.keySet()) {
+    if (!userState.inputMap.containsKey(inputId)) {
+      notifyInputAddedLocked(userState,inputId);
+    }
+ else     if (updatedPackages != null) {
+      ComponentName component=inputMap.get(inputId).info.getComponent();
+      for (      String updatedPackage : updatedPackages) {
+        if (component.getPackageName().equals(updatedPackage)) {
+          updateServiceConnectionLocked(component,userId);
+          notifyInputUpdatedLocked(userState,inputId);
+          break;
+        }
+      }
+    }
+  }
+  for (  String inputId : userState.inputMap.keySet()) {
+    if (!inputMap.containsKey(inputId)) {
+      TvInputInfo info=userState.inputMap.get(inputId).info;
+      ServiceState serviceState=userState.serviceStateMap.get(info.getComponent());
+      if (serviceState != null) {
+        abortPendingCreateSessionRequestsLocked(serviceState,inputId,userId);
+      }
+      notifyInputRemovedLocked(userState,inputId);
+    }
+  }
+  userState.inputMap.clear();
+  userState.inputMap=inputMap;
+}

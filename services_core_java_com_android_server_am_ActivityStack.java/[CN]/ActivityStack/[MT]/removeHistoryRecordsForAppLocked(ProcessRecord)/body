@@ -1,0 +1,60 @@
+{
+  removeHistoryRecordsForAppLocked(mLRUActivities,app,"mLRUActivities");
+  removeHistoryRecordsForAppLocked(mStackSupervisor.mStoppingActivities,app,"mStoppingActivities");
+  removeHistoryRecordsForAppLocked(mStackSupervisor.mGoingToSleepActivities,app,"mGoingToSleepActivities");
+  removeHistoryRecordsForAppLocked(mStackSupervisor.mWaitingVisibleActivities,app,"mWaitingVisibleActivities");
+  removeHistoryRecordsForAppLocked(mStackSupervisor.mFinishingActivities,app,"mFinishingActivities");
+  boolean hasVisibleActivities=false;
+  int i=numActivities();
+  if (DEBUG_CLEANUP)   Slog.v(TAG,"Removing app " + app + " from history with "+ i+ " entries");
+  for (int taskNdx=mTaskHistory.size() - 1; taskNdx >= 0; --taskNdx) {
+    final ArrayList<ActivityRecord> activities=mTaskHistory.get(taskNdx).mActivities;
+    for (int activityNdx=activities.size() - 1; activityNdx >= 0; --activityNdx) {
+      final ActivityRecord r=activities.get(activityNdx);
+      --i;
+      if (DEBUG_CLEANUP)       Slog.v(TAG,"Record #" + i + " "+ r+ ": app="+ r.app);
+      if (r.app == app) {
+        boolean remove;
+        if ((!r.haveState && !r.stateNotNeeded) || r.finishing) {
+          remove=true;
+        }
+ else         if (r.launchCount > 2 && r.lastLaunchTime > (SystemClock.uptimeMillis() - 60000)) {
+          remove=true;
+        }
+ else {
+          remove=false;
+        }
+        if (remove) {
+          if (DEBUG_ADD_REMOVE || DEBUG_CLEANUP) {
+            RuntimeException here=new RuntimeException("here");
+            here.fillInStackTrace();
+            Slog.i(TAG,"Removing activity " + r + " from stack at "+ i+ ": haveState="+ r.haveState+ " stateNotNeeded="+ r.stateNotNeeded+ " finishing="+ r.finishing+ " state="+ r.state,here);
+          }
+          if (!r.finishing) {
+            Slog.w(TAG,"Force removing " + r + ": app died, no saved state");
+            EventLog.writeEvent(EventLogTags.AM_FINISH_ACTIVITY,r.userId,System.identityHashCode(r),r.task.taskId,r.shortComponentName,"proc died without state saved");
+            if (r.state == ActivityState.RESUMED) {
+              mService.updateUsageStats(r,false);
+            }
+          }
+          removeActivityFromHistoryLocked(r);
+        }
+ else {
+          if (localLOGV)           Slog.v(TAG,"Keeping entry, setting app to null");
+          if (r.visible) {
+            hasVisibleActivities=true;
+          }
+          if (DEBUG_APP)           Slog.v(TAG,"Clearing app during removeHistory for activity " + r);
+          r.app=null;
+          r.nowVisible=false;
+          if (!r.haveState) {
+            if (DEBUG_SAVED_STATE)             Slog.i(TAG,"App died, clearing saved state of " + r);
+            r.icicle=null;
+          }
+        }
+        cleanUpActivityLocked(r,true,true);
+      }
+    }
+  }
+  return hasVisibleActivities;
+}

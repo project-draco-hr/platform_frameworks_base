@@ -1,0 +1,66 @@
+{
+  NetworkAgentInfo nai=mNetworkAgentInfos.get(msg.replyTo);
+  if (nai != null) {
+    if (DBG) {
+      log(nai.name() + " got DISCONNECTED, was satisfying " + nai.networkRequests.size());
+    }
+    if (nai.created) {
+      try {
+        mNetd.removeNetwork(nai.network.netId);
+      }
+ catch (      Exception e) {
+        loge("Exception removing network: " + e);
+      }
+    }
+    if (nai.networkInfo.isConnected()) {
+      nai.networkInfo.setDetailedState(NetworkInfo.DetailedState.DISCONNECTED,null,null);
+    }
+    if (isDefaultNetwork(nai)) {
+      mDefaultInetConditionPublished=0;
+    }
+    notifyNetworkCallbacks(nai,ConnectivityManager.CALLBACK_LOST);
+    nai.networkMonitor.sendMessage(NetworkMonitor.CMD_NETWORK_DISCONNECTED);
+    mNetworkAgentInfos.remove(msg.replyTo);
+    updateClat(null,nai.linkProperties,nai);
+    mLegacyTypeTracker.remove(nai);
+synchronized (mNetworkForNetId) {
+      mNetworkForNetId.remove(nai.network.netId);
+    }
+    final ArrayList<NetworkAgentInfo> toActivate=new ArrayList<NetworkAgentInfo>();
+    for (int i=0; i < nai.networkRequests.size(); i++) {
+      NetworkRequest request=nai.networkRequests.valueAt(i);
+      NetworkAgentInfo currentNetwork=mNetworkForRequestId.get(request.requestId);
+      if (currentNetwork != null && currentNetwork.network.netId == nai.network.netId) {
+        if (DBG) {
+          log("Checking for replacement network to handle request " + request);
+        }
+        mNetworkForRequestId.remove(request.requestId);
+        sendUpdatedScoreToFactories(request,0);
+        NetworkAgentInfo alternative=null;
+        for (        Map.Entry entry : mNetworkAgentInfos.entrySet()) {
+          NetworkAgentInfo existing=(NetworkAgentInfo)entry.getValue();
+          if (existing.networkInfo.isConnected() && request.networkCapabilities.satisfiedByNetworkCapabilities(existing.networkCapabilities) && (alternative == null || alternative.getCurrentScore() < existing.getCurrentScore())) {
+            alternative=existing;
+          }
+        }
+        if (alternative != null) {
+          if (DBG)           log(" found replacement in " + alternative.name());
+          if (!toActivate.contains(alternative)) {
+            toActivate.add(alternative);
+          }
+        }
+      }
+    }
+    if (nai.networkRequests.get(mDefaultRequest.requestId) != null) {
+      removeDataActivityTracking(nai);
+      mActiveDefaultNetwork=ConnectivityManager.TYPE_NONE;
+      notifyLockdownVpn(nai);
+      requestNetworkTransitionWakelock(nai.name());
+    }
+    for (    NetworkAgentInfo networkToActivate : toActivate) {
+      networkToActivate.networkLingered.clear();
+      networkToActivate.networkMonitor.sendMessage(NetworkMonitor.CMD_NETWORK_CONNECTED);
+      rematchNetworkAndRequests(networkToActivate,false);
+    }
+  }
+}

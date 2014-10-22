@@ -1,0 +1,101 @@
+{
+switch (msg.what) {
+case OBB_RUN_ACTION:
+{
+      final ObbAction action=(ObbAction)msg.obj;
+      if (DEBUG_OBB)       Slog.i(TAG,"OBB_RUN_ACTION: " + action.toString());
+      if (!mBound) {
+        if (!connectToService()) {
+          Slog.e(TAG,"Failed to bind to media container service");
+          action.handleError();
+          return;
+        }
+      }
+      mActions.add(action);
+      break;
+    }
+case OBB_MCS_BOUND:
+{
+    if (DEBUG_OBB)     Slog.i(TAG,"OBB_MCS_BOUND");
+    if (msg.obj != null) {
+      mContainerService=(IMediaContainerService)msg.obj;
+    }
+    if (mContainerService == null) {
+      Slog.e(TAG,"Cannot bind to media container service");
+      for (      ObbAction action : mActions) {
+        action.handleError();
+      }
+      mActions.clear();
+    }
+ else     if (mActions.size() > 0) {
+      final ObbAction action=mActions.get(0);
+      if (action != null) {
+        action.execute(this);
+      }
+    }
+ else {
+      Slog.w(TAG,"Empty queue");
+    }
+    break;
+  }
+case OBB_MCS_RECONNECT:
+{
+  if (DEBUG_OBB)   Slog.i(TAG,"OBB_MCS_RECONNECT");
+  if (mActions.size() > 0) {
+    if (mBound) {
+      disconnectService();
+    }
+    if (!connectToService()) {
+      Slog.e(TAG,"Failed to bind to media container service");
+      for (      ObbAction action : mActions) {
+        action.handleError();
+      }
+      mActions.clear();
+    }
+  }
+  break;
+}
+case OBB_MCS_UNBIND:
+{
+if (DEBUG_OBB) Slog.i(TAG,"OBB_MCS_UNBIND");
+if (mActions.size() > 0) {
+  mActions.remove(0);
+}
+if (mActions.size() == 0) {
+  if (mBound) {
+    disconnectService();
+  }
+}
+ else {
+  mObbActionHandler.sendEmptyMessage(OBB_MCS_BOUND);
+}
+break;
+}
+case OBB_FLUSH_MOUNT_STATE:
+{
+final String path=(String)msg.obj;
+if (DEBUG_OBB) Slog.i(TAG,"Flushing all OBB state for path " + path);
+synchronized (mObbMounts) {
+final List<ObbState> obbStatesToRemove=new LinkedList<ObbState>();
+final Iterator<ObbState> i=mObbPathToStateMap.values().iterator();
+while (i.hasNext()) {
+  final ObbState state=i.next();
+  if (state.canonicalPath.startsWith(path)) {
+    obbStatesToRemove.add(state);
+  }
+}
+for (final ObbState obbState : obbStatesToRemove) {
+  if (DEBUG_OBB)   Slog.i(TAG,"Removing state for " + obbState.rawPath);
+  removeObbStateLocked(obbState);
+  try {
+    obbState.token.onObbResult(obbState.rawPath,obbState.nonce,OnObbStateChangeListener.UNMOUNTED);
+  }
+ catch (  RemoteException e) {
+    Slog.i(TAG,"Couldn't send unmount notification for  OBB: " + obbState.rawPath);
+  }
+}
+}
+break;
+}
+}
+}

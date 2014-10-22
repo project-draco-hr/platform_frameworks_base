@@ -1,0 +1,103 @@
+{
+  if (DEBUG_EVENTS) {
+    StringBuilder builder=new StringBuilder();
+    builder.append("onEvent::");
+    builder.append(" raw= " + raw);
+    if (cooked != null) {
+      builder.append(" cooked = ");
+      for (      String str : cooked) {
+        builder.append(" " + str);
+      }
+    }
+    Slog.i(TAG,builder.toString());
+  }
+  if (code == VoldResponseCode.VolumeStateChange) {
+    notifyVolumeStateChange(cooked[2],cooked[3],Integer.parseInt(cooked[7]),Integer.parseInt(cooked[10]));
+  }
+ else   if (code == VoldResponseCode.VolumeUuidChange) {
+    final String path=cooked[2];
+    final String uuid=(cooked.length > 3) ? cooked[3] : null;
+    final StorageVolume vol=mVolumesByPath.get(path);
+    if (vol != null) {
+      vol.setUuid(uuid);
+    }
+  }
+ else   if (code == VoldResponseCode.VolumeUserLabelChange) {
+    final String path=cooked[2];
+    final String userLabel=(cooked.length > 3) ? cooked[3] : null;
+    final StorageVolume vol=mVolumesByPath.get(path);
+    if (vol != null) {
+      vol.setUserLabel(userLabel);
+    }
+  }
+ else   if ((code == VoldResponseCode.VolumeDiskInserted) || (code == VoldResponseCode.VolumeDiskRemoved) || (code == VoldResponseCode.VolumeBadRemoval)) {
+    String action=null;
+    final String label=cooked[2];
+    final String path=cooked[3];
+    int major=-1;
+    int minor=-1;
+    try {
+      String devComp=cooked[6].substring(1,cooked[6].length() - 1);
+      String[] devTok=devComp.split(":");
+      major=Integer.parseInt(devTok[0]);
+      minor=Integer.parseInt(devTok[1]);
+    }
+ catch (    Exception ex) {
+      Slog.e(TAG,"Failed to parse major/minor",ex);
+    }
+    final StorageVolume volume;
+    final String state;
+synchronized (mVolumesLock) {
+      volume=mVolumesByPath.get(path);
+      state=mVolumeStates.get(path);
+    }
+    if (code == VoldResponseCode.VolumeDiskInserted) {
+      new Thread("MountService#VolumeDiskInserted"){
+        @Override public void run(){
+          try {
+            int rc;
+            if ((rc=doMountVolume(path)) != StorageResultCode.OperationSucceeded) {
+              Slog.w(TAG,String.format("Insertion mount failed (%d)",rc));
+            }
+          }
+ catch (          Exception ex) {
+            Slog.w(TAG,"Failed to mount media on insertion",ex);
+          }
+        }
+      }
+.start();
+    }
+ else     if (code == VoldResponseCode.VolumeDiskRemoved) {
+      if (getVolumeState(path).equals(Environment.MEDIA_BAD_REMOVAL)) {
+        return true;
+      }
+      if (DEBUG_EVENTS)       Slog.i(TAG,"Sending unmounted event first");
+      updatePublicVolumeState(volume,Environment.MEDIA_UNMOUNTED);
+      sendStorageIntent(Intent.ACTION_MEDIA_UNMOUNTED,volume,UserHandle.ALL);
+      if (DEBUG_EVENTS)       Slog.i(TAG,"Sending media removed");
+      updatePublicVolumeState(volume,Environment.MEDIA_REMOVED);
+      action=Intent.ACTION_MEDIA_REMOVED;
+    }
+ else     if (code == VoldResponseCode.VolumeBadRemoval) {
+      if (DEBUG_EVENTS)       Slog.i(TAG,"Sending unmounted event first");
+      updatePublicVolumeState(volume,Environment.MEDIA_UNMOUNTED);
+      sendStorageIntent(Intent.ACTION_MEDIA_UNMOUNTED,volume,UserHandle.ALL);
+      if (DEBUG_EVENTS)       Slog.i(TAG,"Sending media bad removal");
+      updatePublicVolumeState(volume,Environment.MEDIA_BAD_REMOVAL);
+      action=Intent.ACTION_MEDIA_BAD_REMOVAL;
+    }
+ else     if (code == VoldResponseCode.FstrimCompleted) {
+      EventLogTags.writeFstrimFinish(SystemClock.elapsedRealtime());
+    }
+ else {
+      Slog.e(TAG,String.format("Unknown code {%d}",code));
+    }
+    if (action != null) {
+      sendStorageIntent(action,volume,UserHandle.ALL);
+    }
+  }
+ else {
+    return false;
+  }
+  return true;
+}

@@ -1,0 +1,58 @@
+{
+  NetworkInfo.State state=newInfo.getState();
+  NetworkInfo oldInfo=null;
+synchronized (networkAgent) {
+    oldInfo=networkAgent.networkInfo;
+    networkAgent.networkInfo=newInfo;
+  }
+  notifyLockdownVpn(networkAgent);
+  if (oldInfo != null && oldInfo.getState() == state) {
+    if (VDBG)     log("ignoring duplicate network state non-change");
+    return;
+  }
+  if (DBG) {
+    log(networkAgent.name() + " EVENT_NETWORK_INFO_CHANGED, going from " + (oldInfo == null ? "null" : oldInfo.getState())+ " to "+ state);
+  }
+  if (state == NetworkInfo.State.CONNECTED && !networkAgent.created) {
+    try {
+      if (networkAgent.isVPN()) {
+        mNetd.createVirtualNetwork(networkAgent.network.netId,!networkAgent.linkProperties.getDnsServers().isEmpty(),(networkAgent.networkMisc == null || !networkAgent.networkMisc.allowBypass));
+      }
+ else {
+        mNetd.createPhysicalNetwork(networkAgent.network.netId);
+      }
+    }
+ catch (    Exception e) {
+      loge("Error creating network " + networkAgent.network.netId + ": "+ e.getMessage());
+      return;
+    }
+    networkAgent.created=true;
+    updateLinkProperties(networkAgent,null);
+    notifyNetworkCallbacks(networkAgent,ConnectivityManager.CALLBACK_PRECHECK);
+    networkAgent.networkMonitor.sendMessage(NetworkMonitor.CMD_NETWORK_CONNECTED);
+    if (networkAgent.isVPN()) {
+synchronized (mProxyLock) {
+        if (!mDefaultProxyDisabled) {
+          mDefaultProxyDisabled=true;
+          if (mGlobalProxy == null && mDefaultProxy != null) {
+            sendProxyBroadcast(null);
+          }
+        }
+      }
+    }
+    rematchNetworkAndRequests(networkAgent,false);
+  }
+ else   if (state == NetworkInfo.State.DISCONNECTED || state == NetworkInfo.State.SUSPENDED) {
+    networkAgent.asyncChannel.disconnect();
+    if (networkAgent.isVPN()) {
+synchronized (mProxyLock) {
+        if (mDefaultProxyDisabled) {
+          mDefaultProxyDisabled=false;
+          if (mGlobalProxy == null && mDefaultProxy != null) {
+            sendProxyBroadcast(mDefaultProxy);
+          }
+        }
+      }
+    }
+  }
+}

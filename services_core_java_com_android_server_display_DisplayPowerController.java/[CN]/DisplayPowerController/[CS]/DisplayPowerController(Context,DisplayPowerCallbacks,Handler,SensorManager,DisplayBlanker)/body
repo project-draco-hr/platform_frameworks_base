@@ -1,0 +1,52 @@
+{
+  mHandler=new DisplayControllerHandler(handler.getLooper());
+  mCallbacks=callbacks;
+  mBatteryStats=BatteryStatsService.getService();
+  mLights=LocalServices.getService(LightsManager.class);
+  mSensorManager=sensorManager;
+  mWindowManagerPolicy=LocalServices.getService(WindowManagerPolicy.class);
+  mBlanker=blanker;
+  mContext=context;
+  final Resources resources=context.getResources();
+  final int screenBrightnessSettingMinimum=clampAbsoluteBrightness(resources.getInteger(com.android.internal.R.integer.config_screenBrightnessSettingMinimum));
+  mScreenBrightnessDozeConfig=clampAbsoluteBrightness(resources.getInteger(com.android.internal.R.integer.config_screenBrightnessDoze));
+  mScreenBrightnessDimConfig=clampAbsoluteBrightness(resources.getInteger(com.android.internal.R.integer.config_screenBrightnessDim));
+  mScreenBrightnessDarkConfig=clampAbsoluteBrightness(resources.getInteger(com.android.internal.R.integer.config_screenBrightnessDark));
+  if (mScreenBrightnessDarkConfig > mScreenBrightnessDimConfig) {
+    Slog.w(TAG,"Expected config_screenBrightnessDark (" + mScreenBrightnessDarkConfig + ") to be less than or equal to "+ "config_screenBrightnessDim ("+ mScreenBrightnessDimConfig+ ").");
+  }
+  if (mScreenBrightnessDarkConfig > mScreenBrightnessDimConfig) {
+    Slog.w(TAG,"Expected config_screenBrightnessDark (" + mScreenBrightnessDarkConfig + ") to be less than or equal to "+ "config_screenBrightnessSettingMinimum ("+ screenBrightnessSettingMinimum+ ").");
+  }
+  int screenBrightnessRangeMinimum=Math.min(Math.min(screenBrightnessSettingMinimum,mScreenBrightnessDimConfig),mScreenBrightnessDarkConfig);
+  mScreenBrightnessRangeMaximum=PowerManager.BRIGHTNESS_ON;
+  mUseSoftwareAutoBrightnessConfig=resources.getBoolean(com.android.internal.R.bool.config_automatic_brightness_available);
+  if (mUseSoftwareAutoBrightnessConfig) {
+    int[] lux=resources.getIntArray(com.android.internal.R.array.config_autoBrightnessLevels);
+    int[] screenBrightness=resources.getIntArray(com.android.internal.R.array.config_autoBrightnessLcdBacklightValues);
+    int lightSensorWarmUpTimeConfig=resources.getInteger(com.android.internal.R.integer.config_lightSensorWarmupTime);
+    Spline screenAutoBrightnessSpline=createAutoBrightnessSpline(lux,screenBrightness);
+    if (screenAutoBrightnessSpline == null) {
+      Slog.e(TAG,"Error in config.xml.  config_autoBrightnessLcdBacklightValues " + "(size " + screenBrightness.length + ") "+ "must be monotic and have exactly one more entry than "+ "config_autoBrightnessLevels (size "+ lux.length+ ") "+ "which must be strictly increasing.  "+ "Auto-brightness will be disabled.");
+      mUseSoftwareAutoBrightnessConfig=false;
+    }
+ else {
+      int bottom=clampAbsoluteBrightness(screenBrightness[0]);
+      if (mScreenBrightnessDarkConfig > bottom) {
+        Slog.w(TAG,"config_screenBrightnessDark (" + mScreenBrightnessDarkConfig + ") should be less than or equal to the first value of "+ "config_autoBrightnessLcdBacklightValues ("+ bottom+ ").");
+      }
+      if (bottom < screenBrightnessRangeMinimum) {
+        screenBrightnessRangeMinimum=bottom;
+      }
+      mAutomaticBrightnessController=new AutomaticBrightnessController(this,handler.getLooper(),sensorManager,screenAutoBrightnessSpline,lightSensorWarmUpTimeConfig,screenBrightnessRangeMinimum,mScreenBrightnessRangeMaximum);
+    }
+  }
+  mScreenBrightnessRangeMinimum=screenBrightnessRangeMinimum;
+  mColorFadeFadesConfig=resources.getBoolean(com.android.internal.R.bool.config_animateScreenLights);
+  if (!DEBUG_PRETEND_PROXIMITY_SENSOR_ABSENT) {
+    mProximitySensor=mSensorManager.getDefaultSensor(Sensor.TYPE_PROXIMITY);
+    if (mProximitySensor != null) {
+      mProximityThreshold=Math.min(mProximitySensor.getMaximumRange(),TYPICAL_PROXIMITY_THRESHOLD);
+    }
+  }
+}

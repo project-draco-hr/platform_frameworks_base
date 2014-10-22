@@ -1,0 +1,86 @@
+{
+  mPackageName=null;
+  mVersionCode=-1;
+  mSignatures=null;
+  mResolvedBaseFile=null;
+  mResolvedStagedFiles.clear();
+  mResolvedInheritedFiles.clear();
+  final File[] files=mResolvedStageDir.listFiles();
+  if (ArrayUtils.isEmpty(files)) {
+    throw new PackageManagerException(INSTALL_FAILED_INVALID_APK,"No packages staged");
+  }
+  final ArraySet<String> stagedSplits=new ArraySet<>();
+  for (  File file : files) {
+    if (file.isDirectory())     continue;
+    final ApkLite apk;
+    try {
+      apk=PackageParser.parseApkLite(file,PackageParser.PARSE_COLLECT_CERTIFICATES);
+    }
+ catch (    PackageParserException e) {
+      throw PackageManagerException.from(e);
+    }
+    if (!stagedSplits.add(apk.splitName)) {
+      throw new PackageManagerException(INSTALL_FAILED_INVALID_APK,"Split " + apk.splitName + " was defined multiple times");
+    }
+    if (mPackageName == null) {
+      mPackageName=apk.packageName;
+      mVersionCode=apk.versionCode;
+    }
+    if (mSignatures == null) {
+      mSignatures=apk.signatures;
+    }
+    assertApkConsistent(String.valueOf(file),apk);
+    final String targetName;
+    if (apk.splitName == null) {
+      targetName="base.apk";
+    }
+ else {
+      targetName="split_" + apk.splitName + ".apk";
+    }
+    if (!FileUtils.isValidExtFilename(targetName)) {
+      throw new PackageManagerException(INSTALL_FAILED_INVALID_APK,"Invalid filename: " + targetName);
+    }
+    final File targetFile=new File(mResolvedStageDir,targetName);
+    if (!file.equals(targetFile)) {
+      file.renameTo(targetFile);
+    }
+    if (apk.splitName == null) {
+      mResolvedBaseFile=targetFile;
+    }
+    mResolvedStagedFiles.add(targetFile);
+  }
+  if (params.mode == SessionParams.MODE_FULL_INSTALL) {
+    if (!stagedSplits.contains(null)) {
+      throw new PackageManagerException(INSTALL_FAILED_INVALID_APK,"Full install must include a base package");
+    }
+  }
+ else {
+    final ApplicationInfo app=mPm.getApplicationInfo(mPackageName,0,userId);
+    if (app == null) {
+      throw new PackageManagerException(INSTALL_FAILED_INVALID_APK,"Missing existing base package for " + mPackageName);
+    }
+    final PackageLite existing;
+    final ApkLite existingBase;
+    try {
+      existing=PackageParser.parsePackageLite(new File(app.getCodePath()),0);
+      existingBase=PackageParser.parseApkLite(new File(app.getBaseCodePath()),PackageParser.PARSE_COLLECT_CERTIFICATES);
+    }
+ catch (    PackageParserException e) {
+      throw PackageManagerException.from(e);
+    }
+    assertApkConsistent("Existing base",existingBase);
+    if (mResolvedBaseFile == null) {
+      mResolvedBaseFile=new File(app.getBaseCodePath());
+      mResolvedInheritedFiles.add(mResolvedBaseFile);
+    }
+    if (!ArrayUtils.isEmpty(existing.splitNames)) {
+      for (int i=0; i < existing.splitNames.length; i++) {
+        final String splitName=existing.splitNames[i];
+        final File splitFile=new File(existing.splitCodePaths[i]);
+        if (!stagedSplits.contains(splitName)) {
+          mResolvedInheritedFiles.add(splitFile);
+        }
+      }
+    }
+  }
+}

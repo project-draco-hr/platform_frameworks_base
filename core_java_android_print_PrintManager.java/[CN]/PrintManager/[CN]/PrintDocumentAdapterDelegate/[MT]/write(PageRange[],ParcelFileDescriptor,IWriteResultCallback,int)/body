@@ -1,29 +1,23 @@
 {
-  final boolean destroyed;
-synchronized (mLock) {
-    destroyed=mDestroyed;
-    if (mStartReqeusted && !mFinishRequested && !mDestroyed) {
-      if (mLastWriteSpec != null) {
-        IoUtils.closeQuietly(mLastWriteSpec.fd);
-        mLastWriteSpec=null;
-      }
-      mLastWriteSpec=new WriteSpec();
-      mLastWriteSpec.callback=callback;
-      mLastWriteSpec.pages=pages;
-      mLastWriteSpec.fd=fd;
-      mLastWriteSpec.sequence=sequence;
-      if (cancelPreviousCancellableOperationLocked()) {
-        return;
-      }
-      doPendingWorkLocked();
-    }
+  ICancellationSignal cancellationTransport=CancellationSignal.createTransport();
+  try {
+    callback.onWriteStarted(cancellationTransport,sequence);
   }
-  if (destroyed) {
-    try {
-      callback.onWriteFailed(null,sequence);
+ catch (  RemoteException re) {
+    Log.e(LOG_TAG,"Error notifying for write start",re);
+    return;
+  }
+synchronized (mLock) {
+    if (isDestroyedLocked()) {
+      return;
     }
- catch (    RemoteException re) {
-      Log.i(LOG_TAG,"Error notifying for cancelled write",re);
-    }
+    CancellationSignal cancellationSignal=CancellationSignal.fromTransport(cancellationTransport);
+    SomeArgs args=SomeArgs.obtain();
+    args.arg1=mDocumentAdapter;
+    args.arg2=pages;
+    args.arg3=fd;
+    args.arg4=cancellationSignal;
+    args.arg5=new MyWriteResultCallback(callback,fd,sequence);
+    mHandler.obtainMessage(MyHandler.MSG_ON_WRITE,args).sendToTarget();
   }
 }

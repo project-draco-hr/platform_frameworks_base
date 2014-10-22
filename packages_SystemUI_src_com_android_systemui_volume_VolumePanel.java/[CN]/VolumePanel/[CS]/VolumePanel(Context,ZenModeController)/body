@@ -1,0 +1,79 @@
+{
+  mTag=String.format("%s.%08x",TAG,hashCode());
+  mContext=context;
+  mZenController=zenController;
+  mAudioManager=(AudioManager)context.getSystemService(Context.AUDIO_SERVICE);
+  mAccessibilityManager=(AccessibilityManager)context.getSystemService(Context.ACCESSIBILITY_SERVICE);
+  final Resources res=context.getResources();
+  final boolean useMasterVolume=res.getBoolean(R.bool.config_useMasterVolume);
+  if (useMasterVolume) {
+    for (int i=0; i < STREAMS.length; i++) {
+      StreamResources streamRes=STREAMS[i];
+      streamRes.show=(streamRes.streamType == STREAM_MASTER);
+    }
+  }
+  if (LOGD)   Log.d(mTag,"new VolumePanel");
+  mDisabledAlpha=0.5f;
+  if (mContext.getTheme() != null) {
+    final TypedArray arr=mContext.getTheme().obtainStyledAttributes(new int[]{android.R.attr.disabledAlpha});
+    mDisabledAlpha=arr.getFloat(0,mDisabledAlpha);
+    arr.recycle();
+  }
+  mDialog=new Dialog(context){
+    @Override public boolean onTouchEvent(    MotionEvent event){
+      if (isShowing() && event.getAction() == MotionEvent.ACTION_OUTSIDE && sSafetyWarning == null) {
+        forceTimeout(0);
+        return true;
+      }
+      return false;
+    }
+  }
+;
+  final Window window=mDialog.getWindow();
+  window.requestFeature(Window.FEATURE_NO_TITLE);
+  mDialog.setCanceledOnTouchOutside(true);
+  mDialog.setContentView(com.android.systemui.R.layout.volume_dialog);
+  mDialog.setOnDismissListener(new OnDismissListener(){
+    @Override public void onDismiss(    DialogInterface dialog){
+      mActiveStreamType=-1;
+      mAudioManager.forceVolumeControlStream(mActiveStreamType);
+      setZenPanelVisible(false);
+    }
+  }
+);
+  mDialog.create();
+  final LayoutParams lp=window.getAttributes();
+  lp.token=null;
+  lp.y=res.getDimensionPixelOffset(com.android.systemui.R.dimen.volume_panel_top);
+  lp.type=LayoutParams.TYPE_STATUS_BAR_PANEL;
+  lp.format=PixelFormat.TRANSLUCENT;
+  lp.windowAnimations=com.android.systemui.R.style.VolumePanelAnimation;
+  lp.setTitle(TAG);
+  window.setAttributes(lp);
+  updateWidth();
+  window.setBackgroundDrawable(new ColorDrawable(0x00000000));
+  window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+  window.addFlags(LayoutParams.FLAG_NOT_FOCUSABLE | LayoutParams.FLAG_NOT_TOUCH_MODAL | LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH| LayoutParams.FLAG_HARDWARE_ACCELERATED);
+  mView=window.findViewById(R.id.content);
+  Interaction.register(mView,new Interaction.Callback(){
+    @Override public void onInteraction(){
+      resetTimeout();
+    }
+  }
+);
+  mPanel=(ViewGroup)mView.findViewById(com.android.systemui.R.id.visible_panel);
+  mSliderPanel=(ViewGroup)mView.findViewById(com.android.systemui.R.id.slider_panel);
+  mZenPanel=(ZenModePanel)mView.findViewById(com.android.systemui.R.id.zen_mode_panel);
+  initZenModePanel();
+  mToneGenerators=new ToneGenerator[AudioSystem.getNumStreamTypes()];
+  mVibrator=(Vibrator)context.getSystemService(Context.VIBRATOR_SERVICE);
+  mVoiceCapable=context.getResources().getBoolean(R.bool.config_voice_capable);
+  if (mZenController != null && !useMasterVolume) {
+    mZenModeAvailable=mZenController.isZenAvailable();
+    mZenController.addCallback(mZenCallback);
+  }
+  final boolean masterVolumeOnly=res.getBoolean(R.bool.config_useMasterVolume);
+  final boolean masterVolumeKeySounds=res.getBoolean(R.bool.config_useVolumeKeySounds);
+  mPlayMasterStreamTones=masterVolumeOnly && masterVolumeKeySounds;
+  registerReceiver();
+}

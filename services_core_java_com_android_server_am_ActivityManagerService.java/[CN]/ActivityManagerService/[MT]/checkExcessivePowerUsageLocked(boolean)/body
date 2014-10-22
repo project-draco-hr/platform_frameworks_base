@@ -1,0 +1,82 @@
+{
+  updateCpuStatsNow();
+  BatteryStatsImpl stats=mBatteryStatsService.getActiveStatistics();
+  boolean doWakeKills=doKills;
+  boolean doCpuKills=doKills;
+  if (mLastPowerCheckRealtime == 0) {
+    doWakeKills=false;
+  }
+  if (mLastPowerCheckUptime == 0) {
+    doCpuKills=false;
+  }
+  if (stats.isScreenOn()) {
+    doWakeKills=false;
+  }
+  final long curRealtime=SystemClock.elapsedRealtime();
+  final long realtimeSince=curRealtime - mLastPowerCheckRealtime;
+  final long curUptime=SystemClock.uptimeMillis();
+  final long uptimeSince=curUptime - mLastPowerCheckUptime;
+  mLastPowerCheckRealtime=curRealtime;
+  mLastPowerCheckUptime=curUptime;
+  if (realtimeSince < WAKE_LOCK_MIN_CHECK_DURATION) {
+    doWakeKills=false;
+  }
+  if (uptimeSince < CPU_MIN_CHECK_DURATION) {
+    doCpuKills=false;
+  }
+  int i=mLruProcesses.size();
+  while (i > 0) {
+    i--;
+    ProcessRecord app=mLruProcesses.get(i);
+    if (app.setProcState >= ActivityManager.PROCESS_STATE_HOME) {
+      long wtime;
+synchronized (stats) {
+        wtime=stats.getProcessWakeTime(app.info.uid,app.pid,curRealtime);
+      }
+      long wtimeUsed=wtime - app.lastWakeTime;
+      long cputimeUsed=app.curCpuTime - app.lastCpuTime;
+      if (DEBUG_POWER) {
+        StringBuilder sb=new StringBuilder(128);
+        sb.append("Wake for ");
+        app.toShortString(sb);
+        sb.append(": over ");
+        TimeUtils.formatDuration(realtimeSince,sb);
+        sb.append(" used ");
+        TimeUtils.formatDuration(wtimeUsed,sb);
+        sb.append(" (");
+        sb.append((wtimeUsed * 100) / realtimeSince);
+        sb.append("%)");
+        Slog.i(TAG,sb.toString());
+        sb.setLength(0);
+        sb.append("CPU for ");
+        app.toShortString(sb);
+        sb.append(": over ");
+        TimeUtils.formatDuration(uptimeSince,sb);
+        sb.append(" used ");
+        TimeUtils.formatDuration(cputimeUsed,sb);
+        sb.append(" (");
+        sb.append((cputimeUsed * 100) / uptimeSince);
+        sb.append("%)");
+        Slog.i(TAG,sb.toString());
+      }
+      if (doWakeKills && realtimeSince > 0 && ((wtimeUsed * 100) / realtimeSince) >= 50) {
+synchronized (stats) {
+          stats.reportExcessiveWakeLocked(app.info.uid,app.processName,realtimeSince,wtimeUsed);
+        }
+        app.kill("excessive wake held " + wtimeUsed + " during "+ realtimeSince,true);
+        app.baseProcessTracker.reportExcessiveWake(app.pkgList);
+      }
+ else       if (doCpuKills && uptimeSince > 0 && ((cputimeUsed * 100) / uptimeSince) >= 25) {
+synchronized (stats) {
+          stats.reportExcessiveCpuLocked(app.info.uid,app.processName,uptimeSince,cputimeUsed);
+        }
+        app.kill("excessive cpu " + cputimeUsed + " during "+ uptimeSince,true);
+        app.baseProcessTracker.reportExcessiveCpu(app.pkgList);
+      }
+ else {
+        app.lastWakeTime=wtime;
+        app.lastCpuTime=app.curCpuTime;
+      }
+    }
+  }
+}

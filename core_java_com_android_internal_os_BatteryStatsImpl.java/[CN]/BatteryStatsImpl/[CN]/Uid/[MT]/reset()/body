@@ -1,42 +1,48 @@
 {
   boolean active=false;
   if (mWifiRunningTimer != null) {
-    active|=!mWifiRunningTimer.reset(BatteryStatsImpl.this,false);
+    active|=!mWifiRunningTimer.reset(false);
     active|=mWifiRunning;
   }
   if (mFullWifiLockTimer != null) {
-    active|=!mFullWifiLockTimer.reset(BatteryStatsImpl.this,false);
+    active|=!mFullWifiLockTimer.reset(false);
     active|=mFullWifiLockOut;
   }
   if (mWifiScanTimer != null) {
-    active|=!mWifiScanTimer.reset(BatteryStatsImpl.this,false);
+    active|=!mWifiScanTimer.reset(false);
     active|=mWifiScanStarted;
   }
   if (mWifiBatchedScanTimer != null) {
     for (int i=0; i < NUM_WIFI_BATCHED_SCAN_BINS; i++) {
       if (mWifiBatchedScanTimer[i] != null) {
-        active|=!mWifiBatchedScanTimer[i].reset(BatteryStatsImpl.this,false);
+        active|=!mWifiBatchedScanTimer[i].reset(false);
       }
     }
     active|=(mWifiBatchedScanBinStarted != NO_BATCHED_SCAN_STARTED);
   }
   if (mWifiMulticastTimer != null) {
-    active|=!mWifiMulticastTimer.reset(BatteryStatsImpl.this,false);
+    active|=!mWifiMulticastTimer.reset(false);
     active|=mWifiMulticastEnabled;
   }
   if (mAudioTurnedOnTimer != null) {
-    active|=!mAudioTurnedOnTimer.reset(BatteryStatsImpl.this,false);
-    active|=mAudioTurnedOn;
+    active|=!mAudioTurnedOnTimer.reset(false);
   }
   if (mVideoTurnedOnTimer != null) {
-    active|=!mVideoTurnedOnTimer.reset(BatteryStatsImpl.this,false);
-    active|=mVideoTurnedOn;
+    active|=!mVideoTurnedOnTimer.reset(false);
   }
   if (mForegroundActivityTimer != null) {
-    active|=!mForegroundActivityTimer.reset(BatteryStatsImpl.this,false);
+    active|=!mForegroundActivityTimer.reset(false);
+  }
+  if (mProcessStateTimer != null) {
+    for (int i=0; i < NUM_PROCESS_STATE; i++) {
+      if (mProcessStateTimer[i] != null) {
+        active|=!mProcessStateTimer[i].reset(false);
+      }
+    }
+    active|=(mProcessState != PROCESS_STATE_NONE);
   }
   if (mVibratorOnTimer != null) {
-    if (mVibratorOnTimer.reset(BatteryStatsImpl.this,false)) {
+    if (mVibratorOnTimer.reset(false)) {
       mVibratorOnTimer.detach();
       mVibratorOnTimer=null;
     }
@@ -49,50 +55,77 @@
       mUserActivityCounters[i].reset(false);
     }
   }
-  if (mNetworkActivityCounters != null) {
+  if (mNetworkByteActivityCounters != null) {
     for (int i=0; i < NUM_NETWORK_ACTIVITY_TYPES; i++) {
-      mNetworkActivityCounters[i].reset(false);
+      mNetworkByteActivityCounters[i].reset(false);
+      mNetworkPacketActivityCounters[i].reset(false);
     }
+    mMobileRadioActiveTime.reset(false);
+    mMobileRadioActiveCount.reset(false);
   }
-  if (mWakelockStats.size() > 0) {
-    Iterator<Map.Entry<String,Wakelock>> it=mWakelockStats.entrySet().iterator();
-    while (it.hasNext()) {
-      Map.Entry<String,Wakelock> wakelockEntry=it.next();
-      Wakelock wl=wakelockEntry.getValue();
-      if (wl.reset()) {
-        it.remove();
-      }
+  final ArrayMap<String,Wakelock> wakeStats=mWakelockStats.getMap();
+  for (int iw=wakeStats.size() - 1; iw >= 0; iw--) {
+    Wakelock wl=wakeStats.valueAt(iw);
+    if (wl.reset()) {
+      wakeStats.removeAt(iw);
+    }
  else {
-        active=true;
-      }
+      active=true;
     }
   }
-  if (mSensorStats.size() > 0) {
-    Iterator<Map.Entry<Integer,Sensor>> it=mSensorStats.entrySet().iterator();
-    while (it.hasNext()) {
-      Map.Entry<Integer,Sensor> sensorEntry=it.next();
-      Sensor s=sensorEntry.getValue();
-      if (s.reset()) {
-        it.remove();
-      }
+  mWakelockStats.cleanup();
+  final ArrayMap<String,StopwatchTimer> syncStats=mSyncStats.getMap();
+  for (int is=syncStats.size() - 1; is >= 0; is--) {
+    StopwatchTimer timer=syncStats.valueAt(is);
+    if (timer.reset(false)) {
+      syncStats.removeAt(is);
+      timer.detach();
+    }
  else {
-        active=true;
-      }
+      active=true;
     }
   }
-  if (mProcessStats.size() > 0) {
-    Iterator<Map.Entry<String,Proc>> it=mProcessStats.entrySet().iterator();
-    while (it.hasNext()) {
-      Map.Entry<String,Proc> procEntry=it.next();
-      procEntry.getValue().detach();
+  mSyncStats.cleanup();
+  final ArrayMap<String,StopwatchTimer> jobStats=mJobStats.getMap();
+  for (int ij=jobStats.size() - 1; ij >= 0; ij--) {
+    StopwatchTimer timer=jobStats.valueAt(ij);
+    if (timer.reset(false)) {
+      jobStats.removeAt(ij);
+      timer.detach();
     }
-    mProcessStats.clear();
+ else {
+      active=true;
+    }
+  }
+  mJobStats.cleanup();
+  for (int ise=mSensorStats.size() - 1; ise >= 0; ise--) {
+    Sensor s=mSensorStats.valueAt(ise);
+    if (s.reset()) {
+      mSensorStats.removeAt(ise);
+    }
+ else {
+      active=true;
+    }
+  }
+  for (int ip=mProcessStats.size() - 1; ip >= 0; ip--) {
+    Proc proc=mProcessStats.valueAt(ip);
+    if (proc.mProcessState == PROCESS_STATE_NONE) {
+      proc.detach();
+      mProcessStats.removeAt(ip);
+    }
+ else {
+      proc.reset();
+      active=true;
+    }
   }
   if (mPids.size() > 0) {
-    for (int i=0; !active && i < mPids.size(); i++) {
+    for (int i=mPids.size() - 1; i >= 0; i--) {
       Pid pid=mPids.valueAt(i);
-      if (pid.mWakeStart != 0) {
+      if (pid.mWakeNesting > 0) {
         active=true;
+      }
+ else {
+        mPids.removeAt(i);
       }
     }
   }
@@ -112,7 +145,6 @@
     }
     mPackageStats.clear();
   }
-  mPids.clear();
   if (!active) {
     if (mWifiRunningTimer != null) {
       mWifiRunningTimer.detach();
@@ -148,11 +180,13 @@
         mUserActivityCounters[i].detach();
       }
     }
-    if (mNetworkActivityCounters != null) {
+    if (mNetworkByteActivityCounters != null) {
       for (int i=0; i < NUM_NETWORK_ACTIVITY_TYPES; i++) {
-        mNetworkActivityCounters[i].detach();
+        mNetworkByteActivityCounters[i].detach();
+        mNetworkPacketActivityCounters[i].detach();
       }
     }
+    mPids.clear();
   }
   return !active;
 }

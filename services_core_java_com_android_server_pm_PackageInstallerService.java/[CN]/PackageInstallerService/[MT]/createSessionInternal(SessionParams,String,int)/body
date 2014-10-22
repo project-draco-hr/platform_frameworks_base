@@ -1,0 +1,71 @@
+{
+  final int callingUid=Binder.getCallingUid();
+  mPm.enforceCrossUserPermission(callingUid,userId,true,true,"createSession");
+  if (mPm.isUserRestricted(userId,UserManager.DISALLOW_INSTALL_APPS)) {
+    throw new SecurityException("User restriction prevents installing");
+  }
+  if ((callingUid == Process.SHELL_UID) || (callingUid == Process.ROOT_UID)) {
+    params.installFlags|=PackageManager.INSTALL_FROM_ADB;
+  }
+ else {
+    mAppOps.checkPackage(callingUid,installerPackageName);
+    params.installFlags&=~PackageManager.INSTALL_FROM_ADB;
+    params.installFlags&=~PackageManager.INSTALL_ALL_USERS;
+    params.installFlags|=PackageManager.INSTALL_REPLACE_EXISTING;
+  }
+  if (params.appIcon != null) {
+    final ActivityManager am=(ActivityManager)mContext.getSystemService(Context.ACTIVITY_SERVICE);
+    final int iconSize=am.getLauncherLargeIconSize();
+    if ((params.appIcon.getWidth() > iconSize * 2) || (params.appIcon.getHeight() > iconSize * 2)) {
+      params.appIcon=Bitmap.createScaledBitmap(params.appIcon,iconSize,iconSize,true);
+    }
+  }
+  if (params.mode == SessionParams.MODE_FULL_INSTALL || params.mode == SessionParams.MODE_INHERIT_EXISTING) {
+    final long ident=Binder.clearCallingIdentity();
+    try {
+      final int resolved=PackageHelper.resolveInstallLocation(mContext,params.appPackageName,params.installLocation,params.sizeBytes,params.installFlags);
+      if (resolved == PackageHelper.RECOMMEND_INSTALL_INTERNAL) {
+        params.setInstallFlagsInternal();
+      }
+ else       if (resolved == PackageHelper.RECOMMEND_INSTALL_EXTERNAL) {
+        params.setInstallFlagsExternal();
+      }
+ else {
+        throw new IOException("No storage with enough free space; res=" + resolved);
+      }
+    }
+  finally {
+      Binder.restoreCallingIdentity(ident);
+    }
+  }
+ else {
+    throw new IllegalArgumentException("Invalid install mode: " + params.mode);
+  }
+  final int sessionId;
+  final PackageInstallerSession session;
+synchronized (mSessions) {
+    final int activeCount=getSessionCount(mSessions,callingUid);
+    if (activeCount >= MAX_ACTIVE_SESSIONS) {
+      throw new IllegalStateException("Too many active sessions for UID " + callingUid);
+    }
+    final int historicalCount=getSessionCount(mHistoricalSessions,callingUid);
+    if (historicalCount >= MAX_HISTORICAL_SESSIONS) {
+      throw new IllegalStateException("Too many historical sessions for UID " + callingUid);
+    }
+    final long createdMillis=System.currentTimeMillis();
+    sessionId=allocateSessionIdLocked();
+    File stageDir=null;
+    String stageCid=null;
+    if ((params.installFlags & PackageManager.INSTALL_INTERNAL) != 0) {
+      stageDir=buildInternalStageDir(sessionId);
+    }
+ else {
+      stageCid=buildExternalStageCid(sessionId);
+    }
+    session=new PackageInstallerSession(mInternalCallback,mContext,mPm,mInstallThread.getLooper(),sessionId,userId,installerPackageName,callingUid,params,createdMillis,stageDir,stageCid,false,false);
+    mSessions.put(sessionId,session);
+  }
+  mCallbacks.notifySessionCreated(session.sessionId,session.userId);
+  writeSessionsAsync();
+  return sessionId;
+}

@@ -1,0 +1,435 @@
+{
+  boolean dumpDetails=false;
+  boolean dumpFullDetails=false;
+  boolean dumpDalvik=false;
+  boolean oomOnly=false;
+  boolean isCompact=false;
+  boolean localOnly=false;
+  boolean packages=false;
+  int opti=0;
+  while (opti < args.length) {
+    String opt=args[opti];
+    if (opt == null || opt.length() <= 0 || opt.charAt(0) != '-') {
+      break;
+    }
+    opti++;
+    if ("-a".equals(opt)) {
+      dumpDetails=true;
+      dumpFullDetails=true;
+      dumpDalvik=true;
+    }
+ else     if ("-d".equals(opt)) {
+      dumpDalvik=true;
+    }
+ else     if ("-c".equals(opt)) {
+      isCompact=true;
+    }
+ else     if ("--oom".equals(opt)) {
+      oomOnly=true;
+    }
+ else     if ("--local".equals(opt)) {
+      localOnly=true;
+    }
+ else     if ("--package".equals(opt)) {
+      packages=true;
+    }
+ else     if ("-h".equals(opt)) {
+      pw.println("meminfo dump options: [-a] [-d] [-c] [--oom] [process]");
+      pw.println("  -a: include all available information for each process.");
+      pw.println("  -d: include dalvik details when dumping process details.");
+      pw.println("  -c: dump in a compact machine-parseable representation.");
+      pw.println("  --oom: only show processes organized by oom adj.");
+      pw.println("  --local: only collect details locally, don't call process.");
+      pw.println("  --package: interpret process arg as package, dumping all");
+      pw.println("             processes that have loaded that package.");
+      pw.println("If [process] is specified it can be the name or ");
+      pw.println("pid of a specific process to dump.");
+      return;
+    }
+ else {
+      pw.println("Unknown argument: " + opt + "; use -h for help");
+    }
+  }
+  final boolean isCheckinRequest=scanArgs(args,"--checkin");
+  long uptime=SystemClock.uptimeMillis();
+  long realtime=SystemClock.elapsedRealtime();
+  final long[] tmpLong=new long[1];
+  ArrayList<ProcessRecord> procs=collectProcesses(pw,opti,packages,args);
+  if (procs == null) {
+    if (args != null && args.length > opti && args[opti].charAt(0) != '-') {
+      ArrayList<ProcessCpuTracker.Stats> nativeProcs=new ArrayList<ProcessCpuTracker.Stats>();
+      updateCpuStatsNow();
+      int findPid=-1;
+      try {
+        findPid=Integer.parseInt(args[opti]);
+      }
+ catch (      NumberFormatException e) {
+      }
+synchronized (mProcessCpuTracker) {
+        final int N=mProcessCpuTracker.countStats();
+        for (int i=0; i < N; i++) {
+          ProcessCpuTracker.Stats st=mProcessCpuTracker.getStats(i);
+          if (st.pid == findPid || (st.baseName != null && st.baseName.equals(args[opti]))) {
+            nativeProcs.add(st);
+          }
+        }
+      }
+      if (nativeProcs.size() > 0) {
+        dumpApplicationMemoryUsageHeader(pw,uptime,realtime,isCheckinRequest,isCompact);
+        Debug.MemoryInfo mi=null;
+        for (int i=nativeProcs.size() - 1; i >= 0; i--) {
+          final ProcessCpuTracker.Stats r=nativeProcs.get(i);
+          final int pid=r.pid;
+          if (!isCheckinRequest && dumpDetails) {
+            pw.println("\n** MEMINFO in pid " + pid + " ["+ r.baseName+ "] **");
+          }
+          if (mi == null) {
+            mi=new Debug.MemoryInfo();
+          }
+          if (dumpDetails || (!brief && !oomOnly)) {
+            Debug.getMemoryInfo(pid,mi);
+          }
+ else {
+            mi.dalvikPss=(int)Debug.getPss(pid,tmpLong);
+            mi.dalvikPrivateDirty=(int)tmpLong[0];
+          }
+          ActivityThread.dumpMemInfoTable(pw,mi,isCheckinRequest,dumpFullDetails,dumpDalvik,pid,r.baseName,0,0,0,0,0,0);
+          if (isCheckinRequest) {
+            pw.println();
+          }
+        }
+        return;
+      }
+    }
+    pw.println("No process found for: " + args[opti]);
+    return;
+  }
+  if (!brief && !oomOnly && (procs.size() == 1 || isCheckinRequest || packages)) {
+    dumpDetails=true;
+  }
+  dumpApplicationMemoryUsageHeader(pw,uptime,realtime,isCheckinRequest,isCompact);
+  String[] innerArgs=new String[args.length - opti];
+  System.arraycopy(args,opti,innerArgs,0,args.length - opti);
+  ArrayList<MemItem> procMems=new ArrayList<MemItem>();
+  final SparseArray<MemItem> procMemsMap=new SparseArray<MemItem>();
+  long nativePss=0, dalvikPss=0, otherPss=0;
+  long[] miscPss=new long[Debug.MemoryInfo.NUM_OTHER_STATS];
+  long oomPss[]=new long[DUMP_MEM_OOM_LABEL.length];
+  ArrayList<MemItem>[] oomProcs=(ArrayList<MemItem>[])new ArrayList[DUMP_MEM_OOM_LABEL.length];
+  long totalPss=0;
+  long cachedPss=0;
+  Debug.MemoryInfo mi=null;
+  for (int i=procs.size() - 1; i >= 0; i--) {
+    final ProcessRecord r=procs.get(i);
+    final IApplicationThread thread;
+    final int pid;
+    final int oomAdj;
+    final boolean hasActivities;
+synchronized (this) {
+      thread=r.thread;
+      pid=r.pid;
+      oomAdj=r.getSetAdjWithServices();
+      hasActivities=r.activities.size() > 0;
+    }
+    if (thread != null) {
+      if (!isCheckinRequest && dumpDetails) {
+        pw.println("\n** MEMINFO in pid " + pid + " ["+ r.processName+ "] **");
+      }
+      if (mi == null) {
+        mi=new Debug.MemoryInfo();
+      }
+      if (dumpDetails || (!brief && !oomOnly)) {
+        Debug.getMemoryInfo(pid,mi);
+      }
+ else {
+        mi.dalvikPss=(int)Debug.getPss(pid,tmpLong);
+        mi.dalvikPrivateDirty=(int)tmpLong[0];
+      }
+      if (dumpDetails) {
+        if (localOnly) {
+          ActivityThread.dumpMemInfoTable(pw,mi,isCheckinRequest,dumpFullDetails,dumpDalvik,pid,r.processName,0,0,0,0,0,0);
+          if (isCheckinRequest) {
+            pw.println();
+          }
+        }
+ else {
+          try {
+            pw.flush();
+            thread.dumpMemInfo(fd,mi,isCheckinRequest,dumpFullDetails,dumpDalvik,innerArgs);
+          }
+ catch (          RemoteException e) {
+            if (!isCheckinRequest) {
+              pw.println("Got RemoteException!");
+              pw.flush();
+            }
+          }
+        }
+      }
+      final long myTotalPss=mi.getTotalPss();
+      final long myTotalUss=mi.getTotalUss();
+synchronized (this) {
+        if (r.thread != null && oomAdj == r.getSetAdjWithServices()) {
+          r.baseProcessTracker.addPss(myTotalPss,myTotalUss,true,r.pkgList);
+        }
+      }
+      if (!isCheckinRequest && mi != null) {
+        totalPss+=myTotalPss;
+        MemItem pssItem=new MemItem(r.processName + " (pid " + pid+ (hasActivities ? " / activities)" : ")"),r.processName,myTotalPss,pid,hasActivities);
+        procMems.add(pssItem);
+        procMemsMap.put(pid,pssItem);
+        nativePss+=mi.nativePss;
+        dalvikPss+=mi.dalvikPss;
+        otherPss+=mi.otherPss;
+        for (int j=0; j < Debug.MemoryInfo.NUM_OTHER_STATS; j++) {
+          long mem=mi.getOtherPss(j);
+          miscPss[j]+=mem;
+          otherPss-=mem;
+        }
+        if (oomAdj >= ProcessList.CACHED_APP_MIN_ADJ) {
+          cachedPss+=myTotalPss;
+        }
+        for (int oomIndex=0; oomIndex < oomPss.length; oomIndex++) {
+          if (oomAdj <= DUMP_MEM_OOM_ADJ[oomIndex] || oomIndex == (oomPss.length - 1)) {
+            oomPss[oomIndex]+=myTotalPss;
+            if (oomProcs[oomIndex] == null) {
+              oomProcs[oomIndex]=new ArrayList<MemItem>();
+            }
+            oomProcs[oomIndex].add(pssItem);
+            break;
+          }
+        }
+      }
+    }
+  }
+  long nativeProcTotalPss=0;
+  if (!isCheckinRequest && procs.size() > 1 && !packages) {
+    updateCpuStatsNow();
+synchronized (mProcessCpuTracker) {
+      final int N=mProcessCpuTracker.countStats();
+      for (int i=0; i < N; i++) {
+        ProcessCpuTracker.Stats st=mProcessCpuTracker.getStats(i);
+        if (st.vsize > 0 && procMemsMap.indexOfKey(st.pid) < 0) {
+          if (mi == null) {
+            mi=new Debug.MemoryInfo();
+          }
+          if (!brief && !oomOnly) {
+            Debug.getMemoryInfo(st.pid,mi);
+          }
+ else {
+            mi.nativePss=(int)Debug.getPss(st.pid,tmpLong);
+            mi.nativePrivateDirty=(int)tmpLong[0];
+          }
+          final long myTotalPss=mi.getTotalPss();
+          totalPss+=myTotalPss;
+          nativeProcTotalPss+=myTotalPss;
+          MemItem pssItem=new MemItem(st.name + " (pid " + st.pid+ ")",st.name,myTotalPss,st.pid,false);
+          procMems.add(pssItem);
+          nativePss+=mi.nativePss;
+          dalvikPss+=mi.dalvikPss;
+          otherPss+=mi.otherPss;
+          for (int j=0; j < Debug.MemoryInfo.NUM_OTHER_STATS; j++) {
+            long mem=mi.getOtherPss(j);
+            miscPss[j]+=mem;
+            otherPss-=mem;
+          }
+          oomPss[0]+=myTotalPss;
+          if (oomProcs[0] == null) {
+            oomProcs[0]=new ArrayList<MemItem>();
+          }
+          oomProcs[0].add(pssItem);
+        }
+      }
+    }
+    ArrayList<MemItem> catMems=new ArrayList<MemItem>();
+    catMems.add(new MemItem("Native","Native",nativePss,-1));
+    catMems.add(new MemItem("Dalvik","Dalvik",dalvikPss,-2));
+    catMems.add(new MemItem("Unknown","Unknown",otherPss,-3));
+    for (int j=0; j < Debug.MemoryInfo.NUM_OTHER_STATS; j++) {
+      String label=Debug.MemoryInfo.getOtherLabel(j);
+      catMems.add(new MemItem(label,label,miscPss[j],j));
+    }
+    ArrayList<MemItem> oomMems=new ArrayList<MemItem>();
+    for (int j=0; j < oomPss.length; j++) {
+      if (oomPss[j] != 0) {
+        String label=isCompact ? DUMP_MEM_OOM_COMPACT_LABEL[j] : DUMP_MEM_OOM_LABEL[j];
+        MemItem item=new MemItem(label,label,oomPss[j],DUMP_MEM_OOM_ADJ[j]);
+        item.subitems=oomProcs[j];
+        oomMems.add(item);
+      }
+    }
+    if (!brief && !oomOnly && !isCompact) {
+      pw.println();
+      pw.println("Total PSS by process:");
+      dumpMemItems(pw,"  ","proc",procMems,true,isCompact);
+      pw.println();
+    }
+    if (!isCompact) {
+      pw.println("Total PSS by OOM adjustment:");
+    }
+    dumpMemItems(pw,"  ","oom",oomMems,false,isCompact);
+    if (!brief && !oomOnly) {
+      PrintWriter out=categoryPw != null ? categoryPw : pw;
+      if (!isCompact) {
+        out.println();
+        out.println("Total PSS by category:");
+      }
+      dumpMemItems(out,"  ","cat",catMems,true,isCompact);
+    }
+    if (!isCompact) {
+      pw.println();
+    }
+    MemInfoReader memInfo=new MemInfoReader();
+    memInfo.readMemInfo();
+    if (nativeProcTotalPss > 0) {
+synchronized (this) {
+        mProcessStats.addSysMemUsageLocked(memInfo.getCachedSizeKb(),memInfo.getFreeSizeKb(),memInfo.getZramTotalSizeKb(),memInfo.getBuffersSizeKb() + memInfo.getShmemSizeKb() + memInfo.getSlabSizeKb(),nativeProcTotalPss);
+      }
+    }
+    if (!brief) {
+      if (!isCompact) {
+        pw.print("Total RAM: ");
+        pw.print(memInfo.getTotalSizeKb());
+        pw.print(" kB (status ");
+switch (mLastMemoryLevel) {
+case ProcessStats.ADJ_MEM_FACTOR_NORMAL:
+          pw.println("normal)");
+        break;
+case ProcessStats.ADJ_MEM_FACTOR_MODERATE:
+      pw.println("moderate)");
+    break;
+case ProcessStats.ADJ_MEM_FACTOR_LOW:
+  pw.println("low)");
+break;
+case ProcessStats.ADJ_MEM_FACTOR_CRITICAL:
+pw.println("critical)");
+break;
+default :
+pw.print(mLastMemoryLevel);
+pw.println(")");
+break;
+}
+pw.print(" Free RAM: ");
+pw.print(cachedPss + memInfo.getCachedSizeKb() + memInfo.getFreeSizeKb());
+pw.print(" kB (");
+pw.print(cachedPss);
+pw.print(" cached pss + ");
+pw.print(memInfo.getCachedSizeKb());
+pw.print(" cached + ");
+pw.print(memInfo.getFreeSizeKb());
+pw.println(" free)");
+}
+ else {
+pw.print("ram,");
+pw.print(memInfo.getTotalSizeKb());
+pw.print(",");
+pw.print(cachedPss + memInfo.getCachedSizeKb() + memInfo.getFreeSizeKb());
+pw.print(",");
+pw.println(totalPss - cachedPss);
+}
+}
+if (!isCompact) {
+pw.print(" Used RAM: ");
+pw.print(totalPss - cachedPss + memInfo.getBuffersSizeKb() + memInfo.getShmemSizeKb() + memInfo.getSlabSizeKb());
+pw.print(" kB (");
+pw.print(totalPss - cachedPss);
+pw.print(" used pss + ");
+pw.print(memInfo.getBuffersSizeKb());
+pw.print(" buffers + ");
+pw.print(memInfo.getShmemSizeKb());
+pw.print(" shmem + ");
+pw.print(memInfo.getSlabSizeKb());
+pw.println(" slab)");
+pw.print(" Lost RAM: ");
+pw.print(memInfo.getTotalSizeKb() - totalPss - memInfo.getFreeSizeKb()- memInfo.getCachedSizeKb()- memInfo.getBuffersSizeKb()- memInfo.getShmemSizeKb()- memInfo.getSlabSizeKb());
+pw.println(" kB");
+}
+if (!brief) {
+if (memInfo.getZramTotalSizeKb() != 0) {
+if (!isCompact) {
+pw.print("     ZRAM: ");
+pw.print(memInfo.getZramTotalSizeKb());
+pw.print(" kB physical used for ");
+pw.print(memInfo.getSwapTotalSizeKb() - memInfo.getSwapFreeSizeKb());
+pw.print(" kB in swap (");
+pw.print(memInfo.getSwapTotalSizeKb());
+pw.println(" kB total swap)");
+}
+ else {
+pw.print("zram,");
+pw.print(memInfo.getZramTotalSizeKb());
+pw.print(",");
+pw.print(memInfo.getSwapTotalSizeKb());
+pw.print(",");
+pw.println(memInfo.getSwapFreeSizeKb());
+}
+}
+final int[] SINGLE_LONG_FORMAT=new int[]{Process.PROC_SPACE_TERM | Process.PROC_OUT_LONG};
+long[] longOut=new long[1];
+Process.readProcFile("/sys/kernel/mm/ksm/pages_shared",SINGLE_LONG_FORMAT,null,longOut,null);
+long shared=longOut[0] * ProcessList.PAGE_SIZE / 1024;
+longOut[0]=0;
+Process.readProcFile("/sys/kernel/mm/ksm/pages_sharing",SINGLE_LONG_FORMAT,null,longOut,null);
+long sharing=longOut[0] * ProcessList.PAGE_SIZE / 1024;
+longOut[0]=0;
+Process.readProcFile("/sys/kernel/mm/ksm/pages_unshared",SINGLE_LONG_FORMAT,null,longOut,null);
+long unshared=longOut[0] * ProcessList.PAGE_SIZE / 1024;
+longOut[0]=0;
+Process.readProcFile("/sys/kernel/mm/ksm/pages_volatile",SINGLE_LONG_FORMAT,null,longOut,null);
+long voltile=longOut[0] * ProcessList.PAGE_SIZE / 1024;
+if (!isCompact) {
+if (sharing != 0 || shared != 0 || unshared != 0 || voltile != 0) {
+pw.print("      KSM: ");
+pw.print(sharing);
+pw.print(" kB saved from shared ");
+pw.print(shared);
+pw.println(" kB");
+pw.print("           ");
+pw.print(unshared);
+pw.print(" kB unshared; ");
+pw.print(voltile);
+pw.println(" kB volatile");
+}
+pw.print("   Tuning: ");
+pw.print(ActivityManager.staticGetMemoryClass());
+pw.print(" (large ");
+pw.print(ActivityManager.staticGetLargeMemoryClass());
+pw.print("), oom ");
+pw.print(mProcessList.getMemLevel(ProcessList.CACHED_APP_MAX_ADJ) / 1024);
+pw.print(" kB");
+pw.print(", restore limit ");
+pw.print(mProcessList.getCachedRestoreThresholdKb());
+pw.print(" kB");
+if (ActivityManager.isLowRamDeviceStatic()) {
+pw.print(" (low-ram)");
+}
+if (ActivityManager.isHighEndGfx()) {
+pw.print(" (high-end-gfx)");
+}
+pw.println();
+}
+ else {
+pw.print("ksm,");
+pw.print(sharing);
+pw.print(",");
+pw.print(shared);
+pw.print(",");
+pw.print(unshared);
+pw.print(",");
+pw.println(voltile);
+pw.print("tuning,");
+pw.print(ActivityManager.staticGetMemoryClass());
+pw.print(',');
+pw.print(ActivityManager.staticGetLargeMemoryClass());
+pw.print(',');
+pw.print(mProcessList.getMemLevel(ProcessList.CACHED_APP_MAX_ADJ) / 1024);
+if (ActivityManager.isLowRamDeviceStatic()) {
+pw.print(",low-ram");
+}
+if (ActivityManager.isHighEndGfx()) {
+pw.print(",high-end-gfx");
+}
+pw.println();
+}
+}
+}
+}

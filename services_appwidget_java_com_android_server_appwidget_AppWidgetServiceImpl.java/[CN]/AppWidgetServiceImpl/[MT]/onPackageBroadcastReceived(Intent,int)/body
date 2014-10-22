@@ -1,0 +1,59 @@
+{
+  final String action=intent.getAction();
+  boolean added=false;
+  boolean changed=false;
+  boolean componentsModified=false;
+  String pkgList[]=null;
+  if (Intent.ACTION_EXTERNAL_APPLICATIONS_AVAILABLE.equals(action)) {
+    pkgList=intent.getStringArrayExtra(Intent.EXTRA_CHANGED_PACKAGE_LIST);
+    added=true;
+  }
+ else   if (Intent.ACTION_EXTERNAL_APPLICATIONS_UNAVAILABLE.equals(action)) {
+    pkgList=intent.getStringArrayExtra(Intent.EXTRA_CHANGED_PACKAGE_LIST);
+    added=false;
+  }
+ else {
+    Uri uri=intent.getData();
+    if (uri == null) {
+      return;
+    }
+    String pkgName=uri.getSchemeSpecificPart();
+    if (pkgName == null) {
+      return;
+    }
+    pkgList=new String[]{pkgName};
+    added=Intent.ACTION_PACKAGE_ADDED.equals(action);
+    changed=Intent.ACTION_PACKAGE_CHANGED.equals(action);
+  }
+  if (pkgList == null || pkgList.length == 0) {
+    return;
+  }
+synchronized (mLock) {
+    ensureGroupStateLoadedLocked(userId);
+    Bundle extras=intent.getExtras();
+    if (added || changed) {
+      final boolean newPackageAdded=added && (extras == null || !extras.getBoolean(Intent.EXTRA_REPLACING,false));
+      for (      String pkgName : pkgList) {
+        componentsModified|=updateProvidersForPackageLocked(pkgName,userId,null);
+        if (newPackageAdded && userId == UserHandle.USER_OWNER) {
+          final int uid=getUidForPackage(pkgName,userId);
+          if (uid >= 0) {
+            resolveHostUidLocked(pkgName,uid);
+          }
+        }
+      }
+    }
+ else {
+      final boolean packageRemovedPermanently=(extras == null || !extras.getBoolean(Intent.EXTRA_REPLACING,false));
+      if (packageRemovedPermanently) {
+        for (        String pkgName : pkgList) {
+          componentsModified|=removeHostsAndProvidersForPackageLocked(pkgName,userId);
+        }
+      }
+    }
+    if (componentsModified) {
+      saveGroupStateAsync(userId);
+      scheduleNotifyGroupHostsForProvidersChangedLocked(userId);
+    }
+  }
+}

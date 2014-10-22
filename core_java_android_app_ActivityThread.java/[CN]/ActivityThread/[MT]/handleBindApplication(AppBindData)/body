@@ -3,9 +3,12 @@
   mConfiguration=new Configuration(data.config);
   mCompatConfiguration=new Configuration(data.config);
   mProfiler=new Profiler();
-  mProfiler.profileFile=data.initProfileFile;
-  mProfiler.profileFd=data.initProfileFd;
-  mProfiler.autoStopProfiler=data.initAutoStopProfiler;
+  if (data.initProfilerInfo != null) {
+    mProfiler.profileFile=data.initProfilerInfo.profileFile;
+    mProfiler.profileFd=data.initProfilerInfo.profileFd;
+    mProfiler.samplingInterval=data.initProfilerInfo.samplingInterval;
+    mProfiler.autoStopProfiler=data.initProfilerInfo.autoStopProfiler;
+  }
   Process.setArgV0(data.processName);
   android.ddm.DdmHandleAppName.setAppName(data.processName,UserHandle.myUserId());
   if (data.persistent) {
@@ -19,6 +22,7 @@
   if (data.appInfo.targetSdkVersion <= android.os.Build.VERSION_CODES.HONEYCOMB_MR1) {
     AsyncTask.setDefaultExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
   }
+  Message.updateCheckRecycle(data.appInfo.targetSdkVersion);
   TimeZone.setDefault(null);
   Locale.setDefault(data.config.locale);
   mResourcesManager.applyConfigurationToResourcesLocked(data.config,data.compatInfo);
@@ -43,6 +47,7 @@
   }
   final boolean is24Hr="24".equals(mCoreSettings.getString(Settings.System.TIME_12_24));
   DateFormat.set24HourTimePref(is24Hr);
+  View.mDebugViewAttributes=mCoreSettings.getInt(Settings.Global.DEBUG_VIEW_ATTRIBUTES,0) != 0;
   if ((data.appInfo.flags & (ApplicationInfo.FLAG_SYSTEM | ApplicationInfo.FLAG_UPDATED_SYSTEM_APP)) != 0) {
     StrictMode.conditionallyEnableDebugLogging();
   }
@@ -79,8 +84,8 @@
   if (b != null) {
     IConnectivityManager service=IConnectivityManager.Stub.asInterface(b);
     try {
-      ProxyProperties proxyProperties=service.getProxy();
-      Proxy.setHttpProxySystemProperty(proxyProperties);
+      ProxyInfo proxyInfo=service.getProxy();
+      Proxy.setHttpProxySystemProperty(proxyInfo);
     }
  catch (    RemoteException e) {
     }
@@ -95,18 +100,22 @@
     if (ii == null) {
       throw new RuntimeException("Unable to find instrumentation info for: " + data.instrumentationName);
     }
+    mInstrumentationPackageName=ii.packageName;
     mInstrumentationAppDir=ii.sourceDir;
-    mInstrumentationAppLibraryDir=ii.nativeLibraryDir;
-    mInstrumentationAppPackage=ii.packageName;
+    mInstrumentationSplitAppDirs=ii.splitSourceDirs;
+    mInstrumentationLibDir=ii.nativeLibraryDir;
     mInstrumentedAppDir=data.info.getAppDir();
-    mInstrumentedAppLibraryDir=data.info.getLibDir();
+    mInstrumentedSplitAppDirs=data.info.getSplitAppDirs();
+    mInstrumentedLibDir=data.info.getLibDir();
     ApplicationInfo instrApp=new ApplicationInfo();
     instrApp.packageName=ii.packageName;
     instrApp.sourceDir=ii.sourceDir;
     instrApp.publicSourceDir=ii.publicSourceDir;
+    instrApp.splitSourceDirs=ii.splitSourceDirs;
+    instrApp.splitPublicSourceDirs=ii.splitPublicSourceDirs;
     instrApp.dataDir=ii.dataDir;
     instrApp.nativeLibraryDir=ii.nativeLibraryDir;
-    LoadedApk pi=getPackageInfo(instrApp,data.compatInfo,appContext.getClassLoader(),false,true);
+    LoadedApk pi=getPackageInfo(instrApp,data.compatInfo,appContext.getClassLoader(),false,true,false);
     ContextImpl instrContext=ContextImpl.createAppContext(this,pi);
     try {
       java.lang.ClassLoader cl=instrContext.getClassLoader();

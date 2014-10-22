@@ -1,0 +1,40 @@
+{
+  mContext.enforceCallingPermission(android.Manifest.permission.BACKUP,"fullRestore");
+  final int callingUserHandle=UserHandle.getCallingUserId();
+  if (callingUserHandle != UserHandle.USER_OWNER) {
+    throw new IllegalStateException("Restore supported only for the device owner");
+  }
+  long oldId=Binder.clearCallingIdentity();
+  try {
+    if (!deviceIsProvisioned()) {
+      Slog.i(TAG,"Full restore not permitted before setup");
+      return;
+    }
+    Slog.i(TAG,"Beginning full restore...");
+    FullRestoreParams params=new FullRestoreParams(fd);
+    final int token=generateToken();
+synchronized (mFullConfirmations) {
+      mFullConfirmations.put(token,params);
+    }
+    if (DEBUG)     Slog.d(TAG,"Starting restore confirmation UI, token=" + token);
+    if (!startConfirmationUi(token,FullBackup.FULL_RESTORE_INTENT_ACTION)) {
+      Slog.e(TAG,"Unable to launch full restore confirmation");
+      mFullConfirmations.delete(token);
+      return;
+    }
+    mPowerManager.userActivity(SystemClock.uptimeMillis(),false);
+    startConfirmationTimeout(token,params);
+    if (DEBUG)     Slog.d(TAG,"Waiting for full restore completion...");
+    waitForCompletion(params);
+  }
+  finally {
+    try {
+      fd.close();
+    }
+ catch (    IOException e) {
+      Slog.w(TAG,"Error trying to close fd after full restore: " + e);
+    }
+    Binder.restoreCallingIdentity(oldId);
+    Slog.i(TAG,"Full restore processing complete.");
+  }
+}

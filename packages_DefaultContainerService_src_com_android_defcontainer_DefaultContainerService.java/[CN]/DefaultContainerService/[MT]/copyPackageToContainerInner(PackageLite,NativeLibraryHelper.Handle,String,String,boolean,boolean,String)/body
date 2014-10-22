@@ -1,0 +1,36 @@
+{
+  final long sizeBytes=PackageHelper.calculateInstalledSize(pkg,handle,isForwardLocked,abiOverride);
+  final String newMountPath=PackageHelper.createSdDir(sizeBytes,newCid,key,Process.myUid(),isExternal);
+  if (newMountPath == null) {
+    throw new IOException("Failed to create container " + newCid);
+  }
+  final File targetDir=new File(newMountPath);
+  try {
+    copyFile(pkg.baseCodePath,targetDir,"base.apk",isForwardLocked);
+    if (!ArrayUtils.isEmpty(pkg.splitNames)) {
+      for (int i=0; i < pkg.splitNames.length; i++) {
+        copyFile(pkg.splitCodePaths[i],targetDir,"split_" + pkg.splitNames[i] + ".apk",isForwardLocked);
+      }
+    }
+    final File libraryRoot=new File(targetDir,LIB_DIR_NAME);
+    final int res=NativeLibraryHelper.copyNativeBinariesWithOverride(handle,libraryRoot,abiOverride);
+    if (res != PackageManager.INSTALL_SUCCEEDED) {
+      throw new IOException("Failed to extract native code, res=" + res);
+    }
+    if (!PackageHelper.finalizeSdDir(newCid)) {
+      throw new IOException("Failed to finalize " + newCid);
+    }
+    if (PackageHelper.isContainerMounted(newCid)) {
+      PackageHelper.unMountSdDir(newCid);
+    }
+  }
+ catch (  ErrnoException e) {
+    PackageHelper.destroySdDir(newCid);
+    throw e.rethrowAsIOException();
+  }
+catch (  IOException e) {
+    PackageHelper.destroySdDir(newCid);
+    throw e;
+  }
+  return newMountPath;
+}

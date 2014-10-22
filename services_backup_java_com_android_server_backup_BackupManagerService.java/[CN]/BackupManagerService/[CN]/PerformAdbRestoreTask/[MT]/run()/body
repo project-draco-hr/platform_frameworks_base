@@ -1,0 +1,87 @@
+{
+  Slog.i(TAG,"--- Performing full-dataset restore ---");
+  mObbConnection.establish();
+  sendStartRestore();
+  if (Environment.getExternalStorageState().equals(Environment.MEDIA_MOUNTED)) {
+    mPackagePolicies.put(SHARED_BACKUP_AGENT_PACKAGE,RestorePolicy.ACCEPT);
+  }
+  FileInputStream rawInStream=null;
+  DataInputStream rawDataIn=null;
+  try {
+    if (!backupPasswordMatches(mCurrentPassword)) {
+      if (DEBUG)       Slog.w(TAG,"Backup password mismatch; aborting");
+      return;
+    }
+    mBytes=0;
+    byte[] buffer=new byte[32 * 1024];
+    rawInStream=new FileInputStream(mInputFile.getFileDescriptor());
+    rawDataIn=new DataInputStream(rawInStream);
+    boolean compressed=false;
+    InputStream preCompressStream=rawInStream;
+    final InputStream in;
+    boolean okay=false;
+    final int headerLen=BACKUP_FILE_HEADER_MAGIC.length();
+    byte[] streamHeader=new byte[headerLen];
+    rawDataIn.readFully(streamHeader);
+    byte[] magicBytes=BACKUP_FILE_HEADER_MAGIC.getBytes("UTF-8");
+    if (Arrays.equals(magicBytes,streamHeader)) {
+      String s=readHeaderLine(rawInStream);
+      final int archiveVersion=Integer.parseInt(s);
+      if (archiveVersion <= BACKUP_FILE_VERSION) {
+        final boolean pbkdf2Fallback=(archiveVersion == 1);
+        s=readHeaderLine(rawInStream);
+        compressed=(Integer.parseInt(s) != 0);
+        s=readHeaderLine(rawInStream);
+        if (s.equals("none")) {
+          okay=true;
+        }
+ else         if (mDecryptPassword != null && mDecryptPassword.length() > 0) {
+          preCompressStream=decodeAesHeaderAndInitialize(s,pbkdf2Fallback,rawInStream);
+          if (preCompressStream != null) {
+            okay=true;
+          }
+        }
+ else         Slog.w(TAG,"Archive is encrypted but no password given");
+      }
+ else       Slog.w(TAG,"Wrong header version: " + s);
+    }
+ else     Slog.w(TAG,"Didn't read the right header magic");
+    if (!okay) {
+      Slog.w(TAG,"Invalid restore data; aborting.");
+      return;
+    }
+    in=(compressed) ? new InflaterInputStream(preCompressStream) : preCompressStream;
+    boolean didRestore;
+    do {
+      didRestore=restoreOneFile(in,buffer);
+    }
+ while (didRestore);
+    if (MORE_DEBUG)     Slog.v(TAG,"Done consuming input tarfile, total bytes=" + mBytes);
+  }
+ catch (  IOException e) {
+    Slog.e(TAG,"Unable to read restore input");
+  }
+ finally {
+    tearDownPipes();
+    tearDownAgent(mTargetApp);
+    try {
+      if (rawDataIn != null)       rawDataIn.close();
+      if (rawInStream != null)       rawInStream.close();
+      mInputFile.close();
+    }
+ catch (    IOException e) {
+      Slog.w(TAG,"Close of restore data pipe threw",e);
+    }
+synchronized (mCurrentOpLock) {
+      mCurrentOperations.clear();
+    }
+synchronized (mLatchObject) {
+      mLatchObject.set(true);
+      mLatchObject.notifyAll();
+    }
+    mObbConnection.tearDown();
+    sendEndRestore();
+    Slog.d(TAG,"Full restore pass complete.");
+    mWakelock.release();
+  }
+}

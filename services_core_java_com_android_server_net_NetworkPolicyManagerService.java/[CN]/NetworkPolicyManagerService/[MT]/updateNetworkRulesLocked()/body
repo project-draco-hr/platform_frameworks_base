@@ -1,0 +1,118 @@
+{
+  if (LOGV)   Slog.v(TAG,"updateIfacesLocked()");
+  final NetworkState[] states;
+  try {
+    states=mConnManager.getAllNetworkState();
+  }
+ catch (  RemoteException e) {
+    return;
+  }
+  final boolean powerSave=mRestrictPower && !mRestrictBackground;
+  final ArrayList<Pair<String,NetworkIdentity>> connIdents=new ArrayList<>(states.length);
+  final ArraySet<String> connIfaces=new ArraySet<String>(states.length);
+  for (  NetworkState state : states) {
+    if (state.networkInfo.isConnected()) {
+      final NetworkIdentity ident=NetworkIdentity.buildNetworkIdentity(mContext,state);
+      final String baseIface=state.linkProperties.getInterfaceName();
+      if (baseIface != null) {
+        connIdents.add(Pair.create(baseIface,ident));
+        if (powerSave) {
+          connIfaces.add(baseIface);
+        }
+      }
+      final List<LinkProperties> stackedLinks=state.linkProperties.getStackedLinks();
+      for (      LinkProperties stackedLink : stackedLinks) {
+        final String stackedIface=stackedLink.getInterfaceName();
+        if (stackedIface != null) {
+          connIdents.add(Pair.create(stackedIface,ident));
+          if (powerSave) {
+            connIfaces.add(stackedIface);
+          }
+        }
+      }
+    }
+  }
+  mNetworkRules.clear();
+  final ArrayList<String> ifaceList=Lists.newArrayList();
+  for (int i=mNetworkPolicy.size() - 1; i >= 0; i--) {
+    final NetworkPolicy policy=mNetworkPolicy.valueAt(i);
+    ifaceList.clear();
+    for (int j=connIdents.size() - 1; j >= 0; j--) {
+      final Pair<String,NetworkIdentity> ident=connIdents.get(j);
+      if (policy.template.matches(ident.second)) {
+        ifaceList.add(ident.first);
+      }
+    }
+    if (ifaceList.size() > 0) {
+      final String[] ifaces=ifaceList.toArray(new String[ifaceList.size()]);
+      mNetworkRules.put(policy,ifaces);
+    }
+  }
+  long lowestRule=Long.MAX_VALUE;
+  final ArraySet<String> newMeteredIfaces=new ArraySet<String>(states.length);
+  final long currentTime=currentTimeMillis();
+  for (int i=mNetworkRules.size() - 1; i >= 0; i--) {
+    final NetworkPolicy policy=mNetworkRules.keyAt(i);
+    final String[] ifaces=mNetworkRules.valueAt(i);
+    final long start;
+    final long totalBytes;
+    if (policy.hasCycle()) {
+      start=computeLastCycleBoundary(currentTime,policy);
+      totalBytes=getTotalBytes(policy.template,start,currentTime);
+    }
+ else {
+      start=Long.MAX_VALUE;
+      totalBytes=0;
+    }
+    if (LOGD) {
+      Slog.d(TAG,"applying policy " + policy.toString() + " to ifaces "+ Arrays.toString(ifaces));
+    }
+    final boolean hasWarning=policy.warningBytes != LIMIT_DISABLED;
+    final boolean hasLimit=policy.limitBytes != LIMIT_DISABLED;
+    if (hasLimit || policy.metered) {
+      final long quotaBytes;
+      if (!hasLimit) {
+        quotaBytes=Long.MAX_VALUE;
+      }
+ else       if (policy.lastLimitSnooze >= start) {
+        quotaBytes=Long.MAX_VALUE;
+      }
+ else {
+        quotaBytes=Math.max(1,policy.limitBytes - totalBytes);
+      }
+      if (ifaces.length > 1) {
+        Slog.w(TAG,"shared quota unsupported; generating rule for each iface");
+      }
+      for (      String iface : ifaces) {
+        removeInterfaceQuota(iface);
+        setInterfaceQuota(iface,quotaBytes);
+        newMeteredIfaces.add(iface);
+        if (powerSave) {
+          connIfaces.remove(iface);
+        }
+      }
+    }
+    if (hasWarning && policy.warningBytes < lowestRule) {
+      lowestRule=policy.warningBytes;
+    }
+    if (hasLimit && policy.limitBytes < lowestRule) {
+      lowestRule=policy.limitBytes;
+    }
+  }
+  for (int i=connIfaces.size() - 1; i >= 0; i--) {
+    String iface=connIfaces.valueAt(i);
+    removeInterfaceQuota(iface);
+    setInterfaceQuota(iface,Long.MAX_VALUE);
+    newMeteredIfaces.add(iface);
+  }
+  mHandler.obtainMessage(MSG_ADVISE_PERSIST_THRESHOLD,lowestRule).sendToTarget();
+  for (int i=mMeteredIfaces.size() - 1; i >= 0; i--) {
+    final String iface=mMeteredIfaces.valueAt(i);
+    if (!newMeteredIfaces.contains(iface)) {
+      removeInterfaceQuota(iface);
+    }
+  }
+  mMeteredIfaces=newMeteredIfaces;
+  final String[] meteredIfaces=mMeteredIfaces.toArray(new String[mMeteredIfaces.size()]);
+  mHandler.obtainMessage(MSG_METERED_IFACES_CHANGED,meteredIfaces).sendToTarget();
+}

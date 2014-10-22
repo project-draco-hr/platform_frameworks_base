@@ -1,0 +1,72 @@
+{
+  final HistoryPrinter hprinter=new HistoryPrinter();
+  final HistoryItem rec=new HistoryItem();
+  long lastTime=-1;
+  long baseTime=-1;
+  boolean printed=false;
+  HistoryEventTracker tracker=null;
+  while (getNextHistoryLocked(rec)) {
+    lastTime=rec.time;
+    if (baseTime < 0) {
+      baseTime=lastTime;
+    }
+    if (rec.time >= histStart) {
+      if (histStart >= 0 && !printed) {
+        if (rec.cmd == HistoryItem.CMD_CURRENT_TIME || rec.cmd == HistoryItem.CMD_RESET || rec.cmd == HistoryItem.CMD_START) {
+          printed=true;
+          hprinter.printNextItem(pw,rec,baseTime,checkin,(flags & DUMP_VERBOSE) != 0);
+          rec.cmd=HistoryItem.CMD_UPDATE;
+        }
+ else         if (rec.currentTime != 0) {
+          printed=true;
+          byte cmd=rec.cmd;
+          rec.cmd=HistoryItem.CMD_CURRENT_TIME;
+          hprinter.printNextItem(pw,rec,baseTime,checkin,(flags & DUMP_VERBOSE) != 0);
+          rec.cmd=cmd;
+        }
+        if (tracker != null) {
+          if (rec.cmd != HistoryItem.CMD_UPDATE) {
+            hprinter.printNextItem(pw,rec,baseTime,checkin,(flags & DUMP_VERBOSE) != 0);
+            rec.cmd=HistoryItem.CMD_UPDATE;
+          }
+          int oldEventCode=rec.eventCode;
+          HistoryTag oldEventTag=rec.eventTag;
+          rec.eventTag=new HistoryTag();
+          for (int i=0; i < HistoryItem.EVENT_COUNT; i++) {
+            HashMap<String,SparseIntArray> active=tracker.getStateForEvent(i);
+            if (active == null) {
+              continue;
+            }
+            for (            HashMap.Entry<String,SparseIntArray> ent : active.entrySet()) {
+              SparseIntArray uids=ent.getValue();
+              for (int j=0; j < uids.size(); j++) {
+                rec.eventCode=i;
+                rec.eventTag.string=ent.getKey();
+                rec.eventTag.uid=uids.keyAt(j);
+                rec.eventTag.poolIdx=uids.valueAt(j);
+                hprinter.printNextItem(pw,rec,baseTime,checkin,(flags & DUMP_VERBOSE) != 0);
+                rec.wakeReasonTag=null;
+                rec.wakelockTag=null;
+              }
+            }
+          }
+          rec.eventCode=oldEventCode;
+          rec.eventTag=oldEventTag;
+          tracker=null;
+        }
+      }
+      hprinter.printNextItem(pw,rec,baseTime,checkin,(flags & DUMP_VERBOSE) != 0);
+    }
+ else     if (false && rec.eventCode != HistoryItem.EVENT_NONE) {
+      if (tracker == null) {
+        tracker=new HistoryEventTracker();
+      }
+      tracker.updateState(rec.eventCode,rec.eventTag.string,rec.eventTag.uid,rec.eventTag.poolIdx);
+    }
+  }
+  if (histStart >= 0) {
+    commitCurrentHistoryBatchLocked();
+    pw.print(checkin ? "NEXT: " : "  NEXT: ");
+    pw.println(lastTime + 1);
+  }
+}

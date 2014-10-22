@@ -21,6 +21,7 @@
     }
   }
   checkWritePermissions(args);
+  checkUserRestrictions(name,desiredUserHandle);
   if (TABLE_GLOBAL.equals(args.table)) {
     desiredUserHandle=UserHandle.USER_OWNER;
   }
@@ -29,12 +30,19 @@
   if (SettingsCache.isRedundantSetValue(cache,name,value)) {
     return Uri.withAppendedPath(url,name);
   }
-  final AtomicInteger mutationCount=sKnownMutationsInFlight.get(desiredUserHandle);
-  mutationCount.incrementAndGet();
+  final AtomicInteger mutationCount;
+synchronized (this) {
+    mutationCount=sKnownMutationsInFlight.get(callingUser);
+  }
+  if (mutationCount != null) {
+    mutationCount.incrementAndGet();
+  }
   DatabaseHelper dbH=getOrEstablishDatabase(desiredUserHandle);
   SQLiteDatabase db=dbH.getWritableDatabase();
   final long rowId=db.insert(args.table,null,initialValues);
-  mutationCount.decrementAndGet();
+  if (mutationCount != null) {
+    mutationCount.decrementAndGet();
+  }
   if (rowId <= 0)   return null;
   SettingsCache.populate(cache,initialValues);
   if (LOCAL_LOGV)   Log.v(TAG,args.table + " <- " + initialValues+ " for user "+ desiredUserHandle);

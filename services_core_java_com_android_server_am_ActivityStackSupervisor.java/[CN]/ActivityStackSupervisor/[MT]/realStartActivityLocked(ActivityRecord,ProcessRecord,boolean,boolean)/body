@@ -1,0 +1,112 @@
+{
+  r.startFreezingScreenLocked(app,0);
+  if (false)   Slog.d(TAG,"realStartActivity: setting app visibility true");
+  mWindowManager.setAppVisibility(r.appToken,true);
+  r.startLaunchTickingLocked();
+  if (checkConfig) {
+    Configuration config=mWindowManager.updateOrientationFromAppTokens(mService.mConfiguration,r.mayFreezeScreenLocked(app) ? r.appToken : null);
+    mService.updateConfigurationLocked(config,r,false,false);
+  }
+  r.app=app;
+  app.waitingToKill=null;
+  r.launchCount++;
+  r.lastLaunchTime=SystemClock.uptimeMillis();
+  if (localLOGV)   Slog.v(TAG,"Launching: " + r);
+  int idx=app.activities.indexOf(r);
+  if (idx < 0) {
+    app.activities.add(r);
+  }
+  mService.updateLruProcessLocked(app,true,null);
+  mService.updateOomAdjLocked();
+  final ActivityStack stack=r.task.stack;
+  try {
+    if (app.thread == null) {
+      throw new RemoteException();
+    }
+    List<ResultInfo> results=null;
+    List<Intent> newIntents=null;
+    if (andResume) {
+      results=r.results;
+      newIntents=r.newIntents;
+    }
+    if (DEBUG_SWITCH)     Slog.v(TAG,"Launching: " + r + " icicle="+ r.icicle+ " with results="+ results+ " newIntents="+ newIntents+ " andResume="+ andResume);
+    if (andResume) {
+      EventLog.writeEvent(EventLogTags.AM_RESTART_ACTIVITY,r.userId,System.identityHashCode(r),r.task.taskId,r.shortComponentName);
+    }
+    if (r.isHomeActivity() && r.isNotResolverActivity()) {
+      mService.mHomeProcess=r.task.mActivities.get(0).app;
+    }
+    mService.ensurePackageDexOpt(r.intent.getComponent().getPackageName());
+    r.sleeping=false;
+    r.forceNewConfig=false;
+    mService.showAskCompatModeDialogLocked(r);
+    r.compat=mService.compatibilityInfoForPackageLocked(r.info.applicationInfo);
+    String profileFile=null;
+    ParcelFileDescriptor profileFd=null;
+    if (mService.mProfileApp != null && mService.mProfileApp.equals(app.processName)) {
+      if (mService.mProfileProc == null || mService.mProfileProc == app) {
+        mService.mProfileProc=app;
+        profileFile=mService.mProfileFile;
+        profileFd=mService.mProfileFd;
+      }
+    }
+    app.hasShownUi=true;
+    app.pendingUiClean=true;
+    if (profileFd != null) {
+      try {
+        profileFd=profileFd.dup();
+      }
+ catch (      IOException e) {
+        if (profileFd != null) {
+          try {
+            profileFd.close();
+          }
+ catch (          IOException o) {
+          }
+          profileFd=null;
+        }
+      }
+    }
+    ProfilerInfo profilerInfo=profileFile != null ? new ProfilerInfo(profileFile,profileFd,mService.mSamplingInterval,mService.mAutoStopProfiler) : null;
+    app.forceProcessStateUpTo(ActivityManager.PROCESS_STATE_TOP);
+    app.thread.scheduleLaunchActivity(new Intent(r.intent),r.appToken,System.identityHashCode(r),r.info,new Configuration(mService.mConfiguration),r.compat,r.task.voiceInteractor,app.repProcState,r.icicle,r.persistentState,results,newIntents,!andResume,mService.isNextTransitionForward(),profilerInfo);
+    if ((app.info.flags & ApplicationInfo.FLAG_CANT_SAVE_STATE) != 0) {
+      if (app.processName.equals(app.info.packageName)) {
+        if (mService.mHeavyWeightProcess != null && mService.mHeavyWeightProcess != app) {
+          Slog.w(TAG,"Starting new heavy weight process " + app + " when already running "+ mService.mHeavyWeightProcess);
+        }
+        mService.mHeavyWeightProcess=app;
+        Message msg=mService.mHandler.obtainMessage(ActivityManagerService.POST_HEAVY_NOTIFICATION_MSG);
+        msg.obj=r;
+        mService.mHandler.sendMessage(msg);
+      }
+    }
+  }
+ catch (  RemoteException e) {
+    if (r.launchFailed) {
+      Slog.e(TAG,"Second failure launching " + r.intent.getComponent().flattenToShortString() + ", giving up",e);
+      mService.appDiedLocked(app);
+      stack.requestFinishActivityLocked(r.appToken,Activity.RESULT_CANCELED,null,"2nd-crash",false);
+      return false;
+    }
+    app.activities.remove(r);
+    throw e;
+  }
+  r.launchFailed=false;
+  if (stack.updateLRUListLocked(r)) {
+    Slog.w(TAG,"Activity " + r + " being launched, but already in LRU list");
+  }
+  if (andResume) {
+    stack.minimalResumeActivityLocked(r);
+  }
+ else {
+    if (DEBUG_STATES)     Slog.v(TAG,"Moving to STOPPED: " + r + " (starting in stopped state)");
+    r.state=ActivityState.STOPPED;
+    r.stopped=true;
+  }
+  if (isFrontStack(stack)) {
+    mService.startSetupActivityLocked();
+  }
+  mService.mServices.updateServiceConnectionActivitiesLocked(r.app);
+  return true;
+}

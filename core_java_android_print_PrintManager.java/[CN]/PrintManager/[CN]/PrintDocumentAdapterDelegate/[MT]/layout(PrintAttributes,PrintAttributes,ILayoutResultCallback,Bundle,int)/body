@@ -1,30 +1,24 @@
 {
-  final boolean destroyed;
-synchronized (mLock) {
-    destroyed=mDestroyed;
-    if (mStartReqeusted && !mFinishRequested && !mDestroyed) {
-      if (mLastWriteSpec != null) {
-        IoUtils.closeQuietly(mLastWriteSpec.fd);
-        mLastWriteSpec=null;
-      }
-      mLastLayoutSpec=new LayoutSpec();
-      mLastLayoutSpec.callback=callback;
-      mLastLayoutSpec.oldAttributes=oldAttributes;
-      mLastLayoutSpec.newAttributes=newAttributes;
-      mLastLayoutSpec.metadata=metadata;
-      mLastLayoutSpec.sequence=sequence;
-      if (cancelPreviousCancellableOperationLocked()) {
-        return;
-      }
-      doPendingWorkLocked();
-    }
+  ICancellationSignal cancellationTransport=CancellationSignal.createTransport();
+  try {
+    callback.onLayoutStarted(cancellationTransport,sequence);
   }
-  if (destroyed) {
-    try {
-      callback.onLayoutFailed(null,sequence);
+ catch (  RemoteException re) {
+    Log.e(LOG_TAG,"Error notifying for layout start",re);
+    return;
+  }
+synchronized (mLock) {
+    if (isDestroyedLocked()) {
+      return;
     }
- catch (    RemoteException re) {
-      Log.i(LOG_TAG,"Error notifying for cancelled layout",re);
-    }
+    CancellationSignal cancellationSignal=CancellationSignal.fromTransport(cancellationTransport);
+    SomeArgs args=SomeArgs.obtain();
+    args.arg1=mDocumentAdapter;
+    args.arg2=oldAttributes;
+    args.arg3=newAttributes;
+    args.arg4=cancellationSignal;
+    args.arg5=new MyLayoutResultCallback(callback,sequence);
+    args.arg6=metadata;
+    mHandler.obtainMessage(MyHandler.MSG_ON_LAYOUT,args).sendToTarget();
   }
 }

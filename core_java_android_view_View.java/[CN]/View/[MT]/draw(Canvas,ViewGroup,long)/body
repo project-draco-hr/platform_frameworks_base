@@ -1,5 +1,5 @@
 {
-  boolean useDisplayListProperties=mAttachInfo != null && mAttachInfo.mHardwareAccelerated;
+  boolean usingRenderNodeProperties=mAttachInfo != null && mAttachInfo.mHardwareAccelerated;
   boolean more=false;
   final boolean childHasIdentityMatrix=hasIdentityMatrix();
   final int flags=parent.mGroupFlags;
@@ -30,11 +30,11 @@
     transformToApply=parent.getChildTransformation();
   }
  else {
-    if ((mPrivateFlags3 & PFLAG3_VIEW_IS_ANIMATING_TRANSFORM) == PFLAG3_VIEW_IS_ANIMATING_TRANSFORM && mDisplayList != null) {
-      mDisplayList.setAnimationMatrix(null);
+    if ((mPrivateFlags3 & PFLAG3_VIEW_IS_ANIMATING_TRANSFORM) != 0) {
+      mRenderNode.setAnimationMatrix(null);
       mPrivateFlags3&=~PFLAG3_VIEW_IS_ANIMATING_TRANSFORM;
     }
-    if (!useDisplayListProperties && (flags & ViewGroup.FLAG_SUPPORT_STATIC_TRANSFORMATIONS) != 0) {
+    if (!usingRenderNodeProperties && (flags & ViewGroup.FLAG_SUPPORT_STATIC_TRANSFORMATIONS) != 0) {
       final Transformation t=parent.getChildTransformation();
       final boolean hasTransform=parent.getChildStaticTransformation(this,t);
       if (hasTransform) {
@@ -55,7 +55,7 @@
     mRecreateDisplayList=(mPrivateFlags & PFLAG_INVALIDATED) == PFLAG_INVALIDATED;
     mPrivateFlags&=~PFLAG_INVALIDATED;
   }
-  DisplayList displayList=null;
+  RenderNode renderNode=null;
   Bitmap cache=null;
   boolean hasDisplayList=false;
   if (caching) {
@@ -69,7 +69,7 @@
  else {
 switch (layerType) {
 case LAYER_TYPE_SOFTWARE:
-        if (useDisplayListProperties) {
+        if (usingRenderNodeProperties) {
           hasDisplayList=canHaveDisplayList();
         }
  else {
@@ -78,7 +78,7 @@ case LAYER_TYPE_SOFTWARE:
         }
       break;
 case LAYER_TYPE_HARDWARE:
-    if (useDisplayListProperties) {
+    if (usingRenderNodeProperties) {
       hasDisplayList=canHaveDisplayList();
     }
   break;
@@ -88,13 +88,13 @@ break;
 }
 }
 }
-useDisplayListProperties&=hasDisplayList;
-if (useDisplayListProperties) {
-displayList=getDisplayList();
-if (!displayList.isValid()) {
-displayList=null;
+usingRenderNodeProperties&=hasDisplayList;
+if (usingRenderNodeProperties) {
+renderNode=getDisplayList();
+if (!renderNode.isValid()) {
+renderNode=null;
 hasDisplayList=false;
-useDisplayListProperties=false;
+usingRenderNodeProperties=false;
 }
 }
 int sx=0;
@@ -107,25 +107,25 @@ sy=mScrollY;
 final boolean hasNoCache=cache == null || hasDisplayList;
 final boolean offsetForScroll=cache == null && !hasDisplayList && layerType != LAYER_TYPE_HARDWARE;
 int restoreTo=-1;
-if (!useDisplayListProperties || transformToApply != null) {
+if (!usingRenderNodeProperties || transformToApply != null) {
 restoreTo=canvas.save();
 }
 if (offsetForScroll) {
 canvas.translate(mLeft - sx,mTop - sy);
 }
  else {
-if (!useDisplayListProperties) {
+if (!usingRenderNodeProperties) {
 canvas.translate(mLeft,mTop);
 }
 if (scalingRequired) {
-if (useDisplayListProperties) {
+if (usingRenderNodeProperties) {
 restoreTo=canvas.save();
 }
 final float scale=1.0f / mAttachInfo.mApplicationScale;
 canvas.scale(scale,scale);
 }
 }
-float alpha=useDisplayListProperties ? 1 : (getAlpha() * getTransitionAlpha());
+float alpha=usingRenderNodeProperties ? 1 : (getAlpha() * getTransitionAlpha());
 if (transformToApply != null || alpha < 1 || !hasIdentityMatrix() || (mPrivateFlags3 & PFLAG3_VIEW_IS_ANIMATING_ALPHA) == PFLAG3_VIEW_IS_ANIMATING_ALPHA) {
 if (transformToApply != null || !childHasIdentityMatrix) {
 int transX=0;
@@ -136,8 +136,8 @@ transY=-sy;
 }
 if (transformToApply != null) {
 if (concatMatrix) {
-if (useDisplayListProperties) {
-displayList.setAnimationMatrix(transformToApply.getMatrix());
+if (usingRenderNodeProperties) {
+renderNode.setAnimationMatrix(transformToApply.getMatrix());
 }
  else {
 canvas.translate(-transX,-transY);
@@ -152,7 +152,7 @@ alpha*=transformAlpha;
 parent.mGroupFlags|=ViewGroup.FLAG_CLEAR_TRANSFORMATION;
 }
 }
-if (!childHasIdentityMatrix && !useDisplayListProperties) {
+if (!childHasIdentityMatrix && !usingRenderNodeProperties) {
 canvas.translate(-transX,-transY);
 canvas.concat(getMatrix());
 canvas.translate(transX,transY);
@@ -173,13 +173,13 @@ int layerFlags=Canvas.HAS_ALPHA_LAYER_SAVE_FLAG;
 if ((flags & ViewGroup.FLAG_CLIP_CHILDREN) != 0 || layerType != LAYER_TYPE_NONE) {
 layerFlags|=Canvas.CLIP_TO_LAYER_SAVE_FLAG;
 }
-if (useDisplayListProperties) {
-displayList.setAlpha(alpha * getAlpha() * getTransitionAlpha());
+if (usingRenderNodeProperties) {
+renderNode.setAlpha(alpha * getAlpha() * getTransitionAlpha());
 }
  else if (layerType == LAYER_TYPE_NONE) {
 final int scrollX=hasDisplayList ? 0 : sx;
 final int scrollY=hasDisplayList ? 0 : sy;
-canvas.saveLayerAlpha(scrollX,scrollY,scrollX + mRight - mLeft,scrollY + mBottom - mTop,multipliedAlpha,layerFlags);
+canvas.saveLayerAlpha(scrollX,scrollY,scrollX + (mRight - mLeft),scrollY + (mBottom - mTop),multipliedAlpha,layerFlags);
 }
 }
  else {
@@ -192,7 +192,8 @@ mPrivateFlags|=PFLAG_ALPHA_SET;
 onSetAlpha(255);
 mPrivateFlags&=~PFLAG_ALPHA_SET;
 }
-if ((flags & ViewGroup.FLAG_CLIP_CHILDREN) == ViewGroup.FLAG_CLIP_CHILDREN && !useDisplayListProperties && cache == null) {
+if (!usingRenderNodeProperties) {
+if ((flags & ViewGroup.FLAG_CLIP_CHILDREN) == ViewGroup.FLAG_CLIP_CHILDREN && cache == null) {
 if (offsetForScroll) {
 canvas.clipRect(sx,sy,sx + (mRight - mLeft),sy + (mBottom - mTop));
 }
@@ -205,20 +206,26 @@ canvas.clipRect(0,0,cache.getWidth(),cache.getHeight());
 }
 }
 }
-if (!useDisplayListProperties && hasDisplayList) {
-displayList=getDisplayList();
-if (!displayList.isValid()) {
-displayList=null;
+if (mClipBounds != null) {
+canvas.clipRect(mClipBounds);
+}
+}
+if (!usingRenderNodeProperties && hasDisplayList) {
+renderNode=getDisplayList();
+if (!renderNode.isValid()) {
+renderNode=null;
 hasDisplayList=false;
 }
 }
 if (hasNoCache) {
 boolean layerRendered=false;
-if (layerType == LAYER_TYPE_HARDWARE && !useDisplayListProperties) {
+if (layerType == LAYER_TYPE_HARDWARE && !usingRenderNodeProperties) {
 final HardwareLayer layer=getHardwareLayer();
 if (layer != null && layer.isValid()) {
+int restoreAlpha=mLayerPaint.getAlpha();
 mLayerPaint.setAlpha((int)(alpha * 255));
 ((HardwareCanvas)canvas).drawHardwareLayer(layer,0,0,mLayerPaint);
+mLayerPaint.setAlpha(restoreAlpha);
 layerRendered=true;
 }
  else {
@@ -232,20 +239,25 @@ if (!hasDisplayList) {
 if ((mPrivateFlags & PFLAG_SKIP_DRAW) == PFLAG_SKIP_DRAW) {
 mPrivateFlags&=~PFLAG_DIRTY_MASK;
 dispatchDraw(canvas);
+if (mOverlay != null && !mOverlay.isEmpty()) {
+mOverlay.getOverlayView().draw(canvas);
+}
 }
  else {
 draw(canvas);
 }
+drawAccessibilityFocus(canvas);
 }
  else {
 mPrivateFlags&=~PFLAG_DIRTY_MASK;
-((HardwareCanvas)canvas).drawDisplayList(displayList,null,flags);
+((HardwareCanvas)canvas).drawRenderNode(renderNode,null,flags);
 }
 }
 }
  else if (cache != null) {
 mPrivateFlags&=~PFLAG_DIRTY_MASK;
 Paint cachePaint;
+int restoreAlpha=0;
 if (layerType == LAYER_TYPE_NONE) {
 cachePaint=parent.mCachePaint;
 if (cachePaint == null) {
@@ -253,20 +265,14 @@ cachePaint=new Paint();
 cachePaint.setDither(false);
 parent.mCachePaint=cachePaint;
 }
-if (alpha < 1) {
-cachePaint.setAlpha((int)(alpha * 255));
-parent.mGroupFlags|=ViewGroup.FLAG_ALPHA_LOWER_THAN_ONE;
-}
- else if ((flags & ViewGroup.FLAG_ALPHA_LOWER_THAN_ONE) != 0) {
-cachePaint.setAlpha(255);
-parent.mGroupFlags&=~ViewGroup.FLAG_ALPHA_LOWER_THAN_ONE;
-}
 }
  else {
 cachePaint=mLayerPaint;
-cachePaint.setAlpha((int)(alpha * 255));
+restoreAlpha=mLayerPaint.getAlpha();
 }
+cachePaint.setAlpha((int)(alpha * 255));
 canvas.drawBitmap(cache,0.0f,0.0f,cachePaint);
+cachePaint.setAlpha(restoreAlpha);
 }
 if (restoreTo >= 0) {
 canvas.restoreToCount(restoreTo);

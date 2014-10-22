@@ -1,0 +1,89 @@
+{
+  if (mDeferredRotationPauseCount > 0) {
+    if (DEBUG_ORIENTATION)     Slog.v(TAG,"Deferring rotation, rotation is paused.");
+    return false;
+  }
+  ScreenRotationAnimation screenRotationAnimation=mAnimator.getScreenRotationAnimationLocked(Display.DEFAULT_DISPLAY);
+  if (screenRotationAnimation != null && screenRotationAnimation.isAnimating()) {
+    if (DEBUG_ORIENTATION)     Slog.v(TAG,"Deferring rotation, animation in progress.");
+    return false;
+  }
+  if (!mDisplayEnabled) {
+    if (DEBUG_ORIENTATION)     Slog.v(TAG,"Deferring rotation, display is not enabled.");
+    return false;
+  }
+  int rotation=mPolicy.rotationForOrientationLw(mForcedAppOrientation,mRotation);
+  boolean altOrientation=!mPolicy.rotationHasCompatibleMetricsLw(mForcedAppOrientation,rotation);
+  if (DEBUG_ORIENTATION) {
+    Slog.v(TAG,"Application requested orientation " + mForcedAppOrientation + ", got rotation "+ rotation+ " which has "+ (altOrientation ? "incompatible" : "compatible")+ " metrics");
+  }
+  if (mRotation == rotation && mAltOrientation == altOrientation) {
+    return false;
+  }
+  if (DEBUG_ORIENTATION) {
+    Slog.v(TAG,"Rotation changed to " + rotation + (altOrientation ? " (alt)" : "")+ " from "+ mRotation+ (mAltOrientation ? " (alt)" : "")+ ", forceApp="+ mForcedAppOrientation);
+  }
+  mRotation=rotation;
+  mAltOrientation=altOrientation;
+  mPolicy.setRotationLw(mRotation);
+  mWindowsFreezingScreen=true;
+  mH.removeMessages(H.WINDOW_FREEZE_TIMEOUT);
+  mH.sendEmptyMessageDelayed(H.WINDOW_FREEZE_TIMEOUT,WINDOW_FREEZE_TIMEOUT_DURATION);
+  mWaitingForConfig=true;
+  final DisplayContent displayContent=getDefaultDisplayContentLocked();
+  displayContent.layoutNeeded=true;
+  final int[] anim=new int[2];
+  if (displayContent.isDimming()) {
+    anim[0]=anim[1]=0;
+  }
+ else {
+    mPolicy.selectRotationAnimationLw(anim);
+  }
+  startFreezingDisplayLocked(inTransaction,anim[0],anim[1]);
+  screenRotationAnimation=mAnimator.getScreenRotationAnimationLocked(Display.DEFAULT_DISPLAY);
+  computeScreenConfigurationLocked(null);
+  final DisplayInfo displayInfo=displayContent.getDisplayInfo();
+  if (!inTransaction) {
+    if (SHOW_TRANSACTIONS) {
+      Slog.i(TAG,">>> OPEN TRANSACTION setRotationUnchecked");
+    }
+    SurfaceControl.openTransaction();
+  }
+  try {
+    if (CUSTOM_SCREEN_ROTATION && screenRotationAnimation != null && screenRotationAnimation.hasScreenshot()) {
+      if (screenRotationAnimation.setRotationInTransaction(rotation,mFxSession,MAX_ANIMATION_DURATION,getTransitionAnimationScaleLocked(),displayInfo.logicalWidth,displayInfo.logicalHeight)) {
+        scheduleAnimationLocked();
+      }
+    }
+    mDisplayManagerInternal.performTraversalInTransactionFromWindowManager();
+  }
+  finally {
+    if (!inTransaction) {
+      SurfaceControl.closeTransaction();
+      if (SHOW_LIGHT_TRANSACTIONS) {
+        Slog.i(TAG,"<<< CLOSE TRANSACTION setRotationUnchecked");
+      }
+    }
+  }
+  final WindowList windows=displayContent.getWindowList();
+  for (int i=windows.size() - 1; i >= 0; i--) {
+    WindowState w=windows.get(i);
+    if (w.mHasSurface) {
+      if (DEBUG_ORIENTATION)       Slog.v(TAG,"Set mOrientationChanging of " + w);
+      w.mOrientationChanging=true;
+      mInnerFields.mOrientationChangeComplete=false;
+    }
+    w.mLastFreezeDuration=0;
+  }
+  for (int i=mRotationWatchers.size() - 1; i >= 0; i--) {
+    try {
+      mRotationWatchers.get(i).watcher.onRotationChanged(rotation);
+    }
+ catch (    RemoteException e) {
+    }
+  }
+  if (screenRotationAnimation == null && mAccessibilityController != null && displayContent.getDisplayId() == Display.DEFAULT_DISPLAY) {
+    mAccessibilityController.onRotationChangedLocked(getDefaultDisplayContentLocked(),rotation);
+  }
+  return true;
+}

@@ -1,0 +1,43 @@
+{
+  if (Log.isLoggable(TAG,Log.VERBOSE)) {
+    Log.v(TAG,"removeAccount: " + account + ", response "+ response+ ", caller's uid "+ Binder.getCallingUid()+ ", pid "+ Binder.getCallingPid()+ ", for user id "+ userId);
+  }
+  if (response == null)   throw new IllegalArgumentException("response is null");
+  if (account == null)   throw new IllegalArgumentException("account is null");
+  enforceCrossUserPermission(userId,"User " + UserHandle.getCallingUserId() + " trying to remove account for "+ userId);
+  checkManageAccountsPermission();
+  UserAccounts accounts=getUserAccounts(userId);
+  if (!canUserModifyAccounts(userId)) {
+    try {
+      response.onError(AccountManager.ERROR_CODE_USER_RESTRICTED,"User cannot modify accounts");
+    }
+ catch (    RemoteException re) {
+    }
+    return;
+  }
+  if (!canUserModifyAccountsForType(userId,account.type)) {
+    try {
+      response.onError(AccountManager.ERROR_CODE_MANAGEMENT_DISABLED_FOR_ACCOUNT_TYPE,"User cannot modify accounts of this type (policy).");
+    }
+ catch (    RemoteException re) {
+    }
+    return;
+  }
+  UserHandle user=new UserHandle(userId);
+  long identityToken=clearCallingIdentity();
+  cancelNotification(getSigninRequiredNotificationId(accounts,account),user);
+synchronized (accounts.credentialsPermissionNotificationIds) {
+    for (    Pair<Pair<Account,String>,Integer> pair : accounts.credentialsPermissionNotificationIds.keySet()) {
+      if (account.equals(pair.first.first)) {
+        int id=accounts.credentialsPermissionNotificationIds.get(pair);
+        cancelNotification(id,user);
+      }
+    }
+  }
+  try {
+    new RemoveAccountSession(accounts,response,account).bind();
+  }
+  finally {
+    restoreCallingIdentity(identityToken);
+  }
+}

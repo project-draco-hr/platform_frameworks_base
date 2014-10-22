@@ -1,0 +1,52 @@
+{
+  if (!checkCallingPermission(android.Manifest.permission.MANAGE_APP_TOKENS,"removeWindowToken()")) {
+    throw new SecurityException("Requires MANAGE_APP_TOKENS permission");
+  }
+  final long origId=Binder.clearCallingIdentity();
+synchronized (mWindowMap) {
+    DisplayContent displayContent=null;
+    WindowToken wtoken=mTokenMap.remove(token);
+    if (wtoken != null) {
+      boolean delayed=false;
+      if (!wtoken.hidden) {
+        final int N=wtoken.windows.size();
+        boolean changed=false;
+        for (int i=0; i < N; i++) {
+          WindowState win=wtoken.windows.get(i);
+          displayContent=win.getDisplayContent();
+          if (win.mWinAnimator.isAnimating()) {
+            delayed=true;
+          }
+          if (win.isVisibleNow()) {
+            win.mWinAnimator.applyAnimationLocked(WindowManagerPolicy.TRANSIT_EXIT,false);
+            if (mAccessibilityController != null && win.isDefaultDisplay()) {
+              mAccessibilityController.onWindowTransitionLocked(win,WindowManagerPolicy.TRANSIT_EXIT);
+            }
+            changed=true;
+            if (displayContent != null) {
+              displayContent.layoutNeeded=true;
+            }
+          }
+        }
+        wtoken.hidden=true;
+        if (changed) {
+          performLayoutAndPlaceSurfacesLocked();
+          updateFocusedWindowLocked(UPDATE_FOCUS_NORMAL,false);
+        }
+        if (delayed) {
+          if (displayContent != null) {
+            displayContent.mExitingTokens.add(wtoken);
+          }
+        }
+ else         if (wtoken.windowType == TYPE_WALLPAPER) {
+          mWallpaperTokens.remove(wtoken);
+        }
+      }
+      mInputMonitor.updateInputWindowsLw(true);
+    }
+ else {
+      Slog.w(TAG,"Attempted to remove non-existing token: " + token);
+    }
+  }
+  Binder.restoreCallingIdentity(origId);
+}

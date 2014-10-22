@@ -1,0 +1,55 @@
+{
+  ArrayMap<AsecInstallArgs,String> processCids=new ArrayMap<>();
+  int[] uidArr=EmptyArray.INT;
+  final String[] list=PackageHelper.getSecureContainerList();
+  if (ArrayUtils.isEmpty(list)) {
+    Log.i(TAG,"No secure containers found");
+  }
+ else {
+synchronized (mPackages) {
+      for (      String cid : list) {
+        if (PackageInstallerService.isStageName(cid))         continue;
+        if (DEBUG_SD_INSTALL)         Log.i(TAG,"Processing container " + cid);
+        String pkgName=getAsecPackageName(cid);
+        if (pkgName == null) {
+          Slog.i(TAG,"Found stale container " + cid + " with no package name");
+          continue;
+        }
+        if (DEBUG_SD_INSTALL)         Log.i(TAG,"Looking for pkg : " + pkgName);
+        final PackageSetting ps=mSettings.mPackages.get(pkgName);
+        if (ps == null) {
+          Slog.i(TAG,"Found stale container " + cid + " with no matching settings");
+          continue;
+        }
+        if (externalStorage && !isMounted && !isExternal(ps)) {
+          continue;
+        }
+        final AsecInstallArgs args=new AsecInstallArgs(cid,getAppDexInstructionSets(ps),isForwardLocked(ps));
+        if (ps.codePathString != null && ps.codePathString.startsWith(args.getCodePath())) {
+          if (DEBUG_SD_INSTALL) {
+            Log.i(TAG,"Container : " + cid + " corresponds to pkg : "+ pkgName+ " at code path: "+ ps.codePathString);
+          }
+          processCids.put(args,ps.codePathString);
+          final int uid=ps.appId;
+          if (uid != -1) {
+            uidArr=ArrayUtils.appendInt(uidArr,uid);
+          }
+        }
+ else {
+          Slog.i(TAG,"Found stale container " + cid + ": expected codePath="+ ps.codePathString);
+        }
+      }
+    }
+    Arrays.sort(uidArr);
+  }
+  if (isMounted) {
+    if (DEBUG_SD_INSTALL)     Log.i(TAG,"Loading packages");
+    loadMediaPackages(processCids,uidArr);
+    startCleaningPackages();
+    mInstallerService.onSecureContainersAvailable();
+  }
+ else {
+    if (DEBUG_SD_INSTALL)     Log.i(TAG,"Unloading packages");
+    unloadMediaPackages(processCids,uidArr,reportStatus);
+  }
+}

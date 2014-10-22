@@ -1,28 +1,44 @@
 {
-  try {
-    ActivityManagerNative.getDefault().resumeAppSwitches();
-    ActivityManagerNative.getDefault().dismissKeyguardOnNextActivity();
-  }
- catch (  RemoteException e) {
-  }
-  if (mIntent != null) {
-    int[] pos=new int[2];
-    v.getLocationOnScreen(pos);
-    Intent overlay=new Intent();
-    overlay.setSourceBounds(new Rect(pos[0],pos[1],pos[0] + v.getWidth(),pos[1] + v.getHeight()));
-    try {
-      mIntent.send(mContext,0,overlay);
+  final boolean keyguardShowing=mStatusBarKeyguardViewManager.isShowing();
+  final boolean afterKeyguardGone=mIntent.isActivity() && PreviewInflater.wouldLaunchResolverActivity(mContext,mIntent.getIntent(),mCurrentUserId);
+  dismissKeyguardThenExecute(new OnDismissAction(){
+    public boolean onDismiss(){
+      if (mIsHeadsUp) {
+        mHeadsUpNotificationView.clear();
+      }
+      new Thread(){
+        @Override public void run(){
+          try {
+            if (keyguardShowing && !afterKeyguardGone) {
+              ActivityManagerNative.getDefault().keyguardWaitingForActivityDrawn();
+            }
+            ActivityManagerNative.getDefault().resumeAppSwitches();
+          }
+ catch (          RemoteException e) {
+          }
+          if (mIntent != null) {
+            try {
+              mIntent.send();
+            }
+ catch (            PendingIntent.CanceledException e) {
+              Log.w(TAG,"Sending contentIntent failed: " + e);
+            }
+            if (mIntent.isActivity()) {
+              overrideActivityPendingAppTransition(keyguardShowing && !afterKeyguardGone);
+            }
+          }
+          try {
+            mBarService.onNotificationClick(mNotificationKey);
+          }
+ catch (          RemoteException ex) {
+          }
+        }
+      }
+.start();
+      animateCollapsePanels(CommandQueue.FLAG_EXCLUDE_NONE,true);
+      visibilityChanged(false);
+      return mIntent != null && mIntent.isActivity();
     }
- catch (    PendingIntent.CanceledException e) {
-      Log.w(TAG,"Sending contentIntent failed: " + e);
-    }
-    KeyguardTouchDelegate.getInstance(mContext).dismiss();
   }
-  try {
-    mBarService.onNotificationClick(mPkg,mTag,mId);
-  }
- catch (  RemoteException ex) {
-  }
-  animateCollapsePanels(CommandQueue.FLAG_EXCLUDE_NONE);
-  visibilityChanged(false);
+,afterKeyguardGone);
 }

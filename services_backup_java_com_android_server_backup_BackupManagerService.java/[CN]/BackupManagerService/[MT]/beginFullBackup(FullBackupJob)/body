@@ -1,0 +1,40 @@
+{
+  long now=System.currentTimeMillis();
+  FullBackupEntry entry=null;
+  if (DEBUG_SCHEDULING) {
+    Slog.i(TAG,"Beginning scheduled full backup operation");
+  }
+synchronized (mQueueLock) {
+    if (mRunningFullBackupTask != null) {
+      Slog.e(TAG,"Backup triggered but one already/still running!");
+      return false;
+    }
+    if (mFullBackupQueue.size() == 0) {
+      if (DEBUG) {
+        Slog.i(TAG,"Backup queue empty; doing nothing");
+      }
+      return false;
+    }
+    entry=mFullBackupQueue.get(0);
+    long timeSinceRun=now - entry.lastBackup;
+    if (timeSinceRun < MIN_FULL_BACKUP_INTERVAL) {
+      if (MORE_DEBUG) {
+        Slog.i(TAG,"Device ready but too early to back up next app");
+      }
+      final long latency=MIN_FULL_BACKUP_INTERVAL - timeSinceRun;
+      mBackupHandler.post(new Runnable(){
+        @Override public void run(){
+          FullBackupJob.schedule(mContext,latency);
+        }
+      }
+);
+      return false;
+    }
+    mFullBackupQueue.remove(0);
+    AtomicBoolean latch=new AtomicBoolean(false);
+    String[] pkg=new String[]{entry.packageName};
+    mRunningFullBackupTask=new PerformFullTransportBackupTask(null,pkg,true,scheduledJob,latch);
+    (new Thread(mRunningFullBackupTask)).start();
+  }
+  return true;
+}

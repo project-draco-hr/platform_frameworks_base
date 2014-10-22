@@ -1,0 +1,81 @@
+{
+  if (mPausingActivity != null) {
+    Slog.wtf(TAG,"Going to pause when pause is already pending for " + mPausingActivity);
+    completePauseLocked(false);
+  }
+  ActivityRecord prev=mResumedActivity;
+  if (prev == null) {
+    if (!resuming) {
+      Slog.wtf(TAG,"Trying to pause when nothing is resumed");
+      mStackSupervisor.resumeTopActivitiesLocked();
+    }
+    return false;
+  }
+  if (mActivityContainer.mParentActivity == null) {
+    mStackSupervisor.pauseChildStacks(prev,userLeaving,uiSleeping,resuming,dontWait);
+  }
+  if (DEBUG_STATES)   Slog.v(TAG,"Moving to PAUSING: " + prev);
+ else   if (DEBUG_PAUSE)   Slog.v(TAG,"Start pausing: " + prev);
+  mResumedActivity=null;
+  mPausingActivity=prev;
+  mLastPausedActivity=prev;
+  mLastNoHistoryActivity=(prev.intent.getFlags() & Intent.FLAG_ACTIVITY_NO_HISTORY) != 0 || (prev.info.flags & ActivityInfo.FLAG_NO_HISTORY) != 0 ? prev : null;
+  prev.state=ActivityState.PAUSING;
+  prev.task.touchActiveTime();
+  clearLaunchTime(prev);
+  final ActivityRecord next=mStackSupervisor.topRunningActivityLocked();
+  if (mService.mHasRecents && (next == null || next.noDisplay || next.task != prev.task)) {
+    prev.updateThumbnail(screenshotActivities(prev),null);
+  }
+  stopFullyDrawnTraceIfNeeded();
+  mService.updateCpuStats();
+  if (prev.app != null && prev.app.thread != null) {
+    if (DEBUG_PAUSE)     Slog.v(TAG,"Enqueueing pending pause: " + prev);
+    try {
+      EventLog.writeEvent(EventLogTags.AM_PAUSE_ACTIVITY,prev.userId,System.identityHashCode(prev),prev.shortComponentName);
+      mService.updateUsageStats(prev,false);
+      prev.app.thread.schedulePauseActivity(prev.appToken,prev.finishing,userLeaving,prev.configChangeFlags,dontWait);
+    }
+ catch (    Exception e) {
+      Slog.w(TAG,"Exception thrown during pause",e);
+      mPausingActivity=null;
+      mLastPausedActivity=null;
+      mLastNoHistoryActivity=null;
+    }
+  }
+ else {
+    mPausingActivity=null;
+    mLastPausedActivity=null;
+    mLastNoHistoryActivity=null;
+  }
+  if (!mService.isSleepingOrShuttingDown()) {
+    mStackSupervisor.acquireLaunchWakelock();
+  }
+  if (mPausingActivity != null) {
+    if (!uiSleeping) {
+      prev.pauseKeyDispatchingLocked();
+    }
+ else {
+      if (DEBUG_PAUSE)       Slog.v(TAG,"Key dispatch not paused for screen off");
+    }
+    if (dontWait) {
+      completePauseLocked(false);
+      return false;
+    }
+ else {
+      Message msg=mHandler.obtainMessage(PAUSE_TIMEOUT_MSG);
+      msg.obj=prev;
+      prev.pauseTime=SystemClock.uptimeMillis();
+      mHandler.sendMessageDelayed(msg,PAUSE_TIMEOUT);
+      if (DEBUG_PAUSE)       Slog.v(TAG,"Waiting for pause to complete...");
+      return true;
+    }
+  }
+ else {
+    if (DEBUG_PAUSE)     Slog.v(TAG,"Activity not running, resuming next.");
+    if (!resuming) {
+      mStackSupervisor.getFocusedStack().resumeTopActivityLocked(null);
+    }
+    return false;
+  }
+}

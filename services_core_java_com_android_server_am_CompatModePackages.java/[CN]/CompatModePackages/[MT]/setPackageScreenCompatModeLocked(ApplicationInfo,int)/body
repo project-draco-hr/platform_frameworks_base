@@ -1,0 +1,67 @@
+{
+  final String packageName=ai.packageName;
+  int curFlags=getPackageFlags(packageName);
+  boolean enable;
+switch (mode) {
+case ActivityManager.COMPAT_MODE_DISABLED:
+    enable=false;
+  break;
+case ActivityManager.COMPAT_MODE_ENABLED:
+enable=true;
+break;
+case ActivityManager.COMPAT_MODE_TOGGLE:
+enable=(curFlags & COMPAT_FLAG_ENABLED) == 0;
+break;
+default :
+Slog.w(TAG,"Unknown screen compat mode req #" + mode + "; ignoring");
+return;
+}
+int newFlags=curFlags;
+if (enable) {
+newFlags|=COMPAT_FLAG_ENABLED;
+}
+ else {
+newFlags&=~COMPAT_FLAG_ENABLED;
+}
+CompatibilityInfo ci=compatibilityInfoForPackageLocked(ai);
+if (ci.alwaysSupportsScreen()) {
+Slog.w(TAG,"Ignoring compat mode change of " + packageName + "; compatibility never needed");
+newFlags=0;
+}
+if (ci.neverSupportsScreen()) {
+Slog.w(TAG,"Ignoring compat mode change of " + packageName + "; compatibility always needed");
+newFlags=0;
+}
+if (newFlags != curFlags) {
+if (newFlags != 0) {
+mPackages.put(packageName,newFlags);
+}
+ else {
+mPackages.remove(packageName);
+}
+ci=compatibilityInfoForPackageLocked(ai);
+mHandler.removeMessages(MSG_WRITE);
+Message msg=mHandler.obtainMessage(MSG_WRITE);
+mHandler.sendMessageDelayed(msg,10000);
+final ActivityStack stack=mService.getFocusedStack();
+ActivityRecord starting=stack.restartPackage(packageName);
+for (int i=mService.mLruProcesses.size() - 1; i >= 0; i--) {
+ProcessRecord app=mService.mLruProcesses.get(i);
+if (!app.pkgList.containsKey(packageName)) {
+continue;
+}
+try {
+if (app.thread != null) {
+if (DEBUG_CONFIGURATION) Slog.v(TAG,"Sending to proc " + app.processName + " new compat "+ ci);
+app.thread.updatePackageCompatibilityInfo(packageName,ci);
+}
+}
+ catch (Exception e) {
+}
+}
+if (starting != null) {
+stack.ensureActivityConfigurationLocked(starting,0);
+stack.ensureActivitiesVisibleLocked(starting,0);
+}
+}
+}

@@ -1,0 +1,40 @@
+{
+  boolean trustDisabled=false;
+  if (DEBUG)   Slog.v(TAG,"updateDevicePolicyFeatures(" + mName + ")");
+  try {
+    if (mTrustAgentService != null) {
+      DevicePolicyManager dpm=(DevicePolicyManager)mContext.getSystemService(Context.DEVICE_POLICY_SERVICE);
+      if ((dpm.getKeyguardDisabledFeatures(null) & DevicePolicyManager.KEYGUARD_DISABLE_TRUST_AGENTS) != 0) {
+        List<String> features=dpm.getTrustAgentFeaturesEnabled(null,mName);
+        trustDisabled=true;
+        if (DEBUG)         Slog.v(TAG,"Detected trust agents disabled. Features = " + features);
+        if (features != null && features.size() > 0) {
+          Bundle bundle=new Bundle();
+          bundle.putStringArrayList(TrustAgentService.KEY_FEATURES,(ArrayList<String>)features);
+          if (DEBUG) {
+            Slog.v(TAG,"TrustAgent " + mName.flattenToShortString() + " disabled until it acknowledges "+ features);
+          }
+          mSetTrustAgentFeaturesToken=new Binder();
+          mTrustAgentService.setTrustAgentFeaturesEnabled(bundle,mSetTrustAgentFeaturesToken);
+        }
+      }
+      final long maxTimeToLock=dpm.getMaximumTimeToLock(null);
+      if (maxTimeToLock != mMaximumTimeToLock) {
+        mMaximumTimeToLock=maxTimeToLock;
+        if (mAlarmPendingIntent != null) {
+          mAlarmManager.cancel(mAlarmPendingIntent);
+          mAlarmPendingIntent=null;
+          mHandler.sendEmptyMessage(MSG_TRUST_TIMEOUT);
+        }
+      }
+    }
+  }
+ catch (  RemoteException e) {
+    onError(e);
+  }
+  if (mTrustDisabledByDpm != trustDisabled) {
+    mTrustDisabledByDpm=trustDisabled;
+    mTrustManagerService.updateTrust(mUserId,false);
+  }
+  return trustDisabled;
+}

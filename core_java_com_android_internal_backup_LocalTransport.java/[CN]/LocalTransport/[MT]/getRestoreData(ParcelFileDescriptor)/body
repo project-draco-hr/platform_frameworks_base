@@ -1,34 +1,37 @@
 {
   if (mRestorePackages == null)   throw new IllegalStateException("startRestore not called");
   if (mRestorePackage < 0)   throw new IllegalStateException("nextRestorePackage not called");
-  File packageDir=new File(mDataDir,mRestorePackages[mRestorePackage].packageName);
-  File[] blobs=packageDir.listFiles();
-  if (blobs == null) {
-    Log.e(TAG,"Error listing directory: " + packageDir);
-    return BackupConstants.TRANSPORT_ERROR;
+  if (mRestoreType != RestoreDescription.TYPE_KEY_VALUE) {
+    throw new IllegalStateException("getRestoreData(fd) for non-key/value dataset");
   }
-  if (DEBUG)   Log.v(TAG,"  getRestoreData() found " + blobs.length + " key files");
+  File packageDir=new File(mRestoreSetIncrementalDir,mRestorePackages[mRestorePackage].packageName);
+  ArrayList<DecodedFilename> blobs=contentsByKey(packageDir);
+  if (blobs == null) {
+    Log.e(TAG,"No keys for package: " + packageDir);
+    return TRANSPORT_ERROR;
+  }
+  if (DEBUG)   Log.v(TAG,"  getRestoreData() found " + blobs.size() + " key files");
   BackupDataOutput out=new BackupDataOutput(outFd.getFileDescriptor());
   try {
-    for (    File f : blobs) {
+    for (    DecodedFilename keyEntry : blobs) {
+      File f=keyEntry.file;
       FileInputStream in=new FileInputStream(f);
       try {
         int size=(int)f.length();
         byte[] buf=new byte[size];
         in.read(buf);
-        String key=new String(Base64.decode(f.getName()));
-        if (DEBUG)         Log.v(TAG,"    ... key=" + key + " size="+ size);
-        out.writeEntityHeader(key,size);
+        if (DEBUG)         Log.v(TAG,"    ... key=" + keyEntry.key + " size="+ size);
+        out.writeEntityHeader(keyEntry.key,size);
         out.writeEntityData(buf,size);
       }
   finally {
         in.close();
       }
     }
-    return BackupConstants.TRANSPORT_OK;
+    return TRANSPORT_OK;
   }
  catch (  IOException e) {
     Log.e(TAG,"Unable to read backup records",e);
-    return BackupConstants.TRANSPORT_ERROR;
+    return TRANSPORT_ERROR;
   }
 }

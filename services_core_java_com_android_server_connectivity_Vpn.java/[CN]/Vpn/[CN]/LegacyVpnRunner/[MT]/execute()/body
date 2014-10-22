@@ -1,0 +1,149 @@
+{
+  boolean initFinished=false;
+  try {
+    checkpoint(false);
+    for (    String daemon : mDaemons) {
+      while (!SystemService.isStopped(daemon)) {
+        checkpoint(true);
+      }
+    }
+    File state=new File("/data/misc/vpn/state");
+    state.delete();
+    if (state.exists()) {
+      throw new IllegalStateException("Cannot delete the state");
+    }
+    new File("/data/misc/vpn/abort").delete();
+    initFinished=true;
+    boolean restart=false;
+    for (    String[] arguments : mArguments) {
+      restart=restart || (arguments != null);
+    }
+    if (!restart) {
+      agentDisconnect();
+      return;
+    }
+    updateState(DetailedState.CONNECTING,"execute");
+    for (int i=0; i < mDaemons.length; ++i) {
+      String[] arguments=mArguments[i];
+      if (arguments == null) {
+        continue;
+      }
+      String daemon=mDaemons[i];
+      SystemService.start(daemon);
+      while (!SystemService.isRunning(daemon)) {
+        checkpoint(true);
+      }
+      mSockets[i]=new LocalSocket();
+      LocalSocketAddress address=new LocalSocketAddress(daemon,LocalSocketAddress.Namespace.RESERVED);
+      while (true) {
+        try {
+          mSockets[i].connect(address);
+          break;
+        }
+ catch (        Exception e) {
+        }
+        checkpoint(true);
+      }
+      mSockets[i].setSoTimeout(500);
+      OutputStream out=mSockets[i].getOutputStream();
+      for (      String argument : arguments) {
+        byte[] bytes=argument.getBytes(StandardCharsets.UTF_8);
+        if (bytes.length >= 0xFFFF) {
+          throw new IllegalArgumentException("Argument is too large");
+        }
+        out.write(bytes.length >> 8);
+        out.write(bytes.length);
+        out.write(bytes);
+        checkpoint(false);
+      }
+      out.write(0xFF);
+      out.write(0xFF);
+      out.flush();
+      InputStream in=mSockets[i].getInputStream();
+      while (true) {
+        try {
+          if (in.read() == -1) {
+            break;
+          }
+        }
+ catch (        Exception e) {
+        }
+        checkpoint(true);
+      }
+    }
+    while (!state.exists()) {
+      for (int i=0; i < mDaemons.length; ++i) {
+        String daemon=mDaemons[i];
+        if (mArguments[i] != null && !SystemService.isRunning(daemon)) {
+          throw new IllegalStateException(daemon + " is dead");
+        }
+      }
+      checkpoint(true);
+    }
+    String[] parameters=FileUtils.readTextFile(state,0,null).split("\n",-1);
+    if (parameters.length != 7) {
+      throw new IllegalStateException("Cannot parse the state");
+    }
+    mConfig.interfaze=parameters[0].trim();
+    mConfig.addLegacyAddresses(parameters[1]);
+    if (mConfig.routes == null || mConfig.routes.isEmpty()) {
+      mConfig.addLegacyRoutes(parameters[2]);
+    }
+    if (mConfig.dnsServers == null || mConfig.dnsServers.size() == 0) {
+      String dnsServers=parameters[3].trim();
+      if (!dnsServers.isEmpty()) {
+        mConfig.dnsServers=Arrays.asList(dnsServers.split(" "));
+      }
+    }
+    if (mConfig.searchDomains == null || mConfig.searchDomains.size() == 0) {
+      String searchDomains=parameters[4].trim();
+      if (!searchDomains.isEmpty()) {
+        mConfig.searchDomains=Arrays.asList(searchDomains.split(" "));
+      }
+    }
+    String endpoint=parameters[5];
+    if (!endpoint.isEmpty()) {
+      try {
+        InetAddress addr=InetAddress.parseNumericAddress(endpoint);
+        if (addr instanceof Inet4Address) {
+          mConfig.routes.add(new RouteInfo(new IpPrefix(addr,32),RTN_THROW));
+        }
+ else         if (addr instanceof Inet6Address) {
+          mConfig.routes.add(new RouteInfo(new IpPrefix(addr,128),RTN_THROW));
+        }
+ else {
+          Log.e(TAG,"Unknown IP address family for VPN endpoint: " + endpoint);
+        }
+      }
+ catch (      IllegalArgumentException e) {
+        Log.e(TAG,"Exception constructing throw route to " + endpoint + ": "+ e);
+      }
+    }
+synchronized (Vpn.this) {
+      mConfig.startTime=SystemClock.elapsedRealtime();
+      checkpoint(false);
+      if (jniCheck(mConfig.interfaze) == 0) {
+        throw new IllegalStateException(mConfig.interfaze + " is gone");
+      }
+      mInterface=mConfig.interfaze;
+      mVpnUsers=new ArrayList<UidRange>();
+      agentConnect();
+      Log.i(TAG,"Connected!");
+    }
+  }
+ catch (  Exception e) {
+    Log.i(TAG,"Aborting",e);
+    updateState(DetailedState.FAILED,e.getMessage());
+    exit();
+  }
+ finally {
+    if (!initFinished) {
+      for (      String daemon : mDaemons) {
+        SystemService.stop(daemon);
+      }
+    }
+    if (!initFinished || mNetworkInfo.getDetailedState() == DetailedState.CONNECTING) {
+      agentDisconnect();
+    }
+  }
+}

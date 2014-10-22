@@ -1,0 +1,52 @@
+{
+  mFormat=ImageFormat.YUV_420_888;
+  mTimestamp=timestamp;
+  mIsValid=true;
+  mIsReadOnly=buffer.isReadOnly();
+  mBuffer=buffer.duplicate();
+  if (cropRect != null) {
+    cropRect.offset(-xOffset,-yOffset);
+  }
+  super.setCropRect(cropRect);
+  mXOffset=xOffset;
+  mYOffset=yOffset;
+  mInfo=info;
+  if (info.remaining() == 80 || info.remaining() == 156) {
+    boolean sizeIsLong=info.remaining() == 156;
+    int type=info.getInt();
+    if (type != TYPE_YUV) {
+      throw new UnsupportedOperationException("unsupported type: " + type);
+    }
+    int numPlanes=readInt(info,sizeIsLong);
+    if (numPlanes != 3) {
+      throw new RuntimeException("unexpected number of planes: " + numPlanes);
+    }
+    mWidth=readInt(info,sizeIsLong);
+    mHeight=readInt(info,sizeIsLong);
+    if (mWidth < 1 || mHeight < 1) {
+      throw new UnsupportedOperationException("unsupported size: " + mWidth + "x"+ mHeight);
+    }
+    int bitDepth=readInt(info,sizeIsLong);
+    if (bitDepth != 8) {
+      throw new UnsupportedOperationException("unsupported bit depth: " + bitDepth);
+    }
+    mPlanes=new MediaPlane[numPlanes];
+    for (int ix=0; ix < numPlanes; ix++) {
+      int planeOffset=readInt(info,sizeIsLong);
+      int colInc=readInt(info,sizeIsLong);
+      int rowInc=readInt(info,sizeIsLong);
+      int horiz=readInt(info,sizeIsLong);
+      int vert=readInt(info,sizeIsLong);
+      if (horiz != vert || horiz != (ix == 0 ? 1 : 2)) {
+        throw new UnsupportedOperationException("unexpected subsampling: " + horiz + "x"+ vert+ " on plane "+ ix);
+      }
+      buffer.clear();
+      buffer.position(mBuffer.position() + planeOffset + (xOffset / horiz) * colInc + (yOffset / vert) * rowInc);
+      buffer.limit(buffer.position() + Utils.divUp(bitDepth,8) + (mHeight / vert - 1) * rowInc + (mWidth / horiz - 1) * colInc);
+      mPlanes[ix]=new MediaPlane(buffer.slice(),rowInc,colInc);
+    }
+  }
+ else {
+    throw new UnsupportedOperationException("unsupported info length: " + info.remaining());
+  }
+}

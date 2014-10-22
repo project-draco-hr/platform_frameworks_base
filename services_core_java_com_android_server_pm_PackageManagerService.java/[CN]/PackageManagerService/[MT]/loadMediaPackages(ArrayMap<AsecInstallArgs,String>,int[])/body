@@ -1,0 +1,61 @@
+{
+  ArrayList<String> pkgList=new ArrayList<String>();
+  Set<AsecInstallArgs> keys=processCids.keySet();
+  for (  AsecInstallArgs args : keys) {
+    String codePath=processCids.get(args);
+    if (DEBUG_SD_INSTALL)     Log.i(TAG,"Loading container : " + args.cid);
+    int retCode=PackageManager.INSTALL_FAILED_CONTAINER_ERROR;
+    try {
+      if (args.doPreInstall(PackageManager.INSTALL_SUCCEEDED) != PackageManager.INSTALL_SUCCEEDED) {
+        Slog.e(TAG,"Failed to mount cid : " + args.cid + " when installing from sdcard");
+        continue;
+      }
+      if (codePath == null || !codePath.startsWith(args.getCodePath())) {
+        Slog.e(TAG,"Container " + args.cid + " cachepath "+ args.getCodePath()+ " does not match one in settings "+ codePath);
+        continue;
+      }
+      int parseFlags=mDefParseFlags;
+      if (args.isExternal()) {
+        parseFlags|=PackageParser.PARSE_ON_SDCARD;
+      }
+      if (args.isFwdLocked()) {
+        parseFlags|=PackageParser.PARSE_FORWARD_LOCK;
+      }
+synchronized (mInstallLock) {
+        PackageParser.Package pkg=null;
+        try {
+          pkg=scanPackageLI(new File(codePath),parseFlags,0,0,null);
+        }
+ catch (        PackageManagerException e) {
+          Slog.w(TAG,"Failed to scan " + codePath + ": "+ e.getMessage());
+        }
+        if (pkg != null) {
+synchronized (mPackages) {
+            retCode=PackageManager.INSTALL_SUCCEEDED;
+            pkgList.add(pkg.packageName);
+            args.doPostInstall(PackageManager.INSTALL_SUCCEEDED,pkg.applicationInfo.uid);
+          }
+        }
+ else {
+          Slog.i(TAG,"Failed to install pkg from  " + codePath + " from sdcard");
+        }
+      }
+    }
+  finally {
+      if (retCode != PackageManager.INSTALL_SUCCEEDED) {
+        Log.w(TAG,"Container " + args.cid + " is stale, retCode="+ retCode);
+      }
+    }
+  }
+synchronized (mPackages) {
+    final boolean regrantPermissions=mSettings.mExternalSdkPlatform != mSdkVersion;
+    if (regrantPermissions)     Slog.i(TAG,"Platform changed from " + mSettings.mExternalSdkPlatform + " to "+ mSdkVersion+ "; regranting permissions for external storage");
+    mSettings.mExternalSdkPlatform=mSdkVersion;
+    updatePermissionsLPw(null,null,UPDATE_PERMISSIONS_ALL | (regrantPermissions ? (UPDATE_PERMISSIONS_REPLACE_PKG | UPDATE_PERMISSIONS_REPLACE_ALL) : 0));
+    mSettings.updateExternalDatabaseVersion();
+    mSettings.writeLPr();
+  }
+  if (pkgList.size() > 0) {
+    sendResourcesChangedBroadcast(true,false,pkgList,uidArr,null);
+  }
+}

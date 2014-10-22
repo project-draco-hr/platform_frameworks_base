@@ -1,0 +1,87 @@
+{
+  BroadcastReceiver br=new BroadcastReceiver(){
+    @Override public void onReceive(    Context context,    Intent intent){
+      actionDone();
+    }
+  }
+;
+{
+    String reason=(mReboot ? "1" : "0") + (mRebootReason != null ? mRebootReason : "");
+    SystemProperties.set(SHUTDOWN_ACTION_PROPERTY,reason);
+  }
+  if (mRebootSafeMode) {
+    SystemProperties.set(REBOOT_SAFEMODE_PROPERTY,"1");
+  }
+  Log.i(TAG,"Sending shutdown broadcast...");
+  mActionDone=false;
+  Intent intent=new Intent(Intent.ACTION_SHUTDOWN);
+  intent.addFlags(Intent.FLAG_RECEIVER_FOREGROUND);
+  mContext.sendOrderedBroadcastAsUser(intent,UserHandle.ALL,null,br,mHandler,0,null,null);
+  final long endTime=SystemClock.elapsedRealtime() + MAX_BROADCAST_TIME;
+synchronized (mActionDoneSync) {
+    while (!mActionDone) {
+      long delay=endTime - SystemClock.elapsedRealtime();
+      if (delay <= 0) {
+        Log.w(TAG,"Shutdown broadcast timed out");
+        break;
+      }
+      try {
+        mActionDoneSync.wait(delay);
+      }
+ catch (      InterruptedException e) {
+      }
+    }
+  }
+  Log.i(TAG,"Shutting down activity manager...");
+  final IActivityManager am=ActivityManagerNative.asInterface(ServiceManager.checkService("activity"));
+  if (am != null) {
+    try {
+      am.shutdown(MAX_BROADCAST_TIME);
+    }
+ catch (    RemoteException e) {
+    }
+  }
+  Log.i(TAG,"Shutting down package manager...");
+  final PackageManagerService pm=(PackageManagerService)ServiceManager.getService("package");
+  if (pm != null) {
+    pm.shutdown();
+  }
+  shutdownRadios(MAX_RADIO_WAIT_TIME);
+  IMountShutdownObserver observer=new IMountShutdownObserver.Stub(){
+    public void onShutDownComplete(    int statusCode) throws RemoteException {
+      Log.w(TAG,"Result code " + statusCode + " from MountService.shutdown");
+      actionDone();
+    }
+  }
+;
+  Log.i(TAG,"Shutting down MountService");
+  mActionDone=false;
+  final long endShutTime=SystemClock.elapsedRealtime() + MAX_SHUTDOWN_WAIT_TIME;
+synchronized (mActionDoneSync) {
+    try {
+      final IMountService mount=IMountService.Stub.asInterface(ServiceManager.checkService("mount"));
+      if (mount != null) {
+        mount.shutdown(observer);
+      }
+ else {
+        Log.w(TAG,"MountService unavailable for shutdown");
+      }
+    }
+ catch (    Exception e) {
+      Log.e(TAG,"Exception during MountService shutdown",e);
+    }
+    while (!mActionDone) {
+      long delay=endShutTime - SystemClock.elapsedRealtime();
+      if (delay <= 0) {
+        Log.w(TAG,"Shutdown wait timed out");
+        break;
+      }
+      try {
+        mActionDoneSync.wait(delay);
+      }
+ catch (      InterruptedException e) {
+      }
+    }
+  }
+  rebootOrShutdown(mReboot,mRebootReason);
+}

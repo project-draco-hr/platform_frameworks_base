@@ -1,0 +1,56 @@
+{
+  if (!mHasFeature) {
+    return null;
+  }
+synchronized (this) {
+    List<String> result=null;
+    List<UserInfo> profiles=mUserManager.getProfiles(userId);
+    final int PROFILES_SIZE=profiles.size();
+    for (int i=0; i < PROFILES_SIZE; ++i) {
+      DevicePolicyData policy=getUserData(profiles.get(i).id);
+      final int N=policy.mAdminList.size();
+      for (int j=0; j < N; j++) {
+        ActiveAdmin admin=policy.mAdminList.get(j);
+        List<String> fromAdmin=admin.permittedAccessiblityServices;
+        if (fromAdmin != null) {
+          if (result == null) {
+            result=new ArrayList<String>(fromAdmin);
+          }
+ else {
+            result.retainAll(fromAdmin);
+          }
+        }
+      }
+    }
+    if (result != null) {
+      long id=Binder.clearCallingIdentity();
+      try {
+        UserInfo user=mUserManager.getUserInfo(userId);
+        if (user.isManagedProfile()) {
+          userId=user.profileGroupId;
+        }
+        AccessibilityManager accessibilityManager=getAccessibilityManagerForUser(userId);
+        List<AccessibilityServiceInfo> installedServices=accessibilityManager.getInstalledAccessibilityServiceList();
+        IPackageManager pm=AppGlobals.getPackageManager();
+        if (installedServices != null) {
+          for (          AccessibilityServiceInfo service : installedServices) {
+            String packageName=service.getResolveInfo().serviceInfo.packageName;
+            try {
+              ApplicationInfo applicationInfo=pm.getApplicationInfo(packageName,PackageManager.GET_UNINSTALLED_PACKAGES,userId);
+              if ((applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) != 0) {
+                result.add(packageName);
+              }
+            }
+ catch (            RemoteException e) {
+              Log.i(LOG_TAG,"Accessibility service in missing package",e);
+            }
+          }
+        }
+      }
+  finally {
+        restoreCallingIdentity(id);
+      }
+    }
+    return result;
+  }
+}

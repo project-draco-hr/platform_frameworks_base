@@ -1,0 +1,93 @@
+{
+  if (DBG) {
+    Log.d(LOG_TAG,"createAnimators() for " + this);
+  }
+  ArrayMap<Animator,AnimationInfo> runningAnimators=getRunningAnimators();
+  long minStartDelay=Long.MAX_VALUE;
+  int minAnimator=mAnimators.size();
+  SparseLongArray startDelays=new SparseLongArray();
+  int startValuesListCount=startValuesList.size();
+  for (int i=0; i < startValuesListCount; ++i) {
+    TransitionValues start=startValuesList.get(i);
+    TransitionValues end=endValuesList.get(i);
+    if (start != null && !start.targetedTransitions.contains(this)) {
+      start=null;
+    }
+    if (end != null && !end.targetedTransitions.contains(this)) {
+      end=null;
+    }
+    if (start == null && end == null) {
+      continue;
+    }
+    boolean isChanged=start == null || end == null || areValuesChanged(start,end);
+    if (isChanged) {
+      if (DBG) {
+        View view=(end != null) ? end.view : start.view;
+        Log.d(LOG_TAG,"  differing start/end values for view " + view);
+        if (start == null || end == null) {
+          Log.d(LOG_TAG,"    " + ((start == null) ? "start null, end non-null" : "start non-null, end null"));
+        }
+ else {
+          for (          String key : start.values.keySet()) {
+            Object startValue=start.values.get(key);
+            Object endValue=end.values.get(key);
+            if (startValue != endValue && !startValue.equals(endValue)) {
+              Log.d(LOG_TAG,"    " + key + ": start("+ startValue+ "), end("+ endValue+ ")");
+            }
+          }
+        }
+      }
+      Animator animator=createAnimator(sceneRoot,start,end);
+      if (animator != null) {
+        View view=null;
+        TransitionValues infoValues=null;
+        if (end != null) {
+          view=end.view;
+          String[] properties=getTransitionProperties();
+          if (view != null && properties != null && properties.length > 0) {
+            infoValues=new TransitionValues();
+            infoValues.view=view;
+            TransitionValues newValues=endValues.viewValues.get(view);
+            if (newValues != null) {
+              for (int j=0; j < properties.length; ++j) {
+                infoValues.values.put(properties[j],newValues.values.get(properties[j]));
+              }
+            }
+            int numExistingAnims=runningAnimators.size();
+            for (int j=0; j < numExistingAnims; ++j) {
+              Animator anim=runningAnimators.keyAt(j);
+              AnimationInfo info=runningAnimators.get(anim);
+              if (info.values != null && info.view == view && ((info.name == null && getName() == null) || info.name.equals(getName()))) {
+                if (info.values.equals(infoValues)) {
+                  animator=null;
+                  break;
+                }
+              }
+            }
+          }
+        }
+ else {
+          view=(start != null) ? start.view : null;
+        }
+        if (animator != null) {
+          if (mPropagation != null) {
+            long delay=mPropagation.getStartDelay(sceneRoot,this,start,end);
+            startDelays.put(mAnimators.size(),delay);
+            minStartDelay=Math.min(delay,minStartDelay);
+          }
+          AnimationInfo info=new AnimationInfo(view,getName(),this,sceneRoot.getWindowId(),infoValues);
+          runningAnimators.put(animator,info);
+          mAnimators.add(animator);
+        }
+      }
+    }
+  }
+  if (minStartDelay != 0) {
+    for (int i=0; i < startDelays.size(); i++) {
+      int index=startDelays.keyAt(i);
+      Animator animator=mAnimators.get(index);
+      long delay=startDelays.valueAt(i) - minStartDelay + animator.getStartDelay();
+      animator.setStartDelay(delay);
+    }
+  }
+}

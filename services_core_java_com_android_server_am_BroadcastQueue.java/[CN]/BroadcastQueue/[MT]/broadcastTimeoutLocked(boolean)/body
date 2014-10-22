@@ -1,0 +1,69 @@
+{
+  if (fromMsg) {
+    mPendingBroadcastTimeoutMessage=false;
+  }
+  if (mOrderedBroadcasts.size() == 0) {
+    return;
+  }
+  long now=SystemClock.uptimeMillis();
+  BroadcastRecord r=mOrderedBroadcasts.get(0);
+  if (fromMsg) {
+    if (mService.mDidDexOpt) {
+      mService.mDidDexOpt=false;
+      long timeoutTime=SystemClock.uptimeMillis() + mTimeoutPeriod;
+      setBroadcastTimeoutLocked(timeoutTime);
+      return;
+    }
+    if (!mService.mProcessesReady) {
+      return;
+    }
+    long timeoutTime=r.receiverTime + mTimeoutPeriod;
+    if (timeoutTime > now) {
+      if (DEBUG_BROADCAST)       Slog.v(TAG,"Premature timeout [" + mQueueName + "] @ "+ now+ ": resetting BROADCAST_TIMEOUT_MSG for "+ timeoutTime);
+      setBroadcastTimeoutLocked(timeoutTime);
+      return;
+    }
+  }
+  BroadcastRecord br=mOrderedBroadcasts.get(0);
+  if (br.state == BroadcastRecord.WAITING_SERVICES) {
+    Slog.i(ActivityManagerService.TAG,"Waited long enough for: " + (br.curComponent != null ? br.curComponent.flattenToShortString() : "(null)"));
+    br.curComponent=null;
+    br.state=BroadcastRecord.IDLE;
+    processNextBroadcast(false);
+    return;
+  }
+  Slog.w(TAG,"Timeout of broadcast " + r + " - receiver="+ r.receiver+ ", started "+ (now - r.receiverTime)+ "ms ago");
+  r.receiverTime=now;
+  r.anrCount++;
+  if (r.nextReceiver <= 0) {
+    Slog.w(TAG,"Timeout on receiver with nextReceiver <= 0");
+    return;
+  }
+  ProcessRecord app=null;
+  String anrMessage=null;
+  Object curReceiver=r.receivers.get(r.nextReceiver - 1);
+  Slog.w(TAG,"Receiver during timeout: " + curReceiver);
+  logBroadcastReceiverDiscardLocked(r);
+  if (curReceiver instanceof BroadcastFilter) {
+    BroadcastFilter bf=(BroadcastFilter)curReceiver;
+    if (bf.receiverList.pid != 0 && bf.receiverList.pid != ActivityManagerService.MY_PID) {
+synchronized (mService.mPidsSelfLocked) {
+        app=mService.mPidsSelfLocked.get(bf.receiverList.pid);
+      }
+    }
+  }
+ else {
+    app=r.curApp;
+  }
+  if (app != null) {
+    anrMessage="Broadcast of " + r.intent.toString();
+  }
+  if (mPendingBroadcast == r) {
+    mPendingBroadcast=null;
+  }
+  finishReceiverLocked(r,r.resultCode,r.resultData,r.resultExtras,r.resultAbort,false);
+  scheduleBroadcastsLocked();
+  if (anrMessage != null) {
+    mHandler.post(new AppNotResponding(app,anrMessage));
+  }
+}

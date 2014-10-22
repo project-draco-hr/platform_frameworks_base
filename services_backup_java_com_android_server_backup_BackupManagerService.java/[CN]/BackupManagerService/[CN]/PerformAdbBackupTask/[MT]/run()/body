@@ -1,0 +1,130 @@
+{
+  Slog.i(TAG,"--- Performing full-dataset adb backup ---");
+  TreeMap<String,PackageInfo> packagesToBackup=new TreeMap<String,PackageInfo>();
+  FullBackupObbConnection obbConnection=new FullBackupObbConnection();
+  obbConnection.establish();
+  sendStartBackup();
+  if (mAllApps) {
+    List<PackageInfo> allPackages=mPackageManager.getInstalledPackages(PackageManager.GET_SIGNATURES);
+    for (int i=0; i < allPackages.size(); i++) {
+      PackageInfo pkg=allPackages.get(i);
+      if (mIncludeSystem == true || ((pkg.applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) == 0)) {
+        packagesToBackup.put(pkg.packageName,pkg);
+      }
+    }
+  }
+  if (mDoWidgets) {
+    List<String> pkgs=AppWidgetBackupBridge.getWidgetParticipants(UserHandle.USER_OWNER);
+    if (pkgs != null) {
+      if (MORE_DEBUG) {
+        Slog.i(TAG,"Adding widget participants to backup set:");
+        StringBuilder sb=new StringBuilder(128);
+        sb.append("   ");
+        for (        String s : pkgs) {
+          sb.append(' ');
+          sb.append(s);
+        }
+        Slog.i(TAG,sb.toString());
+      }
+      addPackagesToSet(packagesToBackup,pkgs);
+    }
+  }
+  if (mPackages != null) {
+    addPackagesToSet(packagesToBackup,mPackages);
+  }
+  Iterator<Entry<String,PackageInfo>> iter=packagesToBackup.entrySet().iterator();
+  while (iter.hasNext()) {
+    PackageInfo pkg=iter.next().getValue();
+    if (!appIsEligibleForBackup(pkg.applicationInfo)) {
+      iter.remove();
+    }
+  }
+  ArrayList<PackageInfo> backupQueue=new ArrayList<PackageInfo>(packagesToBackup.values());
+  FileOutputStream ofstream=new FileOutputStream(mOutputFile.getFileDescriptor());
+  OutputStream out=null;
+  PackageInfo pkg=null;
+  try {
+    boolean encrypting=(mEncryptPassword != null && mEncryptPassword.length() > 0);
+    if (deviceIsEncrypted() && !encrypting) {
+      Slog.e(TAG,"Unencrypted backup of encrypted device; aborting");
+      return;
+    }
+    OutputStream finalOutput=ofstream;
+    if (!backupPasswordMatches(mCurrentPassword)) {
+      if (DEBUG)       Slog.w(TAG,"Backup password mismatch; aborting");
+      return;
+    }
+    StringBuilder headerbuf=new StringBuilder(1024);
+    headerbuf.append(BACKUP_FILE_HEADER_MAGIC);
+    headerbuf.append(BACKUP_FILE_VERSION);
+    headerbuf.append(mCompress ? "\n1\n" : "\n0\n");
+    try {
+      if (encrypting) {
+        finalOutput=emitAesBackupHeader(headerbuf,finalOutput);
+      }
+ else {
+        headerbuf.append("none\n");
+      }
+      byte[] header=headerbuf.toString().getBytes("UTF-8");
+      ofstream.write(header);
+      if (mCompress) {
+        Deflater deflater=new Deflater(Deflater.BEST_COMPRESSION);
+        finalOutput=new DeflaterOutputStream(finalOutput,deflater,true);
+      }
+      out=finalOutput;
+    }
+ catch (    Exception e) {
+      Slog.e(TAG,"Unable to emit archive header",e);
+      return;
+    }
+    if (mIncludeShared) {
+      try {
+        pkg=mPackageManager.getPackageInfo(SHARED_BACKUP_AGENT_PACKAGE,0);
+        backupQueue.add(pkg);
+      }
+ catch (      NameNotFoundException e) {
+        Slog.e(TAG,"Unable to find shared-storage backup handler");
+      }
+    }
+    int N=backupQueue.size();
+    for (int i=0; i < N; i++) {
+      pkg=backupQueue.get(i);
+      final boolean isSharedStorage=pkg.packageName.equals(SHARED_BACKUP_AGENT_PACKAGE);
+      mBackupEngine=new FullBackupEngine(out,pkg.packageName,mIncludeApks);
+      sendOnBackupPackage(isSharedStorage ? "Shared storage" : pkg.packageName);
+      mBackupEngine.backupOnePackage(pkg);
+      if (mIncludeObbs) {
+        boolean obbOkay=obbConnection.backupObbs(pkg,out);
+        if (!obbOkay) {
+          throw new RuntimeException("Failure writing OBB stack for " + pkg);
+        }
+      }
+    }
+    finalizeBackup(out);
+  }
+ catch (  RemoteException e) {
+    Slog.e(TAG,"App died during full backup");
+  }
+catch (  Exception e) {
+    Slog.e(TAG,"Internal exception during full backup",e);
+  }
+ finally {
+    try {
+      if (out != null)       out.close();
+      mOutputFile.close();
+    }
+ catch (    IOException e) {
+    }
+synchronized (mCurrentOpLock) {
+      mCurrentOperations.clear();
+    }
+synchronized (mLatch) {
+      mLatch.set(true);
+      mLatch.notifyAll();
+    }
+    sendEndBackup();
+    obbConnection.tearDown();
+    if (DEBUG)     Slog.d(TAG,"Full backup pass complete.");
+    mWakelock.release();
+  }
+}

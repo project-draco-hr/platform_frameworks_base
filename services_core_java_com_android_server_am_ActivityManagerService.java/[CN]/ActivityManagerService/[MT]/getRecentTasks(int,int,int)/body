@@ -1,0 +1,56 @@
+{
+  final int callingUid=Binder.getCallingUid();
+  userId=handleIncomingUser(Binder.getCallingPid(),callingUid,userId,false,ALLOW_FULL_ONLY,"getRecentTasks",null);
+  final boolean includeProfiles=(flags & ActivityManager.RECENT_INCLUDE_PROFILES) != 0;
+  final boolean withExcluded=(flags & ActivityManager.RECENT_WITH_EXCLUDED) != 0;
+synchronized (this) {
+    final boolean allowed=isGetTasksAllowed("getRecentTasks",Binder.getCallingPid(),callingUid);
+    final boolean detailed=checkCallingPermission(android.Manifest.permission.GET_DETAILED_TASKS) == PackageManager.PERMISSION_GRANTED;
+    final int N=mRecentTasks.size();
+    ArrayList<ActivityManager.RecentTaskInfo> res=new ArrayList<ActivityManager.RecentTaskInfo>(maxNum < N ? maxNum : N);
+    final Set<Integer> includedUsers;
+    if (includeProfiles) {
+      includedUsers=getProfileIdsLocked(userId);
+    }
+ else {
+      includedUsers=new HashSet<Integer>();
+    }
+    includedUsers.add(Integer.valueOf(userId));
+    for (int i=0; i < N && maxNum > 0; i++) {
+      TaskRecord tr=mRecentTasks.get(i);
+      if (!includedUsers.contains(Integer.valueOf(tr.userId))) {
+        if (DEBUG_RECENTS)         Slog.d(TAG,"Skipping, not user: " + tr);
+        continue;
+      }
+      if (i == 0 || withExcluded || (tr.intent == null) || ((tr.intent.getFlags() & Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS) == 0)) {
+        if (!allowed) {
+          if (!tr.isHomeTask() && tr.effectiveUid != callingUid) {
+            if (DEBUG_RECENTS)             Slog.d(TAG,"Skipping, not allowed: " + tr);
+            continue;
+          }
+        }
+        if ((flags & ActivityManager.RECENT_IGNORE_HOME_STACK_TASKS) != 0) {
+          if (tr.stack != null && tr.stack.isHomeStack()) {
+            if (DEBUG_RECENTS)             Slog.d(TAG,"Skipping, home stack task: " + tr);
+            continue;
+          }
+        }
+        if (tr.autoRemoveRecents && tr.getTopActivity() == null) {
+          if (DEBUG_RECENTS)           Slog.d(TAG,"Skipping, auto-remove without activity: " + tr);
+          continue;
+        }
+        if ((flags & ActivityManager.RECENT_IGNORE_UNAVAILABLE) != 0 && !tr.isAvailable) {
+          if (DEBUG_RECENTS)           Slog.d(TAG,"Skipping, unavail real act: " + tr);
+          continue;
+        }
+        ActivityManager.RecentTaskInfo rti=createRecentTaskInfoFromTaskRecord(tr);
+        if (!detailed) {
+          rti.baseIntent.replaceExtras((Bundle)null);
+        }
+        res.add(rti);
+        maxNum--;
+      }
+    }
+    return res;
+  }
+}

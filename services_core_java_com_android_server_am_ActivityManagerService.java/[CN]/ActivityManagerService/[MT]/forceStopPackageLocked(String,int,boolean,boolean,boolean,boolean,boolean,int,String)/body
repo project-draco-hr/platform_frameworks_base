@@ -1,0 +1,134 @@
+{
+  int i;
+  int N;
+  if (userId == UserHandle.USER_ALL && name == null) {
+    Slog.w(TAG,"Can't force stop all processes of all users, that is insane!");
+  }
+  if (appId < 0 && name != null) {
+    try {
+      appId=UserHandle.getAppId(AppGlobals.getPackageManager().getPackageUid(name,0));
+    }
+ catch (    RemoteException e) {
+    }
+  }
+  if (doit) {
+    if (name != null) {
+      Slog.i(TAG,"Force stopping " + name + " appid="+ appId+ " user="+ userId+ ": "+ reason);
+    }
+ else {
+      Slog.i(TAG,"Force stopping u" + userId + ": "+ reason);
+    }
+    final ArrayMap<String,SparseArray<Long>> pmap=mProcessCrashTimes.getMap();
+    for (int ip=pmap.size() - 1; ip >= 0; ip--) {
+      SparseArray<Long> ba=pmap.valueAt(ip);
+      for (i=ba.size() - 1; i >= 0; i--) {
+        boolean remove=false;
+        final int entUid=ba.keyAt(i);
+        if (name != null) {
+          if (userId == UserHandle.USER_ALL) {
+            if (UserHandle.getAppId(entUid) == appId) {
+              remove=true;
+            }
+          }
+ else {
+            if (entUid == UserHandle.getUid(userId,appId)) {
+              remove=true;
+            }
+          }
+        }
+ else         if (UserHandle.getUserId(entUid) == userId) {
+          remove=true;
+        }
+        if (remove) {
+          ba.removeAt(i);
+        }
+      }
+      if (ba.size() == 0) {
+        pmap.removeAt(ip);
+      }
+    }
+  }
+  boolean didSomething=killPackageProcessesLocked(name,appId,userId,-100,callerWillRestart,true,doit,evenPersistent,name == null ? ("stop user " + userId) : ("stop " + name));
+  if (mStackSupervisor.forceStopPackageLocked(name,doit,evenPersistent,userId)) {
+    if (!doit) {
+      return true;
+    }
+    didSomething=true;
+  }
+  if (mServices.forceStopLocked(name,userId,evenPersistent,doit)) {
+    if (!doit) {
+      return true;
+    }
+    didSomething=true;
+  }
+  if (name == null) {
+    mStickyBroadcasts.remove(userId);
+  }
+  ArrayList<ContentProviderRecord> providers=new ArrayList<ContentProviderRecord>();
+  if (mProviderMap.collectForceStopProviders(name,appId,doit,evenPersistent,userId,providers)) {
+    if (!doit) {
+      return true;
+    }
+    didSomething=true;
+  }
+  N=providers.size();
+  for (i=0; i < N; i++) {
+    removeDyingProviderLocked(null,providers.get(i),true);
+  }
+  removeUriPermissionsForPackageLocked(name,userId,false);
+  if (name == null || uninstalling) {
+    if (mIntentSenderRecords.size() > 0) {
+      Iterator<WeakReference<PendingIntentRecord>> it=mIntentSenderRecords.values().iterator();
+      while (it.hasNext()) {
+        WeakReference<PendingIntentRecord> wpir=it.next();
+        if (wpir == null) {
+          it.remove();
+          continue;
+        }
+        PendingIntentRecord pir=wpir.get();
+        if (pir == null) {
+          it.remove();
+          continue;
+        }
+        if (name == null) {
+          if (pir.key.userId != userId) {
+            continue;
+          }
+        }
+ else {
+          if (UserHandle.getAppId(pir.uid) != appId) {
+            continue;
+          }
+          if (userId != UserHandle.USER_ALL && pir.key.userId != userId) {
+            continue;
+          }
+          if (!pir.key.packageName.equals(name)) {
+            continue;
+          }
+        }
+        if (!doit) {
+          return true;
+        }
+        didSomething=true;
+        it.remove();
+        pir.canceled=true;
+        if (pir.key.activity != null) {
+          pir.key.activity.pendingResults.remove(pir.ref);
+        }
+      }
+    }
+  }
+  if (doit) {
+    if (purgeCache && name != null) {
+      AttributeCache ac=AttributeCache.instance();
+      if (ac != null) {
+        ac.removePackage(name);
+      }
+    }
+    if (mBooted) {
+      mStackSupervisor.resumeTopActivitiesLocked();
+      mStackSupervisor.scheduleIdleLocked();
+    }
+  }
+  return didSomething;
+}

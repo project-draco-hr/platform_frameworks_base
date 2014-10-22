@@ -1,0 +1,112 @@
+{
+  ParcelFileDescriptor[] enginePipes=null;
+  ParcelFileDescriptor[] transportPipes=null;
+  PackageInfo currentPackage;
+  try {
+    IBackupTransport transport=getTransport(mCurrentTransport);
+    if (transport == null) {
+      Slog.w(TAG,"Transport not present; full data backup not performed");
+      return;
+    }
+    final int N=mPackages.size();
+    for (int i=0; i < N; i++) {
+      currentPackage=mPackages.get(i);
+      if (DEBUG) {
+        Slog.i(TAG,"Initiating full-data transport backup of " + currentPackage.packageName);
+      }
+      EventLog.writeEvent(EventLogTags.FULL_BACKUP_PACKAGE,currentPackage.packageName);
+      transportPipes=ParcelFileDescriptor.createPipe();
+      int result=transport.performFullBackup(currentPackage,transportPipes[0]);
+      if (result == BackupTransport.TRANSPORT_OK) {
+        transportPipes[0].close();
+        transportPipes[0]=null;
+        enginePipes=ParcelFileDescriptor.createPipe();
+        AtomicBoolean runnerLatch=new AtomicBoolean(false);
+        SinglePackageBackupRunner backupRunner=new SinglePackageBackupRunner(enginePipes[1],currentPackage,runnerLatch);
+        enginePipes[1].close();
+        enginePipes[1]=null;
+        (new Thread(backupRunner,"package-backup-bridge")).start();
+        FileInputStream in=new FileInputStream(enginePipes[0].getFileDescriptor());
+        FileOutputStream out=new FileOutputStream(transportPipes[1].getFileDescriptor());
+        byte[] buffer=new byte[8192];
+        int nRead=0;
+        do {
+          if (!mKeepRunning.get()) {
+            if (DEBUG_SCHEDULING) {
+              Slog.i(TAG,"Full backup task told to stop");
+            }
+            break;
+          }
+          nRead=in.read(buffer);
+          if (nRead > 0) {
+            out.write(buffer,0,nRead);
+            result=transport.sendBackupData(nRead);
+          }
+        }
+ while (nRead > 0 && result == BackupTransport.TRANSPORT_OK);
+        if (!mKeepRunning.get()) {
+          result=BackupTransport.TRANSPORT_ERROR;
+          transport.cancelFullBackup();
+        }
+ else {
+          final int finishResult=transport.finishBackup();
+          if (result == BackupTransport.TRANSPORT_OK) {
+            result=finishResult;
+          }
+        }
+        if (MORE_DEBUG) {
+          Slog.i(TAG,"Done trying to send backup data: result=" + result);
+        }
+        if (result != BackupTransport.TRANSPORT_OK) {
+          Slog.e(TAG,"Error " + result + " backing up "+ currentPackage.packageName);
+        }
+      }
+      if (mUpdateSchedule) {
+        enqueueFullBackup(currentPackage.packageName,System.currentTimeMillis());
+      }
+      if (result == BackupTransport.TRANSPORT_PACKAGE_REJECTED) {
+        if (DEBUG) {
+          Slog.i(TAG,"Transport rejected backup of " + currentPackage.packageName + ", skipping");
+        }
+        EventLog.writeEvent(EventLogTags.FULL_BACKUP_AGENT_FAILURE,currentPackage.packageName,"transport rejected");
+      }
+ else       if (result != BackupTransport.TRANSPORT_OK) {
+        if (DEBUG) {
+          Slog.i(TAG,"Transport failed; aborting backup: " + result);
+          EventLog.writeEvent(EventLogTags.FULL_BACKUP_TRANSPORT_FAILURE);
+          return;
+        }
+      }
+ else {
+        EventLog.writeEvent(EventLogTags.FULL_BACKUP_SUCCESS,currentPackage.packageName);
+        logBackupComplete(currentPackage.packageName);
+      }
+      cleanUpPipes(transportPipes);
+      cleanUpPipes(enginePipes);
+      currentPackage=null;
+    }
+    if (DEBUG) {
+      Slog.i(TAG,"Full backup completed.");
+    }
+  }
+ catch (  Exception e) {
+    Slog.w(TAG,"Exception trying full transport backup",e);
+  }
+ finally {
+    cleanUpPipes(transportPipes);
+    cleanUpPipes(enginePipes);
+    if (mJob != null) {
+      mJob.finishBackupPass();
+    }
+synchronized (mQueueLock) {
+      mRunningFullBackupTask=null;
+    }
+synchronized (mLatch) {
+      mLatch.set(true);
+      mLatch.notifyAll();
+    }
+    if (mUpdateSchedule) {
+      scheduleNextFullBackupJob();
+    }
+  }
+}

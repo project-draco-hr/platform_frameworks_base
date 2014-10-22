@@ -4,28 +4,72 @@ synchronized (this) {
       return mClassLoader;
     }
     if (mIncludeCode && !mPackageName.equals("android")) {
-      String zip=mAppDir;
-      String libraryPath=mLibDir;
-      String instrumentationAppDir=mActivityThread.mInstrumentationAppDir;
-      String instrumentationAppLibraryDir=mActivityThread.mInstrumentationAppLibraryDir;
-      String instrumentationAppPackage=mActivityThread.mInstrumentationAppPackage;
-      String instrumentedAppDir=mActivityThread.mInstrumentedAppDir;
-      String instrumentedAppLibraryDir=mActivityThread.mInstrumentedAppLibraryDir;
-      String[] instrumentationLibs=null;
-      if (mAppDir.equals(instrumentationAppDir) || mAppDir.equals(instrumentedAppDir)) {
-        zip=instrumentationAppDir + ":" + instrumentedAppDir;
-        libraryPath=instrumentationAppLibraryDir + ":" + instrumentedAppLibraryDir;
-        if (!instrumentedAppDir.equals(instrumentationAppDir)) {
-          instrumentationLibs=getLibrariesFor(instrumentationAppPackage);
+      if (!Objects.equals(mPackageName,ActivityThread.currentPackageName())) {
+        final String isa=VMRuntime.getRuntime().vmInstructionSet();
+        try {
+          ActivityThread.getPackageManager().performDexOptIfNeeded(mPackageName,isa);
+        }
+ catch (        RemoteException re) {
         }
       }
-      if ((mSharedLibraries != null) || (instrumentationLibs != null)) {
-        zip=combineLibs(mSharedLibraries,instrumentationLibs) + ':' + zip;
+      final ArrayList<String> zipPaths=new ArrayList<>();
+      final ArrayList<String> libPaths=new ArrayList<>();
+      if (mRegisterPackage) {
+        try {
+          ActivityManagerNative.getDefault().addPackageDependency(mPackageName);
+        }
+ catch (        RemoteException e) {
+        }
       }
-      if (ActivityThread.localLOGV)       Slog.v(ActivityThread.TAG,"Class path: " + zip + ", JNI path: "+ libraryPath);
+      zipPaths.add(mAppDir);
+      if (mSplitAppDirs != null) {
+        Collections.addAll(zipPaths,mSplitAppDirs);
+      }
+      libPaths.add(mLibDir);
+      String instrumentationPackageName=mActivityThread.mInstrumentationPackageName;
+      String instrumentationAppDir=mActivityThread.mInstrumentationAppDir;
+      String[] instrumentationSplitAppDirs=mActivityThread.mInstrumentationSplitAppDirs;
+      String instrumentationLibDir=mActivityThread.mInstrumentationLibDir;
+      String instrumentedAppDir=mActivityThread.mInstrumentedAppDir;
+      String[] instrumentedSplitAppDirs=mActivityThread.mInstrumentedSplitAppDirs;
+      String instrumentedLibDir=mActivityThread.mInstrumentedLibDir;
+      String[] instrumentationLibs=null;
+      if (mAppDir.equals(instrumentationAppDir) || mAppDir.equals(instrumentedAppDir)) {
+        zipPaths.clear();
+        zipPaths.add(instrumentationAppDir);
+        if (instrumentationSplitAppDirs != null) {
+          Collections.addAll(zipPaths,instrumentationSplitAppDirs);
+        }
+        zipPaths.add(instrumentedAppDir);
+        if (instrumentedSplitAppDirs != null) {
+          Collections.addAll(zipPaths,instrumentedSplitAppDirs);
+        }
+        libPaths.clear();
+        libPaths.add(instrumentationLibDir);
+        libPaths.add(instrumentedLibDir);
+        if (!instrumentedAppDir.equals(instrumentationAppDir)) {
+          instrumentationLibs=getLibrariesFor(instrumentationPackageName);
+        }
+      }
+      if (mSharedLibraries != null) {
+        for (        String lib : mSharedLibraries) {
+          if (!zipPaths.contains(lib)) {
+            zipPaths.add(0,lib);
+          }
+        }
+      }
+      if (instrumentationLibs != null) {
+        for (        String lib : instrumentationLibs) {
+          if (!zipPaths.contains(lib)) {
+            zipPaths.add(0,lib);
+          }
+        }
+      }
+      final String zip=TextUtils.join(File.pathSeparator,zipPaths);
+      final String lib=TextUtils.join(File.pathSeparator,libPaths);
+      if (ActivityThread.localLOGV)       Slog.v(ActivityThread.TAG,"Class path: " + zip + ", JNI path: "+ lib);
       StrictMode.ThreadPolicy oldPolicy=StrictMode.allowThreadDiskReads();
-      mClassLoader=ApplicationLoaders.getDefault().getClassLoader(zip,libraryPath,mBaseClassLoader);
-      initializeJavaContextClassLoader();
+      mClassLoader=ApplicationLoaders.getDefault().getClassLoader(zip,lib,mBaseClassLoader);
       StrictMode.setThreadPolicy(oldPolicy);
     }
  else {

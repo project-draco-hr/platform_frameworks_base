@@ -1,0 +1,119 @@
+{
+  mService=service;
+  mSession=s;
+  mClient=c;
+  mAppOp=appOp;
+  mToken=token;
+  mOwnerUid=s.mUid;
+  mWindowId=new IWindowId.Stub(){
+    @Override public void registerFocusObserver(    IWindowFocusObserver observer){
+      WindowState.this.registerFocusObserver(observer);
+    }
+    @Override public void unregisterFocusObserver(    IWindowFocusObserver observer){
+      WindowState.this.unregisterFocusObserver(observer);
+    }
+    @Override public boolean isFocused(){
+      return WindowState.this.isFocused();
+    }
+  }
+;
+  mAttrs.copyFrom(a);
+  mViewVisibility=viewVisibility;
+  mDisplayContent=displayContent;
+  mPolicy=mService.mPolicy;
+  mContext=mService.mContext;
+  DeathRecipient deathRecipient=new DeathRecipient();
+  mSeq=seq;
+  mEnforceSizeCompat=(mAttrs.privateFlags & PRIVATE_FLAG_COMPATIBLE_WINDOW) != 0;
+  if (WindowManagerService.localLOGV)   Slog.v(TAG,"Window " + this + " client="+ c.asBinder()+ " token="+ token+ " ("+ mAttrs.token+ ")"+ " params="+ a);
+  try {
+    c.asBinder().linkToDeath(deathRecipient,0);
+  }
+ catch (  RemoteException e) {
+    mDeathRecipient=null;
+    mAttachedWindow=null;
+    mLayoutAttached=false;
+    mIsImWindow=false;
+    mIsWallpaper=false;
+    mIsFloatingLayer=false;
+    mBaseLayer=0;
+    mSubLayer=0;
+    mInputWindowHandle=null;
+    mWinAnimator=null;
+    return;
+  }
+  mDeathRecipient=deathRecipient;
+  if ((mAttrs.type >= FIRST_SUB_WINDOW && mAttrs.type <= LAST_SUB_WINDOW)) {
+    mBaseLayer=mPolicy.windowTypeToLayerLw(attachedWindow.mAttrs.type) * WindowManagerService.TYPE_LAYER_MULTIPLIER + WindowManagerService.TYPE_LAYER_OFFSET;
+    mSubLayer=mPolicy.subWindowTypeToLayerLw(a.type);
+    mAttachedWindow=attachedWindow;
+    if (WindowManagerService.DEBUG_ADD_REMOVE)     Slog.v(TAG,"Adding " + this + " to "+ mAttachedWindow);
+    int children_size=mAttachedWindow.mChildWindows.size();
+    if (children_size == 0) {
+      mAttachedWindow.mChildWindows.add(this);
+    }
+ else {
+      for (int i=0; i < children_size; i++) {
+        WindowState child=(WindowState)mAttachedWindow.mChildWindows.get(i);
+        if (this.mSubLayer < child.mSubLayer) {
+          mAttachedWindow.mChildWindows.add(i,this);
+          break;
+        }
+ else         if (this.mSubLayer > child.mSubLayer) {
+          continue;
+        }
+        if (this.mBaseLayer <= child.mBaseLayer) {
+          mAttachedWindow.mChildWindows.add(i,this);
+          break;
+        }
+ else {
+          continue;
+        }
+      }
+      if (children_size == mAttachedWindow.mChildWindows.size()) {
+        mAttachedWindow.mChildWindows.add(this);
+      }
+    }
+    mLayoutAttached=mAttrs.type != WindowManager.LayoutParams.TYPE_APPLICATION_ATTACHED_DIALOG;
+    mIsImWindow=attachedWindow.mAttrs.type == TYPE_INPUT_METHOD || attachedWindow.mAttrs.type == TYPE_INPUT_METHOD_DIALOG;
+    mIsWallpaper=attachedWindow.mAttrs.type == TYPE_WALLPAPER;
+    mIsFloatingLayer=mIsImWindow || mIsWallpaper;
+  }
+ else {
+    mBaseLayer=mPolicy.windowTypeToLayerLw(a.type) * WindowManagerService.TYPE_LAYER_MULTIPLIER + WindowManagerService.TYPE_LAYER_OFFSET;
+    mSubLayer=0;
+    mAttachedWindow=null;
+    mLayoutAttached=false;
+    mIsImWindow=mAttrs.type == TYPE_INPUT_METHOD || mAttrs.type == TYPE_INPUT_METHOD_DIALOG;
+    mIsWallpaper=mAttrs.type == TYPE_WALLPAPER;
+    mIsFloatingLayer=mIsImWindow || mIsWallpaper;
+  }
+  WindowState appWin=this;
+  while (appWin.mAttachedWindow != null) {
+    appWin=appWin.mAttachedWindow;
+  }
+  WindowToken appToken=appWin.mToken;
+  while (appToken.appWindowToken == null) {
+    WindowToken parent=mService.mTokenMap.get(appToken.token);
+    if (parent == null || appToken == parent) {
+      break;
+    }
+    appToken=parent;
+  }
+  mRootToken=appToken;
+  mAppToken=appToken.appWindowToken;
+  if (mAppToken != null) {
+    final DisplayContent appDisplay=getDisplayContent();
+    mNotOnAppsDisplay=displayContent != appDisplay;
+  }
+  mWinAnimator=new WindowStateAnimator(this);
+  mWinAnimator.mAlpha=a.alpha;
+  mRequestedWidth=0;
+  mRequestedHeight=0;
+  mLastRequestedWidth=0;
+  mLastRequestedHeight=0;
+  mXOffset=0;
+  mYOffset=0;
+  mLayer=0;
+  mInputWindowHandle=new InputWindowHandle(mAppToken != null ? mAppToken.mInputApplicationHandle : null,this,displayContent.getDisplayId());
+}

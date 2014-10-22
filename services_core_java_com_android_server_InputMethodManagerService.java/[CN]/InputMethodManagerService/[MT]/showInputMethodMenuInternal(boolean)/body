@@ -1,0 +1,102 @@
+{
+  if (DEBUG)   Slog.v(TAG,"Show switching menu");
+  final Context context=mContext;
+  final boolean isScreenLocked=isScreenLocked();
+  final String lastInputMethodId=mSettings.getSelectedInputMethod();
+  int lastInputMethodSubtypeId=mSettings.getSelectedInputMethodSubtypeId(lastInputMethodId);
+  if (DEBUG)   Slog.v(TAG,"Current IME: " + lastInputMethodId);
+synchronized (mMethodMap) {
+    final HashMap<InputMethodInfo,List<InputMethodSubtype>> immis=mSettings.getExplicitlyOrImplicitlyEnabledInputMethodsAndSubtypeListLocked(mContext);
+    if (immis == null || immis.size() == 0) {
+      return;
+    }
+    hideInputMethodMenuLocked();
+    final List<ImeSubtypeListItem> imList=mSwitchingController.getSortedInputMethodAndSubtypeListLocked(showSubtypes,mInputShown,isScreenLocked);
+    if (lastInputMethodSubtypeId == NOT_A_SUBTYPE_ID) {
+      final InputMethodSubtype currentSubtype=getCurrentInputMethodSubtypeLocked();
+      if (currentSubtype != null) {
+        final InputMethodInfo currentImi=mMethodMap.get(mCurMethodId);
+        lastInputMethodSubtypeId=InputMethodUtils.getSubtypeIdFromHashCode(currentImi,currentSubtype.hashCode());
+      }
+    }
+    final int N=imList.size();
+    mIms=new InputMethodInfo[N];
+    mSubtypeIds=new int[N];
+    int checkedItem=0;
+    for (int i=0; i < N; ++i) {
+      final ImeSubtypeListItem item=imList.get(i);
+      mIms[i]=item.mImi;
+      mSubtypeIds[i]=item.mSubtypeId;
+      if (mIms[i].getId().equals(lastInputMethodId)) {
+        int subtypeId=mSubtypeIds[i];
+        if ((subtypeId == NOT_A_SUBTYPE_ID) || (lastInputMethodSubtypeId == NOT_A_SUBTYPE_ID && subtypeId == 0) || (subtypeId == lastInputMethodSubtypeId)) {
+          checkedItem=i;
+        }
+      }
+    }
+    final Context themedContext=new ContextThemeWrapper(context,android.R.style.Theme_DeviceDefault_Settings);
+    mDialogBuilder=new AlertDialog.Builder(themedContext);
+    final TypedArray a=themedContext.obtainStyledAttributes(null,com.android.internal.R.styleable.DialogPreference,com.android.internal.R.attr.alertDialogStyle,0);
+    mDialogBuilder.setIcon(a.getDrawable(com.android.internal.R.styleable.DialogPreference_dialogIcon));
+    a.recycle();
+    mDialogBuilder.setOnCancelListener(new OnCancelListener(){
+      @Override public void onCancel(      DialogInterface dialog){
+        hideInputMethodMenu();
+      }
+    }
+);
+    final LayoutInflater inflater=(LayoutInflater)themedContext.getSystemService(Context.LAYOUT_INFLATER_SERVICE);
+    final View tv=inflater.inflate(com.android.internal.R.layout.input_method_switch_dialog_title,null);
+    mDialogBuilder.setCustomTitle(tv);
+    mSwitchingDialogTitleView=tv;
+    mSwitchingDialogTitleView.findViewById(com.android.internal.R.id.hard_keyboard_section).setVisibility(mWindowManagerService.isHardKeyboardAvailable() ? View.VISIBLE : View.GONE);
+    final Switch hardKeySwitch=(Switch)mSwitchingDialogTitleView.findViewById(com.android.internal.R.id.hard_keyboard_switch);
+    hardKeySwitch.setChecked(mShowImeWithHardKeyboard);
+    hardKeySwitch.setOnCheckedChangeListener(new OnCheckedChangeListener(){
+      @Override public void onCheckedChanged(      CompoundButton buttonView,      boolean isChecked){
+        mSettings.setShowImeWithHardKeyboard(isChecked);
+        hideInputMethodMenu();
+      }
+    }
+);
+    final ImeSubtypeListAdapter adapter=new ImeSubtypeListAdapter(themedContext,com.android.internal.R.layout.input_method_switch_item,imList,checkedItem);
+    final OnClickListener choiceListener=new OnClickListener(){
+      @Override public void onClick(      final DialogInterface dialog,      final int which){
+synchronized (mMethodMap) {
+          if (mIms == null || mIms.length <= which || mSubtypeIds == null || mSubtypeIds.length <= which) {
+            return;
+          }
+          final InputMethodInfo im=mIms[which];
+          int subtypeId=mSubtypeIds[which];
+          adapter.mCheckedItem=which;
+          adapter.notifyDataSetChanged();
+          hideInputMethodMenu();
+          if (im != null) {
+            if (subtypeId < 0 || subtypeId >= im.getSubtypeCount()) {
+              subtypeId=NOT_A_SUBTYPE_ID;
+            }
+            setInputMethodLocked(im.getId(),subtypeId);
+          }
+        }
+      }
+    }
+;
+    mDialogBuilder.setSingleChoiceItems(adapter,checkedItem,choiceListener);
+    if (showSubtypes && !isScreenLocked) {
+      final OnClickListener positiveListener=new OnClickListener(){
+        @Override public void onClick(        DialogInterface dialog,        int whichButton){
+          showConfigureInputMethods();
+        }
+      }
+;
+      mDialogBuilder.setPositiveButton(com.android.internal.R.string.configure_input_methods,positiveListener);
+    }
+    mSwitchingDialog=mDialogBuilder.create();
+    mSwitchingDialog.setCanceledOnTouchOutside(true);
+    mSwitchingDialog.getWindow().setType(WindowManager.LayoutParams.TYPE_INPUT_METHOD_DIALOG);
+    mSwitchingDialog.getWindow().getAttributes().privateFlags|=WindowManager.LayoutParams.PRIVATE_FLAG_SHOW_FOR_ALL_USERS;
+    mSwitchingDialog.getWindow().getAttributes().setTitle("Select input method");
+    updateImeWindowStatusLocked();
+    mSwitchingDialog.show();
+  }
+}

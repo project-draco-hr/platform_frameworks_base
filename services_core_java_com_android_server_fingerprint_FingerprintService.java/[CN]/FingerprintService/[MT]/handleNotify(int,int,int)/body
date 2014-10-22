@@ -1,0 +1,88 @@
+{
+  Slog.v(TAG,"handleNotify(msg=" + msg + ", arg1="+ arg1+ ", arg2="+ arg2+ ")");
+  for (int i=0; i < mClients.size(); i++) {
+    ClientData clientData=mClients.valueAt(i);
+    if (clientData == null || clientData.receiver == null) {
+      if (DEBUG)       Slog.v(TAG,"clientData at " + i + " is invalid!!");
+      continue;
+    }
+switch (msg) {
+case FingerprintManager.FINGERPRINT_ERROR:
+{
+        final int error=arg1;
+        try {
+          clientData.receiver.onError(error);
+        }
+ catch (        RemoteException e) {
+          Slog.e(TAG,"can't send message to client. Did it die?",e);
+          mClients.remove(mClients.keyAt(i));
+        }
+      }
+    break;
+case FingerprintManager.FINGERPRINT_ACQUIRED:
+{
+    final int acquireInfo=arg1;
+    try {
+      clientData.receiver.onAcquired(acquireInfo);
+    }
+ catch (    RemoteException e) {
+      Slog.e(TAG,"can't send message to client. Did it die?",e);
+      mClients.remove(mClients.keyAt(i));
+    }
+    break;
+  }
+case FingerprintManager.FINGERPRINT_PROCESSED:
+{
+  final int fingerId=arg1;
+  try {
+    clientData.receiver.onProcessed(fingerId);
+  }
+ catch (  RemoteException e) {
+    Slog.e(TAG,"can't send message to client. Did it die?",e);
+    mClients.remove(mClients.keyAt(i));
+  }
+  break;
+}
+case FingerprintManager.FINGERPRINT_TEMPLATE_ENROLLING:
+{
+final int fingerId=arg1;
+final int remaining=arg2;
+if (clientData.state == STATE_ENROLLING) {
+  try {
+    clientData.receiver.onEnrollResult(fingerId,remaining);
+  }
+ catch (  RemoteException e) {
+    Slog.e(TAG,"can't send message to client. Did it die?",e);
+    mClients.remove(mClients.keyAt(i));
+  }
+  if (remaining == 0) {
+    FingerprintUtils.addFingerprintIdForUser(fingerId,mContext.getContentResolver(),clientData.userId);
+    clientData.state=STATE_IDLE;
+  }
+}
+ else {
+  if (DEBUG)   Slog.w(TAG,"Client not enrolling");
+  break;
+}
+break;
+}
+case FingerprintManager.FINGERPRINT_TEMPLATE_REMOVED:
+{
+int fingerId=arg1;
+if (fingerId == 0) throw new IllegalStateException("Got illegal id from HAL");
+FingerprintUtils.removeFingerprintIdForUser(fingerId,mContext.getContentResolver(),clientData.userId);
+if (clientData.receiver != null) {
+try {
+  clientData.receiver.onRemoved(fingerId);
+}
+ catch (RemoteException e) {
+  Slog.e(TAG,"can't send message to client. Did it die?",e);
+  mClients.remove(mClients.keyAt(i));
+}
+}
+clientData.state=STATE_LISTENING;
+}
+break;
+}
+}
+}

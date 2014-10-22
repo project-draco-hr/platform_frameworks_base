@@ -1,0 +1,88 @@
+{
+  List<ResolveInfo> ri=service.mActivities.queryIntent(intent,intent.getType(),flags,0);
+  if (PackageManagerService.DEBUG_PREFERRED)   Log.d(TAG,"Queried " + intent + " results: "+ ri);
+  int systemMatch=0;
+  int thirdPartyMatch=0;
+  if (ri != null && ri.size() > 1) {
+    boolean haveAct=false;
+    ComponentName haveNonSys=null;
+    ComponentName[] set=new ComponentName[ri.size()];
+    for (int i=0; i < ri.size(); i++) {
+      ActivityInfo ai=ri.get(i).activityInfo;
+      set[i]=new ComponentName(ai.packageName,ai.name);
+      if ((ai.applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) == 0) {
+        if (ri.get(i).match >= thirdPartyMatch) {
+          if (PackageManagerService.DEBUG_PREFERRED)           Log.d(TAG,"Result " + ai.packageName + "/"+ ai.name+ ": non-system!");
+          haveNonSys=set[i];
+          break;
+        }
+      }
+ else       if (cn.getPackageName().equals(ai.packageName) && cn.getClassName().equals(ai.name)) {
+        if (PackageManagerService.DEBUG_PREFERRED)         Log.d(TAG,"Result " + ai.packageName + "/"+ ai.name+ ": default!");
+        haveAct=true;
+        systemMatch=ri.get(i).match;
+      }
+ else {
+        if (PackageManagerService.DEBUG_PREFERRED)         Log.d(TAG,"Result " + ai.packageName + "/"+ ai.name+ ": skipped");
+      }
+    }
+    if (haveNonSys != null && thirdPartyMatch < systemMatch) {
+      haveNonSys=null;
+    }
+    if (haveAct && haveNonSys == null) {
+      IntentFilter filter=new IntentFilter();
+      if (intent.getAction() != null) {
+        filter.addAction(intent.getAction());
+      }
+      if (intent.getCategories() != null) {
+        for (        String cat : intent.getCategories()) {
+          filter.addCategory(cat);
+        }
+      }
+      if ((flags & PackageManager.MATCH_DEFAULT_ONLY) != 0) {
+        filter.addCategory(Intent.CATEGORY_DEFAULT);
+      }
+      if (scheme != null) {
+        filter.addDataScheme(scheme);
+      }
+      if (ssp != null) {
+        filter.addDataSchemeSpecificPart(ssp.getPath(),ssp.getType());
+      }
+      if (auth != null) {
+        filter.addDataAuthority(auth);
+      }
+      if (path != null) {
+        filter.addDataPath(path);
+      }
+      if (intent.getType() != null) {
+        try {
+          filter.addDataType(intent.getType());
+        }
+ catch (        IntentFilter.MalformedMimeTypeException ex) {
+          Slog.w(TAG,"Malformed mimetype " + intent.getType() + " for "+ cn);
+        }
+      }
+      PreferredActivity pa=new PreferredActivity(filter,systemMatch,set,cn,true);
+      editPreferredActivitiesLPw(userId).addFilter(pa);
+    }
+ else     if (haveNonSys == null) {
+      StringBuilder sb=new StringBuilder();
+      sb.append("No component ");
+      sb.append(cn.flattenToShortString());
+      sb.append(" found setting preferred ");
+      sb.append(intent);
+      sb.append("; possible matches are ");
+      for (int i=0; i < set.length; i++) {
+        if (i > 0)         sb.append(", ");
+        sb.append(set[i].flattenToShortString());
+      }
+      Slog.w(TAG,sb.toString());
+    }
+ else {
+      Slog.i(TAG,"Not setting preferred " + intent + "; found third party match "+ haveNonSys.flattenToShortString());
+    }
+  }
+ else {
+    Slog.w(TAG,"No potential matches found for " + intent + " while setting preferred "+ cn.flattenToShortString());
+  }
+}

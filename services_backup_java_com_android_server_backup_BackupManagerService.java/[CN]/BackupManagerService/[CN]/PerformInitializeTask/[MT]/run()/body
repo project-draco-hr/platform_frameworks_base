@@ -1,0 +1,46 @@
+{
+  try {
+    for (    String transportName : mQueue) {
+      IBackupTransport transport=getTransport(transportName);
+      if (transport == null) {
+        Slog.e(TAG,"Requested init for " + transportName + " but not found");
+        continue;
+      }
+      Slog.i(TAG,"Initializing (wiping) backup transport storage: " + transportName);
+      EventLog.writeEvent(EventLogTags.BACKUP_START,transport.transportDirName());
+      long startRealtime=SystemClock.elapsedRealtime();
+      int status=transport.initializeDevice();
+      if (status == BackupTransport.TRANSPORT_OK) {
+        status=transport.finishBackup();
+      }
+      if (status == BackupTransport.TRANSPORT_OK) {
+        Slog.i(TAG,"Device init successful");
+        int millis=(int)(SystemClock.elapsedRealtime() - startRealtime);
+        EventLog.writeEvent(EventLogTags.BACKUP_INITIALIZE);
+        resetBackupState(new File(mBaseStateDir,transport.transportDirName()));
+        EventLog.writeEvent(EventLogTags.BACKUP_SUCCESS,0,millis);
+synchronized (mQueueLock) {
+          recordInitPendingLocked(false,transportName);
+        }
+      }
+ else {
+        Slog.e(TAG,"Transport error in initializeDevice()");
+        EventLog.writeEvent(EventLogTags.BACKUP_TRANSPORT_FAILURE,"(initialize)");
+synchronized (mQueueLock) {
+          recordInitPendingLocked(true,transportName);
+        }
+        long delay=transport.requestBackupTime();
+        if (DEBUG)         Slog.w(TAG,"init failed on " + transportName + " resched in "+ delay);
+        mAlarmManager.set(AlarmManager.RTC_WAKEUP,System.currentTimeMillis() + delay,mRunInitIntent);
+      }
+    }
+  }
+ catch (  RemoteException e) {
+  }
+catch (  Exception e) {
+    Slog.e(TAG,"Unexpected error performing init",e);
+  }
+ finally {
+    mWakelock.release();
+  }
+}

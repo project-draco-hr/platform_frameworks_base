@@ -1,0 +1,74 @@
+{
+  Resources resources=getContext().getResources();
+  mAm=ActivityManagerNative.getDefault();
+  mAppOps=(AppOpsManager)getContext().getSystemService(Context.APP_OPS_SERVICE);
+  mVibrator=(Vibrator)getContext().getSystemService(Context.VIBRATOR_SERVICE);
+  mHandler=new WorkerHandler();
+  mRankingThread.start();
+  String[] extractorNames;
+  try {
+    extractorNames=resources.getStringArray(R.array.config_notificationSignalExtractors);
+  }
+ catch (  Resources.NotFoundException e) {
+    extractorNames=new String[0];
+  }
+  mRankingHelper=new RankingHelper(getContext(),new RankingWorkerHandler(mRankingThread.getLooper()),extractorNames);
+  mZenModeHelper=new ZenModeHelper(getContext(),mHandler);
+  mZenModeHelper.addCallback(new ZenModeHelper.Callback(){
+    @Override public void onConfigChanged(){
+      savePolicyFile();
+    }
+    @Override void onZenModeChanged(){
+synchronized (mNotificationList) {
+        updateInterruptionFilterLocked();
+      }
+    }
+  }
+);
+  final File systemDir=new File(Environment.getDataDirectory(),"system");
+  mPolicyFile=new AtomicFile(new File(systemDir,"notification_policy.xml"));
+  mUsageStats=new NotificationUsageStats(getContext());
+  importOldBlockDb();
+  mListeners=new NotificationListeners();
+  mConditionProviders=new ConditionProviders(getContext(),mHandler,mUserProfiles,mZenModeHelper);
+  mStatusBar=getLocalService(StatusBarManagerInternal.class);
+  mStatusBar.setNotificationDelegate(mNotificationDelegate);
+  final LightsManager lights=getLocalService(LightsManager.class);
+  mNotificationLight=lights.getLight(LightsManager.LIGHT_ID_NOTIFICATIONS);
+  mAttentionLight=lights.getLight(LightsManager.LIGHT_ID_ATTENTION);
+  mDefaultNotificationColor=resources.getColor(R.color.config_defaultNotificationColor);
+  mDefaultNotificationLedOn=resources.getInteger(R.integer.config_defaultNotificationLedOn);
+  mDefaultNotificationLedOff=resources.getInteger(R.integer.config_defaultNotificationLedOff);
+  mDefaultVibrationPattern=getLongArray(resources,R.array.config_defaultNotificationVibePattern,VIBRATE_PATTERN_MAXLEN,DEFAULT_VIBRATE_PATTERN);
+  mFallbackVibrationPattern=getLongArray(resources,R.array.config_notificationFallbackVibePattern,VIBRATE_PATTERN_MAXLEN,DEFAULT_VIBRATE_PATTERN);
+  mUseAttentionLight=resources.getBoolean(R.bool.config_useAttentionLight);
+  if (0 == Settings.Global.getInt(getContext().getContentResolver(),Settings.Global.DEVICE_PROVISIONED,0)) {
+    mDisableNotificationEffects=true;
+  }
+  mZenModeHelper.updateZenMode();
+  mUserProfiles.updateCache(getContext());
+  listenForCallState();
+  IntentFilter filter=new IntentFilter();
+  filter.addAction(Intent.ACTION_SCREEN_ON);
+  filter.addAction(Intent.ACTION_SCREEN_OFF);
+  filter.addAction(TelephonyManager.ACTION_PHONE_STATE_CHANGED);
+  filter.addAction(Intent.ACTION_USER_PRESENT);
+  filter.addAction(Intent.ACTION_USER_STOPPED);
+  filter.addAction(Intent.ACTION_USER_SWITCHED);
+  filter.addAction(Intent.ACTION_USER_ADDED);
+  getContext().registerReceiver(mIntentReceiver,filter);
+  IntentFilter pkgFilter=new IntentFilter();
+  pkgFilter.addAction(Intent.ACTION_PACKAGE_ADDED);
+  pkgFilter.addAction(Intent.ACTION_PACKAGE_REMOVED);
+  pkgFilter.addAction(Intent.ACTION_PACKAGE_CHANGED);
+  pkgFilter.addAction(Intent.ACTION_PACKAGE_RESTARTED);
+  pkgFilter.addAction(Intent.ACTION_QUERY_PACKAGE_RESTART);
+  pkgFilter.addDataScheme("package");
+  getContext().registerReceiver(mIntentReceiver,pkgFilter);
+  IntentFilter sdFilter=new IntentFilter(Intent.ACTION_EXTERNAL_APPLICATIONS_UNAVAILABLE);
+  getContext().registerReceiver(mIntentReceiver,sdFilter);
+  mSettingsObserver=new SettingsObserver(mHandler);
+  mArchive=new Archive(resources.getInteger(R.integer.config_notificationServiceArchiveSize));
+  publishBinderService(Context.NOTIFICATION_SERVICE,mService);
+  publishLocalService(NotificationManagerInternal.class,mInternalService);
+}

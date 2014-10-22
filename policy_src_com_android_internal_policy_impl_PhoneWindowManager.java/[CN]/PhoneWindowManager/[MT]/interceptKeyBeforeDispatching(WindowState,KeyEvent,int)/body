@@ -24,6 +24,9 @@
       return -1;
     }
   }
+  if (mPendingMetaAction && !KeyEvent.isMetaKey(keyCode)) {
+    mPendingMetaAction=false;
+  }
   if (keyCode == KeyEvent.KEYCODE_HOME) {
     if (!down) {
       cancelPreloadRecentApps();
@@ -36,20 +39,19 @@
         Log.i(TAG,"Ignoring HOME; event canceled.");
         return -1;
       }
-      try {
-        ITelephony telephonyService=getTelephonyService();
-        if (telephonyService != null && telephonyService.isRinging()) {
-          Log.i(TAG,"Ignoring HOME; there's a ringing incoming call.");
-          return -1;
-        }
-      }
- catch (      RemoteException ex) {
-        Log.w(TAG,"RemoteException from getPhoneInterface()",ex);
+      TelecomManager telecomManager=getTelecommService();
+      if (telecomManager != null && telecomManager.isRinging()) {
+        Log.i(TAG,"Ignoring HOME; there's a ringing incoming call.");
+        return -1;
       }
       if (mDoubleTapOnHomeBehavior != DOUBLE_TAP_HOME_NOTHING) {
         mHandler.removeCallbacks(mHomeDoubleTapTimeoutRunnable);
         mHomeDoubleTapPending=true;
         mHandler.postDelayed(mHomeDoubleTapTimeoutRunnable,ViewConfiguration.getDoubleTapTimeout());
+        return -1;
+      }
+      if (mDreamManagerInternal != null && mDreamManagerInternal.isDreaming()) {
+        mDreamManagerInternal.stopDream(false);
         return -1;
       }
       launchHomeFromHotKey();
@@ -58,7 +60,7 @@
     WindowManager.LayoutParams attrs=win != null ? win.getAttrs() : null;
     if (attrs != null) {
       final int type=attrs.type;
-      if (type == WindowManager.LayoutParams.TYPE_KEYGUARD || type == WindowManager.LayoutParams.TYPE_KEYGUARD_SCRIM || type == WindowManager.LayoutParams.TYPE_KEYGUARD_DIALOG) {
+      if (type == WindowManager.LayoutParams.TYPE_KEYGUARD_SCRIM || type == WindowManager.LayoutParams.TYPE_KEYGUARD_DIALOG || (attrs.privateFlags & PRIVATE_FLAG_KEYGUARD) != 0) {
         return 0;
       }
       final int typeCount=WINDOW_TYPES_WHERE_HOME_DOESNT_WORK.length;
@@ -161,6 +163,19 @@
     }
     return -1;
   }
+ else   if (keyCode == KeyEvent.KEYCODE_VOICE_ASSIST) {
+    if (!down) {
+      Intent voiceIntent;
+      if (!keyguardOn) {
+        voiceIntent=new Intent(RecognizerIntent.ACTION_WEB_SEARCH);
+      }
+ else {
+        voiceIntent=new Intent(RecognizerIntent.ACTION_VOICE_SEARCH_HANDS_FREE);
+        voiceIntent.putExtra(RecognizerIntent.EXTRA_SECURE,true);
+      }
+      mContext.startActivityAsUser(voiceIntent,UserHandle.CURRENT_OR_SELF);
+    }
+  }
  else   if (keyCode == KeyEvent.KEYCODE_SYSRQ) {
     if (down && repeatCount == 0) {
       mHandler.post(mScreenshotRunnable);
@@ -182,8 +197,16 @@
       brightness=Math.min(max,brightness);
       brightness=Math.max(min,brightness);
       Settings.System.putIntForUser(mContext.getContentResolver(),Settings.System.SCREEN_BRIGHTNESS,brightness,UserHandle.USER_CURRENT_OR_SELF);
-      Intent intent=new Intent(Intent.ACTION_SHOW_BRIGHTNESS_DIALOG);
-      mContext.sendBroadcastAsUser(intent,UserHandle.CURRENT_OR_SELF);
+      mContext.startActivityAsUser(new Intent(Intent.ACTION_SHOW_BRIGHTNESS_DIALOG),UserHandle.CURRENT_OR_SELF);
+    }
+    return -1;
+  }
+ else   if (KeyEvent.isMetaKey(keyCode)) {
+    if (down) {
+      mPendingMetaAction=true;
+    }
+ else     if (mPendingMetaAction) {
+      launchAssistAction(Intent.EXTRA_ASSIST_INPUT_HINT_KEYBOARD);
     }
     return -1;
   }
@@ -241,18 +264,18 @@
     }
   }
   if (down && repeatCount == 0 && keyCode == KeyEvent.KEYCODE_TAB) {
-    if (mRecentAppsDialogHeldModifiers == 0 && !keyguardOn) {
+    if (mRecentAppsHeldModifiers == 0 && !keyguardOn) {
       final int shiftlessModifiers=event.getModifiers() & ~KeyEvent.META_SHIFT_MASK;
-      if (KeyEvent.metaStateHasModifiers(shiftlessModifiers,KeyEvent.META_ALT_ON) || KeyEvent.metaStateHasModifiers(shiftlessModifiers,KeyEvent.META_META_ON)) {
-        mRecentAppsDialogHeldModifiers=shiftlessModifiers;
-        showOrHideRecentAppsDialog(RECENT_APPS_BEHAVIOR_EXIT_TOUCH_MODE_AND_SHOW);
+      if (KeyEvent.metaStateHasModifiers(shiftlessModifiers,KeyEvent.META_ALT_ON)) {
+        mRecentAppsHeldModifiers=shiftlessModifiers;
+        showRecentApps(true);
         return -1;
       }
     }
   }
- else   if (!down && mRecentAppsDialogHeldModifiers != 0 && (metaState & mRecentAppsDialogHeldModifiers) == 0) {
-    mRecentAppsDialogHeldModifiers=0;
-    showOrHideRecentAppsDialog(keyguardOn ? RECENT_APPS_BEHAVIOR_DISMISS : RECENT_APPS_BEHAVIOR_DISMISS_AND_SWITCH);
+ else   if (!down && mRecentAppsHeldModifiers != 0 && (metaState & mRecentAppsHeldModifiers) == 0) {
+    mRecentAppsHeldModifiers=0;
+    hideRecentApps(true,false);
   }
   if (down && repeatCount == 0 && (keyCode == KeyEvent.KEYCODE_LANGUAGE_SWITCH || (keyCode == KeyEvent.KEYCODE_SPACE && (metaState & KeyEvent.META_CTRL_MASK) != 0))) {
     int direction=(metaState & KeyEvent.META_SHIFT_MASK) != 0 ? -1 : 1;
@@ -264,6 +287,9 @@
     return -1;
   }
   if (mGlobalKeyManager.handleGlobalKey(mContext,keyCode,event)) {
+    return -1;
+  }
+  if ((metaState & KeyEvent.META_META_ON) != 0) {
     return -1;
   }
   return 0;

@@ -1,0 +1,55 @@
+{
+  super.onCreate(savedInstanceState);
+  String server=Settings.Global.getString(getContentResolver(),"captive_portal_server");
+  if (server == null)   server=DEFAULT_SERVER;
+  try {
+    mURL=new URL("http://" + server + "/generate_204");
+  }
+ catch (  MalformedURLException e) {
+    done(true);
+  }
+  mNetId=Integer.parseInt(getIntent().getStringExtra(Intent.EXTRA_TEXT));
+  final Network network=new Network(mNetId);
+  ConnectivityManager.setProcessDefaultNetwork(network);
+  final LinkProperties lp=ConnectivityManager.from(this).getLinkProperties(network);
+  if (lp != null) {
+    final ProxyInfo proxyInfo=lp.getHttpProxy();
+    String host="";
+    String port="";
+    String exclList="";
+    Uri pacFileUrl=Uri.EMPTY;
+    if (proxyInfo != null) {
+      host=proxyInfo.getHost();
+      port=Integer.toString(proxyInfo.getPort());
+      exclList=proxyInfo.getExclusionListAsString();
+      pacFileUrl=proxyInfo.getPacFileUrl();
+    }
+    Proxy.setHttpProxySystemProperty(host,port,exclList,pacFileUrl);
+    Log.v(TAG,"Set proxy system properties to " + proxyInfo);
+  }
+  setContentView(R.layout.activity_captive_portal_login);
+  getActionBar().setDisplayShowHomeEnabled(false);
+  final NetworkCapabilities networkCapabilities=ConnectivityManager.from(this).getNetworkCapabilities(network);
+  if (networkCapabilities == null) {
+    finish();
+    return;
+  }
+  mNetworkCallback=new NetworkCallback(){
+    @Override public void onLost(    Network lostNetwork){
+      if (network.equals(lostNetwork))       done(false);
+    }
+  }
+;
+  final NetworkRequest.Builder builder=new NetworkRequest.Builder();
+  for (  int transportType : networkCapabilities.getTransportTypes()) {
+    builder.addTransportType(transportType);
+  }
+  ConnectivityManager.from(this).registerNetworkCallback(builder.build(),mNetworkCallback);
+  final WebView myWebView=(WebView)findViewById(R.id.webview);
+  myWebView.clearCache(true);
+  WebSettings webSettings=myWebView.getSettings();
+  webSettings.setJavaScriptEnabled(true);
+  myWebView.setWebViewClient(new MyWebViewClient());
+  myWebView.setWebChromeClient(new MyWebChromeClient());
+  myWebView.loadData("","text/html",null);
+}

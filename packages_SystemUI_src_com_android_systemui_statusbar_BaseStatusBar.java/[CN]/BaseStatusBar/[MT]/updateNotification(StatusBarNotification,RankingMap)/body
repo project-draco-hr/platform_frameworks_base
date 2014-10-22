@@ -1,0 +1,131 @@
+{
+  if (DEBUG)   Log.d(TAG,"updateNotification(" + notification + ")");
+  final String key=notification.getKey();
+  boolean wasHeadsUp=isHeadsUp(key);
+  Entry oldEntry;
+  if (wasHeadsUp) {
+    oldEntry=mHeadsUpNotificationView.getEntry();
+  }
+ else {
+    oldEntry=mNotificationData.get(key);
+  }
+  if (oldEntry == null) {
+    return;
+  }
+  final StatusBarNotification oldNotification=oldEntry.notification;
+  final RemoteViews oldContentView=oldNotification.getNotification().contentView;
+  Notification n=notification.getNotification();
+  final RemoteViews contentView=n.contentView;
+  final RemoteViews oldBigContentView=oldNotification.getNotification().bigContentView;
+  final RemoteViews bigContentView=n.bigContentView;
+  final RemoteViews oldHeadsUpContentView=oldNotification.getNotification().headsUpContentView;
+  final RemoteViews headsUpContentView=n.headsUpContentView;
+  final Notification oldPublicNotification=oldNotification.getNotification().publicVersion;
+  final RemoteViews oldPublicContentView=oldPublicNotification != null ? oldPublicNotification.contentView : null;
+  final Notification publicNotification=n.publicVersion;
+  final RemoteViews publicContentView=publicNotification != null ? publicNotification.contentView : null;
+  if (DEBUG) {
+    Log.d(TAG,"old notification: when=" + oldNotification.getNotification().when + " ongoing="+ oldNotification.isOngoing()+ " expanded="+ oldEntry.expanded+ " contentView="+ oldContentView+ " bigContentView="+ oldBigContentView+ " publicView="+ oldPublicContentView+ " rowParent="+ oldEntry.row.getParent());
+    Log.d(TAG,"new notification: when=" + n.when + " ongoing="+ oldNotification.isOngoing()+ " contentView="+ contentView+ " bigContentView="+ bigContentView+ " publicView="+ publicContentView);
+  }
+  boolean contentsUnchanged=oldEntry.expanded != null && contentView.getPackage() != null && oldContentView.getPackage() != null && oldContentView.getPackage().equals(contentView.getPackage()) && oldContentView.getLayoutId() == contentView.getLayoutId();
+  boolean bigContentsUnchanged=(oldEntry.getBigContentView() == null && bigContentView == null) || ((oldEntry.getBigContentView() != null && bigContentView != null) && bigContentView.getPackage() != null && oldBigContentView.getPackage() != null && oldBigContentView.getPackage().equals(bigContentView.getPackage()) && oldBigContentView.getLayoutId() == bigContentView.getLayoutId());
+  boolean headsUpContentsUnchanged=(oldHeadsUpContentView == null && headsUpContentView == null) || ((oldHeadsUpContentView != null && headsUpContentView != null) && headsUpContentView.getPackage() != null && oldHeadsUpContentView.getPackage() != null && oldHeadsUpContentView.getPackage().equals(headsUpContentView.getPackage()) && oldHeadsUpContentView.getLayoutId() == headsUpContentView.getLayoutId());
+  boolean publicUnchanged=(oldPublicContentView == null && publicContentView == null) || ((oldPublicContentView != null && publicContentView != null) && publicContentView.getPackage() != null && oldPublicContentView.getPackage() != null && oldPublicContentView.getPackage().equals(publicContentView.getPackage()) && oldPublicContentView.getLayoutId() == publicContentView.getLayoutId());
+  boolean updateTicker=n.tickerText != null && !TextUtils.equals(n.tickerText,oldEntry.notification.getNotification().tickerText);
+  final boolean shouldInterrupt=shouldInterrupt(notification);
+  final boolean alertAgain=alertAgain(oldEntry,n);
+  boolean updateSuccessful=false;
+  if (contentsUnchanged && bigContentsUnchanged && headsUpContentsUnchanged&& publicUnchanged) {
+    if (DEBUG)     Log.d(TAG,"reusing notification for key: " + key);
+    oldEntry.notification=notification;
+    try {
+      if (oldEntry.icon != null) {
+        final StatusBarIcon ic=new StatusBarIcon(notification.getPackageName(),notification.getUser(),n.icon,n.iconLevel,n.number,n.tickerText);
+        oldEntry.icon.setNotification(n);
+        if (!oldEntry.icon.set(ic)) {
+          handleNotificationError(notification,"Couldn't update icon: " + ic);
+          return;
+        }
+      }
+      if (wasHeadsUp) {
+        if (shouldInterrupt) {
+          updateHeadsUpViews(oldEntry,notification);
+          if (alertAgain) {
+            resetHeadsUpDecayTimer();
+          }
+        }
+ else {
+          mHeadsUpNotificationView.releaseAndClose();
+          return;
+        }
+      }
+ else {
+        if (shouldInterrupt && alertAgain) {
+          removeNotificationViews(key,ranking);
+          addNotification(notification,ranking);
+        }
+ else {
+          updateNotificationViews(oldEntry,notification);
+        }
+      }
+      mNotificationData.updateRanking(ranking);
+      updateNotifications();
+      updateSuccessful=true;
+    }
+ catch (    RuntimeException e) {
+      Log.w(TAG,"Couldn't reapply views for package " + contentView.getPackage(),e);
+    }
+  }
+  if (!updateSuccessful) {
+    if (DEBUG)     Log.d(TAG,"not reusing notification for key: " + key);
+    if (wasHeadsUp) {
+      if (shouldInterrupt) {
+        if (DEBUG)         Log.d(TAG,"rebuilding heads up for key: " + key);
+        Entry newEntry=new Entry(notification,null);
+        ViewGroup holder=mHeadsUpNotificationView.getHolder();
+        if (inflateViewsForHeadsUp(newEntry,holder)) {
+          mHeadsUpNotificationView.showNotification(newEntry);
+          if (alertAgain) {
+            resetHeadsUpDecayTimer();
+          }
+        }
+ else {
+          Log.w(TAG,"Couldn't create new updated headsup for package " + contentView.getPackage());
+        }
+      }
+ else {
+        if (DEBUG)         Log.d(TAG,"releasing heads up for key: " + key);
+        oldEntry.notification=notification;
+        mHeadsUpNotificationView.releaseAndClose();
+        return;
+      }
+    }
+ else {
+      if (shouldInterrupt && alertAgain) {
+        if (DEBUG)         Log.d(TAG,"reposting to invoke heads up for key: " + key);
+        removeNotificationViews(key,ranking);
+        addNotification(notification,ranking);
+      }
+ else {
+        if (DEBUG)         Log.d(TAG,"rebuilding update in place for key: " + key);
+        oldEntry.notification=notification;
+        final StatusBarIcon ic=new StatusBarIcon(notification.getPackageName(),notification.getUser(),n.icon,n.iconLevel,n.number,n.tickerText);
+        oldEntry.icon.setNotification(n);
+        oldEntry.icon.set(ic);
+        inflateViews(oldEntry,mStackScroller,wasHeadsUp);
+        mNotificationData.updateRanking(ranking);
+        updateNotifications();
+      }
+    }
+  }
+  updateNotificationVetoButton(oldEntry.row,notification);
+  boolean isForCurrentUser=isNotificationForCurrentProfiles(notification);
+  if (DEBUG)   Log.d(TAG,"notification is " + (isForCurrentUser ? "" : "not ") + "for you");
+  if (updateTicker && isForCurrentUser) {
+    haltTicker();
+    tick(notification,false);
+  }
+  setAreThereNotifications();
+  updateExpandedViewPos(EXPANDED_LEAVE_ALONE);
+}

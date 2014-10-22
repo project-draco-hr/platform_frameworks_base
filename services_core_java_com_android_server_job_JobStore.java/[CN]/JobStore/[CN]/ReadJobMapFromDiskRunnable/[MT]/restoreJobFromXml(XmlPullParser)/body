@@ -1,0 +1,92 @@
+{
+  JobInfo.Builder jobBuilder;
+  int uid;
+  try {
+    jobBuilder=buildBuilderFromXml(parser);
+    jobBuilder.setPersisted(true);
+    uid=Integer.valueOf(parser.getAttributeValue(null,"uid"));
+  }
+ catch (  NumberFormatException e) {
+    Slog.e(TAG,"Error parsing job's required fields, skipping");
+    return null;
+  }
+  int eventType;
+  do {
+    eventType=parser.next();
+  }
+ while (eventType == XmlPullParser.TEXT);
+  if (!(eventType == XmlPullParser.START_TAG && XML_TAG_PARAMS_CONSTRAINTS.equals(parser.getName()))) {
+    return null;
+  }
+  try {
+    buildConstraintsFromXml(jobBuilder,parser);
+  }
+ catch (  NumberFormatException e) {
+    Slog.d(TAG,"Error reading constraints, skipping.");
+    return null;
+  }
+  parser.next();
+  do {
+    eventType=parser.next();
+  }
+ while (eventType == XmlPullParser.TEXT);
+  if (eventType != XmlPullParser.START_TAG) {
+    return null;
+  }
+  Pair<Long,Long> runtimes;
+  try {
+    runtimes=buildExecutionTimesFromXml(parser);
+  }
+ catch (  NumberFormatException e) {
+    if (DEBUG) {
+      Slog.d(TAG,"Error parsing execution time parameters, skipping.");
+    }
+    return null;
+  }
+  if (XML_TAG_PERIODIC.equals(parser.getName())) {
+    try {
+      String val=parser.getAttributeValue(null,"period");
+      jobBuilder.setPeriodic(Long.valueOf(val));
+    }
+ catch (    NumberFormatException e) {
+      Slog.d(TAG,"Error reading periodic execution criteria, skipping.");
+      return null;
+    }
+  }
+ else   if (XML_TAG_ONEOFF.equals(parser.getName())) {
+    try {
+      if (runtimes.first != JobStatus.NO_EARLIEST_RUNTIME) {
+        jobBuilder.setMinimumLatency(runtimes.first - SystemClock.elapsedRealtime());
+      }
+      if (runtimes.second != JobStatus.NO_LATEST_RUNTIME) {
+        jobBuilder.setOverrideDeadline(runtimes.second - SystemClock.elapsedRealtime());
+      }
+    }
+ catch (    NumberFormatException e) {
+      Slog.d(TAG,"Error reading job execution criteria, skipping.");
+      return null;
+    }
+  }
+ else {
+    if (DEBUG) {
+      Slog.d(TAG,"Invalid parameter tag, skipping - " + parser.getName());
+    }
+    return null;
+  }
+  maybeBuildBackoffPolicyFromXml(jobBuilder,parser);
+  parser.nextTag();
+  do {
+    eventType=parser.next();
+  }
+ while (eventType == XmlPullParser.TEXT);
+  if (!(eventType == XmlPullParser.START_TAG && XML_TAG_EXTRAS.equals(parser.getName()))) {
+    if (DEBUG) {
+      Slog.d(TAG,"Error reading extras, skipping.");
+    }
+    return null;
+  }
+  PersistableBundle extras=PersistableBundle.restoreFromXml(parser);
+  jobBuilder.setExtras(extras);
+  parser.nextTag();
+  return new JobStatus(jobBuilder.build(),uid,runtimes.first,runtimes.second);
+}

@@ -1,0 +1,1072 @@
+{
+  final long rawUptime=SystemClock.uptimeMillis() * 1000;
+  final long rawRealtime=SystemClock.elapsedRealtime() * 1000;
+  final long batteryUptime=getBatteryUptime(rawUptime);
+  final long whichBatteryUptime=computeBatteryUptime(rawUptime,which);
+  final long whichBatteryRealtime=computeBatteryRealtime(rawRealtime,which);
+  final long totalRealtime=computeRealtime(rawRealtime,which);
+  final long totalUptime=computeUptime(rawUptime,which);
+  final long whichBatteryScreenOffUptime=computeBatteryScreenOffUptime(rawUptime,which);
+  final long whichBatteryScreenOffRealtime=computeBatteryScreenOffRealtime(rawRealtime,which);
+  final long batteryTimeRemaining=computeBatteryTimeRemaining(rawRealtime);
+  final long chargeTimeRemaining=computeChargeTimeRemaining(rawRealtime);
+  StringBuilder sb=new StringBuilder(128);
+  SparseArray<? extends Uid> uidStats=getUidStats();
+  final int NU=uidStats.size();
+  sb.setLength(0);
+  sb.append(prefix);
+  sb.append("  Time on battery: ");
+  formatTimeMs(sb,whichBatteryRealtime / 1000);
+  sb.append("(");
+  sb.append(formatRatioLocked(whichBatteryRealtime,totalRealtime));
+  sb.append(") realtime, ");
+  formatTimeMs(sb,whichBatteryUptime / 1000);
+  sb.append("(");
+  sb.append(formatRatioLocked(whichBatteryUptime,totalRealtime));
+  sb.append(") uptime");
+  pw.println(sb.toString());
+  sb.setLength(0);
+  sb.append(prefix);
+  sb.append("  Time on battery screen off: ");
+  formatTimeMs(sb,whichBatteryScreenOffRealtime / 1000);
+  sb.append("(");
+  sb.append(formatRatioLocked(whichBatteryScreenOffRealtime,totalRealtime));
+  sb.append(") realtime, ");
+  formatTimeMs(sb,whichBatteryScreenOffUptime / 1000);
+  sb.append("(");
+  sb.append(formatRatioLocked(whichBatteryScreenOffUptime,totalRealtime));
+  sb.append(") uptime");
+  pw.println(sb.toString());
+  sb.setLength(0);
+  sb.append(prefix);
+  sb.append("  Total run time: ");
+  formatTimeMs(sb,totalRealtime / 1000);
+  sb.append("realtime, ");
+  formatTimeMs(sb,totalUptime / 1000);
+  sb.append("uptime");
+  pw.println(sb.toString());
+  if (batteryTimeRemaining >= 0) {
+    sb.setLength(0);
+    sb.append(prefix);
+    sb.append("  Battery time remaining: ");
+    formatTimeMs(sb,batteryTimeRemaining / 1000);
+    pw.println(sb.toString());
+  }
+  if (chargeTimeRemaining >= 0) {
+    sb.setLength(0);
+    sb.append(prefix);
+    sb.append("  Charge time remaining: ");
+    formatTimeMs(sb,chargeTimeRemaining / 1000);
+    pw.println(sb.toString());
+  }
+  pw.print("  Start clock time: ");
+  pw.println(DateFormat.format("yyyy-MM-dd-HH-mm-ss",getStartClockTime()).toString());
+  final long screenOnTime=getScreenOnTime(rawRealtime,which);
+  final long interactiveTime=getInteractiveTime(rawRealtime,which);
+  final long lowPowerModeEnabledTime=getLowPowerModeEnabledTime(rawRealtime,which);
+  final long phoneOnTime=getPhoneOnTime(rawRealtime,which);
+  final long wifiRunningTime=getGlobalWifiRunningTime(rawRealtime,which);
+  final long wifiOnTime=getWifiOnTime(rawRealtime,which);
+  final long bluetoothOnTime=getBluetoothOnTime(rawRealtime,which);
+  sb.setLength(0);
+  sb.append(prefix);
+  sb.append("  Screen on: ");
+  formatTimeMs(sb,screenOnTime / 1000);
+  sb.append("(");
+  sb.append(formatRatioLocked(screenOnTime,whichBatteryRealtime));
+  sb.append(") ");
+  sb.append(getScreenOnCount(which));
+  sb.append("x, Interactive: ");
+  formatTimeMs(sb,interactiveTime / 1000);
+  sb.append("(");
+  sb.append(formatRatioLocked(interactiveTime,whichBatteryRealtime));
+  sb.append(")");
+  pw.println(sb.toString());
+  sb.setLength(0);
+  sb.append(prefix);
+  sb.append("  Screen brightnesses:");
+  boolean didOne=false;
+  for (int i=0; i < NUM_SCREEN_BRIGHTNESS_BINS; i++) {
+    final long time=getScreenBrightnessTime(i,rawRealtime,which);
+    if (time == 0) {
+      continue;
+    }
+    sb.append("\n    ");
+    sb.append(prefix);
+    didOne=true;
+    sb.append(SCREEN_BRIGHTNESS_NAMES[i]);
+    sb.append(" ");
+    formatTimeMs(sb,time / 1000);
+    sb.append("(");
+    sb.append(formatRatioLocked(time,screenOnTime));
+    sb.append(")");
+  }
+  if (!didOne)   sb.append(" (no activity)");
+  pw.println(sb.toString());
+  if (lowPowerModeEnabledTime != 0) {
+    sb.setLength(0);
+    sb.append(prefix);
+    sb.append("  Low power mode enabled: ");
+    formatTimeMs(sb,lowPowerModeEnabledTime / 1000);
+    sb.append("(");
+    sb.append(formatRatioLocked(lowPowerModeEnabledTime,whichBatteryRealtime));
+    sb.append(")");
+    pw.println(sb.toString());
+  }
+  if (phoneOnTime != 0) {
+    sb.setLength(0);
+    sb.append(prefix);
+    sb.append("  Active phone call: ");
+    formatTimeMs(sb,phoneOnTime / 1000);
+    sb.append("(");
+    sb.append(formatRatioLocked(phoneOnTime,whichBatteryRealtime));
+    sb.append(") ");
+    sb.append(getPhoneOnCount(which));
+  }
+  long fullWakeLockTimeTotalMicros=0;
+  long partialWakeLockTimeTotalMicros=0;
+  final ArrayList<TimerEntry> timers=new ArrayList<TimerEntry>();
+  for (int iu=0; iu < NU; iu++) {
+    Uid u=uidStats.valueAt(iu);
+    Map<String,? extends BatteryStats.Uid.Wakelock> wakelocks=u.getWakelockStats();
+    if (wakelocks.size() > 0) {
+      for (      Map.Entry<String,? extends BatteryStats.Uid.Wakelock> ent : wakelocks.entrySet()) {
+        Uid.Wakelock wl=ent.getValue();
+        Timer fullWakeTimer=wl.getWakeTime(WAKE_TYPE_FULL);
+        if (fullWakeTimer != null) {
+          fullWakeLockTimeTotalMicros+=fullWakeTimer.getTotalTimeLocked(rawRealtime,which);
+        }
+        Timer partialWakeTimer=wl.getWakeTime(WAKE_TYPE_PARTIAL);
+        if (partialWakeTimer != null) {
+          long totalTimeMicros=partialWakeTimer.getTotalTimeLocked(rawRealtime,which);
+          if (totalTimeMicros > 0) {
+            if (reqUid < 0) {
+              timers.add(new TimerEntry(ent.getKey(),u.getUid(),partialWakeTimer,totalTimeMicros));
+            }
+            partialWakeLockTimeTotalMicros+=totalTimeMicros;
+          }
+        }
+      }
+    }
+  }
+  long mobileRxTotalBytes=getNetworkActivityBytes(NETWORK_MOBILE_RX_DATA,which);
+  long mobileTxTotalBytes=getNetworkActivityBytes(NETWORK_MOBILE_TX_DATA,which);
+  long wifiRxTotalBytes=getNetworkActivityBytes(NETWORK_WIFI_RX_DATA,which);
+  long wifiTxTotalBytes=getNetworkActivityBytes(NETWORK_WIFI_TX_DATA,which);
+  long mobileRxTotalPackets=getNetworkActivityPackets(NETWORK_MOBILE_RX_DATA,which);
+  long mobileTxTotalPackets=getNetworkActivityPackets(NETWORK_MOBILE_TX_DATA,which);
+  long wifiRxTotalPackets=getNetworkActivityPackets(NETWORK_WIFI_RX_DATA,which);
+  long wifiTxTotalPackets=getNetworkActivityPackets(NETWORK_WIFI_TX_DATA,which);
+  if (fullWakeLockTimeTotalMicros != 0) {
+    sb.setLength(0);
+    sb.append(prefix);
+    sb.append("  Total full wakelock time: ");
+    formatTimeMsNoSpace(sb,(fullWakeLockTimeTotalMicros + 500) / 1000);
+    pw.println(sb.toString());
+  }
+  if (partialWakeLockTimeTotalMicros != 0) {
+    sb.setLength(0);
+    sb.append(prefix);
+    sb.append("  Total partial wakelock time: ");
+    formatTimeMsNoSpace(sb,(partialWakeLockTimeTotalMicros + 500) / 1000);
+    pw.println(sb.toString());
+  }
+  pw.print(prefix);
+  pw.print("  Mobile total received: ");
+  pw.print(formatBytesLocked(mobileRxTotalBytes));
+  pw.print(", sent: ");
+  pw.print(formatBytesLocked(mobileTxTotalBytes));
+  pw.print(" (packets received ");
+  pw.print(mobileRxTotalPackets);
+  pw.print(", sent ");
+  pw.print(mobileTxTotalPackets);
+  pw.println(")");
+  sb.setLength(0);
+  sb.append(prefix);
+  sb.append("  Phone signal levels:");
+  didOne=false;
+  for (int i=0; i < SignalStrength.NUM_SIGNAL_STRENGTH_BINS; i++) {
+    final long time=getPhoneSignalStrengthTime(i,rawRealtime,which);
+    if (time == 0) {
+      continue;
+    }
+    sb.append("\n    ");
+    sb.append(prefix);
+    didOne=true;
+    sb.append(SignalStrength.SIGNAL_STRENGTH_NAMES[i]);
+    sb.append(" ");
+    formatTimeMs(sb,time / 1000);
+    sb.append("(");
+    sb.append(formatRatioLocked(time,whichBatteryRealtime));
+    sb.append(") ");
+    sb.append(getPhoneSignalStrengthCount(i,which));
+    sb.append("x");
+  }
+  if (!didOne)   sb.append(" (no activity)");
+  pw.println(sb.toString());
+  sb.setLength(0);
+  sb.append(prefix);
+  sb.append("  Signal scanning time: ");
+  formatTimeMsNoSpace(sb,getPhoneSignalScanningTime(rawRealtime,which) / 1000);
+  pw.println(sb.toString());
+  sb.setLength(0);
+  sb.append(prefix);
+  sb.append("  Radio types:");
+  didOne=false;
+  for (int i=0; i < NUM_DATA_CONNECTION_TYPES; i++) {
+    final long time=getPhoneDataConnectionTime(i,rawRealtime,which);
+    if (time == 0) {
+      continue;
+    }
+    sb.append("\n    ");
+    sb.append(prefix);
+    didOne=true;
+    sb.append(DATA_CONNECTION_NAMES[i]);
+    sb.append(" ");
+    formatTimeMs(sb,time / 1000);
+    sb.append("(");
+    sb.append(formatRatioLocked(time,whichBatteryRealtime));
+    sb.append(") ");
+    sb.append(getPhoneDataConnectionCount(i,which));
+    sb.append("x");
+  }
+  if (!didOne)   sb.append(" (no activity)");
+  pw.println(sb.toString());
+  sb.setLength(0);
+  sb.append(prefix);
+  sb.append("  Mobile radio active time: ");
+  final long mobileActiveTime=getMobileRadioActiveTime(rawRealtime,which);
+  formatTimeMs(sb,mobileActiveTime / 1000);
+  sb.append("(");
+  sb.append(formatRatioLocked(mobileActiveTime,whichBatteryRealtime));
+  sb.append(") ");
+  sb.append(getMobileRadioActiveCount(which));
+  sb.append("x");
+  pw.println(sb.toString());
+  final long mobileActiveUnknownTime=getMobileRadioActiveUnknownTime(which);
+  if (mobileActiveUnknownTime != 0) {
+    sb.setLength(0);
+    sb.append(prefix);
+    sb.append("  Mobile radio active unknown time: ");
+    formatTimeMs(sb,mobileActiveUnknownTime / 1000);
+    sb.append("(");
+    sb.append(formatRatioLocked(mobileActiveUnknownTime,whichBatteryRealtime));
+    sb.append(") ");
+    sb.append(getMobileRadioActiveUnknownCount(which));
+    sb.append("x");
+    pw.println(sb.toString());
+  }
+  final long mobileActiveAdjustedTime=getMobileRadioActiveAdjustedTime(which);
+  if (mobileActiveAdjustedTime != 0) {
+    sb.setLength(0);
+    sb.append(prefix);
+    sb.append("  Mobile radio active adjusted time: ");
+    formatTimeMs(sb,mobileActiveAdjustedTime / 1000);
+    sb.append("(");
+    sb.append(formatRatioLocked(mobileActiveAdjustedTime,whichBatteryRealtime));
+    sb.append(")");
+    pw.println(sb.toString());
+  }
+  pw.print(prefix);
+  pw.print("  Wi-Fi total received: ");
+  pw.print(formatBytesLocked(wifiRxTotalBytes));
+  pw.print(", sent: ");
+  pw.print(formatBytesLocked(wifiTxTotalBytes));
+  pw.print(" (packets received ");
+  pw.print(wifiRxTotalPackets);
+  pw.print(", sent ");
+  pw.print(wifiTxTotalPackets);
+  pw.println(")");
+  sb.setLength(0);
+  sb.append(prefix);
+  sb.append("  Wifi on: ");
+  formatTimeMs(sb,wifiOnTime / 1000);
+  sb.append("(");
+  sb.append(formatRatioLocked(wifiOnTime,whichBatteryRealtime));
+  sb.append("), Wifi running: ");
+  formatTimeMs(sb,wifiRunningTime / 1000);
+  sb.append("(");
+  sb.append(formatRatioLocked(wifiRunningTime,whichBatteryRealtime));
+  sb.append(")");
+  pw.println(sb.toString());
+  sb.setLength(0);
+  sb.append(prefix);
+  sb.append("  Wifi states:");
+  didOne=false;
+  for (int i=0; i < NUM_WIFI_STATES; i++) {
+    final long time=getWifiStateTime(i,rawRealtime,which);
+    if (time == 0) {
+      continue;
+    }
+    sb.append("\n    ");
+    didOne=true;
+    sb.append(WIFI_STATE_NAMES[i]);
+    sb.append(" ");
+    formatTimeMs(sb,time / 1000);
+    sb.append("(");
+    sb.append(formatRatioLocked(time,whichBatteryRealtime));
+    sb.append(") ");
+    sb.append(getWifiStateCount(i,which));
+    sb.append("x");
+  }
+  if (!didOne)   sb.append(" (no activity)");
+  pw.println(sb.toString());
+  sb.setLength(0);
+  sb.append(prefix);
+  sb.append("  Wifi supplicant states:");
+  didOne=false;
+  for (int i=0; i < NUM_WIFI_SUPPL_STATES; i++) {
+    final long time=getWifiSupplStateTime(i,rawRealtime,which);
+    if (time == 0) {
+      continue;
+    }
+    sb.append("\n    ");
+    didOne=true;
+    sb.append(WIFI_SUPPL_STATE_NAMES[i]);
+    sb.append(" ");
+    formatTimeMs(sb,time / 1000);
+    sb.append("(");
+    sb.append(formatRatioLocked(time,whichBatteryRealtime));
+    sb.append(") ");
+    sb.append(getWifiSupplStateCount(i,which));
+    sb.append("x");
+  }
+  if (!didOne)   sb.append(" (no activity)");
+  pw.println(sb.toString());
+  sb.setLength(0);
+  sb.append(prefix);
+  sb.append("  Wifi signal levels:");
+  didOne=false;
+  for (int i=0; i < NUM_WIFI_SIGNAL_STRENGTH_BINS; i++) {
+    final long time=getWifiSignalStrengthTime(i,rawRealtime,which);
+    if (time == 0) {
+      continue;
+    }
+    sb.append("\n    ");
+    sb.append(prefix);
+    didOne=true;
+    sb.append("level(");
+    sb.append(i);
+    sb.append(") ");
+    formatTimeMs(sb,time / 1000);
+    sb.append("(");
+    sb.append(formatRatioLocked(time,whichBatteryRealtime));
+    sb.append(") ");
+    sb.append(getWifiSignalStrengthCount(i,which));
+    sb.append("x");
+  }
+  if (!didOne)   sb.append(" (no activity)");
+  pw.println(sb.toString());
+  sb.setLength(0);
+  sb.append(prefix);
+  sb.append("  Bluetooth on: ");
+  formatTimeMs(sb,bluetoothOnTime / 1000);
+  sb.append("(");
+  sb.append(formatRatioLocked(bluetoothOnTime,whichBatteryRealtime));
+  sb.append(")");
+  pw.println(sb.toString());
+  sb.setLength(0);
+  sb.append(prefix);
+  sb.append("  Bluetooth states:");
+  didOne=false;
+  for (int i=0; i < NUM_BLUETOOTH_STATES; i++) {
+    final long time=getBluetoothStateTime(i,rawRealtime,which);
+    if (time == 0) {
+      continue;
+    }
+    sb.append("\n    ");
+    didOne=true;
+    sb.append(BLUETOOTH_STATE_NAMES[i]);
+    sb.append(" ");
+    formatTimeMs(sb,time / 1000);
+    sb.append("(");
+    sb.append(formatRatioLocked(time,whichBatteryRealtime));
+    sb.append(") ");
+    sb.append(getPhoneDataConnectionCount(i,which));
+    sb.append("x");
+  }
+  if (!didOne)   sb.append(" (no activity)");
+  pw.println(sb.toString());
+  pw.println();
+  if (which == STATS_SINCE_UNPLUGGED) {
+    if (getIsOnBattery()) {
+      pw.print(prefix);
+      pw.println("  Device is currently unplugged");
+      pw.print(prefix);
+      pw.print("    Discharge cycle start level: ");
+      pw.println(getDischargeStartLevel());
+      pw.print(prefix);
+      pw.print("    Discharge cycle current level: ");
+      pw.println(getDischargeCurrentLevel());
+    }
+ else {
+      pw.print(prefix);
+      pw.println("  Device is currently plugged into power");
+      pw.print(prefix);
+      pw.print("    Last discharge cycle start level: ");
+      pw.println(getDischargeStartLevel());
+      pw.print(prefix);
+      pw.print("    Last discharge cycle end level: ");
+      pw.println(getDischargeCurrentLevel());
+    }
+    pw.print(prefix);
+    pw.print("    Amount discharged while screen on: ");
+    pw.println(getDischargeAmountScreenOn());
+    pw.print(prefix);
+    pw.print("    Amount discharged while screen off: ");
+    pw.println(getDischargeAmountScreenOff());
+    pw.println(" ");
+  }
+ else {
+    pw.print(prefix);
+    pw.println("  Device battery use since last full charge");
+    pw.print(prefix);
+    pw.print("    Amount discharged (lower bound): ");
+    pw.println(getLowDischargeAmountSinceCharge());
+    pw.print(prefix);
+    pw.print("    Amount discharged (upper bound): ");
+    pw.println(getHighDischargeAmountSinceCharge());
+    pw.print(prefix);
+    pw.print("    Amount discharged while screen on: ");
+    pw.println(getDischargeAmountScreenOnSinceCharge());
+    pw.print(prefix);
+    pw.print("    Amount discharged while screen off: ");
+    pw.println(getDischargeAmountScreenOffSinceCharge());
+    pw.println();
+  }
+  BatteryStatsHelper helper=new BatteryStatsHelper(context,false,wifiOnly);
+  helper.create(this);
+  helper.refreshStats(which,UserHandle.USER_ALL);
+  List<BatterySipper> sippers=helper.getUsageList();
+  if (sippers != null && sippers.size() > 0) {
+    pw.print(prefix);
+    pw.println("  Estimated power use (mAh):");
+    pw.print(prefix);
+    pw.print("    Capacity: ");
+    printmAh(pw,helper.getPowerProfile().getBatteryCapacity());
+    pw.print(", Computed drain: ");
+    printmAh(pw,helper.getComputedPower());
+    pw.print(", actual drain: ");
+    printmAh(pw,helper.getMinDrainedPower());
+    if (helper.getMinDrainedPower() != helper.getMaxDrainedPower()) {
+      pw.print("-");
+      printmAh(pw,helper.getMaxDrainedPower());
+    }
+    pw.println();
+    for (int i=0; i < sippers.size(); i++) {
+      BatterySipper bs=sippers.get(i);
+switch (bs.drainType) {
+case IDLE:
+        pw.print(prefix);
+      pw.print("    Idle: ");
+    printmAh(pw,bs.value);
+  pw.println();
+break;
+case CELL:
+pw.print(prefix);
+pw.print("    Cell standby: ");
+printmAh(pw,bs.value);
+pw.println();
+break;
+case PHONE:
+pw.print(prefix);
+pw.print("    Phone calls: ");
+printmAh(pw,bs.value);
+pw.println();
+break;
+case WIFI:
+pw.print(prefix);
+pw.print("    Wifi: ");
+printmAh(pw,bs.value);
+pw.println();
+break;
+case BLUETOOTH:
+pw.print(prefix);
+pw.print("    Bluetooth: ");
+printmAh(pw,bs.value);
+pw.println();
+break;
+case SCREEN:
+pw.print(prefix);
+pw.print("    Screen: ");
+printmAh(pw,bs.value);
+pw.println();
+break;
+case FLASHLIGHT:
+pw.print(prefix);
+pw.print("    Flashlight: ");
+printmAh(pw,bs.value);
+pw.println();
+break;
+case APP:
+pw.print(prefix);
+pw.print("    Uid ");
+UserHandle.formatUid(pw,bs.uidObj.getUid());
+pw.print(": ");
+printmAh(pw,bs.value);
+pw.println();
+break;
+case USER:
+pw.print(prefix);
+pw.print("    User ");
+pw.print(bs.userId);
+pw.print(": ");
+printmAh(pw,bs.value);
+pw.println();
+break;
+case UNACCOUNTED:
+pw.print(prefix);
+pw.print("    Unaccounted: ");
+printmAh(pw,bs.value);
+pw.println();
+break;
+case OVERCOUNTED:
+pw.print(prefix);
+pw.print("    Over-counted: ");
+printmAh(pw,bs.value);
+pw.println();
+break;
+}
+}
+pw.println();
+}
+sippers=helper.getMobilemsppList();
+if (sippers != null && sippers.size() > 0) {
+pw.print(prefix);
+pw.println("  Per-app mobile ms per packet:");
+long totalTime=0;
+for (int i=0; i < sippers.size(); i++) {
+BatterySipper bs=sippers.get(i);
+sb.setLength(0);
+sb.append(prefix);
+sb.append("    Uid ");
+UserHandle.formatUid(sb,bs.uidObj.getUid());
+sb.append(": ");
+sb.append(BatteryStatsHelper.makemAh(bs.mobilemspp));
+sb.append(" (");
+sb.append(bs.mobileRxPackets + bs.mobileTxPackets);
+sb.append(" packets over ");
+formatTimeMsNoSpace(sb,bs.mobileActive);
+sb.append(") ");
+sb.append(bs.mobileActiveCount);
+sb.append("x");
+pw.println(sb.toString());
+totalTime+=bs.mobileActive;
+}
+sb.setLength(0);
+sb.append(prefix);
+sb.append("    TOTAL TIME: ");
+formatTimeMs(sb,totalTime);
+sb.append("(");
+sb.append(formatRatioLocked(totalTime,whichBatteryRealtime));
+sb.append(")");
+pw.println(sb.toString());
+pw.println();
+}
+final Comparator<TimerEntry> timerComparator=new Comparator<TimerEntry>(){
+@Override public int compare(TimerEntry lhs,TimerEntry rhs){
+long lhsTime=lhs.mTime;
+long rhsTime=rhs.mTime;
+if (lhsTime < rhsTime) {
+return 1;
+}
+if (lhsTime > rhsTime) {
+return -1;
+}
+return 0;
+}
+}
+;
+if (reqUid < 0) {
+Map<String,? extends BatteryStats.Timer> kernelWakelocks=getKernelWakelockStats();
+if (kernelWakelocks.size() > 0) {
+final ArrayList<TimerEntry> ktimers=new ArrayList<TimerEntry>();
+for (Map.Entry<String,? extends BatteryStats.Timer> ent : kernelWakelocks.entrySet()) {
+BatteryStats.Timer timer=ent.getValue();
+long totalTimeMillis=computeWakeLock(timer,rawRealtime,which);
+if (totalTimeMillis > 0) {
+ktimers.add(new TimerEntry(ent.getKey(),0,timer,totalTimeMillis));
+}
+}
+if (ktimers.size() > 0) {
+Collections.sort(ktimers,timerComparator);
+pw.print(prefix);
+pw.println("  All kernel wake locks:");
+for (int i=0; i < ktimers.size(); i++) {
+TimerEntry timer=ktimers.get(i);
+String linePrefix=": ";
+sb.setLength(0);
+sb.append(prefix);
+sb.append("  Kernel Wake lock ");
+sb.append(timer.mName);
+linePrefix=printWakeLock(sb,timer.mTimer,rawRealtime,null,which,linePrefix);
+if (!linePrefix.equals(": ")) {
+sb.append(" realtime");
+pw.println(sb.toString());
+}
+}
+pw.println();
+}
+}
+if (timers.size() > 0) {
+Collections.sort(timers,timerComparator);
+pw.print(prefix);
+pw.println("  All partial wake locks:");
+for (int i=0; i < timers.size(); i++) {
+TimerEntry timer=timers.get(i);
+sb.setLength(0);
+sb.append("  Wake lock ");
+UserHandle.formatUid(sb,timer.mId);
+sb.append(" ");
+sb.append(timer.mName);
+printWakeLock(sb,timer.mTimer,rawRealtime,null,which,": ");
+sb.append(" realtime");
+pw.println(sb.toString());
+}
+timers.clear();
+pw.println();
+}
+Map<String,? extends Timer> wakeupReasons=getWakeupReasonStats();
+if (wakeupReasons.size() > 0) {
+pw.print(prefix);
+pw.println("  All wakeup reasons:");
+final ArrayList<TimerEntry> reasons=new ArrayList<TimerEntry>();
+for (Map.Entry<String,? extends Timer> ent : wakeupReasons.entrySet()) {
+Timer timer=ent.getValue();
+reasons.add(new TimerEntry(ent.getKey(),0,timer,timer.getCountLocked(which)));
+}
+Collections.sort(reasons,timerComparator);
+for (int i=0; i < reasons.size(); i++) {
+TimerEntry timer=reasons.get(i);
+String linePrefix=": ";
+sb.setLength(0);
+sb.append(prefix);
+sb.append("  Wakeup reason ");
+sb.append(timer.mName);
+printWakeLock(sb,timer.mTimer,rawRealtime,null,which,": ");
+sb.append(" realtime");
+pw.println(sb.toString());
+}
+pw.println();
+}
+}
+for (int iu=0; iu < NU; iu++) {
+final int uid=uidStats.keyAt(iu);
+if (reqUid >= 0 && uid != reqUid && uid != Process.SYSTEM_UID) {
+continue;
+}
+Uid u=uidStats.valueAt(iu);
+pw.print(prefix);
+pw.print("  ");
+UserHandle.formatUid(pw,uid);
+pw.println(":");
+boolean uidActivity=false;
+long mobileRxBytes=u.getNetworkActivityBytes(NETWORK_MOBILE_RX_DATA,which);
+long mobileTxBytes=u.getNetworkActivityBytes(NETWORK_MOBILE_TX_DATA,which);
+long wifiRxBytes=u.getNetworkActivityBytes(NETWORK_WIFI_RX_DATA,which);
+long wifiTxBytes=u.getNetworkActivityBytes(NETWORK_WIFI_TX_DATA,which);
+long mobileRxPackets=u.getNetworkActivityPackets(NETWORK_MOBILE_RX_DATA,which);
+long mobileTxPackets=u.getNetworkActivityPackets(NETWORK_MOBILE_TX_DATA,which);
+long uidMobileActiveTime=u.getMobileRadioActiveTime(which);
+int uidMobileActiveCount=u.getMobileRadioActiveCount(which);
+long wifiRxPackets=u.getNetworkActivityPackets(NETWORK_WIFI_RX_DATA,which);
+long wifiTxPackets=u.getNetworkActivityPackets(NETWORK_WIFI_TX_DATA,which);
+long fullWifiLockOnTime=u.getFullWifiLockTime(rawRealtime,which);
+long wifiScanTime=u.getWifiScanTime(rawRealtime,which);
+long uidWifiRunningTime=u.getWifiRunningTime(rawRealtime,which);
+if (mobileRxBytes > 0 || mobileTxBytes > 0 || mobileRxPackets > 0 || mobileTxPackets > 0) {
+pw.print(prefix);
+pw.print("    Mobile network: ");
+pw.print(formatBytesLocked(mobileRxBytes));
+pw.print(" received, ");
+pw.print(formatBytesLocked(mobileTxBytes));
+pw.print(" sent (packets ");
+pw.print(mobileRxPackets);
+pw.print(" received, ");
+pw.print(mobileTxPackets);
+pw.println(" sent)");
+}
+if (uidMobileActiveTime > 0 || uidMobileActiveCount > 0) {
+sb.setLength(0);
+sb.append(prefix);
+sb.append("    Mobile radio active: ");
+formatTimeMs(sb,uidMobileActiveTime / 1000);
+sb.append("(");
+sb.append(formatRatioLocked(uidMobileActiveTime,mobileActiveTime));
+sb.append(") ");
+sb.append(uidMobileActiveCount);
+sb.append("x");
+long packets=mobileRxPackets + mobileTxPackets;
+if (packets == 0) {
+packets=1;
+}
+sb.append(" @ ");
+sb.append(BatteryStatsHelper.makemAh(uidMobileActiveTime / 1000 / (double)packets));
+sb.append(" mspp");
+pw.println(sb.toString());
+}
+if (wifiRxBytes > 0 || wifiTxBytes > 0 || wifiRxPackets > 0 || wifiTxPackets > 0) {
+pw.print(prefix);
+pw.print("    Wi-Fi network: ");
+pw.print(formatBytesLocked(wifiRxBytes));
+pw.print(" received, ");
+pw.print(formatBytesLocked(wifiTxBytes));
+pw.print(" sent (packets ");
+pw.print(wifiRxPackets);
+pw.print(" received, ");
+pw.print(wifiTxPackets);
+pw.println(" sent)");
+}
+if (fullWifiLockOnTime != 0 || wifiScanTime != 0 || uidWifiRunningTime != 0) {
+sb.setLength(0);
+sb.append(prefix);
+sb.append("    Wifi Running: ");
+formatTimeMs(sb,uidWifiRunningTime / 1000);
+sb.append("(");
+sb.append(formatRatioLocked(uidWifiRunningTime,whichBatteryRealtime));
+sb.append(")\n");
+sb.append(prefix);
+sb.append("    Full Wifi Lock: ");
+formatTimeMs(sb,fullWifiLockOnTime / 1000);
+sb.append("(");
+sb.append(formatRatioLocked(fullWifiLockOnTime,whichBatteryRealtime));
+sb.append(")\n");
+sb.append(prefix);
+sb.append("    Wifi Scan: ");
+formatTimeMs(sb,wifiScanTime / 1000);
+sb.append("(");
+sb.append(formatRatioLocked(wifiScanTime,whichBatteryRealtime));
+sb.append(")");
+pw.println(sb.toString());
+}
+if (u.hasUserActivity()) {
+boolean hasData=false;
+for (int i=0; i < Uid.NUM_USER_ACTIVITY_TYPES; i++) {
+int val=u.getUserActivityCount(i,which);
+if (val != 0) {
+if (!hasData) {
+sb.setLength(0);
+sb.append("    User activity: ");
+hasData=true;
+}
+ else {
+sb.append(", ");
+}
+sb.append(val);
+sb.append(" ");
+sb.append(Uid.USER_ACTIVITY_TYPES[i]);
+}
+}
+if (hasData) {
+pw.println(sb.toString());
+}
+}
+Map<String,? extends BatteryStats.Uid.Wakelock> wakelocks=u.getWakelockStats();
+if (wakelocks.size() > 0) {
+long totalFull=0, totalPartial=0, totalWindow=0;
+int count=0;
+for (Map.Entry<String,? extends Uid.Wakelock> ent : wakelocks.entrySet()) {
+Uid.Wakelock wl=ent.getValue();
+String linePrefix=": ";
+sb.setLength(0);
+sb.append(prefix);
+sb.append("    Wake lock ");
+sb.append(ent.getKey());
+linePrefix=printWakeLock(sb,wl.getWakeTime(WAKE_TYPE_FULL),rawRealtime,"full",which,linePrefix);
+linePrefix=printWakeLock(sb,wl.getWakeTime(WAKE_TYPE_PARTIAL),rawRealtime,"partial",which,linePrefix);
+linePrefix=printWakeLock(sb,wl.getWakeTime(WAKE_TYPE_WINDOW),rawRealtime,"window",which,linePrefix);
+if (true || !linePrefix.equals(": ")) {
+sb.append(" realtime");
+pw.println(sb.toString());
+uidActivity=true;
+count++;
+}
+totalFull+=computeWakeLock(wl.getWakeTime(WAKE_TYPE_FULL),rawRealtime,which);
+totalPartial+=computeWakeLock(wl.getWakeTime(WAKE_TYPE_PARTIAL),rawRealtime,which);
+totalWindow+=computeWakeLock(wl.getWakeTime(WAKE_TYPE_WINDOW),rawRealtime,which);
+}
+if (count > 1) {
+if (totalFull != 0 || totalPartial != 0 || totalWindow != 0) {
+sb.setLength(0);
+sb.append(prefix);
+sb.append("    TOTAL wake: ");
+boolean needComma=false;
+if (totalFull != 0) {
+needComma=true;
+formatTimeMs(sb,totalFull);
+sb.append("full");
+}
+if (totalPartial != 0) {
+if (needComma) {
+sb.append(", ");
+}
+needComma=true;
+formatTimeMs(sb,totalPartial);
+sb.append("partial");
+}
+if (totalWindow != 0) {
+if (needComma) {
+sb.append(", ");
+}
+needComma=true;
+formatTimeMs(sb,totalWindow);
+sb.append("window");
+}
+sb.append(" realtime");
+pw.println(sb.toString());
+}
+}
+}
+Map<String,? extends Timer> syncs=u.getSyncStats();
+if (syncs.size() > 0) {
+for (Map.Entry<String,? extends Timer> ent : syncs.entrySet()) {
+Timer timer=ent.getValue();
+long totalTime=(timer.getTotalTimeLocked(rawRealtime,which) + 500) / 1000;
+int count=timer.getCountLocked(which);
+sb.setLength(0);
+sb.append(prefix);
+sb.append("    Sync ");
+sb.append(ent.getKey());
+sb.append(": ");
+if (totalTime != 0) {
+formatTimeMs(sb,totalTime);
+sb.append("realtime (");
+sb.append(count);
+sb.append(" times)");
+}
+ else {
+sb.append("(not used)");
+}
+pw.println(sb.toString());
+uidActivity=true;
+}
+}
+Map<String,? extends Timer> jobs=u.getJobStats();
+if (jobs.size() > 0) {
+for (Map.Entry<String,? extends Timer> ent : jobs.entrySet()) {
+Timer timer=ent.getValue();
+long totalTime=(timer.getTotalTimeLocked(rawRealtime,which) + 500) / 1000;
+int count=timer.getCountLocked(which);
+sb.setLength(0);
+sb.append(prefix);
+sb.append("    Job ");
+sb.append(ent.getKey());
+sb.append(": ");
+if (totalTime != 0) {
+formatTimeMs(sb,totalTime);
+sb.append("realtime (");
+sb.append(count);
+sb.append(" times)");
+}
+ else {
+sb.append("(not used)");
+}
+pw.println(sb.toString());
+uidActivity=true;
+}
+}
+SparseArray<? extends BatteryStats.Uid.Sensor> sensors=u.getSensorStats();
+int NSE=sensors.size();
+for (int ise=0; ise < NSE; ise++) {
+Uid.Sensor se=sensors.valueAt(ise);
+int sensorNumber=sensors.keyAt(ise);
+sb.setLength(0);
+sb.append(prefix);
+sb.append("    Sensor ");
+int handle=se.getHandle();
+if (handle == Uid.Sensor.GPS) {
+sb.append("GPS");
+}
+ else {
+sb.append(handle);
+}
+sb.append(": ");
+Timer timer=se.getSensorTime();
+if (timer != null) {
+long totalTime=(timer.getTotalTimeLocked(rawRealtime,which) + 500) / 1000;
+int count=timer.getCountLocked(which);
+if (totalTime != 0) {
+formatTimeMs(sb,totalTime);
+sb.append("realtime (");
+sb.append(count);
+sb.append(" times)");
+}
+ else {
+sb.append("(not used)");
+}
+}
+ else {
+sb.append("(not used)");
+}
+pw.println(sb.toString());
+uidActivity=true;
+}
+Timer vibTimer=u.getVibratorOnTimer();
+if (vibTimer != null) {
+long totalTime=(vibTimer.getTotalTimeLocked(rawRealtime,which) + 500) / 1000;
+int count=vibTimer.getCountLocked(which);
+if (totalTime != 0) {
+sb.setLength(0);
+sb.append(prefix);
+sb.append("    Vibrator: ");
+formatTimeMs(sb,totalTime);
+sb.append("realtime (");
+sb.append(count);
+sb.append(" times)");
+pw.println(sb.toString());
+uidActivity=true;
+}
+}
+Timer fgTimer=u.getForegroundActivityTimer();
+if (fgTimer != null) {
+long totalTime=(fgTimer.getTotalTimeLocked(rawRealtime,which) + 500) / 1000;
+int count=fgTimer.getCountLocked(which);
+if (totalTime != 0) {
+sb.setLength(0);
+sb.append(prefix);
+sb.append("    Foreground activities: ");
+formatTimeMs(sb,totalTime);
+sb.append("realtime (");
+sb.append(count);
+sb.append(" times)");
+pw.println(sb.toString());
+uidActivity=true;
+}
+}
+long totalStateTime=0;
+for (int ips=0; ips < Uid.NUM_PROCESS_STATE; ips++) {
+long time=u.getProcessStateTime(ips,rawRealtime,which);
+if (time > 0) {
+totalStateTime+=time;
+sb.setLength(0);
+sb.append(prefix);
+sb.append("    ");
+sb.append(Uid.PROCESS_STATE_NAMES[ips]);
+sb.append(" for: ");
+formatTimeMs(sb,(totalStateTime + 500) / 1000);
+pw.println(sb.toString());
+uidActivity=true;
+}
+}
+Map<String,? extends BatteryStats.Uid.Proc> processStats=u.getProcessStats();
+if (processStats.size() > 0) {
+for (Map.Entry<String,? extends BatteryStats.Uid.Proc> ent : processStats.entrySet()) {
+Uid.Proc ps=ent.getValue();
+long userTime;
+long systemTime;
+long foregroundTime;
+int starts;
+int numExcessive;
+userTime=ps.getUserTime(which);
+systemTime=ps.getSystemTime(which);
+foregroundTime=ps.getForegroundTime(which);
+starts=ps.getStarts(which);
+numExcessive=which == STATS_SINCE_CHARGED ? ps.countExcessivePowers() : 0;
+if (userTime != 0 || systemTime != 0 || foregroundTime != 0 || starts != 0 || numExcessive != 0) {
+sb.setLength(0);
+sb.append(prefix);
+sb.append("    Proc ");
+sb.append(ent.getKey());
+sb.append(":\n");
+sb.append(prefix);
+sb.append("      CPU: ");
+formatTime(sb,userTime);
+sb.append("usr + ");
+formatTime(sb,systemTime);
+sb.append("krn ; ");
+formatTime(sb,foregroundTime);
+sb.append("fg");
+if (starts != 0) {
+sb.append("\n");
+sb.append(prefix);
+sb.append("      ");
+sb.append(starts);
+sb.append(" proc starts");
+}
+pw.println(sb.toString());
+for (int e=0; e < numExcessive; e++) {
+Uid.Proc.ExcessivePower ew=ps.getExcessivePower(e);
+if (ew != null) {
+pw.print(prefix);
+pw.print("      * Killed for ");
+if (ew.type == Uid.Proc.ExcessivePower.TYPE_WAKE) {
+pw.print("wake lock");
+}
+ else if (ew.type == Uid.Proc.ExcessivePower.TYPE_CPU) {
+pw.print("cpu");
+}
+ else {
+pw.print("unknown");
+}
+pw.print(" use: ");
+TimeUtils.formatDuration(ew.usedTime,pw);
+pw.print(" over ");
+TimeUtils.formatDuration(ew.overTime,pw);
+if (ew.overTime != 0) {
+pw.print(" (");
+pw.print((ew.usedTime * 100) / ew.overTime);
+pw.println("%)");
+}
+}
+}
+uidActivity=true;
+}
+}
+}
+Map<String,? extends BatteryStats.Uid.Pkg> packageStats=u.getPackageStats();
+if (packageStats.size() > 0) {
+for (Map.Entry<String,? extends BatteryStats.Uid.Pkg> ent : packageStats.entrySet()) {
+pw.print(prefix);
+pw.print("    Apk ");
+pw.print(ent.getKey());
+pw.println(":");
+boolean apkActivity=false;
+Uid.Pkg ps=ent.getValue();
+int wakeups=ps.getWakeups(which);
+if (wakeups != 0) {
+pw.print(prefix);
+pw.print("      ");
+pw.print(wakeups);
+pw.println(" wakeup alarms");
+apkActivity=true;
+}
+Map<String,? extends Uid.Pkg.Serv> serviceStats=ps.getServiceStats();
+if (serviceStats.size() > 0) {
+for (Map.Entry<String,? extends BatteryStats.Uid.Pkg.Serv> sent : serviceStats.entrySet()) {
+BatteryStats.Uid.Pkg.Serv ss=sent.getValue();
+long startTime=ss.getStartTime(batteryUptime,which);
+int starts=ss.getStarts(which);
+int launches=ss.getLaunches(which);
+if (startTime != 0 || starts != 0 || launches != 0) {
+sb.setLength(0);
+sb.append(prefix);
+sb.append("      Service ");
+sb.append(sent.getKey());
+sb.append(":\n");
+sb.append(prefix);
+sb.append("        Created for: ");
+formatTimeMs(sb,startTime / 1000);
+sb.append("uptime\n");
+sb.append(prefix);
+sb.append("        Starts: ");
+sb.append(starts);
+sb.append(", launches: ");
+sb.append(launches);
+pw.println(sb.toString());
+apkActivity=true;
+}
+}
+}
+if (!apkActivity) {
+pw.print(prefix);
+pw.println("      (nothing executed)");
+}
+uidActivity=true;
+}
+}
+if (!uidActivity) {
+pw.print(prefix);
+pw.println("    (nothing executed)");
+}
+}
+}

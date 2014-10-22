@@ -1,0 +1,65 @@
+{
+  IBinder binder=c.conn.asBinder();
+  AppBindRecord b=c.binding;
+  ServiceRecord s=b.service;
+  ArrayList<ConnectionRecord> clist=s.connections.get(binder);
+  if (clist != null) {
+    clist.remove(c);
+    if (clist.size() == 0) {
+      s.connections.remove(binder);
+    }
+  }
+  b.connections.remove(c);
+  if (c.activity != null && c.activity != skipAct) {
+    if (c.activity.connections != null) {
+      c.activity.connections.remove(c);
+    }
+  }
+  if (b.client != skipApp) {
+    b.client.connections.remove(c);
+    if ((c.flags & Context.BIND_ABOVE_CLIENT) != 0) {
+      b.client.updateHasAboveClientLocked();
+    }
+    if (s.app != null) {
+      updateServiceClientActivitiesLocked(s.app,c,true);
+    }
+  }
+  clist=mServiceConnections.get(binder);
+  if (clist != null) {
+    clist.remove(c);
+    if (clist.size() == 0) {
+      mServiceConnections.remove(binder);
+    }
+  }
+  if (b.connections.size() == 0) {
+    b.intent.apps.remove(b.client);
+  }
+  if (!c.serviceDead) {
+    if (DEBUG_SERVICE)     Slog.v(TAG,"Disconnecting binding " + b.intent + ": shouldUnbind="+ b.intent.hasBound);
+    if (s.app != null && s.app.thread != null && b.intent.apps.size() == 0 && b.intent.hasBound) {
+      try {
+        bumpServiceExecutingLocked(s,false,"unbind");
+        if (b.client != s.app && (c.flags & Context.BIND_WAIVE_PRIORITY) == 0 && s.app.setProcState <= ActivityManager.PROCESS_STATE_RECEIVER) {
+          mAm.updateLruProcessLocked(s.app,false,null);
+        }
+        mAm.updateOomAdjLocked(s.app);
+        b.intent.hasBound=false;
+        b.intent.doRebind=false;
+        s.app.thread.scheduleUnbindService(s,b.intent.intent.getIntent());
+      }
+ catch (      Exception e) {
+        Slog.w(TAG,"Exception when unbinding service " + s.shortName,e);
+        serviceProcessGoneLocked(s);
+      }
+    }
+    if ((c.flags & Context.BIND_AUTO_CREATE) != 0) {
+      boolean hasAutoCreate=s.hasAutoCreateConnections();
+      if (!hasAutoCreate) {
+        if (s.tracker != null) {
+          s.tracker.setBound(false,mAm.mProcessStats.getMemFactorLocked(),SystemClock.uptimeMillis());
+        }
+      }
+      bringDownServiceIfNeededLocked(s,true,hasAutoCreate);
+    }
+  }
+}

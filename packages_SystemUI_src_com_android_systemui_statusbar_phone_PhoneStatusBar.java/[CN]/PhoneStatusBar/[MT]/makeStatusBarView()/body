@@ -2,7 +2,7 @@
   final Context context=mContext;
   Resources res=context.getResources();
   updateDisplaySize();
-  loadDimens();
+  updateResources();
   mIconSize=res.getDimensionPixelSize(com.android.internal.R.dimen.status_bar_icon_size);
   mStatusBarWindow=(StatusBarWindowView)View.inflate(context,R.layout.super_status_bar,null);
   mStatusBarWindow.mService=this;
@@ -24,13 +24,6 @@
   mStatusBarView.setPanelHolder(holder);
   mNotificationPanel=(NotificationPanelView)mStatusBarWindow.findViewById(R.id.notification_panel);
   mNotificationPanel.setStatusBar(this);
-  mNotificationPanelIsFullScreenWidth=(mNotificationPanel.getLayoutParams().width == ViewGroup.LayoutParams.MATCH_PARENT);
-  mNotificationPanel.findViewById(R.id.header).setOnTouchListener(new View.OnTouchListener(){
-    @Override public boolean onTouch(    View v,    MotionEvent event){
-      return true;
-    }
-  }
-);
   if (!ActivityManager.isHighEndGfx()) {
     mStatusBarWindow.setBackground(null);
     mNotificationPanel.setBackground(new FastColorDrawable(context.getResources().getColor(R.color.notification_panel_solid_background)));
@@ -52,6 +45,15 @@
       mNavigationBarView=(NavigationBarView)View.inflate(context,R.layout.navigation_bar,null);
       mNavigationBarView.setDisabledFlags(mDisabled);
       mNavigationBarView.setBar(this);
+      mNavigationBarView.setOnVerticalChangedListener(new NavigationBarView.OnVerticalChangedListener(){
+        @Override public void onVerticalChanged(        boolean isVertical){
+          if (mSearchPanelView != null) {
+            mSearchPanelView.setHorizontal(isVertical);
+          }
+          mNotificationPanel.setQsScrimEnabled(!isVertical);
+        }
+      }
+);
       mNavigationBarView.setOnTouchListener(new View.OnTouchListener(){
         @Override public boolean onTouch(        View v,        MotionEvent event){
           checkUserAutohide(v,event);
@@ -65,91 +67,101 @@
   }
   mPixelFormat=PixelFormat.OPAQUE;
   mSystemIconArea=(LinearLayout)mStatusBarView.findViewById(R.id.system_icon_area);
+  mSystemIcons=(LinearLayout)mStatusBarView.findViewById(R.id.system_icons);
   mStatusIcons=(LinearLayout)mStatusBarView.findViewById(R.id.statusIcons);
+  mNotificationIconArea=mStatusBarView.findViewById(R.id.notification_icon_area_inner);
   mNotificationIcons=(IconMerger)mStatusBarView.findViewById(R.id.notificationIcons);
   mMoreIcon=mStatusBarView.findViewById(R.id.moreIcon);
   mNotificationIcons.setOverflowIndicator(mMoreIcon);
   mStatusBarContents=(LinearLayout)mStatusBarView.findViewById(R.id.status_bar_contents);
-  mTickerView=mStatusBarView.findViewById(R.id.ticker);
-  mPile=(NotificationRowLayout)mStatusBarWindow.findViewById(R.id.latestItems);
-  mPile.setLayoutTransitionsEnabled(false);
-  mPile.setLongPressListener(getNotificationLongClicker());
-  mExpandedContents=mPile;
-  mNotificationPanelHeader=mStatusBarWindow.findViewById(R.id.header);
-  mClearButton=mStatusBarWindow.findViewById(R.id.clear_all_button);
-  mClearButton.setOnClickListener(mClearButtonListener);
-  mClearButton.setAlpha(0f);
-  mClearButton.setVisibility(View.INVISIBLE);
-  mClearButton.setEnabled(false);
-  mDateView=(DateView)mStatusBarWindow.findViewById(R.id.date);
-  mHasSettingsPanel=res.getBoolean(R.bool.config_hasSettingsPanel);
-  mHasFlipSettings=res.getBoolean(R.bool.config_hasFlipSettingsPanel);
-  mDateTimeView=mNotificationPanelHeader.findViewById(R.id.datetime);
-  if (mDateTimeView != null) {
-    mDateTimeView.setOnClickListener(mClockClickListener);
-    mDateTimeView.setEnabled(true);
-  }
-  mSettingsButton=(ImageView)mStatusBarWindow.findViewById(R.id.settings_button);
-  if (mSettingsButton != null) {
-    mSettingsButton.setOnClickListener(mSettingsButtonListener);
-    if (mHasSettingsPanel) {
-      if (mStatusBarView.hasFullWidthNotifications()) {
-        mSettingsButton.setImageResource(R.drawable.ic_notify_quicksettings);
-        mSettingsButton.setVisibility(View.VISIBLE);
-      }
- else {
-        final View buttonHolder=mStatusBarWindow.findViewById(R.id.settings_button_holder);
-        if (buttonHolder != null) {
-          buttonHolder.setVisibility(View.GONE);
-        }
-      }
-    }
- else {
-      mSettingsButton.setVisibility(View.VISIBLE);
-      mSettingsButton.setImageResource(R.drawable.ic_notify_settings);
+  mStackScroller=(NotificationStackScrollLayout)mStatusBarWindow.findViewById(R.id.notification_stack_scroller);
+  mStackScroller.setLongPressListener(getNotificationLongClicker());
+  mStackScroller.setPhoneStatusBar(this);
+  mKeyguardIconOverflowContainer=(NotificationOverflowContainer)LayoutInflater.from(mContext).inflate(R.layout.status_bar_notification_keyguard_overflow,mStackScroller,false);
+  mKeyguardIconOverflowContainer.setOnActivatedListener(this);
+  mKeyguardIconOverflowContainer.setOnClickListener(mOverflowClickListener);
+  mStackScroller.addView(mKeyguardIconOverflowContainer);
+  SpeedBumpView speedBump=(SpeedBumpView)LayoutInflater.from(mContext).inflate(R.layout.status_bar_notification_speed_bump,mStackScroller,false);
+  mStackScroller.setSpeedBumpView(speedBump);
+  mEmptyShadeView=(EmptyShadeView)LayoutInflater.from(mContext).inflate(R.layout.status_bar_no_notifications,mStackScroller,false);
+  mStackScroller.setEmptyShadeView(mEmptyShadeView);
+  mDismissView=(DismissView)LayoutInflater.from(mContext).inflate(R.layout.status_bar_notification_dismiss_all,mStackScroller,false);
+  mDismissView.setOnButtonClickListener(new View.OnClickListener(){
+    @Override public void onClick(    View v){
+      clearAllNotifications();
     }
   }
-  if (mHasFlipSettings) {
-    mNotificationButton=(ImageView)mStatusBarWindow.findViewById(R.id.notification_button);
-    if (mNotificationButton != null) {
-      mNotificationButton.setOnClickListener(mNotificationButtonListener);
+);
+  mStackScroller.setDismissView(mDismissView);
+  mExpandedContents=mStackScroller;
+  mBackdrop=(BackDropView)mStatusBarWindow.findViewById(R.id.backdrop);
+  mBackdropFront=(ImageView)mBackdrop.findViewById(R.id.backdrop_front);
+  mBackdropBack=(ImageView)mBackdrop.findViewById(R.id.backdrop_back);
+  ScrimView scrimBehind=(ScrimView)mStatusBarWindow.findViewById(R.id.scrim_behind);
+  ScrimView scrimInFront=(ScrimView)mStatusBarWindow.findViewById(R.id.scrim_in_front);
+  mScrimController=new ScrimController(scrimBehind,scrimInFront,mScrimSrcModeEnabled);
+  mScrimController.setBackDropView(mBackdrop);
+  mStatusBarView.setScrimController(mScrimController);
+  mHeader=(StatusBarHeaderView)mStatusBarWindow.findViewById(R.id.header);
+  mHeader.setActivityStarter(this);
+  mKeyguardStatusBar=(KeyguardStatusBarView)mStatusBarWindow.findViewById(R.id.keyguard_header);
+  mStatusIconsKeyguard=(LinearLayout)mKeyguardStatusBar.findViewById(R.id.statusIcons);
+  mKeyguardStatusView=mStatusBarWindow.findViewById(R.id.keyguard_status_view);
+  mKeyguardBottomArea=(KeyguardBottomAreaView)mStatusBarWindow.findViewById(R.id.keyguard_bottom_area);
+  mKeyguardBottomArea.setActivityStarter(this);
+  mKeyguardIndicationController=new KeyguardIndicationController(mContext,(KeyguardIndicationTextView)mStatusBarWindow.findViewById(R.id.keyguard_indication_text));
+  mKeyguardBottomArea.setKeyguardIndicationController(mKeyguardIndicationController);
+  mTickerEnabled=res.getBoolean(R.bool.enable_ticker);
+  if (mTickerEnabled) {
+    final ViewStub tickerStub=(ViewStub)mStatusBarView.findViewById(R.id.ticker_stub);
+    if (tickerStub != null) {
+      mTickerView=tickerStub.inflate();
+      mTicker=new MyTicker(context,mStatusBarView);
+      TickerView tickerView=(TickerView)mStatusBarView.findViewById(R.id.tickerText);
+      tickerView.mTicker=mTicker;
     }
   }
-  mScrollView=(ScrollView)mStatusBarWindow.findViewById(R.id.scroll);
-  mScrollView.setVerticalScrollBarEnabled(false);
-  if (!mNotificationPanelIsFullScreenWidth) {
-    mScrollView.setSystemUiVisibility(View.STATUS_BAR_DISABLE_NOTIFICATION_TICKER | View.STATUS_BAR_DISABLE_NOTIFICATION_ICONS | View.STATUS_BAR_DISABLE_CLOCK);
-  }
-  mTicker=new MyTicker(context,mStatusBarView);
-  TickerView tickerView=(TickerView)mStatusBarView.findViewById(R.id.tickerText);
-  tickerView.mTicker=mTicker;
   mEdgeBorder=res.getDimensionPixelSize(R.dimen.status_bar_edge_ignore);
   setAreThereNotifications();
-  mLocationController=new LocationController(mContext);
+  mLocationController=new LocationControllerImpl(mContext);
   mBatteryController=new BatteryController(mContext);
-  mNetworkController=new NetworkController(mContext);
-  mBluetoothController=new BluetoothController(mContext);
-  mRotationLockController=new RotationLockController(mContext);
+  mBatteryController.addStateChangedCallback(new BatteryStateChangeCallback(){
+    @Override public void onPowerSaveChanged(){
+      mHandler.post(mCheckBarModes);
+      if (mDozeServiceHost != null) {
+        mDozeServiceHost.firePowerSaveChanged(mBatteryController.isPowerSave());
+      }
+    }
+    @Override public void onBatteryLevelChanged(    int level,    boolean pluggedIn,    boolean charging){
+    }
+  }
+);
+  mNetworkController=new NetworkControllerImpl(mContext);
+  mHotspotController=new HotspotControllerImpl(mContext);
+  mBluetoothController=new BluetoothControllerImpl(mContext);
+  mSecurityController=new SecurityControllerImpl(mContext);
+  if (mContext.getResources().getBoolean(R.bool.config_showRotationLock)) {
+    mRotationLockController=new RotationLockControllerImpl(mContext);
+  }
+  mUserInfoController=new UserInfoController(mContext);
+  mVolumeComponent=getComponent(VolumeComponent.class);
+  mZenModeController=mVolumeComponent.getZenController();
+  mCastController=new CastControllerImpl(mContext);
   final SignalClusterView signalCluster=(SignalClusterView)mStatusBarView.findViewById(R.id.signal_cluster);
+  final SignalClusterView signalClusterKeyguard=(SignalClusterView)mKeyguardStatusBar.findViewById(R.id.signal_cluster);
+  final SignalClusterView signalClusterQs=(SignalClusterView)mHeader.findViewById(R.id.signal_cluster);
   mNetworkController.addSignalCluster(signalCluster);
+  mNetworkController.addSignalCluster(signalClusterKeyguard);
+  mNetworkController.addSignalCluster(signalClusterQs);
+  signalCluster.setSecurityController(mSecurityController);
   signalCluster.setNetworkController(mNetworkController);
+  signalClusterKeyguard.setSecurityController(mSecurityController);
+  signalClusterKeyguard.setNetworkController(mNetworkController);
+  signalClusterQs.setSecurityController(mSecurityController);
+  signalClusterQs.setNetworkController(mNetworkController);
   final boolean isAPhone=mNetworkController.hasVoiceCallingFeature();
   if (isAPhone) {
-    mEmergencyCallLabel=(TextView)mStatusBarWindow.findViewById(R.id.emergency_calls_only);
-    if (mEmergencyCallLabel != null) {
-      mNetworkController.addEmergencyLabelView(mEmergencyCallLabel);
-      mEmergencyCallLabel.setOnClickListener(new View.OnClickListener(){
-        public void onClick(        View v){
-        }
-      }
-);
-      mEmergencyCallLabel.addOnLayoutChangeListener(new View.OnLayoutChangeListener(){
-        @Override public void onLayoutChange(        View v,        int left,        int top,        int right,        int bottom,        int oldLeft,        int oldTop,        int oldRight,        int oldBottom){
-          updateCarrierLabelVisibility(false);
-        }
-      }
-);
-    }
+    mNetworkController.addEmergencyLabelView(mHeader);
   }
   mCarrierLabel=(TextView)mStatusBarWindow.findViewById(R.id.carrier_label);
   mShowCarrierInPanel=(mCarrierLabel != null);
@@ -162,62 +174,50 @@
  else {
       mNetworkController.addCombinedLabelView(mCarrierLabel);
     }
-    mPile.setOnSizeChangedListener(new OnSizeChangedListener(){
-      @Override public void onSizeChanged(      View view,      int w,      int h,      int oldw,      int oldh){
-        updateCarrierLabelVisibility(false);
+  }
+  mFlashlightController=new FlashlightController(mContext);
+  mKeyguardBottomArea.setFlashlightController(mFlashlightController);
+  mKeyguardBottomArea.setPhoneStatusBar(this);
+  mAccessibilityController=new AccessibilityController(mContext);
+  mKeyguardBottomArea.setAccessibilityController(mAccessibilityController);
+  mNextAlarmController=new NextAlarmController(mContext);
+  mKeyguardMonitor=new KeyguardMonitor();
+  mUserSwitcherController=new UserSwitcherController(mContext,mKeyguardMonitor);
+  mKeyguardUserSwitcher=new KeyguardUserSwitcher(mContext,(ViewStub)mStatusBarWindow.findViewById(R.id.keyguard_user_switcher),mKeyguardStatusBar,mNotificationPanel,mUserSwitcherController);
+  mQSPanel=(QSPanel)mStatusBarWindow.findViewById(R.id.quick_settings_panel);
+  if (mQSPanel != null) {
+    final QSTileHost qsh=new QSTileHost(mContext,this,mBluetoothController,mLocationController,mRotationLockController,mNetworkController,mZenModeController,mHotspotController,mCastController,mFlashlightController,mUserSwitcherController,mKeyguardMonitor,mSecurityController);
+    mQSPanel.setHost(qsh);
+    mQSPanel.setTiles(qsh.getTiles());
+    mBrightnessMirrorController=new BrightnessMirrorController(mStatusBarWindow);
+    mQSPanel.setBrightnessMirror(mBrightnessMirrorController);
+    mHeader.setQSPanel(mQSPanel);
+    qsh.setCallback(new QSTileHost.Callback(){
+      @Override public void onTilesChanged(){
+        mQSPanel.setTiles(qsh.getTiles());
       }
     }
 );
   }
-  if (mHasSettingsPanel) {
-    final View settings_stub;
-    if (mHasFlipSettings) {
-      settings_stub=mStatusBarWindow.findViewById(R.id.flip_settings_stub);
-      if (settings_stub != null) {
-        mFlipSettingsView=((ViewStub)settings_stub).inflate();
-        mFlipSettingsView.setVisibility(View.GONE);
-        mFlipSettingsView.setVerticalScrollBarEnabled(false);
-      }
-    }
- else {
-      settings_stub=mStatusBarWindow.findViewById(R.id.quick_settings_stub);
-      if (settings_stub != null) {
-        mSettingsPanel=(SettingsPanelView)((ViewStub)settings_stub).inflate();
-      }
- else {
-        mSettingsPanel=(SettingsPanelView)mStatusBarWindow.findViewById(R.id.settings_panel);
-      }
-      if (mSettingsPanel != null) {
-        if (!ActivityManager.isHighEndGfx()) {
-          mSettingsPanel.setBackground(new FastColorDrawable(context.getResources().getColor(R.color.notification_panel_solid_background)));
-        }
-      }
-    }
-    mSettingsContainer=(QuickSettingsContainerView)mStatusBarWindow.findViewById(R.id.quick_settings_container);
-    if (mSettingsContainer != null) {
-      mQS=new QuickSettings(mContext,mSettingsContainer);
-      if (!mNotificationPanelIsFullScreenWidth) {
-        mSettingsContainer.setSystemUiVisibility(View.STATUS_BAR_DISABLE_NOTIFICATION_TICKER | View.STATUS_BAR_DISABLE_SYSTEM_INFO);
-      }
-      if (mSettingsPanel != null) {
-        mSettingsPanel.setQuickSettings(mQS);
-      }
-      mQS.setService(this);
-      mQS.setBar(mStatusBarView);
-      mQS.setup(mNetworkController,mBluetoothController,mBatteryController,mLocationController,mRotationLockController);
-    }
- else {
-      mQS=null;
-    }
-  }
+  mHeader.setUserInfoController(mUserInfoController);
+  mKeyguardStatusBar.setUserInfoController(mUserInfoController);
+  mUserInfoController.reloadUserInfo();
+  mHeader.setBatteryController(mBatteryController);
+  ((BatteryMeterView)mStatusBarView.findViewById(R.id.battery)).setBatteryController(mBatteryController);
+  mKeyguardStatusBar.setBatteryController(mBatteryController);
+  mHeader.setNextAlarmController(mNextAlarmController);
   PowerManager pm=(PowerManager)mContext.getSystemService(Context.POWER_SERVICE);
   mBroadcastReceiver.onReceive(mContext,new Intent(pm.isScreenOn() ? Intent.ACTION_SCREEN_ON : Intent.ACTION_SCREEN_OFF));
   IntentFilter filter=new IntentFilter();
   filter.addAction(Intent.ACTION_CLOSE_SYSTEM_DIALOGS);
   filter.addAction(Intent.ACTION_SCREEN_OFF);
   filter.addAction(Intent.ACTION_SCREEN_ON);
+  if (DEBUG_MEDIA_FAKE_ARTWORK) {
+    filter.addAction("fake_artwork");
+  }
   filter.addAction(ACTION_DEMO);
   context.registerReceiver(mBroadcastReceiver,filter);
   resetUserSetupObserver();
+  startGlyphRasterizeHack();
   return mStatusBarView;
 }

@@ -5,35 +5,37 @@
     HardwareConfig hardwareConfig=params.getHardwareConfig();
     BridgeContext context=getContext();
     boolean isRtl=Bridge.isLocaleRtl(params.getLocale());
-    int direction=isRtl ? View.LAYOUT_DIRECTION_RTL : View.LAYOUT_DIRECTION_LTR;
-    ViewGroup backgroundView=null;
+    int layoutDirection=isRtl ? View.LAYOUT_DIRECTION_RTL : View.LAYOUT_DIRECTION_LTR;
+    ViewGroup backgroundView;
     if (mWindowIsFloating || params.isForceNoDecor()) {
       backgroundView=mViewRoot=mContentRoot=new FrameLayout(context);
-      mViewRoot.setLayoutDirection(direction);
+      mViewRoot.setLayoutDirection(layoutDirection);
     }
  else {
+      int simulatedPlatformVersion=params.getSimulatedPlatformVersion();
       if (hasSoftwareButtons() && mNavigationBarOrientation == LinearLayout.VERTICAL) {
         LinearLayout topLayout=new LinearLayout(context);
-        topLayout.setLayoutDirection(direction);
+        topLayout.setLayoutDirection(layoutDirection);
         mViewRoot=topLayout;
         topLayout.setOrientation(LinearLayout.HORIZONTAL);
-        try {
-          NavigationBar navigationBar=new NavigationBar(context,hardwareConfig.getDensity(),LinearLayout.VERTICAL,isRtl,params.isRtlSupported());
-          navigationBar.setLayoutParams(new LinearLayout.LayoutParams(mNavigationBarSize,LayoutParams.MATCH_PARENT));
-          topLayout.addView(navigationBar);
-        }
- catch (        XmlPullParserException e) {
+        if (Config.showOnScreenNavBar(simulatedPlatformVersion)) {
+          try {
+            NavigationBar navigationBar=createNavigationBar(context,hardwareConfig.getDensity(),isRtl,params.isRtlSupported(),simulatedPlatformVersion);
+            topLayout.addView(navigationBar);
+          }
+ catch (          XmlPullParserException ignored) {
+          }
         }
       }
       LinearLayout topLayout=new LinearLayout(context);
       topLayout.setOrientation(LinearLayout.VERTICAL);
-      topLayout.setLayoutDirection(direction);
+      topLayout.setLayoutDirection(layoutDirection);
       if (mViewRoot == null) {
         mViewRoot=topLayout;
       }
  else {
-        LinearLayout.LayoutParams layoutParams=new LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT,LayoutParams.MATCH_PARENT);
-        layoutParams.weight=1;
+        int topLayoutWidth=params.getHardwareConfig().getScreenWidth() - mNavigationBarSize;
+        LinearLayout.LayoutParams layoutParams=new LinearLayout.LayoutParams(topLayoutWidth,LayoutParams.MATCH_PARENT);
         topLayout.setLayoutParams(layoutParams);
         if (isRtl && params.isRtlSupported()) {
           mViewRoot.addView(topLayout);
@@ -44,11 +46,10 @@
       }
       if (mStatusBarSize > 0) {
         try {
-          StatusBar systemBar=new StatusBar(context,hardwareConfig.getDensity(),direction,params.isRtlSupported());
-          systemBar.setLayoutParams(new LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT,mStatusBarSize));
-          topLayout.addView(systemBar);
+          StatusBar statusBar=createStatusBar(context,hardwareConfig.getDensity(),layoutDirection,params.isRtlSupported(),simulatedPlatformVersion);
+          topLayout.addView(statusBar);
         }
- catch (        XmlPullParserException e) {
+ catch (        XmlPullParserException ignored) {
         }
       }
       LinearLayout backgroundLayout=new LinearLayout(context);
@@ -59,35 +60,32 @@
       backgroundLayout.setLayoutParams(layoutParams);
       topLayout.addView(backgroundLayout);
       if (mActionBarSize > 0) {
-        try {
-          FakeActionBar actionBar=new FakeActionBar(context,hardwareConfig.getDensity(),params.getAppLabel(),params.getAppIcon());
-          actionBar.setLayoutParams(new LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT,mActionBarSize));
-          backgroundLayout.addView(actionBar);
-        }
- catch (        XmlPullParserException e) {
-        }
+        ActionBarLayout actionBar=createActionBar(context,params);
+        backgroundLayout.addView(actionBar);
+        actionBar.createMenuPopup();
+        mContentRoot=actionBar.getContentRoot();
       }
  else       if (mTitleBarSize > 0) {
         try {
-          TitleBar titleBar=new TitleBar(context,hardwareConfig.getDensity(),params.getAppLabel());
-          titleBar.setLayoutParams(new LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT,mTitleBarSize));
+          TitleBar titleBar=createTitleBar(context,params.getAppLabel(),simulatedPlatformVersion);
           backgroundLayout.addView(titleBar);
         }
- catch (        XmlPullParserException e) {
+ catch (        XmlPullParserException ignored) {
         }
       }
-      mContentRoot=new FrameLayout(context);
-      layoutParams=new LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT,0);
-      layoutParams.weight=1;
-      mContentRoot.setLayoutParams(layoutParams);
-      backgroundLayout.addView(mContentRoot);
-      if (mNavigationBarOrientation == LinearLayout.HORIZONTAL && mNavigationBarSize > 0) {
+      if (mContentRoot == null) {
+        mContentRoot=new FrameLayout(context);
+        layoutParams=new LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT,0);
+        layoutParams.weight=1;
+        mContentRoot.setLayoutParams(layoutParams);
+        backgroundLayout.addView(mContentRoot);
+      }
+      if (Config.showOnScreenNavBar(simulatedPlatformVersion) && mNavigationBarOrientation == LinearLayout.HORIZONTAL && mNavigationBarSize > 0) {
         try {
-          NavigationBar navigationBar=new NavigationBar(context,hardwareConfig.getDensity(),LinearLayout.HORIZONTAL,isRtl,params.isRtlSupported());
-          navigationBar.setLayoutParams(new LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT,mNavigationBarSize));
+          NavigationBar navigationBar=createNavigationBar(context,hardwareConfig.getDensity(),isRtl,params.isRtlSupported(),simulatedPlatformVersion);
           topLayout.addView(navigationBar);
         }
- catch (        XmlPullParserException e) {
+ catch (        XmlPullParserException ignored) {
         }
       }
     }
@@ -97,7 +95,7 @@
     Fragment_Delegate.setProjectCallback(null);
     AttachInfo_Accessor.setAttachInfo(mViewRoot);
     postInflateProcess(view,params.getProjectCallback());
-    if (mWindowBackground != null && backgroundView != null) {
+    if (mWindowBackground != null) {
       Drawable d=ResourceHelper.getDrawable(mWindowBackground,context);
       backgroundView.setBackground(d);
     }

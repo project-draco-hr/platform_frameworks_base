@@ -1,0 +1,105 @@
+{
+  prepareForDumpLocked();
+  final boolean filtering=(flags & (DUMP_HISTORY_ONLY | DUMP_UNPLUGGED_ONLY | DUMP_CHARGED_ONLY)) != 0;
+  if ((flags & DUMP_HISTORY_ONLY) != 0 || !filtering) {
+    final long historyTotalSize=getHistoryTotalSize();
+    final long historyUsedSize=getHistoryUsedSize();
+    if (startIteratingHistoryLocked()) {
+      try {
+        pw.print("Battery History (");
+        pw.print((100 * historyUsedSize) / historyTotalSize);
+        pw.print("% used, ");
+        printSizeValue(pw,historyUsedSize);
+        pw.print(" used of ");
+        printSizeValue(pw,historyTotalSize);
+        pw.print(", ");
+        pw.print(getHistoryStringPoolSize());
+        pw.print(" strings using ");
+        printSizeValue(pw,getHistoryStringPoolBytes());
+        pw.println("):");
+        dumpHistoryLocked(pw,flags,histStart,false);
+        pw.println();
+      }
+  finally {
+        finishIteratingHistoryLocked();
+      }
+    }
+    if (startIteratingOldHistoryLocked()) {
+      try {
+        final HistoryItem rec=new HistoryItem();
+        pw.println("Old battery History:");
+        HistoryPrinter hprinter=new HistoryPrinter();
+        long baseTime=-1;
+        while (getNextOldHistoryLocked(rec)) {
+          if (baseTime < 0) {
+            baseTime=rec.time;
+          }
+          hprinter.printNextItem(pw,rec,baseTime,false,(flags & DUMP_VERBOSE) != 0);
+        }
+        pw.println();
+      }
+  finally {
+        finishIteratingOldHistoryLocked();
+      }
+    }
+  }
+  if (filtering && (flags & (DUMP_UNPLUGGED_ONLY | DUMP_CHARGED_ONLY)) == 0) {
+    return;
+  }
+  if (!filtering) {
+    SparseArray<? extends Uid> uidStats=getUidStats();
+    final int NU=uidStats.size();
+    boolean didPid=false;
+    long nowRealtime=SystemClock.elapsedRealtime();
+    for (int i=0; i < NU; i++) {
+      Uid uid=uidStats.valueAt(i);
+      SparseArray<? extends Uid.Pid> pids=uid.getPidStats();
+      if (pids != null) {
+        for (int j=0; j < pids.size(); j++) {
+          Uid.Pid pid=pids.valueAt(j);
+          if (!didPid) {
+            pw.println("Per-PID Stats:");
+            didPid=true;
+          }
+          long time=pid.mWakeSumMs + (pid.mWakeNesting > 0 ? (nowRealtime - pid.mWakeStartMs) : 0);
+          pw.print("  PID ");
+          pw.print(pids.keyAt(j));
+          pw.print(" wake time: ");
+          TimeUtils.formatDuration(time,pw);
+          pw.println("");
+        }
+      }
+    }
+    if (didPid) {
+      pw.println();
+    }
+  }
+  if (!filtering || (flags & DUMP_CHARGED_ONLY) != 0) {
+    if (dumpDurationSteps(pw,"Discharge step durations:",getDischargeStepDurationsArray(),getNumDischargeStepDurations(),false)) {
+      long timeRemaining=computeBatteryTimeRemaining(SystemClock.elapsedRealtime());
+      if (timeRemaining >= 0) {
+        pw.print("  Estimated discharge time remaining: ");
+        TimeUtils.formatDuration(timeRemaining / 1000,pw);
+        pw.println();
+      }
+      pw.println();
+    }
+    if (dumpDurationSteps(pw,"Charge step durations:",getChargeStepDurationsArray(),getNumChargeStepDurations(),false)) {
+      long timeRemaining=computeChargeTimeRemaining(SystemClock.elapsedRealtime());
+      if (timeRemaining >= 0) {
+        pw.print("  Estimated charge time remaining: ");
+        TimeUtils.formatDuration(timeRemaining / 1000,pw);
+        pw.println();
+      }
+      pw.println();
+    }
+    pw.println("Statistics since last charge:");
+    pw.println("  System starts: " + getStartCount() + ", currently on battery: "+ getIsOnBattery());
+    dumpLocked(context,pw,"",STATS_SINCE_CHARGED,reqUid,(flags & DUMP_DEVICE_WIFI_ONLY) != 0);
+    pw.println();
+  }
+  if (!filtering || (flags & DUMP_UNPLUGGED_ONLY) != 0) {
+    pw.println("Statistics since last unplugged:");
+    dumpLocked(context,pw,"",STATS_SINCE_UNPLUGGED,reqUid,(flags & DUMP_DEVICE_WIFI_ONLY) != 0);
+  }
+}

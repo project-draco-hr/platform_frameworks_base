@@ -1,0 +1,60 @@
+{
+  final int userId=UserHandle.getCallingUserId();
+  if (DEBUG) {
+    Slog.i(TAG,"bindAppWidgetId() " + userId);
+  }
+  mSecurityPolicy.enforceCallFromPackage(callingPackage);
+  if (!mSecurityPolicy.isEnabledGroupProfile(providerProfileId)) {
+    return false;
+  }
+  if (!mSecurityPolicy.isProviderInCallerOrInProfileAndWhitelListed(providerComponent.getPackageName(),providerProfileId)) {
+    return false;
+  }
+synchronized (mLock) {
+    ensureGroupStateLoadedLocked(userId);
+    if (!mSecurityPolicy.hasCallerBindPermissionOrBindWhiteListedLocked(callingPackage)) {
+      return false;
+    }
+    Widget widget=lookupWidgetLocked(appWidgetId,Binder.getCallingUid(),callingPackage);
+    if (widget == null) {
+      Slog.e(TAG,"Bad widget id " + appWidgetId);
+      return false;
+    }
+    if (widget.provider != null) {
+      Slog.e(TAG,"Widget id " + appWidgetId + " already bound to: "+ widget.provider.id);
+      return false;
+    }
+    final int providerUid=getUidForPackage(providerComponent.getPackageName(),providerProfileId);
+    if (providerUid < 0) {
+      Slog.e(TAG,"Package " + providerComponent.getPackageName() + " not installed "+ " for profile "+ providerProfileId);
+      return false;
+    }
+    ProviderId providerId=new ProviderId(providerUid,providerComponent);
+    Provider provider=lookupProviderLocked(providerId);
+    if (provider == null) {
+      Slog.e(TAG,"No widget provider " + providerComponent + " for profile "+ providerProfileId);
+      return false;
+    }
+    if (provider.zombie) {
+      Slog.e(TAG,"Can't bind to a 3rd party provider in" + " safe mode " + provider);
+      return false;
+    }
+    widget.provider=provider;
+    widget.options=(options != null) ? cloneIfLocalBinder(options) : new Bundle();
+    if (!widget.options.containsKey(AppWidgetManager.OPTION_APPWIDGET_HOST_CATEGORY)) {
+      widget.options.putInt(AppWidgetManager.OPTION_APPWIDGET_HOST_CATEGORY,AppWidgetProviderInfo.WIDGET_CATEGORY_HOME_SCREEN);
+    }
+    provider.widgets.add(widget);
+    final int widgetCount=provider.widgets.size();
+    if (widgetCount == 1) {
+      sendEnableIntentLocked(provider);
+    }
+    sendUpdateIntentLocked(provider,new int[]{appWidgetId});
+    registerForBroadcastsLocked(provider,getWidgetIds(provider.widgets));
+    saveGroupStateAsync(userId);
+    if (DEBUG) {
+      Slog.i(TAG,"Bound widget " + appWidgetId + " to provider "+ provider.id);
+    }
+  }
+  return true;
+}

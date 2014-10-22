@@ -1,0 +1,150 @@
+{
+  int ret=PackageManager.INSTALL_SUCCEEDED;
+  if (origin.staged) {
+    if (origin.file != null) {
+      installFlags|=PackageManager.INSTALL_INTERNAL;
+      installFlags&=~PackageManager.INSTALL_EXTERNAL;
+    }
+ else     if (origin.cid != null) {
+      installFlags|=PackageManager.INSTALL_EXTERNAL;
+      installFlags&=~PackageManager.INSTALL_INTERNAL;
+    }
+ else {
+      throw new IllegalStateException("Invalid stage location");
+    }
+  }
+  final boolean onSd=(installFlags & PackageManager.INSTALL_EXTERNAL) != 0;
+  final boolean onInt=(installFlags & PackageManager.INSTALL_INTERNAL) != 0;
+  PackageInfoLite pkgLite=null;
+  if (onInt && onSd) {
+    Slog.w(TAG,"Conflicting flags specified for installing on both internal and external");
+    ret=PackageManager.INSTALL_FAILED_INVALID_INSTALL_LOCATION;
+  }
+ else {
+    pkgLite=mContainerService.getMinimalPackageInfo(origin.resolvedPath,installFlags,packageAbiOverride);
+    if (!origin.staged && pkgLite.recommendedInstallLocation == PackageHelper.RECOMMEND_FAILED_INSUFFICIENT_STORAGE) {
+      final StorageManager storage=StorageManager.from(mContext);
+      final long lowThreshold=storage.getStorageLowBytes(Environment.getDataDirectory());
+      final long sizeBytes=mContainerService.calculateInstalledSize(origin.resolvedPath,isForwardLocked(),packageAbiOverride);
+      if (mInstaller.freeCache(sizeBytes + lowThreshold) >= 0) {
+        pkgLite=mContainerService.getMinimalPackageInfo(origin.resolvedPath,installFlags,packageAbiOverride);
+      }
+      if (pkgLite.recommendedInstallLocation == PackageHelper.RECOMMEND_FAILED_INVALID_URI) {
+        pkgLite.recommendedInstallLocation=PackageHelper.RECOMMEND_FAILED_INSUFFICIENT_STORAGE;
+      }
+    }
+  }
+  if (ret == PackageManager.INSTALL_SUCCEEDED) {
+    int loc=pkgLite.recommendedInstallLocation;
+    if (loc == PackageHelper.RECOMMEND_FAILED_INVALID_LOCATION) {
+      ret=PackageManager.INSTALL_FAILED_INVALID_INSTALL_LOCATION;
+    }
+ else     if (loc == PackageHelper.RECOMMEND_FAILED_ALREADY_EXISTS) {
+      ret=PackageManager.INSTALL_FAILED_ALREADY_EXISTS;
+    }
+ else     if (loc == PackageHelper.RECOMMEND_FAILED_INSUFFICIENT_STORAGE) {
+      ret=PackageManager.INSTALL_FAILED_INSUFFICIENT_STORAGE;
+    }
+ else     if (loc == PackageHelper.RECOMMEND_FAILED_INVALID_APK) {
+      ret=PackageManager.INSTALL_FAILED_INVALID_APK;
+    }
+ else     if (loc == PackageHelper.RECOMMEND_FAILED_INVALID_URI) {
+      ret=PackageManager.INSTALL_FAILED_INVALID_URI;
+    }
+ else     if (loc == PackageHelper.RECOMMEND_MEDIA_UNAVAILABLE) {
+      ret=PackageManager.INSTALL_FAILED_MEDIA_UNAVAILABLE;
+    }
+ else {
+      loc=installLocationPolicy(pkgLite);
+      if (loc == PackageHelper.RECOMMEND_FAILED_VERSION_DOWNGRADE) {
+        ret=PackageManager.INSTALL_FAILED_VERSION_DOWNGRADE;
+      }
+ else       if (!onSd && !onInt) {
+        if (loc == PackageHelper.RECOMMEND_INSTALL_EXTERNAL) {
+          installFlags|=PackageManager.INSTALL_EXTERNAL;
+          installFlags&=~PackageManager.INSTALL_INTERNAL;
+        }
+ else {
+          installFlags|=PackageManager.INSTALL_INTERNAL;
+          installFlags&=~PackageManager.INSTALL_EXTERNAL;
+        }
+      }
+    }
+  }
+  final InstallArgs args=createInstallArgs(this);
+  mArgs=args;
+  if (ret == PackageManager.INSTALL_SUCCEEDED) {
+    int userIdentifier=getUser().getIdentifier();
+    if (userIdentifier == UserHandle.USER_ALL && ((installFlags & PackageManager.INSTALL_FROM_ADB) != 0)) {
+      userIdentifier=UserHandle.USER_OWNER;
+    }
+    final int requiredUid=mRequiredVerifierPackage == null ? -1 : getPackageUid(mRequiredVerifierPackage,userIdentifier);
+    if (!origin.existing && requiredUid != -1 && isVerificationEnabled(userIdentifier,installFlags)) {
+      final Intent verification=new Intent(Intent.ACTION_PACKAGE_NEEDS_VERIFICATION);
+      verification.setDataAndType(Uri.fromFile(new File(origin.resolvedPath)),PACKAGE_MIME_TYPE);
+      verification.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+      final List<ResolveInfo> receivers=queryIntentReceivers(verification,PACKAGE_MIME_TYPE,PackageManager.GET_DISABLED_COMPONENTS,0);
+      if (DEBUG_VERIFY) {
+        Slog.d(TAG,"Found " + receivers.size() + " verifiers for intent "+ verification.toString()+ " with "+ pkgLite.verifiers.length+ " optional verifiers");
+      }
+      final int verificationId=mPendingVerificationToken++;
+      verification.putExtra(PackageManager.EXTRA_VERIFICATION_ID,verificationId);
+      verification.putExtra(PackageManager.EXTRA_VERIFICATION_INSTALLER_PACKAGE,installerPackageName);
+      verification.putExtra(PackageManager.EXTRA_VERIFICATION_INSTALL_FLAGS,installFlags);
+      verification.putExtra(PackageManager.EXTRA_VERIFICATION_PACKAGE_NAME,pkgLite.packageName);
+      verification.putExtra(PackageManager.EXTRA_VERIFICATION_VERSION_CODE,pkgLite.versionCode);
+      if (verificationParams != null) {
+        if (verificationParams.getVerificationURI() != null) {
+          verification.putExtra(PackageManager.EXTRA_VERIFICATION_URI,verificationParams.getVerificationURI());
+        }
+        if (verificationParams.getOriginatingURI() != null) {
+          verification.putExtra(Intent.EXTRA_ORIGINATING_URI,verificationParams.getOriginatingURI());
+        }
+        if (verificationParams.getReferrer() != null) {
+          verification.putExtra(Intent.EXTRA_REFERRER,verificationParams.getReferrer());
+        }
+        if (verificationParams.getOriginatingUid() >= 0) {
+          verification.putExtra(Intent.EXTRA_ORIGINATING_UID,verificationParams.getOriginatingUid());
+        }
+        if (verificationParams.getInstallerUid() >= 0) {
+          verification.putExtra(PackageManager.EXTRA_VERIFICATION_INSTALLER_UID,verificationParams.getInstallerUid());
+        }
+      }
+      final PackageVerificationState verificationState=new PackageVerificationState(requiredUid,args);
+      mPendingVerification.append(verificationId,verificationState);
+      final List<ComponentName> sufficientVerifiers=matchVerifiers(pkgLite,receivers,verificationState);
+      if (sufficientVerifiers != null) {
+        final int N=sufficientVerifiers.size();
+        if (N == 0) {
+          Slog.i(TAG,"Additional verifiers required, but none installed.");
+          ret=PackageManager.INSTALL_FAILED_VERIFICATION_FAILURE;
+        }
+ else {
+          for (int i=0; i < N; i++) {
+            final ComponentName verifierComponent=sufficientVerifiers.get(i);
+            final Intent sufficientIntent=new Intent(verification);
+            sufficientIntent.setComponent(verifierComponent);
+            mContext.sendBroadcastAsUser(sufficientIntent,getUser());
+          }
+        }
+      }
+      final ComponentName requiredVerifierComponent=matchComponentForVerifier(mRequiredVerifierPackage,receivers);
+      if (ret == PackageManager.INSTALL_SUCCEEDED && mRequiredVerifierPackage != null) {
+        verification.setComponent(requiredVerifierComponent);
+        mContext.sendOrderedBroadcastAsUser(verification,getUser(),android.Manifest.permission.PACKAGE_VERIFICATION_AGENT,new BroadcastReceiver(){
+          @Override public void onReceive(          Context context,          Intent intent){
+            final Message msg=mHandler.obtainMessage(CHECK_PENDING_VERIFICATION);
+            msg.arg1=verificationId;
+            mHandler.sendMessageDelayed(msg,getVerificationTimeout());
+          }
+        }
+,null,0,null,null);
+        mArgs=null;
+      }
+    }
+ else {
+      ret=args.copyApk(mContainerService,true);
+    }
+  }
+  mRet=ret;
+}

@@ -1,0 +1,68 @@
+{
+  super.onCreate(savedInstanceState);
+  Intent intentReceived=getIntent();
+  String className=intentReceived.getComponent().getClassName();
+  final UserHandle userDest;
+  final int userMessageId;
+  if (className.equals(FORWARD_INTENT_TO_USER_OWNER)) {
+    userMessageId=com.android.internal.R.string.forward_intent_to_owner;
+    userDest=UserHandle.OWNER;
+  }
+ else   if (className.equals(FORWARD_INTENT_TO_MANAGED_PROFILE)) {
+    userMessageId=com.android.internal.R.string.forward_intent_to_work;
+    userDest=getManagedProfile();
+  }
+ else {
+    Slog.wtf(TAG,IntentForwarderActivity.class.getName() + " cannot be called directly");
+    userMessageId=-1;
+    userDest=null;
+  }
+  if (userDest == null) {
+    finish();
+    return;
+  }
+  Intent newIntent=new Intent(intentReceived);
+  newIntent.setComponent(null);
+  newIntent.setPackage(null);
+  newIntent.addFlags(Intent.FLAG_ACTIVITY_FORWARD_RESULT | Intent.FLAG_ACTIVITY_PREVIOUS_IS_TOP);
+  int callingUserId=getUserId();
+  IPackageManager ipm=AppGlobals.getPackageManager();
+  String resolvedType=newIntent.resolveTypeIfNeeded(getContentResolver());
+  boolean canForward=false;
+  Intent selector=newIntent.getSelector();
+  if (selector == null) {
+    selector=newIntent;
+  }
+  try {
+    canForward=ipm.canForwardTo(selector,resolvedType,callingUserId,userDest.getIdentifier());
+  }
+ catch (  RemoteException e) {
+    Slog.e(TAG,"PackageManagerService is dead?");
+  }
+  if (canForward) {
+    newIntent.setContentUserHint(callingUserId);
+    final android.content.pm.ResolveInfo ri=getPackageManager().resolveActivityAsUser(newIntent,MATCH_DEFAULT_ONLY,userDest.getIdentifier());
+    final boolean shouldShowDisclosure=!UserHandle.isSameApp(ri.activityInfo.applicationInfo.uid,Process.SYSTEM_UID);
+    try {
+      startActivityAsCaller(newIntent,null,userDest.getIdentifier());
+    }
+ catch (    RuntimeException e) {
+      int launchedFromUid=-1;
+      String launchedFromPackage="?";
+      try {
+        launchedFromUid=ActivityManagerNative.getDefault().getLaunchedFromUid(getActivityToken());
+        launchedFromPackage=ActivityManagerNative.getDefault().getLaunchedFromPackage(getActivityToken());
+      }
+ catch (      RemoteException ignored) {
+      }
+      Slog.wtf(TAG,"Unable to launch as UID " + launchedFromUid + " package "+ launchedFromPackage+ ", while running in "+ ActivityThread.currentProcessName(),e);
+    }
+    if (shouldShowDisclosure) {
+      Toast.makeText(this,getString(userMessageId),Toast.LENGTH_LONG).show();
+    }
+  }
+ else {
+    Slog.wtf(TAG,"the intent: " + newIntent + "cannot be forwarded from user "+ callingUserId+ " to user "+ userDest.getIdentifier());
+  }
+  finish();
+}

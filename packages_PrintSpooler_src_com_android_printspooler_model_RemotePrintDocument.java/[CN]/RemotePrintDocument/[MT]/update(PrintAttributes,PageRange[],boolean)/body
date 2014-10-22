@@ -1,0 +1,40 @@
+{
+  boolean willUpdate;
+  if (DEBUG) {
+    Log.i(LOG_TAG,"[CALLED] update()");
+  }
+  if (hasUpdateError()) {
+    throw new IllegalStateException("Cannot update without a clearing the failure");
+  }
+  if (mState == STATE_INITIAL || mState == STATE_FINISHED || mState == STATE_DESTROYED) {
+    throw new IllegalStateException("Cannot update in state:" + stateToString(mState));
+  }
+  if (!mUpdateSpec.hasSameConstraints(attributes,preview)) {
+    willUpdate=true;
+    if (mCurrentCommand != null && (mCurrentCommand.isRunning() || mCurrentCommand.isPending())) {
+      mCurrentCommand.cancel();
+    }
+    PrintAttributes oldAttributes=mDocumentInfo.attributes != null ? mDocumentInfo.attributes : new PrintAttributes.Builder().build();
+    AsyncCommand command=new LayoutCommand(mLooper,mPrintDocumentAdapter,mDocumentInfo,oldAttributes,attributes,preview,mCommandResultCallback);
+    scheduleCommand(command);
+    mState=STATE_UPDATING;
+  }
+ else   if ((!(mCurrentCommand instanceof LayoutCommand) || (!mCurrentCommand.isPending() && !mCurrentCommand.isRunning())) && pages != null && !PageRangeUtils.contains(mUpdateSpec.pages,pages,mDocumentInfo.info.getPageCount())) {
+    willUpdate=true;
+    if (mCurrentCommand instanceof WriteCommand && (mCurrentCommand.isPending() || mCurrentCommand.isRunning())) {
+      mCurrentCommand.cancel();
+    }
+    AsyncCommand command=new WriteCommand(mContext,mLooper,mPrintDocumentAdapter,mDocumentInfo,mDocumentInfo.info.getPageCount(),pages,mDocumentInfo.fileProvider,mCommandResultCallback);
+    scheduleCommand(command);
+    mState=STATE_UPDATING;
+  }
+ else {
+    willUpdate=false;
+    if (DEBUG) {
+      Log.i(LOG_TAG,"[SKIPPING] No update needed");
+    }
+  }
+  mUpdateSpec.update(attributes,preview,pages);
+  runPendingCommand();
+  return willUpdate;
+}

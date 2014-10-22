@@ -1,0 +1,52 @@
+{
+synchronized (mLock) {
+    mSystemReady=true;
+    mAppOps=appOps;
+    mDreamManager=getLocalService(DreamManagerInternal.class);
+    mDisplayManagerInternal=getLocalService(DisplayManagerInternal.class);
+    mPolicy=getLocalService(WindowManagerPolicy.class);
+    mBatteryManagerInternal=getLocalService(BatteryManagerInternal.class);
+    PowerManager pm=(PowerManager)mContext.getSystemService(Context.POWER_SERVICE);
+    mScreenBrightnessSettingMinimum=pm.getMinimumScreenBrightnessSetting();
+    mScreenBrightnessSettingMaximum=pm.getMaximumScreenBrightnessSetting();
+    mScreenBrightnessSettingDefault=pm.getDefaultScreenBrightnessSetting();
+    SensorManager sensorManager=new SystemSensorManager(mContext,mHandler.getLooper());
+    mBatteryStats=BatteryStatsService.getService();
+    mNotifier=new Notifier(Looper.getMainLooper(),mContext,mBatteryStats,mAppOps,createSuspendBlockerLocked("PowerManagerService.Broadcasts"),mPolicy);
+    mWirelessChargerDetector=new WirelessChargerDetector(sensorManager,createSuspendBlockerLocked("PowerManagerService.WirelessChargerDetector"),mHandler);
+    mSettingsObserver=new SettingsObserver(mHandler);
+    mLightsManager=getLocalService(LightsManager.class);
+    mAttentionLight=mLightsManager.getLight(LightsManager.LIGHT_ID_ATTENTION);
+    mDisplayManagerInternal.initPowerManagement(mDisplayPowerCallbacks,mHandler,sensorManager);
+    IntentFilter filter=new IntentFilter();
+    filter.addAction(Intent.ACTION_BATTERY_CHANGED);
+    filter.setPriority(IntentFilter.SYSTEM_HIGH_PRIORITY);
+    mContext.registerReceiver(new BatteryReceiver(),filter,null,mHandler);
+    filter=new IntentFilter();
+    filter.addAction(Intent.ACTION_DREAMING_STARTED);
+    filter.addAction(Intent.ACTION_DREAMING_STOPPED);
+    mContext.registerReceiver(new DreamReceiver(),filter,null,mHandler);
+    filter=new IntentFilter();
+    filter.addAction(Intent.ACTION_USER_SWITCHED);
+    mContext.registerReceiver(new UserSwitchedReceiver(),filter,null,mHandler);
+    filter=new IntentFilter();
+    filter.addAction(Intent.ACTION_DOCK_EVENT);
+    mContext.registerReceiver(new DockReceiver(),filter,null,mHandler);
+    final ContentResolver resolver=mContext.getContentResolver();
+    resolver.registerContentObserver(Settings.Secure.getUriFor(Settings.Secure.SCREENSAVER_ENABLED),false,mSettingsObserver,UserHandle.USER_ALL);
+    resolver.registerContentObserver(Settings.Secure.getUriFor(Settings.Secure.SCREENSAVER_ACTIVATE_ON_SLEEP),false,mSettingsObserver,UserHandle.USER_ALL);
+    resolver.registerContentObserver(Settings.Secure.getUriFor(Settings.Secure.SCREENSAVER_ACTIVATE_ON_DOCK),false,mSettingsObserver,UserHandle.USER_ALL);
+    resolver.registerContentObserver(Settings.System.getUriFor(Settings.System.SCREEN_OFF_TIMEOUT),false,mSettingsObserver,UserHandle.USER_ALL);
+    resolver.registerContentObserver(Settings.Secure.getUriFor(Settings.Secure.SLEEP_TIMEOUT),false,mSettingsObserver,UserHandle.USER_ALL);
+    resolver.registerContentObserver(Settings.Global.getUriFor(Settings.Global.STAY_ON_WHILE_PLUGGED_IN),false,mSettingsObserver,UserHandle.USER_ALL);
+    resolver.registerContentObserver(Settings.System.getUriFor(Settings.System.SCREEN_BRIGHTNESS),false,mSettingsObserver,UserHandle.USER_ALL);
+    resolver.registerContentObserver(Settings.System.getUriFor(Settings.System.SCREEN_BRIGHTNESS_MODE),false,mSettingsObserver,UserHandle.USER_ALL);
+    resolver.registerContentObserver(Settings.System.getUriFor(Settings.System.SCREEN_AUTO_BRIGHTNESS_ADJ),false,mSettingsObserver,UserHandle.USER_ALL);
+    resolver.registerContentObserver(Settings.Global.getUriFor(Settings.Global.LOW_POWER_MODE),false,mSettingsObserver,UserHandle.USER_ALL);
+    resolver.registerContentObserver(Settings.Global.getUriFor(Settings.Global.LOW_POWER_MODE_TRIGGER_LEVEL),false,mSettingsObserver,UserHandle.USER_ALL);
+    readConfigurationLocked();
+    updateSettingsLocked();
+    mDirty|=DIRTY_BATTERY_STATE;
+    updatePowerStateLocked();
+  }
+}

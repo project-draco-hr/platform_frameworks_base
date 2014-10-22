@@ -1,0 +1,48 @@
+{
+  if (Log.isLoggable(TAG,Log.VERBOSE)) {
+    Log.v(TAG,"addAccount: accountType " + accountType + ", response "+ response+ ", authTokenType "+ authTokenType+ ", requiredFeatures "+ stringArrayToString(requiredFeatures)+ ", expectActivityLaunch "+ expectActivityLaunch+ ", caller's uid "+ Binder.getCallingUid()+ ", pid "+ Binder.getCallingPid());
+  }
+  if (response == null)   throw new IllegalArgumentException("response is null");
+  if (accountType == null)   throw new IllegalArgumentException("accountType is null");
+  checkManageAccountsPermission();
+  int userId=Binder.getCallingUserHandle().getIdentifier();
+  if (!canUserModifyAccounts(userId)) {
+    try {
+      response.onError(AccountManager.ERROR_CODE_USER_RESTRICTED,"User is not allowed to add an account!");
+    }
+ catch (    RemoteException re) {
+    }
+    showCantAddAccount(AccountManager.ERROR_CODE_USER_RESTRICTED,userId);
+    return;
+  }
+  if (!canUserModifyAccountsForType(userId,accountType)) {
+    try {
+      response.onError(AccountManager.ERROR_CODE_MANAGEMENT_DISABLED_FOR_ACCOUNT_TYPE,"User cannot modify accounts of this type (policy).");
+    }
+ catch (    RemoteException re) {
+    }
+    showCantAddAccount(AccountManager.ERROR_CODE_MANAGEMENT_DISABLED_FOR_ACCOUNT_TYPE,userId);
+    return;
+  }
+  UserAccounts accounts=getUserAccountsForCaller();
+  final int pid=Binder.getCallingPid();
+  final int uid=Binder.getCallingUid();
+  final Bundle options=(optionsIn == null) ? new Bundle() : optionsIn;
+  options.putInt(AccountManager.KEY_CALLER_UID,uid);
+  options.putInt(AccountManager.KEY_CALLER_PID,pid);
+  long identityToken=clearCallingIdentity();
+  try {
+    new Session(accounts,response,accountType,expectActivityLaunch,true){
+      @Override public void run() throws RemoteException {
+        mAuthenticator.addAccount(this,mAccountType,authTokenType,requiredFeatures,options);
+      }
+      @Override protected String toDebugString(      long now){
+        return super.toDebugString(now) + ", addAccount" + ", accountType "+ accountType+ ", requiredFeatures "+ (requiredFeatures != null ? TextUtils.join(",",requiredFeatures) : null);
+      }
+    }
+.bind();
+  }
+  finally {
+    restoreCallingIdentity(identityToken);
+  }
+}

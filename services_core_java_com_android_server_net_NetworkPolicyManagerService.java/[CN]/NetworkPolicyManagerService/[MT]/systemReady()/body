@@ -1,0 +1,72 @@
+{
+  if (!isBandwidthControlEnabled()) {
+    Slog.w(TAG,"bandwidth controls disabled, unable to enforce policy");
+    return;
+  }
+  final PackageManager pm=mContext.getPackageManager();
+synchronized (mRulesLock) {
+    SystemConfig sysConfig=SystemConfig.getInstance();
+    ArraySet<String> allowPower=sysConfig.getAllowInPowerSave();
+    for (int i=0; i < allowPower.size(); i++) {
+      String pkg=allowPower.valueAt(i);
+      try {
+        ApplicationInfo ai=pm.getApplicationInfo(pkg,0);
+        if ((ai.flags & ApplicationInfo.FLAG_SYSTEM) != 0) {
+          mPowerSaveWhitelistAppIds.put(UserHandle.getAppId(ai.uid),true);
+        }
+      }
+ catch (      PackageManager.NameNotFoundException e) {
+      }
+    }
+    mPowerManagerInternal=LocalServices.getService(PowerManagerInternal.class);
+    mPowerManagerInternal.registerLowPowerModeObserver(new PowerManagerInternal.LowPowerModeListener(){
+      @Override public void onLowPowerModeChanged(      boolean enabled){
+synchronized (mRulesLock) {
+          if (mRestrictPower != enabled) {
+            mRestrictPower=enabled;
+            updateRulesForGlobalChangeLocked(true);
+          }
+        }
+      }
+    }
+);
+    mRestrictPower=mPowerManagerInternal.getLowPowerModeEnabled();
+    readPolicyLocked();
+    if (mRestrictBackground || mRestrictPower) {
+      updateRulesForGlobalChangeLocked(true);
+      updateNotificationsLocked();
+    }
+  }
+  updateScreenOn();
+  try {
+    mActivityManager.registerProcessObserver(mProcessObserver);
+    mNetworkManager.registerObserver(mAlertObserver);
+  }
+ catch (  RemoteException e) {
+  }
+  final IntentFilter screenFilter=new IntentFilter();
+  screenFilter.addAction(Intent.ACTION_SCREEN_ON);
+  screenFilter.addAction(Intent.ACTION_SCREEN_OFF);
+  mContext.registerReceiver(mScreenReceiver,screenFilter);
+  final IntentFilter connFilter=new IntentFilter(CONNECTIVITY_ACTION_IMMEDIATE);
+  mContext.registerReceiver(mConnReceiver,connFilter,CONNECTIVITY_INTERNAL,mHandler);
+  final IntentFilter packageFilter=new IntentFilter();
+  packageFilter.addAction(ACTION_PACKAGE_ADDED);
+  packageFilter.addDataScheme("package");
+  mContext.registerReceiver(mPackageReceiver,packageFilter,null,mHandler);
+  mContext.registerReceiver(mUidRemovedReceiver,new IntentFilter(ACTION_UID_REMOVED),null,mHandler);
+  final IntentFilter userFilter=new IntentFilter();
+  userFilter.addAction(ACTION_USER_ADDED);
+  userFilter.addAction(ACTION_USER_REMOVED);
+  mContext.registerReceiver(mUserReceiver,userFilter,null,mHandler);
+  final IntentFilter statsFilter=new IntentFilter(ACTION_NETWORK_STATS_UPDATED);
+  mContext.registerReceiver(mStatsReceiver,statsFilter,READ_NETWORK_USAGE_HISTORY,mHandler);
+  final IntentFilter allowFilter=new IntentFilter(ACTION_ALLOW_BACKGROUND);
+  mContext.registerReceiver(mAllowReceiver,allowFilter,MANAGE_NETWORK_POLICY,mHandler);
+  final IntentFilter snoozeWarningFilter=new IntentFilter(ACTION_SNOOZE_WARNING);
+  mContext.registerReceiver(mSnoozeWarningReceiver,snoozeWarningFilter,MANAGE_NETWORK_POLICY,mHandler);
+  final IntentFilter wifiConfigFilter=new IntentFilter(CONFIGURED_NETWORKS_CHANGED_ACTION);
+  mContext.registerReceiver(mWifiConfigReceiver,wifiConfigFilter,null,mHandler);
+  final IntentFilter wifiStateFilter=new IntentFilter(WifiManager.NETWORK_STATE_CHANGED_ACTION);
+  mContext.registerReceiver(mWifiStateReceiver,wifiStateFilter,null,mHandler);
+}

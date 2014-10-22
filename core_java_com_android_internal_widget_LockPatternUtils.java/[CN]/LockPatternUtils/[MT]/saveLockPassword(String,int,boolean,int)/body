@@ -1,12 +1,20 @@
 {
   try {
-    getLockSettings().setLockPassword(password,userHandle);
     DevicePolicyManager dpm=getDevicePolicyManager();
-    if (password != null) {
-      if (userHandle == UserHandle.USER_OWNER) {
-        updateEncryptionPassword(password);
-      }
+    if (!TextUtils.isEmpty(password)) {
+      getLockSettings().setLockPassword(password,userHandle);
       int computedQuality=computePasswordQuality(password);
+      if (userHandle == UserHandle.USER_OWNER && LockPatternUtils.isDeviceEncryptionEnabled()) {
+        if (!isCredentialRequiredToDecrypt(true)) {
+          clearEncryptionPassword();
+        }
+ else {
+          boolean numeric=computedQuality == DevicePolicyManager.PASSWORD_QUALITY_NUMERIC;
+          boolean numericComplex=computedQuality == DevicePolicyManager.PASSWORD_QUALITY_NUMERIC_COMPLEX;
+          int type=numeric || numericComplex ? StorageManager.CRYPT_TYPE_PIN : StorageManager.CRYPT_TYPE_PASSWORD;
+          updateEncryptionPassword(type,password);
+        }
+      }
       if (!isFallback) {
         deleteGallery();
         setLong(PASSWORD_TYPE_KEY,Math.max(quality,computedQuality),userHandle);
@@ -57,15 +65,20 @@
         passwordHistory="";
       }
  else {
-        byte[] hash=passwordToHash(password);
+        byte[] hash=passwordToHash(password,userHandle);
         passwordHistory=new String(hash) + "," + passwordHistory;
         passwordHistory=passwordHistory.substring(0,Math.min(hash.length * passwordHistoryLength + passwordHistoryLength - 1,passwordHistory.length()));
       }
       setString(PASSWORD_HISTORY_KEY,passwordHistory,userHandle);
     }
  else {
+      getLockSettings().setLockPassword(null,userHandle);
+      if (userHandle == UserHandle.USER_OWNER) {
+        updateEncryptionPassword(StorageManager.CRYPT_TYPE_DEFAULT,null);
+      }
       dpm.setActivePasswordState(DevicePolicyManager.PASSWORD_QUALITY_UNSPECIFIED,0,0,0,0,0,0,0,userHandle);
     }
+    onAfterChangingPassword();
   }
  catch (  RemoteException re) {
     Log.e(TAG,"Unable to save lock password " + re);

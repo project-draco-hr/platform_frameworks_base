@@ -1,0 +1,38 @@
+{
+  final int userId=UserHandle.getCallingUserId();
+  if (DEBUG) {
+    Slog.i(TAG,"bindRemoteViewsService() " + userId);
+  }
+  mSecurityPolicy.enforceCallFromPackage(callingPackage);
+synchronized (mLock) {
+    ensureGroupStateLoadedLocked(userId);
+    Widget widget=lookupWidgetLocked(appWidgetId,Binder.getCallingUid(),callingPackage);
+    if (widget == null) {
+      throw new IllegalArgumentException("Bad widget id");
+    }
+    if (widget.provider == null) {
+      throw new IllegalArgumentException("No provider for widget " + appWidgetId);
+    }
+    ComponentName componentName=intent.getComponent();
+    String providerPackage=widget.provider.id.componentName.getPackageName();
+    String servicePackage=componentName.getPackageName();
+    if (!servicePackage.equals(providerPackage)) {
+      throw new SecurityException("The taget service not in the same package" + " as the widget provider");
+    }
+    mSecurityPolicy.enforceServiceExistsAndRequiresBindRemoteViewsPermission(componentName,widget.provider.getUserId());
+    ServiceConnectionProxy connection=null;
+    FilterComparison fc=new FilterComparison(intent);
+    Pair<Integer,FilterComparison> key=Pair.create(appWidgetId,fc);
+    if (mBoundRemoteViewsServices.containsKey(key)) {
+      connection=(ServiceConnectionProxy)mBoundRemoteViewsServices.get(key);
+      connection.disconnect();
+      unbindService(connection);
+      mBoundRemoteViewsServices.remove(key);
+    }
+    connection=new ServiceConnectionProxy(callbacks);
+    bindService(intent,connection,widget.provider.info.getProfile());
+    mBoundRemoteViewsServices.put(key,connection);
+    Pair<Integer,FilterComparison> serviceId=Pair.create(widget.provider.id.uid,fc);
+    incrementAppWidgetServiceRefCount(appWidgetId,serviceId);
+  }
+}

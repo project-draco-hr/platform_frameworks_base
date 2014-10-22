@@ -11,12 +11,21 @@
   SettingsCache cache;
   if (Settings.CALL_METHOD_GET_SYSTEM.equals(method)) {
     if (LOCAL_LOGV)     Slog.v(TAG,"call(system:" + request + ") for "+ callingUser);
+    if (callingUser != UserHandle.USER_OWNER && shouldShadowParentProfile(callingUser,sSystemCloneToManagedKeys,request)) {
+      callingUser=UserHandle.USER_OWNER;
+    }
     dbHelper=getOrEstablishDatabase(callingUser);
     cache=sSystemCaches.get(callingUser);
     return lookupValue(dbHelper,TABLE_SYSTEM,cache,request);
   }
   if (Settings.CALL_METHOD_GET_SECURE.equals(method)) {
     if (LOCAL_LOGV)     Slog.v(TAG,"call(secure:" + request + ") for "+ callingUser);
+    if (shouldShadowParentProfile(callingUser,sSecureCloneToManagedKeys,request)) {
+      if (Secure.LOCATION_PROVIDERS_ALLOWED.equals(request) && mUserManager.hasUserRestriction(UserManager.DISALLOW_SHARE_LOCATION,new UserHandle(callingUser))) {
+        return sSecureCaches.get(callingUser).putIfAbsent(request,"");
+      }
+      callingUser=UserHandle.USER_OWNER;
+    }
     dbHelper=getOrEstablishDatabase(callingUser);
     cache=sSecureCaches.get(callingUser);
     return lookupValue(dbHelper,TABLE_SECURE,cache,request);
@@ -36,15 +45,60 @@
   values.put(Settings.NameValueTable.NAME,request);
   values.put(Settings.NameValueTable.VALUE,newValue);
   if (Settings.CALL_METHOD_PUT_SYSTEM.equals(method)) {
-    if (LOCAL_LOGV)     Slog.v(TAG,"call_put(system:" + request + "="+ newValue+ ") for "+ callingUser);
+    if (LOCAL_LOGV) {
+      Slog.v(TAG,"call_put(system:" + request + "="+ newValue+ ") for "+ callingUser);
+    }
+    if (callingUser != UserHandle.USER_OWNER && shouldShadowParentProfile(callingUser,sSystemCloneToManagedKeys,request)) {
+      return null;
+    }
     insertForUser(Settings.System.CONTENT_URI,values,callingUser);
+    if (callingUser == UserHandle.USER_OWNER && mManagedProfiles != null && sSystemCloneToManagedKeys.contains(request)) {
+      final long token=Binder.clearCallingIdentity();
+      try {
+        for (int i=mManagedProfiles.size() - 1; i >= 0; i--) {
+          if (LOCAL_LOGV) {
+            Slog.v(TAG,"putting to additional user " + mManagedProfiles.get(i).id);
+          }
+          insertForUser(Settings.System.CONTENT_URI,values,mManagedProfiles.get(i).id);
+        }
+      }
+  finally {
+        Binder.restoreCallingIdentity(token);
+      }
+    }
   }
  else   if (Settings.CALL_METHOD_PUT_SECURE.equals(method)) {
-    if (LOCAL_LOGV)     Slog.v(TAG,"call_put(secure:" + request + "="+ newValue+ ") for "+ callingUser);
+    if (LOCAL_LOGV) {
+      Slog.v(TAG,"call_put(secure:" + request + "="+ newValue+ ") for "+ callingUser);
+    }
+    if (callingUser != UserHandle.USER_OWNER && shouldShadowParentProfile(callingUser,sSecureCloneToManagedKeys,request)) {
+      return null;
+    }
     insertForUser(Settings.Secure.CONTENT_URI,values,callingUser);
+    if (callingUser == UserHandle.USER_OWNER && mManagedProfiles != null && sSecureCloneToManagedKeys.contains(request)) {
+      final long token=Binder.clearCallingIdentity();
+      try {
+        for (int i=mManagedProfiles.size() - 1; i >= 0; i--) {
+          if (LOCAL_LOGV) {
+            Slog.v(TAG,"putting to additional user " + mManagedProfiles.get(i).id);
+          }
+          try {
+            insertForUser(Settings.Secure.CONTENT_URI,values,mManagedProfiles.get(i).id);
+          }
+ catch (          SecurityException e) {
+            Slog.w(TAG,"Cannot clone request '" + request + "' with value '"+ newValue+ "' to managed profile (id "+ mManagedProfiles.get(i).id+ ")",e);
+          }
+        }
+      }
+  finally {
+        Binder.restoreCallingIdentity(token);
+      }
+    }
   }
  else   if (Settings.CALL_METHOD_PUT_GLOBAL.equals(method)) {
-    if (LOCAL_LOGV)     Slog.v(TAG,"call_put(global:" + request + "="+ newValue+ ") for "+ callingUser);
+    if (LOCAL_LOGV) {
+      Slog.v(TAG,"call_put(global:" + request + "="+ newValue+ ") for "+ callingUser);
+    }
     insertForUser(Settings.Global.CONTENT_URI,values,callingUser);
   }
  else {

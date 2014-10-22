@@ -1,0 +1,92 @@
+{
+  teardownConnection();
+  try {
+    int response;
+    int redirectCount=0;
+    URL url=mURL;
+    boolean noProxy=isLocalHost(url);
+    while (true) {
+      if (noProxy) {
+        mConnection=(HttpURLConnection)url.openConnection(Proxy.NO_PROXY);
+      }
+ else {
+        mConnection=(HttpURLConnection)url.openConnection();
+      }
+      mConnection.setInstanceFollowRedirects(mAllowCrossDomainRedirect);
+      if (mHeaders != null) {
+        for (        Map.Entry<String,String> entry : mHeaders.entrySet()) {
+          mConnection.setRequestProperty(entry.getKey(),entry.getValue());
+        }
+      }
+      if (offset > 0) {
+        mConnection.setRequestProperty("Range","bytes=" + offset + "-");
+      }
+      response=mConnection.getResponseCode();
+      if (response != HttpURLConnection.HTTP_MULT_CHOICE && response != HttpURLConnection.HTTP_MOVED_PERM && response != HttpURLConnection.HTTP_MOVED_TEMP && response != HttpURLConnection.HTTP_SEE_OTHER && response != HTTP_TEMP_REDIRECT) {
+        break;
+      }
+      if (++redirectCount > MAX_REDIRECTS) {
+        throw new NoRouteToHostException("Too many redirects: " + redirectCount);
+      }
+      String method=mConnection.getRequestMethod();
+      if (response == HTTP_TEMP_REDIRECT && !method.equals("GET") && !method.equals("HEAD")) {
+        throw new NoRouteToHostException("Invalid redirect");
+      }
+      String location=mConnection.getHeaderField("Location");
+      if (location == null) {
+        throw new NoRouteToHostException("Invalid redirect");
+      }
+      url=new URL(mURL,location);
+      if (!url.getProtocol().equals("https") && !url.getProtocol().equals("http")) {
+        throw new NoRouteToHostException("Unsupported protocol redirect");
+      }
+      boolean sameProtocol=mURL.getProtocol().equals(url.getProtocol());
+      if (!mAllowCrossProtocolRedirect && !sameProtocol) {
+        throw new NoRouteToHostException("Cross-protocol redirects are disallowed");
+      }
+      boolean sameHost=mURL.getHost().equals(url.getHost());
+      if (!mAllowCrossDomainRedirect && !sameHost) {
+        throw new NoRouteToHostException("Cross-domain redirects are disallowed");
+      }
+      if (response != HTTP_TEMP_REDIRECT) {
+        mURL=url;
+      }
+    }
+    if (mAllowCrossDomainRedirect) {
+      mURL=mConnection.getURL();
+    }
+    if (response == HttpURLConnection.HTTP_PARTIAL) {
+      String contentRange=mConnection.getHeaderField("Content-Range");
+      mTotalSize=-1;
+      if (contentRange != null) {
+        int lastSlashPos=contentRange.lastIndexOf('/');
+        if (lastSlashPos >= 0) {
+          String total=contentRange.substring(lastSlashPos + 1);
+          try {
+            mTotalSize=Long.parseLong(total);
+          }
+ catch (          NumberFormatException e) {
+          }
+        }
+      }
+    }
+ else     if (response != HttpURLConnection.HTTP_OK) {
+      throw new IOException();
+    }
+ else {
+      mTotalSize=mConnection.getContentLength();
+    }
+    if (offset > 0 && response != HttpURLConnection.HTTP_PARTIAL) {
+      throw new IOException();
+    }
+    mInputStream=new BufferedInputStream(mConnection.getInputStream());
+    mCurrentOffset=offset;
+  }
+ catch (  IOException e) {
+    mTotalSize=-1;
+    mInputStream=null;
+    mConnection=null;
+    mCurrentOffset=-1;
+    throw e;
+  }
+}

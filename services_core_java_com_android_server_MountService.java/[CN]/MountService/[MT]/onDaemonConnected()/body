@@ -1,0 +1,52 @@
+{
+  new Thread("MountService#onDaemonConnected"){
+    @Override public void run(){
+      try {
+        final String[] vols=NativeDaemonEvent.filterMessageList(mConnector.executeForList("volume","list","broadcast"),VoldResponseCode.VolumeListResult);
+        for (        String volstr : vols) {
+          String[] tok=volstr.split(" ");
+          String path=tok[1];
+          String state=Environment.MEDIA_REMOVED;
+          final StorageVolume volume;
+synchronized (mVolumesLock) {
+            volume=mVolumesByPath.get(path);
+          }
+          int st=Integer.parseInt(tok[2]);
+          if (st == VolumeState.NoMedia) {
+            state=Environment.MEDIA_REMOVED;
+          }
+ else           if (st == VolumeState.Idle) {
+            state=Environment.MEDIA_UNMOUNTED;
+          }
+ else           if (st == VolumeState.Mounted) {
+            state=Environment.MEDIA_MOUNTED;
+            Slog.i(TAG,"Media already mounted on daemon connection");
+          }
+ else           if (st == VolumeState.Shared) {
+            state=Environment.MEDIA_SHARED;
+            Slog.i(TAG,"Media shared on daemon connection");
+          }
+ else {
+            throw new Exception(String.format("Unexpected state %d",st));
+          }
+          if (state != null) {
+            if (DEBUG_EVENTS)             Slog.i(TAG,"Updating valid state " + state);
+            updatePublicVolumeState(volume,state);
+          }
+        }
+      }
+ catch (      Exception e) {
+        Slog.e(TAG,"Error processing initial volume state",e);
+        final StorageVolume primary=getPrimaryPhysicalVolume();
+        if (primary != null) {
+          updatePublicVolumeState(primary,Environment.MEDIA_REMOVED);
+        }
+      }
+      mConnectedSignal.countDown();
+      copyLocaleFromMountService();
+      mPms.scanAvailableAsecs();
+      mAsecsScanned.countDown();
+    }
+  }
+.start();
+}

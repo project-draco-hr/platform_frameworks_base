@@ -1,0 +1,35 @@
+{
+  if ((dirty & DIRTY_BATTERY_STATE) != 0) {
+    final boolean wasPowered=mIsPowered;
+    final int oldPlugType=mPlugType;
+    final boolean oldLevelLow=mBatteryLevelLow;
+    mIsPowered=mBatteryManagerInternal.isPowered(BatteryManager.BATTERY_PLUGGED_ANY);
+    mPlugType=mBatteryManagerInternal.getPlugType();
+    mBatteryLevel=mBatteryManagerInternal.getBatteryLevel();
+    mBatteryLevelLow=mBatteryManagerInternal.getBatteryLevelLow();
+    if (DEBUG_SPEW) {
+      Slog.d(TAG,"updateIsPoweredLocked: wasPowered=" + wasPowered + ", mIsPowered="+ mIsPowered+ ", oldPlugType="+ oldPlugType+ ", mPlugType="+ mPlugType+ ", mBatteryLevel="+ mBatteryLevel);
+    }
+    if (wasPowered != mIsPowered || oldPlugType != mPlugType) {
+      mDirty|=DIRTY_IS_POWERED;
+      final boolean dockedOnWirelessCharger=mWirelessChargerDetector.update(mIsPowered,mPlugType,mBatteryLevel);
+      final long now=SystemClock.uptimeMillis();
+      if (shouldWakeUpWhenPluggedOrUnpluggedLocked(wasPowered,oldPlugType,dockedOnWirelessCharger)) {
+        wakeUpNoUpdateLocked(now,Process.SYSTEM_UID);
+      }
+      userActivityNoUpdateLocked(now,PowerManager.USER_ACTIVITY_EVENT_OTHER,0,Process.SYSTEM_UID);
+      if (dockedOnWirelessCharger) {
+        mNotifier.onWirelessChargingStarted();
+      }
+    }
+    if (wasPowered != mIsPowered || oldLevelLow != mBatteryLevelLow) {
+      if (oldLevelLow != mBatteryLevelLow && !mBatteryLevelLow) {
+        if (DEBUG_SPEW) {
+          Slog.d(TAG,"updateIsPoweredLocked: resetting low power snooze");
+        }
+        mAutoLowPowerModeSnoozing=false;
+      }
+      updateLowPowerModeLocked();
+    }
+  }
+}

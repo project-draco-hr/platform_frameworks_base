@@ -7,14 +7,20 @@
   }
   checkWritePermissions(args);
   SettingsCache cache=cacheForTable(callingUser,args.table);
-  final AtomicInteger mutationCount=sKnownMutationsInFlight.get(callingUser);
-  mutationCount.incrementAndGet();
+  final AtomicInteger mutationCount;
+synchronized (this) {
+    mutationCount=sKnownMutationsInFlight.get(callingUser);
+  }
+  if (mutationCount != null) {
+    mutationCount.incrementAndGet();
+  }
   DatabaseHelper dbH=getOrEstablishDatabase(TABLE_GLOBAL.equals(args.table) ? UserHandle.USER_OWNER : callingUser);
   SQLiteDatabase db=dbH.getWritableDatabase();
   db.beginTransaction();
   try {
     int numValues=values.length;
     for (int i=0; i < numValues; i++) {
+      checkUserRestrictions(values[i].getAsString(Settings.Secure.NAME),callingUser);
       if (db.insert(args.table,null,values[i]) < 0)       return 0;
       SettingsCache.populate(cache,values[i]);
       if (LOCAL_LOGV)       Log.v(TAG,args.table + " <- " + values[i]);
@@ -23,7 +29,9 @@
   }
   finally {
     db.endTransaction();
-    mutationCount.decrementAndGet();
+    if (mutationCount != null) {
+      mutationCount.decrementAndGet();
+    }
   }
   sendNotify(uri,callingUser);
   return values.length;

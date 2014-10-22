@@ -1,0 +1,117 @@
+{
+  ArraySet<Integer> persistentTaskIds=new ArraySet<Integer>();
+  while (true) {
+    final boolean probablyDone;
+synchronized (TaskPersister.this) {
+      probablyDone=mWriteQueue.isEmpty();
+    }
+    if (probablyDone) {
+      if (DEBUG)       Slog.d(TAG,"Looking for obsolete files.");
+      persistentTaskIds.clear();
+synchronized (mService) {
+        final ArrayList<TaskRecord> tasks=mService.mRecentTasks;
+        if (DEBUG)         Slog.d(TAG,"mRecents=" + tasks);
+        for (int taskNdx=tasks.size() - 1; taskNdx >= 0; --taskNdx) {
+          final TaskRecord task=tasks.get(taskNdx);
+          if (DEBUG)           Slog.d(TAG,"LazyTaskWriter: task=" + task + " persistable="+ task.isPersistable);
+          if (task.isPersistable && !task.stack.isHomeStack()) {
+            if (DEBUG)             Slog.d(TAG,"adding to persistentTaskIds task=" + task);
+            persistentTaskIds.add(task.taskId);
+          }
+ else {
+            if (DEBUG)             Slog.d(TAG,"omitting from persistentTaskIds task=" + task);
+          }
+        }
+      }
+      removeObsoleteFiles(persistentTaskIds);
+    }
+    final WriteQueueItem item;
+synchronized (TaskPersister.this) {
+      if (mNextWriteTime != FLUSH_QUEUE) {
+        mNextWriteTime=SystemClock.uptimeMillis() + INTER_WRITE_DELAY_MS;
+        if (DEBUG)         Slog.d(TAG,"Next write time may be in " + INTER_WRITE_DELAY_MS + " msec. ("+ mNextWriteTime+ ")");
+      }
+      while (mWriteQueue.isEmpty()) {
+        if (mNextWriteTime != 0) {
+          mNextWriteTime=0;
+          TaskPersister.this.notifyAll();
+        }
+        try {
+          if (DEBUG)           Slog.d(TAG,"LazyTaskWriter: waiting indefinitely.");
+          TaskPersister.this.wait();
+        }
+ catch (        InterruptedException e) {
+        }
+      }
+      item=mWriteQueue.remove(0);
+      long now=SystemClock.uptimeMillis();
+      if (DEBUG)       Slog.d(TAG,"LazyTaskWriter: now=" + now + " mNextWriteTime="+ mNextWriteTime+ " mWriteQueue.size="+ mWriteQueue.size());
+      while (now < mNextWriteTime) {
+        try {
+          if (DEBUG)           Slog.d(TAG,"LazyTaskWriter: waiting " + (mNextWriteTime - now));
+          TaskPersister.this.wait(mNextWriteTime - now);
+        }
+ catch (        InterruptedException e) {
+        }
+        now=SystemClock.uptimeMillis();
+      }
+    }
+    if (item instanceof ImageWriteQueueItem) {
+      ImageWriteQueueItem imageWriteQueueItem=(ImageWriteQueueItem)item;
+      final String filename=imageWriteQueueItem.mFilename;
+      final Bitmap bitmap=imageWriteQueueItem.mImage;
+      if (DEBUG)       Slog.d(TAG,"writing bitmap: filename=" + filename);
+      FileOutputStream imageFile=null;
+      try {
+        imageFile=new FileOutputStream(new File(sImagesDir,filename));
+        bitmap.compress(Bitmap.CompressFormat.PNG,100,imageFile);
+      }
+ catch (      Exception e) {
+        Slog.e(TAG,"saveImage: unable to save " + filename,e);
+      }
+ finally {
+        if (imageFile != null) {
+          try {
+            imageFile.close();
+          }
+ catch (          IOException e) {
+          }
+        }
+      }
+    }
+ else     if (item instanceof TaskWriteQueueItem) {
+      StringWriter stringWriter=null;
+      TaskRecord task=((TaskWriteQueueItem)item).mTask;
+      if (DEBUG)       Slog.d(TAG,"Writing task=" + task);
+synchronized (mService) {
+        if (task.inRecents) {
+          try {
+            if (DEBUG)             Slog.d(TAG,"Saving task=" + task);
+            stringWriter=saveToXml(task);
+          }
+ catch (          IOException e) {
+          }
+catch (          XmlPullParserException e) {
+          }
+        }
+      }
+      if (stringWriter != null) {
+        FileOutputStream file=null;
+        AtomicFile atomicFile=null;
+        try {
+          atomicFile=new AtomicFile(new File(sTasksDir,String.valueOf(task.taskId) + RECENTS_FILENAME + TASK_EXTENSION));
+          file=atomicFile.startWrite();
+          file.write(stringWriter.toString().getBytes());
+          file.write('\n');
+          atomicFile.finishWrite(file);
+        }
+ catch (        IOException e) {
+          if (file != null) {
+            atomicFile.failWrite(file);
+          }
+          Slog.e(TAG,"Unable to open " + atomicFile + " for persisting. "+ e);
+        }
+      }
+    }
+  }
+}
