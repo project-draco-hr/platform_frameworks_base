@@ -1,9 +1,5 @@
 {
   Preconditions.checkNotNull(listener,"Attempted to register a 'null' listener.");
-  if (!isSupported()) {
-    Log.e(mTag,"Refused to add listener, the feature is not supported.");
-    return false;
-  }
   IBinder binder=listener.asBinder();
   LinkedListener deathListener=new LinkedListener(listener);
 synchronized (mListenerMap) {
@@ -14,17 +10,30 @@ synchronized (mListenerMap) {
       binder.linkToDeath(deathListener,0);
     }
  catch (    RemoteException e) {
-      Log.e(mTag,"Remote listener already died.",e);
+      Log.v(mTag,"Remote listener already died.",e);
       return false;
     }
     mListenerMap.put(binder,deathListener);
-    if (mListenerMap.size() == 1) {
-      if (!registerWithService()) {
-        Log.e(mTag,"RegisterWithService failed, listener will be removed.");
-        removeListener(listener);
-        return false;
-      }
+    int result;
+    if (!isAvailableInPlatform()) {
+      result=RESULT_NOT_AVAILABLE;
     }
+ else     if (mHasIsSupported && !mIsSupported) {
+      result=RESULT_NOT_SUPPORTED;
+    }
+ else     if (!isGpsEnabled()) {
+      result=RESULT_GPS_LOCATION_DISABLED;
+    }
+ else     if (!tryRegister()) {
+      result=RESULT_INTERNAL_ERROR;
+    }
+ else     if (mHasIsSupported && mIsSupported) {
+      result=RESULT_SUCCESS;
+    }
+ else {
+      return true;
+    }
+    post(listener,getHandlerOperation(result));
   }
   return true;
 }
