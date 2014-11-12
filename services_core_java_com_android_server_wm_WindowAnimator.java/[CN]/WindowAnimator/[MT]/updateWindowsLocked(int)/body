@@ -14,6 +14,7 @@
           winAnimator.mAnimation=new AlphaAnimation(1.0f,1.0f);
           winAnimator.mAnimation.setDuration(KEYGUARD_ANIM_TIMEOUT_MS);
           winAnimator.mAnimationIsEntrance=false;
+          winAnimator.mAnimationStartTime=-1;
         }
       }
  else {
@@ -30,6 +31,7 @@
   final WindowState winShowWhenLocked=(WindowState)mPolicy.getWinShowWhenLockedLw();
   final AppWindowToken appShowWhenLocked=winShowWhenLocked == null ? null : winShowWhenLocked.mAppToken;
   boolean wallpaperInUnForceHiding=false;
+  boolean startingInUnForceHiding=false;
   ArrayList<WindowStateAnimator> unForceHiding=null;
   WindowState wallpaper=null;
   for (int i=windows.size() - 1; i >= 0; i--) {
@@ -89,7 +91,8 @@
           if (DEBUG_KEYGUARD || WindowManagerService.DEBUG_VISIBILITY)           Slog.v(TAG,"Now policy hidden: " + win);
         }
  else {
-          if (!win.showLw(false,false)) {
+          boolean applyExistingExitAnimation=mPostKeyguardExitAnimation != null && !winAnimator.mKeyguardGoingAwayAnimation && win.hasDrawnLw();
+          if (!win.showLw(false,false) && !applyExistingExitAnimation) {
             continue;
           }
           final boolean visibleNow=win.isVisibleNow();
@@ -106,10 +109,15 @@
             if ((flags & FLAG_SHOW_WALLPAPER) != 0) {
               wallpaperInUnForceHiding=true;
             }
+            if (win.mAttrs.type == TYPE_APPLICATION_STARTING) {
+              startingInUnForceHiding=true;
+            }
           }
- else           if (mPostKeyguardExitAnimation != null) {
-            winAnimator.setAnimation(mPostKeyguardExitAnimation);
-            winAnimator.keyguardGoingAwayAnimation=true;
+ else           if (applyExistingExitAnimation) {
+            if (DEBUG_KEYGUARD)             Slog.v(TAG,"Applying existing Keyguard exit animation to new window: win=" + win);
+            Animation a=mPolicy.createForceHideEnterAnimation(false,mKeyguardGoingAwayToNotificationShade);
+            winAnimator.setAnimation(a,mPostKeyguardExitAnimation.getStartTime());
+            winAnimator.mKeyguardGoingAwayAnimation=true;
           }
           final WindowState currentFocus=mService.mCurrentFocus;
           if (currentFocus == null || currentFocus.mLayer < win.mLayer) {
@@ -152,19 +160,26 @@
     }
   }
   if (unForceHiding != null) {
-    if (mKeyguardGoingAwayDisableWindowAnimations) {
-      if (DEBUG_KEYGUARD)       Slog.d(TAG,"updateWindowsLocked: skipping anim for windows");
-    }
- else {
-      if (DEBUG_KEYGUARD)       Slog.d(TAG,"updateWindowsLocked: created anim for windows=" + unForceHiding);
-      mPostKeyguardExitAnimation=mPolicy.createForceHideEnterAnimation(wallpaperInUnForceHiding,mKeyguardGoingAwayToNotificationShade);
-    }
-    if (mPostKeyguardExitAnimation != null) {
+    if (!mKeyguardGoingAwayDisableWindowAnimations) {
+      boolean first=true;
       for (int i=unForceHiding.size() - 1; i >= 0; i--) {
         final WindowStateAnimator winAnimator=unForceHiding.get(i);
-        winAnimator.setAnimation(mPostKeyguardExitAnimation);
-        winAnimator.keyguardGoingAwayAnimation=true;
+        Animation a=mPolicy.createForceHideEnterAnimation(wallpaperInUnForceHiding && !startingInUnForceHiding,mKeyguardGoingAwayToNotificationShade);
+        if (a != null) {
+          if (DEBUG_KEYGUARD)           Slog.v(TAG,"Starting keyguard exit animation on window " + winAnimator.mWin);
+          winAnimator.setAnimation(a);
+          winAnimator.mKeyguardGoingAwayAnimation=true;
+          if (first) {
+            mPostKeyguardExitAnimation=a;
+            mPostKeyguardExitAnimation.setStartTime(mCurrentTime);
+            first=false;
+          }
+        }
       }
+    }
+ else     if (mKeyguardGoingAway) {
+      mPolicy.startKeyguardExitAnimation(mCurrentTime,0);
+      mKeyguardGoingAway=false;
     }
     if (!wallpaperInUnForceHiding && wallpaper != null && !mKeyguardGoingAwayDisableWindowAnimations) {
       if (DEBUG_KEYGUARD)       Slog.d(TAG,"updateWindowsLocked: wallpaper animating away");
@@ -179,7 +194,8 @@
       mPolicy.startKeyguardExitAnimation(mCurrentTime + mPostKeyguardExitAnimation.getStartOffset(),mPostKeyguardExitAnimation.getDuration());
       mKeyguardGoingAway=false;
     }
- else     if (mPostKeyguardExitAnimation.hasEnded()) {
+ else     if (mCurrentTime - mPostKeyguardExitAnimation.getStartTime() > mPostKeyguardExitAnimation.getDuration()) {
+      if (DEBUG_KEYGUARD)       Slog.v(TAG,"Done with Keyguard exit animations.");
       mPostKeyguardExitAnimation=null;
     }
   }
