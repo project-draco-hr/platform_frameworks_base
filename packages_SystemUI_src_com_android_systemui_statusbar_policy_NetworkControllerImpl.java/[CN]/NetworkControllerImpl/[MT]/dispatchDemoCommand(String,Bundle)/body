@@ -5,13 +5,15 @@
     mDemoMode=true;
     mDemoInetCondition=mInetCondition ? 1 : 0;
     mDemoWifiState=mWifiSignalController.getState();
-    mDemoMobileState=mMobileSignalController.getState();
   }
  else   if (mDemoMode && command.equals(COMMAND_EXIT)) {
     if (DEBUG)     Log.d(TAG,"Exiting demo mode");
     mDemoMode=false;
+    updateMobileControllers();
+    for (    MobileSignalController controller : mMobileSignalControllers.values()) {
+      controller.resetLastState();
+    }
     mWifiSignalController.resetLastState();
-    mMobileSignalController.resetLastState();
     registerListeners();
     notifyAllListeners();
     refreshCarrierLabel();
@@ -29,7 +31,9 @@
     if (fully != null) {
       mDemoInetCondition=Boolean.parseBoolean(fully) ? 1 : 0;
       mWifiSignalController.setInetCondition(mDemoInetCondition);
-      mMobileSignalController.setInetCondition(mDemoInetCondition,mDemoInetCondition);
+      for (      MobileSignalController controller : mMobileSignalControllers.values()) {
+        controller.setInetCondition(mDemoInetCondition,mDemoInetCondition);
+      }
     }
     String wifi=args.getString("wifi");
     if (wifi != null) {
@@ -42,21 +46,51 @@
       mDemoWifiState.enabled=show;
       mWifiSignalController.notifyListeners();
     }
+    String sims=args.getString("sims");
+    if (sims != null) {
+      int num=Integer.parseInt(sims);
+      List<SubscriptionInfo> subs=new ArrayList<SubscriptionInfo>();
+      if (num != mMobileSignalControllers.size()) {
+        mMobileSignalControllers.clear();
+        int start=mSubscriptionManager.getActiveSubscriptionInfoCountMax();
+        for (int i=start; i < start + num; i++) {
+          SubscriptionInfo info=new SubscriptionInfo(i,"",i,"","",0,0,"",0,null,0,0,"");
+          subs.add(info);
+          mMobileSignalControllers.put(i,new MobileSignalController(mContext,mConfig,mHasMobileDataFeature,mPhone,mSignalsChangedCallbacks,mSignalClusters,this,info));
+        }
+      }
+      final int n=mSignalClusters.size();
+      for (int i=0; i < n; i++) {
+        mSignalClusters.get(i).setSubs(subs);
+      }
+    }
+    String nosim=args.getString("nosim");
+    if (nosim != null) {
+      boolean show=nosim.equals("show");
+      final int n=mSignalClusters.size();
+      for (int i=0; i < n; i++) {
+        mSignalClusters.get(i).setNoSims(show);
+      }
+    }
     String mobile=args.getString("mobile");
     if (mobile != null) {
       boolean show=mobile.equals("show");
       String datatype=args.getString("datatype");
+      String slotString=args.getString("slot");
+      int slot=TextUtils.isEmpty(slotString) ? 0 : Integer.parseInt(slotString);
+      MobileSignalController controller=mMobileSignalControllers.values().toArray(new MobileSignalController[0])[slot];
+      controller.getState().dataSim=datatype != null;
       if (datatype != null) {
-        mDemoMobileState.iconGroup=datatype.equals("1x") ? TelephonyIcons.ONE_X : datatype.equals("3g") ? TelephonyIcons.THREE_G : datatype.equals("4g") ? TelephonyIcons.FOUR_G : datatype.equals("e") ? TelephonyIcons.E : datatype.equals("g") ? TelephonyIcons.G : datatype.equals("h") ? TelephonyIcons.H : datatype.equals("lte") ? TelephonyIcons.LTE : datatype.equals("roam") ? TelephonyIcons.ROAMING : TelephonyIcons.UNKNOWN;
+        controller.getState().iconGroup=datatype.equals("1x") ? TelephonyIcons.ONE_X : datatype.equals("3g") ? TelephonyIcons.THREE_G : datatype.equals("4g") ? TelephonyIcons.FOUR_G : datatype.equals("e") ? TelephonyIcons.E : datatype.equals("g") ? TelephonyIcons.G : datatype.equals("h") ? TelephonyIcons.H : datatype.equals("lte") ? TelephonyIcons.LTE : datatype.equals("roam") ? TelephonyIcons.ROAMING : TelephonyIcons.UNKNOWN;
       }
       int[][] icons=TelephonyIcons.TELEPHONY_SIGNAL_STRENGTH;
       String level=args.getString("level");
       if (level != null) {
-        mDemoMobileState.level=level.equals("null") ? -1 : Math.min(Integer.parseInt(level),icons[0].length - 1);
-        mDemoMobileState.connected=mDemoMobileState.level >= 0;
+        controller.getState().level=level.equals("null") ? -1 : Math.min(Integer.parseInt(level),icons[0].length - 1);
+        controller.getState().connected=controller.getState().level >= 0;
       }
-      mDemoMobileState.enabled=show;
-      mMobileSignalController.notifyListeners();
+      controller.getState().enabled=show;
+      controller.notifyListeners();
     }
     refreshCarrierLabel();
   }
