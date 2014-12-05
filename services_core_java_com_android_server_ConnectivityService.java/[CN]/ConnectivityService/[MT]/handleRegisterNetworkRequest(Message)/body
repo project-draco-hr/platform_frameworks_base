@@ -1,40 +1,33 @@
 {
   final NetworkRequestInfo nri=(NetworkRequestInfo)(msg.obj);
-  final NetworkCapabilities newCap=nri.request.networkCapabilities;
-  int score=0;
   mNetworkRequests.put(nri.request,nri);
   NetworkAgentInfo bestNetwork=null;
   for (  NetworkAgentInfo network : mNetworkAgentInfos.values()) {
     if (DBG)     log("handleRegisterNetworkRequest checking " + network.name());
-    if (newCap.satisfiedByNetworkCapabilities(network.networkCapabilities)) {
+    if (network.satisfies(nri.request)) {
       if (DBG)       log("apparently satisfied.  currentScore=" + network.getCurrentScore());
-      if ((bestNetwork == null) || bestNetwork.getCurrentScore() < network.getCurrentScore()) {
-        if (!nri.isRequest) {
-          network.addRequest(nri.request);
-          notifyNetworkCallback(network,nri);
-        }
- else {
-          bestNetwork=network;
-        }
+      if (!nri.isRequest) {
+        network.addRequest(nri.request);
+        notifyNetworkCallback(network,nri);
+      }
+ else       if (bestNetwork == null || bestNetwork.getCurrentScore() < network.getCurrentScore()) {
+        bestNetwork=network;
       }
     }
   }
   if (bestNetwork != null) {
     if (DBG)     log("using " + bestNetwork.name());
-    if (bestNetwork.networkInfo.isConnected()) {
-      bestNetwork.networkLingered.clear();
-      bestNetwork.networkMonitor.sendMessage(NetworkMonitor.CMD_NETWORK_CONNECTED);
-    }
+    unlinger(bestNetwork);
     bestNetwork.addRequest(nri.request);
     mNetworkForRequestId.put(nri.request.requestId,bestNetwork);
     notifyNetworkCallback(bestNetwork,nri);
-    score=bestNetwork.getCurrentScore();
     if (nri.request.legacyType != TYPE_NONE) {
       mLegacyTypeTracker.add(nri.request.legacyType,bestNetwork);
     }
   }
   if (nri.isRequest) {
     if (DBG)     log("sending new NetworkRequest to factories");
+    final int score=bestNetwork == null ? 0 : bestNetwork.getCurrentScore();
     for (    NetworkFactoryInfo nfi : mNetworkFactoryInfos.values()) {
       nfi.asyncChannel.sendMessage(android.net.NetworkFactory.CMD_REQUEST_NETWORK,score,0,nri.request);
     }
