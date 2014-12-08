@@ -1,15 +1,33 @@
 {
   final boolean withinThreshold=isWithinLookaheadThreshold(nextAlarm);
-  if (DEBUG)   Slog.d(TAG,"onEvaluate mCurrentSubscription=" + mCurrentSubscription + " nextAlarmWakeup="+ mTracker.formatAlarmDebug(wakeupTime)+ " withinThreshold="+ withinThreshold+ " booted="+ booted);
-  if (mCurrentSubscription == null)   return;
-  if (!booted) {
-    notifyCondition(mCurrentSubscription,nextAlarm,Condition.STATE_UNKNOWN,"!booted");
-    return;
+  final long nextAlarmTime=nextAlarm != null ? nextAlarm.getTriggerTime() : 0;
+  if (DEBUG)   Slog.d(TAG,"onEvaluate mSubscriptions=" + mSubscriptions + " nextAlarmTime="+ mTracker.formatAlarmDebug(nextAlarmTime)+ " nextAlarmWakeup="+ mTracker.formatAlarmDebug(wakeupTime)+ " withinThreshold="+ withinThreshold+ " booted="+ booted);
+  ArraySet<Uri> conditions=mSubscriptions;
+  if (mRequesting && nextAlarm != null && withinThreshold) {
+    final Uri id=newConditionId(nextAlarm);
+    if (!conditions.contains(id)) {
+      conditions=new ArraySet<Uri>(conditions);
+      conditions.add(id);
+    }
   }
-  if (!withinThreshold) {
-    notifyCondition(mCurrentSubscription,nextAlarm,Condition.STATE_FALSE,"!within");
-    mCurrentSubscription=null;
-    return;
+  for (  Uri conditionId : conditions) {
+    final long time=tryParseNextAlarmCondition(conditionId);
+    if (time == BAD_CONDITION) {
+      notifyCondition(conditionId,nextAlarm,Condition.STATE_FALSE,"badCondition");
+    }
+ else     if (!booted) {
+      if (mSubscriptions.contains(conditionId)) {
+        notifyCondition(conditionId,nextAlarm,Condition.STATE_UNKNOWN,"!booted");
+      }
+    }
+ else     if (time != nextAlarmTime) {
+      notifyCondition(conditionId,nextAlarm,Condition.STATE_FALSE,"changed");
+    }
+ else     if (!withinThreshold) {
+      notifyCondition(conditionId,nextAlarm,Condition.STATE_FALSE,"!within");
+    }
+ else {
+      notifyCondition(conditionId,nextAlarm,Condition.STATE_TRUE,"within");
+    }
   }
-  notifyCondition(mCurrentSubscription,nextAlarm,Condition.STATE_TRUE,"within");
 }
