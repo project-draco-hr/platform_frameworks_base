@@ -1,0 +1,89 @@
+{
+  final boolean isAffiliated=task.mAffiliatedTaskId != task.taskId || task.mNextAffiliateTaskId != INVALID_TASK_ID || task.mPrevAffiliateTaskId != INVALID_TASK_ID;
+  int recentsCount=size();
+  if (task.voiceSession != null) {
+    if (DEBUG_RECENTS)     Slog.d(TAG,"addRecent: not adding voice interaction " + task);
+    return;
+  }
+  if (!isAffiliated && recentsCount > 0 && get(0) == task) {
+    if (DEBUG_RECENTS)     Slog.d(TAG,"addRecent: already at top: " + task);
+    return;
+  }
+  if (isAffiliated && recentsCount > 0 && task.inRecents && task.mAffiliatedTaskId == get(0).mAffiliatedTaskId) {
+    if (DEBUG_RECENTS)     Slog.d(TAG,"addRecent: affiliated " + get(0) + " at top when adding "+ task);
+    return;
+  }
+  boolean needAffiliationFix=false;
+  if (task.inRecents) {
+    int taskIndex=indexOf(task);
+    if (taskIndex >= 0) {
+      if (!isAffiliated) {
+        remove(taskIndex);
+        add(0,task);
+        mService.notifyTaskPersisterLocked(task,false);
+        if (DEBUG_RECENTS)         Slog.d(TAG,"addRecent: moving to top " + task + " from "+ taskIndex);
+        return;
+      }
+ else {
+        if (moveAffiliatedTasksToFront(task,taskIndex)) {
+          return;
+        }
+        needAffiliationFix=true;
+      }
+    }
+ else {
+      Slog.wtf(TAG,"Task with inRecent not in recents: " + task);
+      needAffiliationFix=true;
+    }
+  }
+  if (DEBUG_RECENTS)   Slog.d(TAG,"addRecent: trimming tasks for " + task);
+  trimForTaskLocked(task,true);
+  recentsCount=size();
+  final int maxRecents=ActivityManager.getMaxRecentTasksStatic();
+  while (recentsCount >= maxRecents) {
+    final TaskRecord tr=remove(recentsCount - 1);
+    tr.removedFromRecents();
+    recentsCount--;
+  }
+  task.inRecents=true;
+  if (!isAffiliated || needAffiliationFix) {
+    add(0,task);
+    if (DEBUG_RECENTS)     Slog.d(TAG,"addRecent: adding " + task);
+  }
+ else   if (isAffiliated) {
+    TaskRecord other=task.mNextAffiliate;
+    if (other == null) {
+      other=task.mPrevAffiliate;
+    }
+    if (other != null) {
+      int otherIndex=indexOf(other);
+      if (otherIndex >= 0) {
+        int taskIndex;
+        if (other == task.mNextAffiliate) {
+          taskIndex=otherIndex + 1;
+        }
+ else {
+          taskIndex=otherIndex;
+        }
+        if (DEBUG_RECENTS)         Slog.d(TAG,"addRecent: new affiliated task added at " + taskIndex + ": "+ task);
+        add(taskIndex,task);
+        if (moveAffiliatedTasksToFront(task,taskIndex)) {
+          return;
+        }
+        needAffiliationFix=true;
+      }
+ else {
+        if (DEBUG_RECENTS)         Slog.d(TAG,"addRecent: couldn't find other affiliation " + other);
+        needAffiliationFix=true;
+      }
+    }
+ else {
+      if (DEBUG_RECENTS)       Slog.d(TAG,"addRecent: adding affiliated task without next/prev:" + task);
+      needAffiliationFix=true;
+    }
+  }
+  if (needAffiliationFix) {
+    if (DEBUG_RECENTS)     Slog.d(TAG,"addRecent: regrouping affiliations");
+    cleanupLocked(task.userId);
+  }
+}
