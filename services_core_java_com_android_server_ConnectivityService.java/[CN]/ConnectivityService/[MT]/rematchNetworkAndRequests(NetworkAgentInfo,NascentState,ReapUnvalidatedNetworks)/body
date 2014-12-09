@@ -1,6 +1,8 @@
 {
   if (!newNetwork.created)   return;
-  if (nascent && !newNetwork.validated)   loge("ERROR: nascent network not validated.");
+  if (nascent == NascentState.JUST_VALIDATED && !newNetwork.validated) {
+    loge("ERROR: nascent network not validated.");
+  }
   boolean keep=newNetwork.isVPN();
   boolean isNewDefault=false;
   if (DBG)   log("rematching " + newNetwork.name());
@@ -109,8 +111,24 @@ synchronized (ConnectivityService.this) {
       mLegacyTypeTracker.add(TYPE_VPN,newNetwork);
     }
   }
- else   if (nascent) {
+ else   if (nascent == NascentState.JUST_VALIDATED) {
     if (DBG)     log("Validated network turns out to be unwanted.  Tear it down.");
     teardownUnneededNetwork(newNetwork);
+  }
+  if (reapUnvalidatedNetworks == ReapUnvalidatedNetworks.REAP) {
+    for (    NetworkAgentInfo nai : mNetworkAgentInfos.values()) {
+      if (!nai.created || nai.validated || nai.isVPN())       continue;
+      boolean reap=true;
+      for (      NetworkRequestInfo nri : mNetworkRequests.values()) {
+        if (nri.isRequest && nai.satisfies(nri.request) && (nai.networkRequests.get(nri.request.requestId) != null || mNetworkForRequestId.get(nri.request.requestId).getCurrentScore() < nai.getCurrentScoreAsValidated())) {
+          reap=false;
+          break;
+        }
+      }
+      if (reap) {
+        if (DBG)         log("Reaping " + nai.name());
+        teardownUnneededNetwork(nai);
+      }
+    }
   }
 }
