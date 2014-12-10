@@ -1,6 +1,7 @@
 {
   if (mAdapter == null || pd == null || pd.tag == null)   return;
   final BluetoothDevice device=(BluetoothDevice)pd.tag;
+  final DeviceInfo info=mDeviceInfo.get(device);
   final String action=connect ? "connect" : "disconnect";
   if (DEBUG)   Log.d(TAG,action + " " + deviceToString(device));
   final ParcelUuid[] uuids=device.getUuids();
@@ -8,38 +9,32 @@
     Log.w(TAG,"No uuids returned, aborting " + action + " for "+ deviceToString(device));
     return;
   }
-  final SparseBooleanArray profiles=new SparseBooleanArray();
-  for (  ParcelUuid uuid : uuids) {
-    final int profile=uuidToProfile(uuid);
-    if (profile == 0) {
-      Log.w(TAG,"Device " + deviceToString(device) + " has an unsupported uuid: "+ uuidToString(uuid));
-      continue;
+  SparseArray<Boolean> profiles=new SparseArray<>();
+  if (connect) {
+    for (    ParcelUuid uuid : uuids) {
+      final int profile=uuidToProfile(uuid);
+      if (profile == 0) {
+        Log.w(TAG,"Device " + deviceToString(device) + " has an unsupported uuid: "+ uuidToString(uuid));
+        continue;
+      }
+      final boolean connected=info.connectedProfiles.get(profile,false);
+      if (!connected) {
+        profiles.put(profile,true);
+      }
     }
-    final int profileState=mAdapter.getProfileConnectionState(profile);
-    if (DEBUG && !profiles.get(profile))     Log.d(TAG,"Profile " + profileToString(profile) + " state = "+ profileStateToString(profileState));
-    final boolean connected=profileState == BluetoothProfile.STATE_CONNECTED;
-    if (connect != connected) {
-      profiles.put(profile,true);
-    }
+  }
+ else {
+    profiles=info.connectedProfiles;
   }
   for (int i=0; i < profiles.size(); i++) {
     final int profile=profiles.keyAt(i);
-    mAdapter.getProfileProxy(mContext,new ServiceListener(){
-      @Override public void onServiceConnected(      int profile,      BluetoothProfile proxy){
-        if (DEBUG)         Log.d(TAG,"onServiceConnected " + profileToString(profile));
-        final Profile p=BluetoothUtil.getProfile(proxy);
-        if (p == null) {
-          Log.w(TAG,"Unable get get Profile for " + profileToString(profile));
-        }
- else {
-          final boolean ok=connect ? p.connect(device) : p.disconnect(device);
-          if (DEBUG)           Log.d(TAG,action + " " + profileToString(profile)+ " "+ (ok ? "succeeded" : "failed"));
-        }
-      }
-      @Override public void onServiceDisconnected(      int profile){
-        if (DEBUG)         Log.d(TAG,"onServiceDisconnected " + profileToString(profile));
-      }
+    if (mProfiles.indexOfKey(profile) >= 0) {
+      final Profile p=BluetoothUtil.getProfile(mProfiles.get(profile));
+      final boolean ok=connect ? p.connect(device) : p.disconnect(device);
+      if (DEBUG)       Log.d(TAG,action + " " + profileToString(profile)+ " "+ (ok ? "succeeded" : "failed"));
     }
-,profile);
+ else {
+      Log.w(TAG,"Unable get get Profile for " + profileToString(profile));
+    }
   }
 }
