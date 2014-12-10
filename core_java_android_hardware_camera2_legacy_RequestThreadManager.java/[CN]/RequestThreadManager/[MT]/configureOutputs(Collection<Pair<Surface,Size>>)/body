@@ -20,10 +20,14 @@
   mCallbackOutputs.clear();
   mJpegSurfaceIds.clear();
   mPreviewTexture=null;
+  List<Size> previewOutputSizes=new ArrayList<>();
+  List<Size> callbackOutputSizes=new ArrayList<>();
   int facing=mCharacteristics.get(CameraCharacteristics.LENS_FACING);
   int orientation=mCharacteristics.get(CameraCharacteristics.SENSOR_ORIENTATION);
   if (outputs != null) {
-    for (    Surface s : outputs) {
+    for (    Pair<Surface,Size> outPair : outputs) {
+      Surface s=outPair.first;
+      Size outSize=outPair.second;
       try {
         int format=LegacyCameraDevice.detectSurfaceType(s);
         LegacyCameraDevice.setSurfaceOrientation(s,facing,orientation);
@@ -34,9 +38,11 @@ case CameraMetadataNative.NATIVE_JPEG_FORMAT:
           }
         mJpegSurfaceIds.add(LegacyCameraDevice.getSurfaceId(s));
       mCallbackOutputs.add(s);
-    break;
+    callbackOutputSizes.add(outSize);
+  break;
 default :
-  mPreviewOutputs.add(s);
+mPreviewOutputs.add(s);
+previewOutputSizes.add(outSize);
 break;
 }
 }
@@ -59,18 +65,8 @@ if (DEBUG) {
 Log.d(TAG,"doPreviewCapture - Selected range [" + bestRange[Camera.Parameters.PREVIEW_FPS_MIN_INDEX] + ","+ bestRange[Camera.Parameters.PREVIEW_FPS_MAX_INDEX]+ "]");
 }
 mParams.setPreviewFpsRange(bestRange[Camera.Parameters.PREVIEW_FPS_MIN_INDEX],bestRange[Camera.Parameters.PREVIEW_FPS_MAX_INDEX]);
-if (mPreviewOutputs.size() > 0) {
-List<Size> outputSizes=new ArrayList<>(outputs.size());
-for (Surface s : mPreviewOutputs) {
-try {
-Size size=LegacyCameraDevice.getSurfaceSize(s);
-outputSizes.add(size);
-}
- catch (LegacyExceptionUtils.BufferQueueAbandonedException e) {
-Log.w(TAG,"Surface abandoned, skipping...",e);
-}
-}
-Size largestOutput=SizeAreaComparator.findLargestByArea(outputSizes);
+if (previewOutputSizes.size() > 0) {
+Size largestOutput=SizeAreaComparator.findLargestByArea(previewOutputSizes);
 Size largestJpegDimen=ParameterUtils.getLargestSupportedJpegSizeByArea(mParams);
 List<Size> supportedPreviewSizes=ParameterUtils.convertSizeList(mParams.getSupportedPreviewSizes());
 long largestOutputArea=largestOutput.getHeight() * (long)largestOutput.getWidth();
@@ -94,7 +90,7 @@ if (DEBUG) {
 Log.d(TAG,"No Intermediate buffer selected, no preview outputs were configured");
 }
 }
-Size smallestSupportedJpegSize=calculatePictureSize(mCallbackOutputs,mParams);
+Size smallestSupportedJpegSize=calculatePictureSize(mCallbackOutputs,callbackOutputSizes,mParams);
 if (smallestSupportedJpegSize != null) {
 Log.i(TAG,"configureOutputs - set take picture size to " + smallestSupportedJpegSize);
 mParams.setPictureSize(smallestSupportedJpegSize.getWidth(),smallestSupportedJpegSize.getHeight());
@@ -104,7 +100,12 @@ mGLThreadManager=new GLThreadManager(mCameraId,facing,mDeviceState);
 mGLThreadManager.start();
 }
 mGLThreadManager.waitUntilStarted();
-mGLThreadManager.setConfigurationAndWait(mPreviewOutputs,mCaptureCollector);
+List<Pair<Surface,Size>> previews=new ArrayList<>();
+Iterator<Size> previewSizeIter=previewOutputSizes.iterator();
+for (Surface p : mPreviewOutputs) {
+previews.add(new Pair<>(p,previewSizeIter.next()));
+}
+mGLThreadManager.setConfigurationAndWait(previews,mCaptureCollector);
 mGLThreadManager.allowNewFrames();
 mPreviewTexture=mGLThreadManager.getCurrentSurfaceTexture();
 if (mPreviewTexture != null) {
