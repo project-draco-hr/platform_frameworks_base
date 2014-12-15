@@ -1,0 +1,46 @@
+{
+  JSONArray authorities=accountJSON.getJSONArray(KEY_ACCOUNT_AUTHORITIES);
+  String accountName=accountJSON.getString(KEY_ACCOUNT_NAME);
+  String accountType=accountJSON.getString(KEY_ACCOUNT_TYPE);
+  final Account account=new Account(accountName,accountType);
+  for (int i=0; i < authorities.length(); i++) {
+    JSONObject authority=(JSONObject)authorities.get(i);
+    final String authorityName=authority.getString(KEY_AUTHORITY_NAME);
+    boolean syncEnabled=authority.getBoolean(KEY_AUTHORITY_SYNC_ENABLED);
+    if (ContentResolver.isSyncActive(account,authorityName)) {
+      ContentResolver.cancelSync(account,authorityName);
+    }
+    boolean overwriteSync=true;
+    Bundle initializationExtras=createSyncInitializationBundle();
+    int currentSyncState=ContentResolver.getIsSyncable(account,authorityName);
+    if (currentSyncState < 0) {
+      final CountDownLatch latch=new CountDownLatch(1);
+      Object syncStatusObserverHandle=ContentResolver.addStatusChangeListener(ContentResolver.SYNC_OBSERVER_TYPE_ACTIVE,new SyncStatusObserver(){
+        @Override public void onStatusChanged(        int which){
+          if (!ContentResolver.isSyncActive(account,authorityName)) {
+            latch.countDown();
+          }
+        }
+      }
+);
+      ContentResolver.requestSync(account,authorityName,initializationExtras);
+      boolean done=false;
+      try {
+        done=latch.await(SYNC_REQUEST_LATCH_TIMEOUT_SECONDS,TimeUnit.SECONDS);
+      }
+ catch (      InterruptedException e) {
+        Log.e(TAG,"CountDownLatch interrupted\n" + e);
+        done=false;
+      }
+      if (!done) {
+        overwriteSync=false;
+        Log.i(TAG,"CountDownLatch timed out, skipping '" + authorityName + "' authority.");
+      }
+      ContentResolver.removeStatusChangeListener(syncStatusObserverHandle);
+    }
+    if (overwriteSync) {
+      ContentResolver.setSyncAutomatically(account,authorityName,syncEnabled);
+      Log.i(TAG,"Set sync automatically for '" + authorityName + "': "+ syncEnabled);
+    }
+  }
+}
