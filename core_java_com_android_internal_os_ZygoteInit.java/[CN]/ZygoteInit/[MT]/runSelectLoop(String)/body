@@ -1,32 +1,36 @@
 {
   ArrayList<FileDescriptor> fds=new ArrayList<FileDescriptor>();
   ArrayList<ZygoteConnection> peers=new ArrayList<ZygoteConnection>();
-  FileDescriptor[] fdArray=new FileDescriptor[4];
   fds.add(sServerSocket.getFileDescriptor());
   peers.add(null);
   while (true) {
-    int index;
+    StructPollfd[] pollFds=new StructPollfd[fds.size()];
+    for (int i=0; i < pollFds.length; ++i) {
+      pollFds[i]=new StructPollfd();
+      pollFds[i].fd=fds.get(i);
+      pollFds[i].events=(short)POLLIN;
+    }
     try {
-      fdArray=fds.toArray(fdArray);
-      index=selectReadable(fdArray);
+      Os.poll(pollFds,-1);
     }
- catch (    IOException ex) {
-      throw new RuntimeException("Error in select()",ex);
+ catch (    ErrnoException ex) {
+      throw new RuntimeException("poll failed",ex);
     }
-    if (index < 0) {
-      throw new RuntimeException("Error in select()");
-    }
- else     if (index == 0) {
-      ZygoteConnection newPeer=acceptCommandPeer(abiList);
-      peers.add(newPeer);
-      fds.add(newPeer.getFileDesciptor());
-    }
+    for (int i=pollFds.length - 1; i >= 0; --i) {
+      if ((pollFds[i].revents & POLLIN) == 0) {
+        continue;
+      }
+      if (i == 0) {
+        ZygoteConnection newPeer=acceptCommandPeer(abiList);
+        peers.add(newPeer);
+        fds.add(newPeer.getFileDesciptor());
+      }
  else {
-      boolean done;
-      done=peers.get(index).runOnce();
-      if (done) {
-        peers.remove(index);
-        fds.remove(index);
+        boolean done=peers.get(i).runOnce();
+        if (done) {
+          peers.remove(i);
+          fds.remove(i);
+        }
       }
     }
   }
