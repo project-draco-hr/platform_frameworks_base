@@ -1,10 +1,6 @@
 {
   try {
     String requestLine=getLine(connection.getInputStream());
-    if (requestLine == null) {
-      connection.close();
-      return;
-    }
     String[] splitLine=requestLine.split(" ");
     if (splitLine.length < 3) {
       connection.close();
@@ -12,22 +8,30 @@
     }
     String requestType=splitLine[0];
     String urlString=splitLine[1];
-    String host="";
-    int port=80;
+    String httpVersion=splitLine[2];
+    URI url=null;
+    String host;
+    int port;
     if (requestType.equals(CONNECT)) {
       String[] hostPortSplit=urlString.split(":");
       host=hostPortSplit[0];
-      try {
-        port=Integer.parseInt(hostPortSplit[1]);
-      }
- catch (      NumberFormatException nfe) {
+      if (hostPortSplit.length < 2) {
         port=443;
+      }
+ else {
+        try {
+          port=Integer.parseInt(hostPortSplit[1]);
+        }
+ catch (        NumberFormatException nfe) {
+          connection.close();
+          return;
+        }
       }
       urlString="Https://" + host + ":"+ port;
     }
  else {
       try {
-        URI url=new URI(urlString);
+        url=new URI(urlString);
         host=url.getHost();
         port=url.getPort();
         if (port < 0) {
@@ -57,33 +61,38 @@
  else {
           server=new Socket(host,port);
           if (requestType.equals(CONNECT)) {
-            while (getLine(connection.getInputStream()).length() != 0)             ;
+            skipToRequestBody(connection);
             sendLine(connection,HTTP_OK);
           }
  else {
-            sendLine(server,requestLine);
+            sendAugmentedRequestToHost(connection,server,requestType,url,httpVersion);
           }
         }
       }
  catch (      IOException ioe) {
+        if (Log.isLoggable(TAG,Log.VERBOSE)) {
+          Log.v(TAG,"Unable to connect to proxy " + proxy,ioe);
+        }
       }
       if (server != null) {
         break;
       }
     }
-    if (server == null) {
+    if (list.isEmpty()) {
       server=new Socket(host,port);
       if (requestType.equals(CONNECT)) {
-        while (getLine(connection.getInputStream()).length() != 0)         ;
+        skipToRequestBody(connection);
         sendLine(connection,HTTP_OK);
       }
  else {
-        sendLine(server,requestLine);
+        sendAugmentedRequestToHost(connection,server,requestType,url,httpVersion);
       }
     }
-    SocketConnect.connect(connection,server);
+    if (server != null) {
+      SocketConnect.connect(connection,server);
+    }
   }
- catch (  IOException e) {
+ catch (  Exception e) {
     Log.d(TAG,"Problem Proxying",e);
   }
   try {
