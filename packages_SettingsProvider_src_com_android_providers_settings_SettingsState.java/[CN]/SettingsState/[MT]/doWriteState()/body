@@ -1,0 +1,49 @@
+{
+  if (DEBUG_PERSISTENCE) {
+    Slog.i(LOG_TAG,"[PERSIST START]");
+  }
+  AtomicFile destination=new AtomicFile(mStatePersistFile);
+  final int version;
+  final ArrayMap<String,Setting> settings;
+synchronized (mLock) {
+    version=mVersion;
+    settings=new ArrayMap<>(mSettings);
+    mDirty=false;
+    mWriteScheduled=false;
+  }
+  FileOutputStream out=null;
+  try {
+    out=destination.startWrite();
+    XmlSerializer serializer=Xml.newSerializer();
+    serializer.setOutput(out,"utf-8");
+    serializer.startDocument(null,true);
+    serializer.startTag(null,TAG_SETTINGS);
+    serializer.attribute(null,ATTR_VERSION,String.valueOf(version));
+    final int settingCount=settings.size();
+    for (int i=0; i < settingCount; i++) {
+      Setting setting=settings.valueAt(i);
+      serializer.startTag(null,TAG_SETTING);
+      serializer.attribute(null,ATTR_ID,setting.getId());
+      serializer.attribute(null,ATTR_NAME,setting.getName());
+      serializer.attribute(null,ATTR_VALUE,packValue(setting.getValue()));
+      serializer.attribute(null,ATTR_PACKAGE,packValue(setting.getPackageName()));
+      serializer.endTag(null,TAG_SETTING);
+      if (DEBUG_PERSISTENCE) {
+        Slog.i(LOG_TAG,"[PERSISTED]" + setting.getName() + "="+ setting.getValue());
+      }
+    }
+    serializer.endTag(null,TAG_SETTINGS);
+    serializer.endDocument();
+    destination.finishWrite(out);
+    if (DEBUG_PERSISTENCE) {
+      Slog.i(LOG_TAG,"[PERSIST END]");
+    }
+  }
+ catch (  IOException e) {
+    Slog.w(LOG_TAG,"Failed to write settings, restoring backup",e);
+    destination.failWrite(out);
+  }
+ finally {
+    IoUtils.closeQuietly(out);
+  }
+}

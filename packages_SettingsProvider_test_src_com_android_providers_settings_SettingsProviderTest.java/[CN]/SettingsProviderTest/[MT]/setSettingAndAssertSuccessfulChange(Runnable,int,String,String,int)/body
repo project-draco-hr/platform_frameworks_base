@@ -1,0 +1,42 @@
+{
+  ContentResolver contentResolver=getContext().getContentResolver();
+  final Uri settingUri=getBaseUriForType(type);
+  final AtomicBoolean success=new AtomicBoolean();
+  ContentObserver contentObserver=new ContentObserver(new Handler(Looper.getMainLooper())){
+    public void onChange(    boolean selfChange,    Uri changeUri,    int changeId){
+      Log.i(LOG_TAG,"onChange(" + selfChange + ", "+ changeUri+ ", "+ changeId+ ")");
+      assertEquals("Wrong change Uri",changeUri,settingUri);
+      assertEquals("Wrong user id",userId,changeId);
+      String changeValue=getStringViaFrontEndApiSetting(type,name,userId);
+      assertEquals("Wrong setting value",value,changeValue);
+      success.set(true);
+synchronized (mLock) {
+        mLock.notifyAll();
+      }
+    }
+  }
+;
+  contentResolver.registerContentObserver(settingUri,false,contentObserver,userId);
+  try {
+    setCommand.run();
+    final long startTimeMillis=SystemClock.uptimeMillis();
+synchronized (mLock) {
+      if (success.get()) {
+        return;
+      }
+      final long elapsedTimeMillis=SystemClock.uptimeMillis() - startTimeMillis;
+      if (elapsedTimeMillis > WAIT_FOR_SETTING_URI_CHANGE_TIMEOUT_MILLIS) {
+        fail("Could not change setting for " + WAIT_FOR_SETTING_URI_CHANGE_TIMEOUT_MILLIS + " ms");
+      }
+      final long remainingTimeMillis=WAIT_FOR_SETTING_URI_CHANGE_TIMEOUT_MILLIS - elapsedTimeMillis;
+      try {
+        mLock.wait(remainingTimeMillis);
+      }
+ catch (      InterruptedException ie) {
+      }
+    }
+  }
+  finally {
+    contentResolver.unregisterContentObserver(contentObserver);
+  }
+}

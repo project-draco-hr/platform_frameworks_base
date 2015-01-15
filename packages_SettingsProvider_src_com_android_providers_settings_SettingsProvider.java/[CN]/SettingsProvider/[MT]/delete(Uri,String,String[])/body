@@ -1,35 +1,35 @@
 {
-  int callingUser=UserHandle.getCallingUserId();
-  if (LOCAL_LOGV)   Slog.v(TAG,"delete() for user " + callingUser);
-  SqlArguments args=new SqlArguments(url,where,whereArgs);
-  if (TABLE_FAVORITES.equals(args.table)) {
+  if (DEBUG) {
+    Slog.v(LOG_TAG,"delete() for user: " + UserHandle.getCallingUserId());
+  }
+  Arguments args=new Arguments(uri,where,whereArgs,false);
+  if (REMOVED_LEGACY_TABLES.contains(args.table)) {
     return 0;
   }
- else   if (TABLE_OLD_FAVORITES.equals(args.table)) {
-    args.table=TABLE_FAVORITES;
+  if (TextUtils.isEmpty(args.name)) {
+    return 0;
   }
- else   if (TABLE_GLOBAL.equals(args.table)) {
-    callingUser=UserHandle.USER_OWNER;
+synchronized (mLock) {
+switch (args.table) {
+case TABLE_GLOBAL:
+{
+        final int userId=UserHandle.getCallingUserId();
+        return deleteGlobalSettingLocked(args.name,userId) ? 1 : 0;
+      }
+case TABLE_SECURE:
+{
+      final int userId=UserHandle.getCallingUserId();
+      return deleteSecureSettingLocked(args.name,userId) ? 1 : 0;
+    }
+case TABLE_SYSTEM:
+{
+    final int userId=UserHandle.getCallingUserId();
+    return deleteSystemSettingLocked(args.name,userId) ? 1 : 0;
   }
-  checkWritePermissions(args);
-  final AtomicInteger mutationCount;
-synchronized (this) {
-    mutationCount=sKnownMutationsInFlight.get(callingUser);
-  }
-  if (mutationCount != null) {
-    mutationCount.incrementAndGet();
-  }
-  DatabaseHelper dbH=getOrEstablishDatabase(callingUser);
-  SQLiteDatabase db=dbH.getWritableDatabase();
-  int count=db.delete(args.table,args.where,args.args);
-  if (mutationCount != null) {
-    mutationCount.decrementAndGet();
-  }
-  if (count > 0) {
-    invalidateCache(callingUser,args.table);
-    sendNotify(url,callingUser);
-  }
-  startAsyncCachePopulation(callingUser);
-  if (LOCAL_LOGV)   Log.v(TAG,args.table + ": " + count+ " row(s) deleted");
-  return count;
+default :
+{
+  throw new IllegalArgumentException("Bad Uri path:" + uri);
+}
+}
+}
 }
