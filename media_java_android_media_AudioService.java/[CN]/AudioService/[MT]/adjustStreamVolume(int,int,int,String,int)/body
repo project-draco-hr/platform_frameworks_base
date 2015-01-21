@@ -5,7 +5,11 @@
   if (DEBUG_VOL)   Log.d(TAG,"adjustStreamVolume() stream=" + streamType + ", dir="+ direction+ ", flags="+ flags);
   ensureValidDirection(direction);
   ensureValidStreamType(streamType);
+  boolean isMuteAdjust=isMuteAdjust(direction);
   int streamTypeAlias=mStreamVolumeAlias[streamType];
+  if (isMuteAdjust && !isStreamAffectedByMute(streamTypeAlias)) {
+    return;
+  }
   VolumeStreamState streamState=mStreamStates[streamTypeAlias];
   final int device=getDeviceForStream(streamTypeAlias);
   int aliasIndex=streamState.getIndex(device);
@@ -59,11 +63,35 @@ synchronized (mA2dpAvrcpLock) {
         }
       }
     }
-    if ((direction == AudioManager.ADJUST_RAISE) && !checkSafeMediaVolume(streamTypeAlias,aliasIndex + step,device)) {
+    if (isMuteAdjust) {
+      boolean state;
+      if (direction == AudioManager.ADJUST_TOGGLE_MUTE) {
+        state=!streamState.mIsMuted;
+      }
+ else {
+        state=direction == AudioManager.ADJUST_MUTE;
+      }
+      if (streamTypeAlias == AudioSystem.STREAM_MUSIC) {
+        setSystemAudioMute(state);
+      }
+      for (int stream=0; stream < mStreamStates.length; stream++) {
+        if (streamTypeAlias == mStreamVolumeAlias[stream]) {
+          mStreamStates[stream].mute(state);
+          Intent intent=new Intent(AudioManager.STREAM_MUTE_CHANGED_ACTION);
+          intent.putExtra(AudioManager.EXTRA_VOLUME_STREAM_TYPE,stream);
+          intent.putExtra(AudioManager.EXTRA_STREAM_VOLUME_MUTED,state);
+          sendBroadcastToAll(intent);
+        }
+      }
+    }
+ else     if ((direction == AudioManager.ADJUST_RAISE) && !checkSafeMediaVolume(streamTypeAlias,aliasIndex + step,device)) {
       Log.e(TAG,"adjustStreamVolume() safe volume index = " + oldIndex);
       mVolumeController.postDisplaySafeVolumeWarning(flags);
     }
- else     if (streamState.adjustIndex(direction * step,device)) {
+ else     if (streamState.adjustIndex(direction * step,device) || streamState.mIsMuted) {
+      if (streamState.mIsMuted) {
+        streamState.mute(false);
+      }
       sendMsg(mAudioHandler,MSG_SET_DEVICE_VOLUME,SENDMSG_QUEUE,device,0,streamState,0);
     }
     int newIndex=mStreamStates[streamType].getIndex(device);
