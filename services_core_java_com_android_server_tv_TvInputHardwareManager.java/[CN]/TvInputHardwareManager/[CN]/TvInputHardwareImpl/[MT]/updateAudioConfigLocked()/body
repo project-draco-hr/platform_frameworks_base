@@ -1,7 +1,7 @@
 {
   boolean sinkUpdated=updateAudioSinkLocked();
   boolean sourceUpdated=updateAudioSourceLocked();
-  if (mAudioSource == null || mAudioSink == null || mActiveConfig == null) {
+  if (mAudioSource == null || mAudioSink.isEmpty() || mActiveConfig == null) {
     if (mAudioPatch != null) {
       mAudioManager.releaseAudioPatch(mAudioPatch);
       mAudioPatch=null;
@@ -36,36 +36,41 @@
     }
   }
   AudioPortConfig sourceConfig=mAudioSource.activeConfig();
-  AudioPortConfig sinkConfig=mAudioSink.activeConfig();
+  List<AudioPortConfig> sinkConfigs=new ArrayList<>();
   AudioPatch[] audioPatchArray=new AudioPatch[]{mAudioPatch};
   boolean shouldRecreateAudioPatch=sourceUpdated || sinkUpdated;
-  int sinkSamplingRate=mDesiredSamplingRate;
-  int sinkChannelMask=mDesiredChannelMask;
-  int sinkFormat=mDesiredFormat;
-  if (sinkConfig != null) {
-    if (sinkSamplingRate == 0) {
-      sinkSamplingRate=sinkConfig.samplingRate();
+  for (  AudioDevicePort audioSink : mAudioSink) {
+    AudioPortConfig sinkConfig=audioSink.activeConfig();
+    int sinkSamplingRate=mDesiredSamplingRate;
+    int sinkChannelMask=mDesiredChannelMask;
+    int sinkFormat=mDesiredFormat;
+    if (sinkConfig != null) {
+      if (sinkSamplingRate == 0) {
+        sinkSamplingRate=sinkConfig.samplingRate();
+      }
+      if (sinkChannelMask == AudioFormat.CHANNEL_OUT_DEFAULT) {
+        sinkChannelMask=sinkConfig.channelMask();
+      }
+      if (sinkFormat == AudioFormat.ENCODING_DEFAULT) {
+        sinkChannelMask=sinkConfig.format();
+      }
     }
-    if (sinkChannelMask == AudioFormat.CHANNEL_OUT_DEFAULT) {
-      sinkChannelMask=sinkConfig.channelMask();
+    if (sinkConfig == null || sinkConfig.samplingRate() != sinkSamplingRate || sinkConfig.channelMask() != sinkChannelMask || sinkConfig.format() != sinkFormat) {
+      if (!intArrayContains(audioSink.samplingRates(),sinkSamplingRate) && audioSink.samplingRates().length > 0) {
+        sinkSamplingRate=audioSink.samplingRates()[0];
+      }
+      if (!intArrayContains(audioSink.channelMasks(),sinkChannelMask)) {
+        sinkChannelMask=AudioFormat.CHANNEL_OUT_DEFAULT;
+      }
+      if (!intArrayContains(audioSink.formats(),sinkFormat)) {
+        sinkFormat=AudioFormat.ENCODING_DEFAULT;
+      }
+      sinkConfig=audioSink.buildConfig(sinkSamplingRate,sinkChannelMask,sinkFormat,null);
+      shouldRecreateAudioPatch=true;
     }
-    if (sinkFormat == AudioFormat.ENCODING_DEFAULT) {
-      sinkChannelMask=sinkConfig.format();
-    }
+    sinkConfigs.add(sinkConfig);
   }
-  if (sinkConfig == null || sinkConfig.samplingRate() != sinkSamplingRate || sinkConfig.channelMask() != sinkChannelMask || sinkConfig.format() != sinkFormat) {
-    if (!intArrayContains(mAudioSink.samplingRates(),sinkSamplingRate) && mAudioSink.samplingRates().length > 0) {
-      sinkSamplingRate=mAudioSink.samplingRates()[0];
-    }
-    if (!intArrayContains(mAudioSink.channelMasks(),sinkChannelMask)) {
-      sinkChannelMask=AudioFormat.CHANNEL_OUT_DEFAULT;
-    }
-    if (!intArrayContains(mAudioSink.formats(),sinkFormat)) {
-      sinkFormat=AudioFormat.ENCODING_DEFAULT;
-    }
-    sinkConfig=mAudioSink.buildConfig(sinkSamplingRate,sinkChannelMask,sinkFormat,null);
-    shouldRecreateAudioPatch=true;
-  }
+  AudioPortConfig sinkConfig=sinkConfigs.get(0);
   if (sourceConfig == null || sourceGainConfig != null) {
     int sourceSamplingRate=0;
     if (intArrayContains(mAudioSource.samplingRates(),sinkConfig.samplingRate())) {
@@ -90,7 +95,7 @@
   }
   if (shouldRecreateAudioPatch) {
     mCommittedVolume=volume;
-    mAudioManager.createAudioPatch(audioPatchArray,new AudioPortConfig[]{sourceConfig},new AudioPortConfig[]{sinkConfig});
+    mAudioManager.createAudioPatch(audioPatchArray,new AudioPortConfig[]{sourceConfig},sinkConfigs.toArray(new AudioPortConfig[0]));
     mAudioPatch=audioPatchArray[0];
     if (sourceGainConfig != null) {
       mAudioManager.setAudioPortGain(mAudioSource,sourceGainConfig);
