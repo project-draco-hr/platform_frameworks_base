@@ -1,9 +1,10 @@
 {
   enforceNotIsolatedCaller("registerReceiver");
+  ArrayList<Intent> stickyIntents=null;
+  ProcessRecord callerApp=null;
   int callingUid;
   int callingPid;
 synchronized (this) {
-    ProcessRecord callerApp=null;
     if (caller != null) {
       callerApp=getRecordForAppLocked(caller);
       if (callerApp == null) {
@@ -20,24 +21,51 @@ synchronized (this) {
       callingUid=Binder.getCallingUid();
       callingPid=Binder.getCallingPid();
     }
-    userId=this.handleIncomingUser(callingPid,callingUid,userId,true,ALLOW_FULL_ONLY,"registerReceiver",callerPackage);
-    List allSticky=null;
-    Iterator actions=filter.actionsIterator();
-    if (actions != null) {
-      while (actions.hasNext()) {
-        String action=(String)actions.next();
-        allSticky=getStickiesLocked(action,filter,allSticky,UserHandle.USER_ALL);
-        allSticky=getStickiesLocked(action,filter,allSticky,UserHandle.getUserId(callingUid));
+    userId=handleIncomingUser(callingPid,callingUid,userId,true,ALLOW_FULL_ONLY,"registerReceiver",callerPackage);
+    Iterator<String> actions=filter.actionsIterator();
+    if (actions == null) {
+      ArrayList<String> noAction=new ArrayList<String>(1);
+      noAction.add(null);
+      actions=noAction.iterator();
+    }
+    int[] userIds={UserHandle.USER_ALL,UserHandle.getUserId(callingUid)};
+    while (actions.hasNext()) {
+      String action=actions.next();
+      for (      int id : userIds) {
+        ArrayMap<String,ArrayList<Intent>> stickies=mStickyBroadcasts.get(id);
+        if (stickies != null) {
+          ArrayList<Intent> intents=stickies.get(action);
+          if (intents != null) {
+            if (stickyIntents == null) {
+              stickyIntents=new ArrayList<Intent>();
+            }
+            stickyIntents.addAll(intents);
+          }
+        }
       }
     }
- else {
-      allSticky=getStickiesLocked(null,filter,allSticky,UserHandle.USER_ALL);
-      allSticky=getStickiesLocked(null,filter,allSticky,UserHandle.getUserId(callingUid));
+  }
+  ArrayList<Intent> allSticky=null;
+  if (stickyIntents != null) {
+    final ContentResolver resolver=mContext.getContentResolver();
+    for (int i=0, N=stickyIntents.size(); i < N; i++) {
+      Intent intent=stickyIntents.get(i);
+      if (filter.match(resolver,intent,true,TAG) >= 0) {
+        if (allSticky == null) {
+          allSticky=new ArrayList<Intent>();
+        }
+        allSticky.add(intent);
+      }
     }
-    Intent sticky=allSticky != null ? (Intent)allSticky.get(0) : null;
-    if (DEBUG_BROADCAST)     Slog.v(TAG,"Register receiver " + filter + ": "+ sticky);
-    if (receiver == null) {
-      return sticky;
+  }
+  Intent sticky=allSticky != null ? allSticky.get(0) : null;
+  if (DEBUG_BROADCAST)   Slog.v(TAG,"Register receiver " + filter + ": "+ sticky);
+  if (receiver == null) {
+    return sticky;
+  }
+synchronized (this) {
+    if (callerApp != null && callerApp.pid == 0) {
+      return null;
     }
     ReceiverList rl=(ReceiverList)mRegisteredReceivers.get(receiver.asBinder());
     if (rl == null) {
