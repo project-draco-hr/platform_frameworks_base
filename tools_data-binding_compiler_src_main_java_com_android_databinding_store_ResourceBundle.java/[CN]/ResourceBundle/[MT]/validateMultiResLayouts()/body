@@ -1,0 +1,103 @@
+{
+  final Iterable<Map.Entry<String,List<LayoutFileBundle>>> multiResLayouts=Iterables.filter(mLayoutBundles.entrySet(),new Predicate<Map.Entry<String,List<LayoutFileBundle>>>(){
+    @Override public boolean apply(    Map.Entry<String,List<LayoutFileBundle>> input){
+      return input.getValue().size() > 1;
+    }
+  }
+);
+  for (  Map.Entry<String,List<LayoutFileBundle>> bundles : multiResLayouts) {
+    Map<String,String> variableTypes=new HashMap<>();
+    Map<String,String> importTypes=new HashMap<>();
+    for (    LayoutFileBundle bundle : bundles.getValue()) {
+      bundle.mHasVariations=true;
+      for (      Map.Entry<String,String> variable : bundle.mVariables.entrySet()) {
+        String existing=variableTypes.get(variable.getKey());
+        Preconditions.checkState(existing == null || existing.equals(variable.getValue()),"inconsistent variable types for %s for layout %s",variable.getKey(),bundle.mFileName);
+        variableTypes.put(variable.getKey(),variable.getValue());
+      }
+      for (      Map.Entry<String,String> userImport : bundle.mImports.entrySet()) {
+        String existing=importTypes.get(userImport.getKey());
+        Preconditions.checkState(existing == null || existing.equals(userImport.getValue()),"inconsistent variable types for %s for layout %s",userImport.getKey(),bundle.mFileName);
+        importTypes.put(userImport.getKey(),userImport.getValue());
+      }
+    }
+    for (    LayoutFileBundle bundle : bundles.getValue()) {
+      L.d("checking for missing variables in %s / %s",bundle.mFileName,bundle.mConfigName);
+      for (      Map.Entry<String,String> variable : variableTypes.entrySet()) {
+        if (!bundle.mVariables.containsKey(variable.getKey())) {
+          bundle.mVariables.put(variable.getKey(),variable.getValue());
+          L.d("adding missing variable %s to %s / %s",variable.getKey(),bundle.mFileName,bundle.mConfigName);
+        }
+      }
+      for (      Map.Entry<String,String> userImport : importTypes.entrySet()) {
+        if (!bundle.mImports.containsKey(userImport.getKey())) {
+          bundle.mImports.put(userImport.getKey(),userImport.getValue());
+          L.d("adding missing import %s to %s / %s",userImport.getKey(),bundle.mFileName,bundle.mConfigName);
+        }
+      }
+    }
+    Set<String> includeBindingIds=new HashSet<>();
+    Set<String> viewBindingIds=new HashSet<>();
+    Map<String,String> viewTypes=new HashMap<>();
+    L.d("validating ids for %s",bundles.getKey());
+    for (    LayoutFileBundle bundle : bundles.getValue()) {
+      for (      BindingTargetBundle target : bundle.mBindingTargetBundles) {
+        L.d("checking %s %s %s",target.getId(),target.mFullClassName,target.isBinder());
+        if (target.isBinder()) {
+          Preconditions.checkState(!viewBindingIds.contains(target.mFullClassName),"Cannot use the same id for a View and an include tag. Error in " + "file %s / %s",bundle.mFileName,bundle.mConfigName);
+          includeBindingIds.add(target.mFullClassName);
+        }
+ else {
+          Preconditions.checkState(!includeBindingIds.contains(target.mFullClassName),"Cannot use the same id for a View and an include tag. Error in " + "file %s / %s",bundle.mFileName,bundle.mConfigName);
+          viewBindingIds.add(target.mFullClassName);
+        }
+        String existingType=viewTypes.get(target.mId);
+        if (existingType == null) {
+          L.d("assigning %s as %s",target.getId(),target.mFullClassName);
+          viewTypes.put(target.mId,target.mFullClassName);
+        }
+ else         if (!existingType.equals(target.mFullClassName)) {
+          if (target.isBinder()) {
+            L.d("overriding %s as base binder",target.getId());
+            viewTypes.put(target.mId,"com.android.databinding.library.IViewDataBinder");
+          }
+ else {
+            L.d("overriding %s as base view",target.getId());
+            viewTypes.put(target.mId,"android.view.View");
+          }
+        }
+      }
+    }
+    for (    LayoutFileBundle bundle : bundles.getValue()) {
+      for (      Map.Entry<String,String> viewType : viewTypes.entrySet()) {
+        BindingTargetBundle target=bundle.getBindingTargetById(viewType.getKey());
+        if (target == null) {
+          bundle.createBindingTarget(viewType.getKey(),viewType.getValue(),false);
+        }
+ else {
+          L.d("setting interface type on %s (%s) as %s",target.mId,target.mFullClassName,viewType.getValue());
+          target.setInterfaceType(viewType.getValue());
+        }
+      }
+    }
+  }
+  for (  Map.Entry<String,List<LayoutFileBundle>> entry : mLayoutBundles.entrySet()) {
+    for (    LayoutFileBundle bundle : entry.getValue()) {
+      final String configName;
+      if (bundle.hasVariations()) {
+        final String parentFileName=bundle.mTransientFile.getParentFile().getName();
+        L.d("parent file for %s is %s",bundle.mTransientFile.getName(),parentFileName);
+        if ("layout".equals(parentFileName)) {
+          configName="";
+        }
+ else {
+          configName=ParserHelper.INSTANCE$.toClassName(parentFileName.substring("layout-".length()));
+        }
+      }
+ else {
+        configName="";
+      }
+      bundle.mConfigName=configName;
+    }
+  }
+}
