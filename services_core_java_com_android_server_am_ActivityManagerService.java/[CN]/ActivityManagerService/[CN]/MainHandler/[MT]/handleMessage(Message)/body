@@ -208,26 +208,27 @@ Slog.w(TAG,"Failed to update http proxy for: " + r.info.processName);
 break;
 case SHOW_UID_ERROR_MSG:
 {
-String title="System UIDs Inconsistent";
-String text="UIDs on the system are inconsistent, you need to wipe your" + " data partition or your device will be unstable.";
-Log.e(TAG,title + ": " + text);
 if (mShowDialogs) {
 AlertDialog d=new BaseErrorDialog(mContext);
 d.getWindow().setType(WindowManager.LayoutParams.TYPE_SYSTEM_ERROR);
 d.setCancelable(false);
-d.setTitle(title);
-d.setMessage(text);
-d.setButton(DialogInterface.BUTTON_POSITIVE,"I'm Feeling Lucky",mHandler.obtainMessage(IM_FEELING_LUCKY_MSG));
-mUidAlert=d;
+d.setTitle(mContext.getText(R.string.android_system_label));
+d.setMessage(mContext.getText(R.string.system_error_wipe_data));
+d.setButton(DialogInterface.BUTTON_POSITIVE,mContext.getText(R.string.ok),mHandler.obtainMessage(DISMISS_DIALOG_MSG,d));
 d.show();
 }
 }
 break;
-case IM_FEELING_LUCKY_MSG:
+case SHOW_FINGERPRINT_ERROR_MSG:
 {
-if (mUidAlert != null) {
-mUidAlert.dismiss();
-mUidAlert=null;
+if (mShowDialogs) {
+AlertDialog d=new BaseErrorDialog(mContext);
+d.getWindow().setType(WindowManager.LayoutParams.TYPE_SYSTEM_ERROR);
+d.setCancelable(false);
+d.setTitle(mContext.getText(R.string.android_system_label));
+d.setMessage(mContext.getText(R.string.system_error_manufacturer));
+d.setButton(DialogInterface.BUTTON_POSITIVE,mContext.getText(R.string.ok),mHandler.obtainMessage(DISMISS_DIALOG_MSG,d));
+d.show();
 }
 }
 break;
@@ -375,162 +376,7 @@ case REPORT_MEM_USAGE_MSG:
 final ArrayList<ProcessMemInfo> memInfos=(ArrayList<ProcessMemInfo>)msg.obj;
 Thread thread=new Thread(){
 @Override public void run(){
-final SparseArray<ProcessMemInfo> infoMap=new SparseArray<ProcessMemInfo>(memInfos.size());
-for (int i=0, N=memInfos.size(); i < N; i++) {
-ProcessMemInfo mi=memInfos.get(i);
-infoMap.put(mi.pid,mi);
-}
-updateCpuStatsNow();
-synchronized (mProcessCpuTracker) {
-final int N=mProcessCpuTracker.countStats();
-for (int i=0; i < N; i++) {
-ProcessCpuTracker.Stats st=mProcessCpuTracker.getStats(i);
-if (st.vsize > 0) {
-long pss=Debug.getPss(st.pid,null);
-if (pss > 0) {
-if (infoMap.indexOfKey(st.pid) < 0) {
-ProcessMemInfo mi=new ProcessMemInfo(st.name,st.pid,ProcessList.NATIVE_ADJ,-1,"native",null);
-mi.pss=pss;
-memInfos.add(mi);
-}
-}
-}
-}
-}
-long totalPss=0;
-for (int i=0, N=memInfos.size(); i < N; i++) {
-ProcessMemInfo mi=memInfos.get(i);
-if (mi.pss == 0) {
-mi.pss=Debug.getPss(mi.pid,null);
-}
-totalPss+=mi.pss;
-}
-Collections.sort(memInfos,new Comparator<ProcessMemInfo>(){
-@Override public int compare(ProcessMemInfo lhs,ProcessMemInfo rhs){
-if (lhs.oomAdj != rhs.oomAdj) {
-return lhs.oomAdj < rhs.oomAdj ? -1 : 1;
-}
-if (lhs.pss != rhs.pss) {
-return lhs.pss < rhs.pss ? 1 : -1;
-}
-return 0;
-}
-}
-);
-StringBuilder tag=new StringBuilder(128);
-StringBuilder stack=new StringBuilder(128);
-tag.append("Low on memory -- ");
-appendMemBucket(tag,totalPss,"total",false);
-appendMemBucket(stack,totalPss,"total",true);
-StringBuilder logBuilder=new StringBuilder(1024);
-logBuilder.append("Low on memory:\n");
-boolean firstLine=true;
-int lastOomAdj=Integer.MIN_VALUE;
-for (int i=0, N=memInfos.size(); i < N; i++) {
-ProcessMemInfo mi=memInfos.get(i);
-if (mi.oomAdj != ProcessList.NATIVE_ADJ && (mi.oomAdj < ProcessList.SERVICE_ADJ || mi.oomAdj == ProcessList.HOME_APP_ADJ || mi.oomAdj == ProcessList.PREVIOUS_APP_ADJ)) {
-if (lastOomAdj != mi.oomAdj) {
-lastOomAdj=mi.oomAdj;
-if (mi.oomAdj <= ProcessList.FOREGROUND_APP_ADJ) {
-tag.append(" / ");
-}
-if (mi.oomAdj >= ProcessList.FOREGROUND_APP_ADJ) {
-if (firstLine) {
-stack.append(":");
-firstLine=false;
-}
-stack.append("\n\t at ");
-}
- else {
-stack.append("$");
-}
-}
- else {
-tag.append(" ");
-stack.append("$");
-}
-if (mi.oomAdj <= ProcessList.FOREGROUND_APP_ADJ) {
-appendMemBucket(tag,mi.pss,mi.name,false);
-}
-appendMemBucket(stack,mi.pss,mi.name,true);
-if (mi.oomAdj >= ProcessList.FOREGROUND_APP_ADJ && ((i + 1) >= N || memInfos.get(i + 1).oomAdj != lastOomAdj)) {
-stack.append("(");
-for (int k=0; k < DUMP_MEM_OOM_ADJ.length; k++) {
-if (DUMP_MEM_OOM_ADJ[k] == mi.oomAdj) {
-stack.append(DUMP_MEM_OOM_LABEL[k]);
-stack.append(":");
-stack.append(DUMP_MEM_OOM_ADJ[k]);
-}
-}
-stack.append(")");
-}
-}
-logBuilder.append("  ");
-logBuilder.append(ProcessList.makeOomAdjString(mi.oomAdj));
-logBuilder.append(' ');
-logBuilder.append(ProcessList.makeProcStateString(mi.procState));
-logBuilder.append(' ');
-ProcessList.appendRamKb(logBuilder,mi.pss);
-logBuilder.append(" kB: ");
-logBuilder.append(mi.name);
-logBuilder.append(" (");
-logBuilder.append(mi.pid);
-logBuilder.append(") ");
-logBuilder.append(mi.adjType);
-logBuilder.append('\n');
-if (mi.adjReason != null) {
-logBuilder.append("                      ");
-logBuilder.append(mi.adjReason);
-logBuilder.append('\n');
-}
-}
-logBuilder.append("           ");
-ProcessList.appendRamKb(logBuilder,totalPss);
-logBuilder.append(" kB: TOTAL\n");
-long[] infos=new long[Debug.MEMINFO_COUNT];
-Debug.getMemInfo(infos);
-logBuilder.append("  MemInfo: ");
-logBuilder.append(infos[Debug.MEMINFO_SLAB]).append(" kB slab, ");
-logBuilder.append(infos[Debug.MEMINFO_SHMEM]).append(" kB shmem, ");
-logBuilder.append(infos[Debug.MEMINFO_BUFFERS]).append(" kB buffers, ");
-logBuilder.append(infos[Debug.MEMINFO_CACHED]).append(" kB cached, ");
-logBuilder.append(infos[Debug.MEMINFO_FREE]).append(" kB free\n");
-if (infos[Debug.MEMINFO_ZRAM_TOTAL] != 0) {
-logBuilder.append("  ZRAM: ");
-logBuilder.append(infos[Debug.MEMINFO_ZRAM_TOTAL]);
-logBuilder.append(" kB RAM, ");
-logBuilder.append(infos[Debug.MEMINFO_SWAP_TOTAL]);
-logBuilder.append(" kB swap total, ");
-logBuilder.append(infos[Debug.MEMINFO_SWAP_FREE]);
-logBuilder.append(" kB swap free\n");
-}
-Slog.i(TAG,logBuilder.toString());
-StringBuilder dropBuilder=new StringBuilder(1024);
-dropBuilder.append(stack);
-dropBuilder.append('\n');
-dropBuilder.append('\n');
-dropBuilder.append(logBuilder);
-dropBuilder.append('\n');
-StringWriter catSw=new StringWriter();
-synchronized (ActivityManagerService.this) {
-PrintWriter catPw=new FastPrintWriter(catSw,false,256);
-String[] emptyArgs=new String[]{};
-catPw.println();
-dumpProcessesLocked(null,catPw,emptyArgs,0,false,null);
-catPw.println();
-mServices.dumpServicesLocked(null,catPw,emptyArgs,0,false,false,null);
-catPw.println();
-dumpActivitiesLocked(null,catPw,emptyArgs,0,false,false,null);
-catPw.flush();
-}
-dropBuilder.append(catSw.toString());
-addErrorToDropBox("lowmem",null,"system_server",null,null,tag.toString(),dropBuilder.toString(),null,null);
-synchronized (ActivityManagerService.this) {
-long now=SystemClock.uptimeMillis();
-if (mLastMemUsageReportTime < now) {
-mLastMemUsageReportTime=now;
-}
-}
+reportMemUsage(memInfos);
 }
 }
 ;
@@ -621,7 +467,6 @@ case SYSTEM_USER_CURRENT_MSG:
 mBatteryStatsService.noteEvent(BatteryStats.HistoryItem.EVENT_USER_FOREGROUND_FINISH,Integer.toString(msg.arg2),msg.arg2);
 mBatteryStatsService.noteEvent(BatteryStats.HistoryItem.EVENT_USER_FOREGROUND_START,Integer.toString(msg.arg1),msg.arg1);
 mSystemServiceManager.switchUser(msg.arg1);
-mLockToAppRequest.clearPrompt();
 break;
 }
 case ENTER_ANIMATION_COMPLETE_MSG:
@@ -659,6 +504,28 @@ mountService.setField(StorageManager.SYSTEM_LOCALE_KEY,l.toLanguageTag());
 }
  catch (RemoteException e) {
 Log.e(TAG,"Error storing locale for decryption UI",e);
+}
+break;
+}
+case DISMISS_DIALOG_MSG:
+{
+final Dialog d=(Dialog)msg.obj;
+d.dismiss();
+break;
+}
+case NOTIFY_TASK_STACK_CHANGE_LISTENERS_MSG:
+{
+synchronized (ActivityManagerService.this) {
+int i=mTaskStackListeners.beginBroadcast();
+while (i > 0) {
+i--;
+try {
+mTaskStackListeners.getBroadcastItem(i).onTaskStackChanged();
+}
+ catch (RemoteException e) {
+}
+}
+mTaskStackListeners.finishBroadcast();
 }
 break;
 }

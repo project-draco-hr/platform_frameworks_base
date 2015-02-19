@@ -7,7 +7,7 @@
   final boolean canceled=event.isCanceled();
   final int keyCode=event.getKeyCode();
   final boolean isInjected=(policyFlags & WindowManagerPolicy.FLAG_INJECTED) != 0;
-  final boolean keyguardActive=(mKeyguardDelegate == null ? false : (interactive ? mKeyguardDelegate.isShowingAndNotOccluded() : mKeyguardDelegate.isShowing()));
+  final boolean keyguardActive=(mKeyguardDelegate == null ? false : (interactive ? isKeyguardShowingAndNotOccluded() : mKeyguardDelegate.isShowing()));
   if (DEBUG_INPUT) {
     Log.d(TAG,"interceptKeyTq keycode=" + keyCode + " interactive="+ interactive+ " keyguardActive="+ keyguardActive+ " policyFlags="+ Integer.toHexString(policyFlags));
   }
@@ -26,9 +26,9 @@
       isWakeKey=false;
     }
   }
-  if (mGlobalKeyManager.shouldHandleGlobalKey(keyCode,event)) {
+  if (isValidGlobalKey(keyCode) && mGlobalKeyManager.shouldHandleGlobalKey(keyCode,event)) {
     if (isWakeKey) {
-      mPowerManager.wakeUp(event.getEventTime());
+      wakeUp(event.getEventTime(),mAllowTheaterModeWakeFromKey);
     }
     return result;
   }
@@ -40,29 +40,29 @@ case KeyEvent.KEYCODE_VOLUME_MUTE:
 {
       if (keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
         if (down) {
-          if (interactive && !mVolumeDownKeyTriggered && (event.getFlags() & KeyEvent.FLAG_FALLBACK) == 0) {
-            mVolumeDownKeyTriggered=true;
-            mVolumeDownKeyTime=event.getDownTime();
-            mVolumeDownKeyConsumedByScreenshotChord=false;
+          if (interactive && !mScreenshotChordVolumeDownKeyTriggered && (event.getFlags() & KeyEvent.FLAG_FALLBACK) == 0) {
+            mScreenshotChordVolumeDownKeyTriggered=true;
+            mScreenshotChordVolumeDownKeyTime=event.getDownTime();
+            mScreenshotChordVolumeDownKeyConsumed=false;
             cancelPendingPowerKeyAction();
             interceptScreenshotChord();
           }
         }
  else {
-          mVolumeDownKeyTriggered=false;
+          mScreenshotChordVolumeDownKeyTriggered=false;
           cancelPendingScreenshotChordAction();
         }
       }
  else       if (keyCode == KeyEvent.KEYCODE_VOLUME_UP) {
         if (down) {
-          if (interactive && !mVolumeUpKeyTriggered && (event.getFlags() & KeyEvent.FLAG_FALLBACK) == 0) {
-            mVolumeUpKeyTriggered=true;
+          if (interactive && !mScreenshotChordVolumeUpKeyTriggered && (event.getFlags() & KeyEvent.FLAG_FALLBACK) == 0) {
+            mScreenshotChordVolumeUpKeyTriggered=true;
             cancelPendingPowerKeyAction();
             cancelPendingScreenshotChordAction();
           }
         }
  else {
-          mVolumeUpKeyTriggered=false;
+          mScreenshotChordVolumeUpKeyTriggered=false;
           cancelPendingScreenshotChordAction();
         }
       }
@@ -96,18 +96,27 @@ case KeyEvent.KEYCODE_ENDCALL:
       if (telecomManager != null) {
         hungUp=telecomManager.endCall();
       }
-      interceptPowerKeyDown(!interactive || hungUp);
+      if (interactive && !hungUp) {
+        mEndCallKeyHandled=false;
+        mHandler.postDelayed(mEndCallLongPress,ViewConfiguration.get(mContext).getDeviceGlobalActionKeyTimeout());
+      }
+ else {
+        mEndCallKeyHandled=true;
+      }
     }
  else {
-      if (interceptPowerKeyUp(canceled)) {
-        if ((mEndcallBehavior & Settings.System.END_BUTTON_BEHAVIOR_HOME) != 0) {
-          if (goHome()) {
-            break;
+      if (!mEndCallKeyHandled) {
+        mHandler.removeCallbacks(mEndCallLongPress);
+        if (!canceled) {
+          if ((mEndcallBehavior & Settings.System.END_BUTTON_BEHAVIOR_HOME) != 0) {
+            if (goHome()) {
+              break;
+            }
           }
-        }
-        if ((mEndcallBehavior & Settings.System.END_BUTTON_BEHAVIOR_SLEEP) != 0) {
-          mPowerManager.goToSleep(event.getEventTime(),PowerManager.GO_TO_SLEEP_REASON_POWER_BUTTON,0);
-          isWakeKey=false;
+          if ((mEndcallBehavior & Settings.System.END_BUTTON_BEHAVIOR_SLEEP) != 0) {
+            mPowerManager.goToSleep(event.getEventTime(),PowerManager.GO_TO_SLEEP_REASON_POWER_BUTTON,0);
+            isWakeKey=false;
+          }
         }
       }
     }
@@ -116,41 +125,12 @@ case KeyEvent.KEYCODE_ENDCALL:
 case KeyEvent.KEYCODE_POWER:
 {
   result&=~ACTION_PASS_TO_USER;
+  isWakeKey=false;
   if (down) {
-    boolean panic=mImmersiveModeConfirmation.onPowerKeyDown(interactive,SystemClock.elapsedRealtime(),isImmersiveMode(mLastSystemUiFlags));
-    if (panic) {
-      mHandler.post(mRequestTransientNav);
-    }
-    if (interactive && !mPowerKeyTriggered && (event.getFlags() & KeyEvent.FLAG_FALLBACK) == 0) {
-      mPowerKeyTriggered=true;
-      mPowerKeyTime=event.getDownTime();
-      interceptScreenshotChord();
-    }
-    TelecomManager telecomManager=getTelecommService();
-    boolean hungUp=false;
-    if (telecomManager != null) {
-      if (telecomManager.isRinging()) {
-        telecomManager.silenceRinger();
-      }
- else       if ((mIncallPowerBehavior & Settings.Secure.INCALL_POWER_BUTTON_BEHAVIOR_HANGUP) != 0 && telecomManager.isInCall() && interactive) {
-        hungUp=telecomManager.endCall();
-      }
-    }
-    interceptPowerKeyDown(!interactive || hungUp || mVolumeDownKeyTriggered|| mVolumeUpKeyTriggered);
+    interceptPowerKeyDown(event,interactive);
   }
  else {
-    mPowerKeyTriggered=false;
-    cancelPendingScreenshotChordAction();
-    if (interceptPowerKeyUp(canceled || mPendingPowerKeyUpCanceled)) {
-      if (mScreenOnEarly && !mScreenOnFully) {
-        Slog.i(TAG,"Suppressed redundant power key press while " + "already in the process of turning the screen on.");
-      }
- else {
-        powerShortPress(event.getEventTime());
-      }
-      isWakeKey=false;
-    }
-    mPendingPowerKeyUpCanceled=false;
+    interceptPowerKeyUp(event,interactive,canceled);
   }
   break;
 }
@@ -223,7 +203,7 @@ if (useHapticFeedback) {
 performHapticFeedbackLw(null,HapticFeedbackConstants.VIRTUAL_KEY,false);
 }
 if (isWakeKey) {
-mPowerManager.wakeUp(event.getEventTime());
+wakeUp(event.getEventTime(),mAllowTheaterModeWakeFromKey);
 }
 return result;
 }

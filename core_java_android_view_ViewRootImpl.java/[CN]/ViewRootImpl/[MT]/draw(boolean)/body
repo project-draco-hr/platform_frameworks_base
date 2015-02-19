@@ -31,6 +31,9 @@ synchronized (sFirstDrawHandlers) {
   if (mCurScrollY != curScrollY) {
     mCurScrollY=curScrollY;
     fullRedrawNeeded=true;
+    if (mView instanceof RootViewSurfaceTaker) {
+      ((RootViewSurfaceTaker)mView).onRootViewScrollYChanged(mCurScrollY);
+    }
   }
   final float appScale=mAttachInfo.mApplicationScale;
   final boolean scalingRequired=mAttachInfo.mScalingRequired;
@@ -75,16 +78,31 @@ synchronized (sFirstDrawHandlers) {
     yOffset-=surfaceInsets.top;
     dirty.offset(surfaceInsets.left,surfaceInsets.right);
   }
-  if (!dirty.isEmpty() || mIsAnimating) {
+  boolean accessibilityFocusDirty=false;
+  final Drawable drawable=mAttachInfo.mAccessibilityFocusDrawable;
+  if (drawable != null) {
+    final Rect bounds=mAttachInfo.mTmpInvalRect;
+    final boolean hasFocus=getAccessibilityFocusedRect(bounds);
+    if (!hasFocus) {
+      bounds.setEmpty();
+    }
+    if (!bounds.equals(drawable.getBounds())) {
+      accessibilityFocusDirty=true;
+    }
+  }
+  if (!dirty.isEmpty() || mIsAnimating || accessibilityFocusDirty) {
     if (mAttachInfo.mHardwareRenderer != null && mAttachInfo.mHardwareRenderer.isEnabled()) {
+      boolean invalidateRoot=accessibilityFocusDirty;
       mIsAnimating=false;
-      boolean invalidateRoot=false;
       if (mHardwareYOffset != yOffset || mHardwareXOffset != xOffset) {
         mHardwareYOffset=yOffset;
         mHardwareXOffset=xOffset;
-        mAttachInfo.mHardwareRenderer.invalidateRoot();
+        invalidateRoot=true;
       }
       mResizeAlpha=resizeAlpha;
+      if (invalidateRoot) {
+        mAttachInfo.mHardwareRenderer.invalidateRoot();
+      }
       dirty.setEmpty();
       mBlockResizeBuffer=false;
       mAttachInfo.mHardwareRenderer.draw(mView,mAttachInfo,this);

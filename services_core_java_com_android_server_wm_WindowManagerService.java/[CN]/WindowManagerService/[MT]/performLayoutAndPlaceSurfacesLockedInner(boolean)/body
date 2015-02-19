@@ -143,7 +143,7 @@
           }
         }
         w.mContentChanged=false;
-        if (w.mHasSurface) {
+        if (w.mHasSurface && !w.isHiddenFromUserLocked()) {
           final boolean committed=winAnimator.commitFinishDrawingLocked(currentTime);
           if (isDefaultDisplay && committed) {
             if (w.mAttrs.type == TYPE_DREAM) {
@@ -172,11 +172,11 @@
               atoken.numInterestingWindows=atoken.numDrawnWindows=0;
               atoken.startingDisplayed=false;
             }
-            if ((w.isOnScreen() || winAnimator.mAttrType == TYPE_BASE_APPLICATION) && !w.mExiting && !w.mDestroying) {
+            if ((w.isOnScreenIgnoringKeyguard() || winAnimator.mAttrType == TYPE_BASE_APPLICATION) && !w.mExiting && !w.mDestroying) {
               if (DEBUG_VISIBILITY || DEBUG_ORIENTATION) {
                 Slog.v(TAG,"Eval win " + w + ": isDrawn="+ w.isDrawnLw()+ ", isAnimating="+ winAnimator.isAnimating());
                 if (!w.isDrawnLw()) {
-                  Slog.v(TAG,"Not displayed: s=" + winAnimator.mSurfaceControl + " pv="+ w.mPolicyVisibility+ " mDrawState="+ winAnimator.mDrawState+ " ah="+ w.mAttachedHidden+ " th="+ atoken.hiddenRequested+ " a="+ winAnimator.mAnimating);
+                  Slog.v(TAG,"Not displayed: s=" + winAnimator.mSurfaceControl + " pv="+ w.mPolicyVisibility+ " mDrawState="+ winAnimator.drawStateToString()+ " ah="+ w.mAttachedHidden+ " th="+ atoken.hiddenRequested+ " a="+ winAnimator.mAnimating);
                 }
               }
               if (w != atoken.startingWindow) {
@@ -300,12 +300,16 @@
     final AppTokenList exitingAppTokens=mStackIdToStack.valueAt(stackNdx).mExitingAppTokens;
     for (i=exitingAppTokens.size() - 1; i >= 0; i--) {
       AppWindowToken token=exitingAppTokens.get(i);
-      if (!token.hasVisible && !mClosingApps.contains(token) && !token.mDeferRemoval) {
+      if (!token.hasVisible && !mClosingApps.contains(token) && (!token.mDeferRemoval || token.allAppWindows.isEmpty())) {
         token.mAppAnimator.clearAnimation();
         token.mAppAnimator.animating=false;
         if (DEBUG_ADD_REMOVE || DEBUG_TOKEN_MOVEMENT)         Slog.v(TAG,"performLayout: App token exiting now removed" + token);
         removeAppFromTaskLocked(token);
         exitingAppTokens.remove(i);
+        final Task task=mTaskIdToTask.get(token.groupId);
+        if (task != null && task.mDeferRemoval && task.mAppTokens.isEmpty()) {
+          removeTaskLocked(task);
+        }
       }
     }
   }
@@ -347,8 +351,10 @@
     mPowerManagerInternal.setUserActivityTimeoutOverrideFromWindowManager(mInnerFields.mUserActivityTimeout);
   }
   if (mTurnOnScreen) {
-    if (DEBUG_VISIBILITY)     Slog.v(TAG,"Turning screen on after layout!");
-    mPowerManager.wakeUp(SystemClock.uptimeMillis());
+    if (mAllowTheaterModeWakeFromLayout || Settings.Global.getInt(mContext.getContentResolver(),Settings.Global.THEATER_MODE_ON,0) == 0) {
+      if (DEBUG_VISIBILITY)       Slog.v(TAG,"Turning screen on after layout!");
+      mPowerManager.wakeUp(SystemClock.uptimeMillis());
+    }
     mTurnOnScreen=false;
   }
   if (mInnerFields.mUpdateRotation) {

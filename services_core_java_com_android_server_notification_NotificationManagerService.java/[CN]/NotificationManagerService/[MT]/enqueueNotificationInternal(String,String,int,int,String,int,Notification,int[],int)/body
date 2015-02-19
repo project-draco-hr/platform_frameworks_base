@@ -23,9 +23,6 @@ synchronized (mNotificationList) {
       }
     }
   }
-  if (!pkg.equals("com.android.providers.downloads") || Log.isLoggable("DownloadManager",Log.VERBOSE)) {
-    EventLogTags.writeNotificationEnqueue(callingUid,callingPid,pkg,id,tag,userId,notification.toString());
-  }
   if (pkg == null || notification == null) {
     throw new IllegalArgumentException("null not allowed: pkg=" + pkg + " id="+ id+ " notification="+ notification);
   }
@@ -55,6 +52,21 @@ synchronized (mNotificationList) {
         if (old != null) {
           r.copyRankingInformation(old);
         }
+        handleGroupedNotificationLocked(r,old,callingUid,callingPid);
+        boolean ignoreNotification=removeUnusedGroupedNotificationLocked(r,old,callingUid,callingPid);
+        if (!pkg.equals("com.android.providers.downloads") || Log.isLoggable("DownloadManager",Log.VERBOSE)) {
+          int enqueueStatus=EVENTLOG_ENQUEUE_STATUS_NEW;
+          if (ignoreNotification) {
+            enqueueStatus=EVENTLOG_ENQUEUE_STATUS_IGNORED;
+          }
+ else           if (old != null) {
+            enqueueStatus=EVENTLOG_ENQUEUE_STATUS_UPDATE;
+          }
+          EventLogTags.writeNotificationEnqueue(callingUid,callingPid,pkg,id,tag,userId,notification.toString(),enqueueStatus);
+        }
+        if (ignoreNotification) {
+          return;
+        }
         mRankingHelper.extractSignals(r);
         if (ENABLE_BLOCKED_NOTIFICATIONS && !noteNotificationOp(pkg,callingUid)) {
           if (!isSystemNotification) {
@@ -64,9 +76,6 @@ synchronized (mNotificationList) {
         }
         if (r.score < SCORE_DISPLAY_THRESHOLD) {
           return;
-        }
-        if (old != null && old.getNotification().isGroupSummary() && (!notification.isGroupSummary() || !old.getGroupKey().equals(r.getGroupKey()))) {
-          cancelGroupChildrenLocked(old,callingUid,callingPid,null);
         }
         int index=indexOfNotificationLocked(n.getKey());
         if (index < 0) {

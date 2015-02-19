@@ -26,15 +26,7 @@
         }
       }
     }
-    BackupDataOutput out=new BackupDataOutput(fd);
-    byte[] widgetState=AppWidgetBackupBridge.getWidgetState(pkgName,UserHandle.USER_OWNER);
-    if (widgetState != null) {
-      out.writeEntityHeader(KEY_WIDGET_STATE,widgetState.length);
-      out.writeEntityData(widgetState,widgetState.length);
-    }
- else {
-      out.writeEntityHeader(KEY_WIDGET_STATE,-1);
-    }
+    writeWidgetPayloadIfAppropriate(fd,pkgName);
   }
  catch (  IOException e) {
     Slog.w(TAG,"Unable to save widget state for " + pkgName);
@@ -65,6 +57,9 @@
         mStatus=mTransport.finishBackup();
         addBackupTrace("finished: " + mStatus);
       }
+ else       if (mStatus == BackupTransport.TRANSPORT_PACKAGE_REJECTED) {
+        addBackupTrace("transport rejected package");
+      }
     }
  else {
       if (DEBUG)       Slog.i(TAG,"no backup data written; not calling transport");
@@ -75,6 +70,11 @@
       mNewStateName.renameTo(mSavedStateName);
       EventLog.writeEvent(EventLogTags.BACKUP_PACKAGE,pkgName,size);
       logBackupComplete(pkgName);
+    }
+ else     if (mStatus == BackupTransport.TRANSPORT_PACKAGE_REJECTED) {
+      mBackupDataName.delete();
+      mNewStateName.delete();
+      EventLogTags.writeBackupAgentFailure(pkgName,"Transport rejected");
     }
  else {
       EventLog.writeEvent(EventLogTags.BACKUP_TRANSPORT_FAILURE,pkgName);
@@ -93,12 +93,12 @@
     }
   }
   final BackupState nextState;
-  if (mStatus != BackupTransport.TRANSPORT_OK) {
-    revertAndEndBackup();
-    nextState=BackupState.FINAL;
+  if (mStatus == BackupTransport.TRANSPORT_OK || mStatus == BackupTransport.TRANSPORT_PACKAGE_REJECTED) {
+    nextState=(mQueue.isEmpty()) ? BackupState.FINAL : BackupState.RUNNING_QUEUE;
   }
  else {
-    nextState=(mQueue.isEmpty()) ? BackupState.FINAL : BackupState.RUNNING_QUEUE;
+    revertAndEndBackup();
+    nextState=BackupState.FINAL;
   }
   executeNextState(nextState);
 }

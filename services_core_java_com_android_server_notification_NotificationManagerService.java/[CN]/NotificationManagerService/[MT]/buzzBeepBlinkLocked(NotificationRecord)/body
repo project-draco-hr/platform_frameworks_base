@@ -1,7 +1,8 @@
 {
   boolean buzzBeepBlinked=false;
   final Notification notification=record.sbn.getNotification();
-  final boolean canInterrupt=(record.score >= SCORE_INTERRUPTION_THRESHOLD) && !record.isIntercepted();
+  final boolean aboveThreshold=record.score >= SCORE_INTERRUPTION_THRESHOLD;
+  final boolean canInterrupt=aboveThreshold && !record.isIntercepted();
   if (DBG || record.isIntercepted())   Slog.v(TAG,"pkg=" + record.sbn.getPackageName() + " canInterrupt="+ canInterrupt+ " intercept="+ record.isIntercepted());
   final int currentUser;
   final long token=Binder.clearCallingIdentity();
@@ -32,14 +33,8 @@
     }
     if (hasValidSound) {
       boolean looping=(notification.flags & Notification.FLAG_INSISTENT) != 0;
-      AudioAttributes audioAttributes;
-      if (notification.audioAttributes != null) {
-        audioAttributes=notification.audioAttributes;
-      }
- else {
-        audioAttributes=Notification.AUDIO_ATTRIBUTES_DEFAULT;
-      }
-      mSoundNotification=record;
+      AudioAttributes audioAttributes=audioAttributesForNotification(notification);
+      mSoundNotificationKey=record.getKey();
       if ((mAudioManager.getStreamVolume(AudioAttributes.toLegacyStreamType(audioAttributes)) != 0) && !mAudioManager.isAudioFocusExclusive()) {
         final long identity=Binder.clearCallingIdentity();
         try {
@@ -58,10 +53,10 @@
       }
     }
     final boolean hasCustomVibrate=notification.vibrate != null;
-    final boolean convertSoundToVibration=!hasCustomVibrate && hasValidSound && (mAudioManager.getRingerMode() == AudioManager.RINGER_MODE_VIBRATE);
+    final boolean convertSoundToVibration=!hasCustomVibrate && hasValidSound && (mAudioManager.getRingerModeInternal() == AudioManager.RINGER_MODE_VIBRATE);
     final boolean useDefaultVibrate=(notification.defaults & Notification.DEFAULT_VIBRATE) != 0;
-    if ((useDefaultVibrate || convertSoundToVibration || hasCustomVibrate) && !(mAudioManager.getRingerMode() == AudioManager.RINGER_MODE_SILENT)) {
-      mVibrateNotification=record;
+    if ((useDefaultVibrate || convertSoundToVibration || hasCustomVibrate) && !(mAudioManager.getRingerModeInternal() == AudioManager.RINGER_MODE_SILENT)) {
+      mVibrateNotificationKey=record.getKey();
       if (useDefaultVibrate || convertSoundToVibration) {
         long identity=Binder.clearCallingIdentity();
         try {
@@ -79,10 +74,7 @@
     }
   }
   boolean wasShowLights=mLights.remove(record.getKey());
-  if (mLedNotification != null && record.getKey().equals(mLedNotification.getKey())) {
-    mLedNotification=null;
-  }
-  if ((notification.flags & Notification.FLAG_SHOW_LIGHTS) != 0 && canInterrupt) {
+  if ((notification.flags & Notification.FLAG_SHOW_LIGHTS) != 0 && aboveThreshold) {
     mLights.add(record.getKey());
     updateLightsLocked();
     if (mUseAttentionLight) {

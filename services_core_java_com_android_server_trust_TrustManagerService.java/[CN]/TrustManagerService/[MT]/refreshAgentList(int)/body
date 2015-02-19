@@ -1,5 +1,8 @@
 {
   if (DEBUG)   Slog.d(TAG,"refreshAgentList()");
+  if (!mTrustAgentsCanRun) {
+    return;
+  }
   if (userId != UserHandle.USER_ALL && userId < UserHandle.USER_OWNER) {
     Log.e(TAG,"refreshAgentList(userId=" + userId + "): Invalid user handle,"+ " must be USER_ALL or a specific user.",new Throwable("here"));
     userId=UserHandle.USER_ALL;
@@ -17,8 +20,10 @@
   ArraySet<AgentInfo> obsoleteAgents=new ArraySet<>();
   obsoleteAgents.addAll(mActiveAgents);
   for (  UserInfo userInfo : userInfos) {
+    if (userInfo == null || userInfo.partial || !userInfo.isEnabled() || userInfo.guestToRemove)     continue;
     if (!userInfo.supportsSwitchTo())     continue;
-    if (lockPatternUtils.getKeyguardStoredPasswordQuality(userInfo.id) == DevicePolicyManager.PASSWORD_QUALITY_UNSPECIFIED)     continue;
+    if (!mActivityManager.isUserRunning(userInfo.id))     continue;
+    if (!lockPatternUtils.isSecure(userInfo.id))     continue;
     if (!mUserHasAuthenticatedSinceBoot.get(userInfo.id))     continue;
     DevicePolicyManager dpm=lockPatternUtils.getDevicePolicyManager();
     int disabledFeatures=dpm.getKeyguardDisabledFeatures(null,userInfo.id);
@@ -32,8 +37,8 @@
       ComponentName name=getComponentName(resolveInfo);
       if (!enabledAgents.contains(name))       continue;
       if (disableTrustAgents) {
-        List<String> features=dpm.getTrustAgentFeaturesEnabled(null,name);
-        if (features == null || features.isEmpty())         continue;
+        List<PersistableBundle> config=dpm.getTrustAgentConfiguration(null,name,userInfo.id);
+        if (config == null || config.isEmpty())         continue;
       }
       AgentInfo agentInfo=new AgentInfo();
       agentInfo.component=name;
@@ -57,11 +62,16 @@
       if (info.agent.isManagingTrust()) {
         trustMayHaveChanged=true;
       }
-      info.agent.unbind();
+      info.agent.destroy();
       mActiveAgents.remove(info);
     }
   }
   if (trustMayHaveChanged) {
-    updateTrustAll();
+    if (userId == UserHandle.USER_ALL) {
+      updateTrustAll();
+    }
+ else {
+      updateTrust(userId,false);
+    }
   }
 }

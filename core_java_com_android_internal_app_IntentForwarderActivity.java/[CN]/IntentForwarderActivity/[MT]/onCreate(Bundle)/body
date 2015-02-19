@@ -2,22 +2,22 @@
   super.onCreate(savedInstanceState);
   Intent intentReceived=getIntent();
   String className=intentReceived.getComponent().getClassName();
-  final UserHandle userDest;
+  final int targetUserId;
   final int userMessageId;
   if (className.equals(FORWARD_INTENT_TO_USER_OWNER)) {
     userMessageId=com.android.internal.R.string.forward_intent_to_owner;
-    userDest=UserHandle.OWNER;
+    targetUserId=UserHandle.USER_OWNER;
   }
  else   if (className.equals(FORWARD_INTENT_TO_MANAGED_PROFILE)) {
     userMessageId=com.android.internal.R.string.forward_intent_to_work;
-    userDest=getManagedProfile();
+    targetUserId=getManagedProfile();
   }
  else {
     Slog.wtf(TAG,IntentForwarderActivity.class.getName() + " cannot be called directly");
     userMessageId=-1;
-    userDest=null;
+    targetUserId=UserHandle.USER_NULL;
   }
-  if (userDest == null) {
+  if (targetUserId == UserHandle.USER_NULL) {
     finish();
     return;
   }
@@ -26,25 +26,18 @@
   newIntent.setPackage(null);
   newIntent.addFlags(Intent.FLAG_ACTIVITY_FORWARD_RESULT | Intent.FLAG_ACTIVITY_PREVIOUS_IS_TOP);
   int callingUserId=getUserId();
-  IPackageManager ipm=AppGlobals.getPackageManager();
-  String resolvedType=newIntent.resolveTypeIfNeeded(getContentResolver());
-  boolean canForward=false;
-  Intent selector=newIntent.getSelector();
-  if (selector == null) {
-    selector=newIntent;
-  }
-  try {
-    canForward=ipm.canForwardTo(selector,resolvedType,callingUserId,userDest.getIdentifier());
-  }
- catch (  RemoteException e) {
-    Slog.e(TAG,"PackageManagerService is dead?");
-  }
-  if (canForward) {
-    newIntent.setContentUserHint(callingUserId);
-    final android.content.pm.ResolveInfo ri=getPackageManager().resolveActivityAsUser(newIntent,MATCH_DEFAULT_ONLY,userDest.getIdentifier());
-    final boolean shouldShowDisclosure=!UserHandle.isSameApp(ri.activityInfo.applicationInfo.uid,Process.SYSTEM_UID);
+  if (canForward(newIntent,targetUserId)) {
+    if (newIntent.getAction().equals(Intent.ACTION_CHOOSER)) {
+      Intent innerIntent=(Intent)newIntent.getParcelableExtra(Intent.EXTRA_INTENT);
+      innerIntent.setContentUserHint(callingUserId);
+    }
+ else {
+      newIntent.setContentUserHint(callingUserId);
+    }
+    final android.content.pm.ResolveInfo ri=getPackageManager().resolveActivityAsUser(newIntent,MATCH_DEFAULT_ONLY,targetUserId);
+    final boolean shouldShowDisclosure=ri == null || ri.activityInfo == null || !"android".equals(ri.activityInfo.packageName) || !(ResolverActivity.class.getName().equals(ri.activityInfo.name) || ChooserActivity.class.getName().equals(ri.activityInfo.name));
     try {
-      startActivityAsCaller(newIntent,null,userDest.getIdentifier());
+      startActivityAsCaller(newIntent,null,targetUserId);
     }
  catch (    RuntimeException e) {
       int launchedFromUid=-1;
@@ -62,7 +55,7 @@
     }
   }
  else {
-    Slog.wtf(TAG,"the intent: " + newIntent + "cannot be forwarded from user "+ callingUserId+ " to user "+ userDest.getIdentifier());
+    Slog.wtf(TAG,"the intent: " + newIntent + "cannot be forwarded from user "+ callingUserId+ " to user "+ targetUserId);
   }
   finish();
 }

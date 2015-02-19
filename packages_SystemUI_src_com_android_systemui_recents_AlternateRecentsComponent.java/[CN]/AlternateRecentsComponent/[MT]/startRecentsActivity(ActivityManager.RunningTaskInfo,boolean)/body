@@ -1,17 +1,24 @@
 {
-  SystemServicesProxy ssp=mSystemServicesProxy;
-  List<ActivityManager.RecentTaskInfo> recentTasks=ssp.getRecentTasks(3,UserHandle.CURRENT.getIdentifier(),isTopTaskHome);
-  boolean useThumbnailTransition=!isTopTaskHome;
-  boolean hasRecentTasks=!recentTasks.isEmpty();
+  if (sInstanceLoadPlan == null) {
+    RecentsTaskLoader loader=RecentsTaskLoader.getInstance();
+    sInstanceLoadPlan=loader.createLoadPlan(mContext);
+  }
+  RecentsTaskLoader loader=RecentsTaskLoader.getInstance();
+  loader.preloadTasks(sInstanceLoadPlan,isTopTaskHome);
+  TaskStack stack=sInstanceLoadPlan.getTaskStack();
+  mDummyStackView.updateMinMaxScrollForStack(stack,mTriggeredFromAltTab,isTopTaskHome);
+  TaskStackViewLayoutAlgorithm.VisibilityReport stackVr=mDummyStackView.computeStackVisibilityReport();
+  boolean hasRecentTasks=stack.getTaskCount() > 0;
+  boolean useThumbnailTransition=(topTask != null) && !isTopTaskHome && hasRecentTasks;
   if (useThumbnailTransition) {
-    ActivityOptions opts=getThumbnailTransitionActivityOptions(topTask,isTopTaskHome);
+    RecentsTaskLoadPlan.Options launchOpts=new RecentsTaskLoadPlan.Options();
+    launchOpts.runningTaskId=topTask.id;
+    launchOpts.loadThumbnails=false;
+    launchOpts.onlyLoadForCache=true;
+    loader.loadTasks(mContext,sInstanceLoadPlan,launchOpts);
+    ActivityOptions opts=getThumbnailTransitionActivityOptions(topTask,stack,mDummyStackView);
     if (opts != null) {
-      if (sLastScreenshot != null) {
-        startAlternateRecentsActivity(topTask,opts,EXTRA_FROM_APP_FULL_SCREENSHOT);
-      }
- else {
-        startAlternateRecentsActivity(topTask,opts,EXTRA_FROM_APP_THUMBNAIL);
-      }
+      startAlternateRecentsActivity(topTask,opts,false,false,true,stackVr);
     }
  else {
       useThumbnailTransition=false;
@@ -36,12 +43,12 @@
         fromSearchHome=true;
       }
       ActivityOptions opts=getHomeTransitionActivityOptions(fromSearchHome);
-      startAlternateRecentsActivity(topTask,opts,fromSearchHome ? EXTRA_FROM_SEARCH_HOME : EXTRA_FROM_HOME);
+      startAlternateRecentsActivity(topTask,opts,true,fromSearchHome,false,stackVr);
     }
  else {
       ActivityOptions opts=getUnknownTransitionActivityOptions();
-      startAlternateRecentsActivity(topTask,opts,null);
+      startAlternateRecentsActivity(topTask,opts,true,false,false,stackVr);
     }
   }
-  mLastToggleTime=System.currentTimeMillis();
+  mLastToggleTime=SystemClock.elapsedRealtime();
 }

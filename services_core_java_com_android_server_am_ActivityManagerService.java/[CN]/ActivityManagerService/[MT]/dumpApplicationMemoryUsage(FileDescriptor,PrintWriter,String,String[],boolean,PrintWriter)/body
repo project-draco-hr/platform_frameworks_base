@@ -90,7 +90,7 @@ synchronized (mProcessCpuTracker) {
             Debug.getMemoryInfo(pid,mi);
           }
  else {
-            mi.dalvikPss=(int)Debug.getPss(pid,tmpLong);
+            mi.dalvikPss=(int)Debug.getPss(pid,tmpLong,null);
             mi.dalvikPrivateDirty=(int)tmpLong[0];
           }
           ActivityThread.dumpMemInfoTable(pw,mi,isCheckinRequest,dumpFullDetails,dumpDalvik,pid,r.baseName,0,0,0,0,0,0);
@@ -112,7 +112,9 @@ synchronized (mProcessCpuTracker) {
   System.arraycopy(args,opti,innerArgs,0,args.length - opti);
   ArrayList<MemItem> procMems=new ArrayList<MemItem>();
   final SparseArray<MemItem> procMemsMap=new SparseArray<MemItem>();
-  long nativePss=0, dalvikPss=0, otherPss=0;
+  long nativePss=0;
+  long dalvikPss=0;
+  long otherPss=0;
   long[] miscPss=new long[Debug.MemoryInfo.NUM_OTHER_STATS];
   long oomPss[]=new long[DUMP_MEM_OOM_LABEL.length];
   ArrayList<MemItem>[] oomProcs=(ArrayList<MemItem>[])new ArrayList[DUMP_MEM_OOM_LABEL.length];
@@ -142,7 +144,7 @@ synchronized (this) {
         Debug.getMemoryInfo(pid,mi);
       }
  else {
-        mi.dalvikPss=(int)Debug.getPss(pid,tmpLong);
+        mi.dalvikPss=(int)Debug.getPss(pid,tmpLong,null);
         mi.dalvikPrivateDirty=(int)tmpLong[0];
       }
       if (dumpDetails) {
@@ -204,6 +206,7 @@ synchronized (this) {
   long nativeProcTotalPss=0;
   if (!isCheckinRequest && procs.size() > 1 && !packages) {
     updateCpuStatsNow();
+    mi=null;
 synchronized (mProcessCpuTracker) {
       final int N=mProcessCpuTracker.countStats();
       for (int i=0; i < N; i++) {
@@ -216,7 +219,7 @@ synchronized (mProcessCpuTracker) {
             Debug.getMemoryInfo(st.pid,mi);
           }
  else {
-            mi.nativePss=(int)Debug.getPss(st.pid,tmpLong);
+            mi.nativePss=(int)Debug.getPss(st.pid,tmpLong,null);
             mi.nativePrivateDirty=(int)tmpLong[0];
           }
           final long myTotalPss=mi.getTotalPss();
@@ -282,7 +285,7 @@ synchronized (mProcessCpuTracker) {
     memInfo.readMemInfo();
     if (nativeProcTotalPss > 0) {
 synchronized (this) {
-        mProcessStats.addSysMemUsageLocked(memInfo.getCachedSizeKb(),memInfo.getFreeSizeKb(),memInfo.getZramTotalSizeKb(),memInfo.getBuffersSizeKb() + memInfo.getShmemSizeKb() + memInfo.getSlabSizeKb(),nativeProcTotalPss);
+        mProcessStats.addSysMemUsageLocked(memInfo.getCachedSizeKb(),memInfo.getFreeSizeKb(),memInfo.getZramTotalSizeKb(),memInfo.getKernelUsedSizeKb(),nativeProcTotalPss);
       }
     }
     if (!brief) {
@@ -314,7 +317,7 @@ pw.print(" kB (");
 pw.print(cachedPss);
 pw.print(" cached pss + ");
 pw.print(memInfo.getCachedSizeKb());
-pw.print(" cached + ");
+pw.print(" cached kernel + ");
 pw.print(memInfo.getFreeSizeKb());
 pw.println(" free)");
 }
@@ -329,18 +332,14 @@ pw.println(totalPss - cachedPss);
 }
 if (!isCompact) {
 pw.print(" Used RAM: ");
-pw.print(totalPss - cachedPss + memInfo.getBuffersSizeKb() + memInfo.getShmemSizeKb() + memInfo.getSlabSizeKb());
+pw.print(totalPss - cachedPss + memInfo.getKernelUsedSizeKb());
 pw.print(" kB (");
 pw.print(totalPss - cachedPss);
 pw.print(" used pss + ");
-pw.print(memInfo.getBuffersSizeKb());
-pw.print(" buffers + ");
-pw.print(memInfo.getShmemSizeKb());
-pw.print(" shmem + ");
-pw.print(memInfo.getSlabSizeKb());
-pw.println(" slab)");
+pw.print(memInfo.getKernelUsedSizeKb());
+pw.print(" kernel)\n");
 pw.print(" Lost RAM: ");
-pw.print(memInfo.getTotalSizeKb() - totalPss - memInfo.getFreeSizeKb()- memInfo.getCachedSizeKb()- memInfo.getBuffersSizeKb()- memInfo.getShmemSizeKb()- memInfo.getSlabSizeKb());
+pw.print(memInfo.getTotalSizeKb() - totalPss - memInfo.getFreeSizeKb()- memInfo.getCachedSizeKb()- memInfo.getKernelUsedSizeKb());
 pw.println(" kB");
 }
 if (!brief) {
@@ -363,30 +362,18 @@ pw.print(",");
 pw.println(memInfo.getSwapFreeSizeKb());
 }
 }
-final int[] SINGLE_LONG_FORMAT=new int[]{Process.PROC_SPACE_TERM | Process.PROC_OUT_LONG};
-long[] longOut=new long[1];
-Process.readProcFile("/sys/kernel/mm/ksm/pages_shared",SINGLE_LONG_FORMAT,null,longOut,null);
-long shared=longOut[0] * ProcessList.PAGE_SIZE / 1024;
-longOut[0]=0;
-Process.readProcFile("/sys/kernel/mm/ksm/pages_sharing",SINGLE_LONG_FORMAT,null,longOut,null);
-long sharing=longOut[0] * ProcessList.PAGE_SIZE / 1024;
-longOut[0]=0;
-Process.readProcFile("/sys/kernel/mm/ksm/pages_unshared",SINGLE_LONG_FORMAT,null,longOut,null);
-long unshared=longOut[0] * ProcessList.PAGE_SIZE / 1024;
-longOut[0]=0;
-Process.readProcFile("/sys/kernel/mm/ksm/pages_volatile",SINGLE_LONG_FORMAT,null,longOut,null);
-long voltile=longOut[0] * ProcessList.PAGE_SIZE / 1024;
+final long[] ksm=getKsmInfo();
 if (!isCompact) {
-if (sharing != 0 || shared != 0 || unshared != 0 || voltile != 0) {
+if (ksm[KSM_SHARING] != 0 || ksm[KSM_SHARED] != 0 || ksm[KSM_UNSHARED] != 0 || ksm[KSM_VOLATILE] != 0) {
 pw.print("      KSM: ");
-pw.print(sharing);
+pw.print(ksm[KSM_SHARING]);
 pw.print(" kB saved from shared ");
-pw.print(shared);
+pw.print(ksm[KSM_SHARED]);
 pw.println(" kB");
 pw.print("           ");
-pw.print(unshared);
+pw.print(ksm[KSM_UNSHARED]);
 pw.print(" kB unshared; ");
-pw.print(voltile);
+pw.print(ksm[KSM_VOLATILE]);
 pw.println(" kB volatile");
 }
 pw.print("   Tuning: ");
@@ -409,13 +396,13 @@ pw.println();
 }
  else {
 pw.print("ksm,");
-pw.print(sharing);
+pw.print(ksm[KSM_SHARING]);
 pw.print(",");
-pw.print(shared);
+pw.print(ksm[KSM_SHARED]);
 pw.print(",");
-pw.print(unshared);
+pw.print(ksm[KSM_UNSHARED]);
 pw.print(",");
-pw.println(voltile);
+pw.println(ksm[KSM_VOLATILE]);
 pw.print("tuning,");
 pw.print(ActivityManager.staticGetMemoryClass());
 pw.print(',');

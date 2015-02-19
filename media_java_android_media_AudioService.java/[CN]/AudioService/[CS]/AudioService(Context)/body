@@ -5,7 +5,7 @@
   if (mContext.getResources().getBoolean(com.android.internal.R.bool.config_voice_capable)) {
     mPlatformType=PLATFORM_VOICE;
   }
- else   if (context.getPackageManager().hasSystemFeature(PackageManager.FEATURE_TELEVISION)) {
+ else   if (context.getPackageManager().hasSystemFeature(PackageManager.FEATURE_LEANBACK)) {
     mPlatformType=PLATFORM_TELEVISION;
   }
  else {
@@ -15,8 +15,16 @@
   mAudioEventWakeLock=pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,"handleAudioEvent");
   Vibrator vibrator=(Vibrator)context.getSystemService(Context.VIBRATOR_SERVICE);
   mHasVibrator=vibrator == null ? false : vibrator.hasVibrator();
-  MAX_STREAM_VOLUME[AudioSystem.STREAM_VOICE_CALL]=SystemProperties.getInt("ro.config.vc_call_vol_steps",MAX_STREAM_VOLUME[AudioSystem.STREAM_VOICE_CALL]);
-  MAX_STREAM_VOLUME[AudioSystem.STREAM_MUSIC]=SystemProperties.getInt("ro.config.media_vol_steps",MAX_STREAM_VOLUME[AudioSystem.STREAM_MUSIC]);
+  int maxVolume=SystemProperties.getInt("ro.config.vc_call_vol_steps",MAX_STREAM_VOLUME[AudioSystem.STREAM_VOICE_CALL]);
+  if (maxVolume != MAX_STREAM_VOLUME[AudioSystem.STREAM_VOICE_CALL]) {
+    MAX_STREAM_VOLUME[AudioSystem.STREAM_VOICE_CALL]=maxVolume;
+    DEFAULT_STREAM_VOLUME[AudioSystem.STREAM_VOICE_CALL]=(maxVolume * 3) / 4;
+  }
+  maxVolume=SystemProperties.getInt("ro.config.media_vol_steps",MAX_STREAM_VOLUME[AudioSystem.STREAM_MUSIC]);
+  if (maxVolume != MAX_STREAM_VOLUME[AudioSystem.STREAM_MUSIC]) {
+    MAX_STREAM_VOLUME[AudioSystem.STREAM_MUSIC]=maxVolume;
+    DEFAULT_STREAM_VOLUME[AudioSystem.STREAM_MUSIC]=(maxVolume * 3) / 4;
+  }
   sSoundEffectVolumeDb=context.getResources().getInteger(com.android.internal.R.integer.config_soundEffectVolumeDb);
   mForcedUseForComm=AudioSystem.FORCE_NONE;
   createAudioSystemThread();
@@ -28,13 +36,15 @@
   mSafeMediaVolumeState=new Integer(Settings.Global.getInt(mContentResolver,Settings.Global.AUDIO_SAFE_VOLUME_STATE,SAFE_MEDIA_VOLUME_NOT_CONFIGURED));
   mSafeMediaVolumeIndex=mContext.getResources().getInteger(com.android.internal.R.integer.config_safe_media_volume_index) * 10;
   mUseFixedVolume=mContext.getResources().getBoolean(com.android.internal.R.bool.config_useFixedVolume);
+  mUseMasterVolume=context.getResources().getBoolean(com.android.internal.R.bool.config_useMasterVolume);
+  mMasterVolumeRamp=context.getResources().getIntArray(com.android.internal.R.array.config_masterVolumeRamp);
   updateStreamVolumeAlias(false);
   readPersistedSettings();
   mSettingsObserver=new SettingsObserver();
   createStreamStates();
   readAndSetLowRamDevice();
   mRingerModeMutedStreams=0;
-  setRingerModeInt(getRingerMode(),false);
+  setRingerModeInt(getRingerModeInternal(),false);
   IntentFilter intentFilter=new IntentFilter(BluetoothHeadset.ACTION_AUDIO_STATE_CHANGED);
   intentFilter.addAction(BluetoothHeadset.ACTION_CONNECTION_STATE_CHANGED);
   intentFilter.addAction(Intent.ACTION_DOCK_EVENT);
@@ -59,8 +69,6 @@
     setRotationForAudioSystem();
   }
   context.registerReceiver(mReceiver,intentFilter);
-  mUseMasterVolume=context.getResources().getBoolean(com.android.internal.R.bool.config_useMasterVolume);
   restoreMasterVolume();
-  mMasterVolumeRamp=context.getResources().getIntArray(com.android.internal.R.array.config_masterVolumeRamp);
   LocalServices.addService(AudioManagerInternal.class,new AudioServiceInternal());
 }

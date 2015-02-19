@@ -102,6 +102,7 @@
   mScrimController=new ScrimController(scrimBehind,scrimInFront,mScrimSrcModeEnabled);
   mScrimController.setBackDropView(mBackdrop);
   mStatusBarView.setScrimController(mScrimController);
+  mDozeScrimController=new DozeScrimController(mScrimController,context);
   mHeader=(StatusBarHeaderView)mStatusBarWindow.findViewById(R.id.header);
   mHeader.setActivityStarter(this);
   mKeyguardStatusBar=(KeyguardStatusBarView)mStatusBarWindow.findViewById(R.id.keyguard_header);
@@ -123,6 +124,8 @@
   }
   mEdgeBorder=res.getDimensionPixelSize(R.dimen.status_bar_edge_ignore);
   setAreThereNotifications();
+  mHandlerThread=new HandlerThread(TAG,Process.THREAD_PRIORITY_BACKGROUND);
+  mHandlerThread.start();
   mLocationController=new LocationControllerImpl(mContext);
   mBatteryController=new BatteryController(mContext);
   mBatteryController.addStateChangedCallback(new BatteryStateChangeCallback(){
@@ -138,14 +141,16 @@
 );
   mNetworkController=new NetworkControllerImpl(mContext);
   mHotspotController=new HotspotControllerImpl(mContext);
-  mBluetoothController=new BluetoothControllerImpl(mContext);
+  mBluetoothController=new BluetoothControllerImpl(mContext,mHandlerThread.getLooper());
   mSecurityController=new SecurityControllerImpl(mContext);
   if (mContext.getResources().getBoolean(R.bool.config_showRotationLock)) {
     mRotationLockController=new RotationLockControllerImpl(mContext);
   }
   mUserInfoController=new UserInfoController(mContext);
   mVolumeComponent=getComponent(VolumeComponent.class);
-  mZenModeController=mVolumeComponent.getZenController();
+  if (mVolumeComponent != null) {
+    mZenModeController=mVolumeComponent.getZenController();
+  }
   mCastController=new CastControllerImpl(mContext);
   final SignalClusterView signalCluster=(SignalClusterView)mStatusBarView.findViewById(R.id.signal_cluster);
   final SignalClusterView signalClusterKeyguard=(SignalClusterView)mKeyguardStatusBar.findViewById(R.id.signal_cluster);
@@ -161,19 +166,32 @@
   signalClusterQs.setNetworkController(mNetworkController);
   final boolean isAPhone=mNetworkController.hasVoiceCallingFeature();
   if (isAPhone) {
-    mNetworkController.addEmergencyLabelView(mHeader);
+    mNetworkController.addEmergencyListener(new NetworkControllerImpl.EmergencyListener(){
+      @Override public void setEmergencyCallsOnly(      boolean emergencyOnly){
+        mHeader.setShowEmergencyCallsOnly(emergencyOnly);
+      }
+    }
+);
   }
   mCarrierLabel=(TextView)mStatusBarWindow.findViewById(R.id.carrier_label);
   mShowCarrierInPanel=(mCarrierLabel != null);
   if (DEBUG)   Log.v(TAG,"carrierlabel=" + mCarrierLabel + " show="+ mShowCarrierInPanel);
   if (mShowCarrierInPanel) {
     mCarrierLabel.setVisibility(mCarrierLabelVisible ? View.VISIBLE : View.INVISIBLE);
-    if (mNetworkController.hasMobileDataFeature()) {
-      mNetworkController.addMobileLabelView(mCarrierLabel);
-    }
+    mNetworkController.addCarrierLabel(new NetworkControllerImpl.CarrierLabelListener(){
+      @Override public void setCarrierLabel(      String label){
+        mCarrierLabel.setText(label);
+        if (mNetworkController.hasMobileDataFeature()) {
+          if (TextUtils.isEmpty(label)) {
+            mCarrierLabel.setVisibility(View.GONE);
+          }
  else {
-      mNetworkController.addCombinedLabelView(mCarrierLabel);
+            mCarrierLabel.setVisibility(View.VISIBLE);
+          }
+        }
+      }
     }
+);
   }
   mFlashlightController=new FlashlightController(mContext);
   mKeyguardBottomArea.setFlashlightController(mFlashlightController);
@@ -182,7 +200,9 @@
   mKeyguardBottomArea.setAccessibilityController(mAccessibilityController);
   mNextAlarmController=new NextAlarmController(mContext);
   mKeyguardMonitor=new KeyguardMonitor();
-  mUserSwitcherController=new UserSwitcherController(mContext,mKeyguardMonitor);
+  if (UserSwitcherController.isUserSwitcherAvailable(UserManager.get(mContext))) {
+    mUserSwitcherController=new UserSwitcherController(mContext,mKeyguardMonitor);
+  }
   mKeyguardUserSwitcher=new KeyguardUserSwitcher(mContext,(ViewStub)mStatusBarWindow.findViewById(R.id.keyguard_user_switcher),mKeyguardStatusBar,mNotificationPanel,mUserSwitcherController);
   mQSPanel=(QSPanel)mStatusBarWindow.findViewById(R.id.quick_settings_panel);
   if (mQSPanel != null) {
@@ -216,7 +236,7 @@
     filter.addAction("fake_artwork");
   }
   filter.addAction(ACTION_DEMO);
-  context.registerReceiver(mBroadcastReceiver,filter);
+  context.registerReceiverAsUser(mBroadcastReceiver,UserHandle.ALL,filter,null,null);
   resetUserSetupObserver();
   startGlyphRasterizeHack();
   return mStatusBarView;

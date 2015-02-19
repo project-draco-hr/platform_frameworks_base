@@ -15,6 +15,14 @@
   mSettings.addSharedUserLPw("android.uid.nfc",NFC_UID,ApplicationInfo.FLAG_SYSTEM,ApplicationInfo.PRIVATE_FLAG_PRIVILEGED);
   mSettings.addSharedUserLPw("android.uid.bluetooth",BLUETOOTH_UID,ApplicationInfo.FLAG_SYSTEM,ApplicationInfo.PRIVATE_FLAG_PRIVILEGED);
   mSettings.addSharedUserLPw("android.uid.shell",SHELL_UID,ApplicationInfo.FLAG_SYSTEM,ApplicationInfo.PRIVATE_FLAG_PRIVILEGED);
+  long dexOptLRUThresholdInMinutes;
+  if (mLazyDexOpt) {
+    dexOptLRUThresholdInMinutes=30;
+  }
+ else {
+    dexOptLRUThresholdInMinutes=7 * 24 * 60;
+  }
+  mDexOptLRUThresholdInMills=dexOptLRUThresholdInMinutes * 60 * 1000;
   String separateProcesses=SystemProperties.get("debug.separate_processes");
   if (separateProcesses != null && separateProcesses.length() > 0) {
     if ("*".equals(separateProcesses)) {
@@ -80,7 +88,7 @@ synchronized (mPackages) {
       long startTime=SystemClock.uptimeMillis();
       EventLog.writeEvent(EventLogTags.BOOT_PROGRESS_PMS_SYSTEM_SCAN_START,startTime);
       final int scanFlags=SCAN_NO_PATHS | SCAN_DEFER_DEX | SCAN_BOOTING;
-      final HashSet<String> alreadyDexOpted=new HashSet<String>();
+      final ArraySet<String> alreadyDexOpted=new ArraySet<String>();
       final String bootClassPath=System.getenv("BOOTCLASSPATH");
       final String systemServerClassPath=System.getenv("SYSTEMSERVERCLASSPATH");
       if (bootClassPath != null) {
@@ -101,7 +109,6 @@ synchronized (mPackages) {
  else {
         Slog.w(TAG,"No SYSTEMSERVERCLASSPATH found!");
       }
-      boolean didDexOptLibraryOrTool=false;
       final List<String> allInstructionSets=getAllInstructionSets();
       final String[] dexCodeInstructionSets=getDexCodeInstructionSets(allInstructionSets.toArray(new String[allInstructionSets.size()]));
       if (mSharedLibraries.size() > 0) {
@@ -121,7 +128,6 @@ synchronized (mPackages) {
  else {
                   mInstaller.patchoat(lib,Process.SYSTEM_UID,true,dexCodeInstructionSet);
                 }
-                didDexOptLibraryOrTool=true;
               }
             }
  catch (            FileNotFoundException e) {
@@ -152,11 +158,9 @@ catch (            IOException e) {
               byte dexoptRequired=DexFile.isDexOptNeededInternal(path,null,dexCodeInstructionSet,false);
               if (dexoptRequired == DexFile.DEXOPT_NEEDED) {
                 mInstaller.dexopt(path,Process.SYSTEM_UID,true,dexCodeInstructionSet);
-                didDexOptLibraryOrTool=true;
               }
  else               if (dexoptRequired == DexFile.PATCHOAT_NEEDED) {
                 mInstaller.patchoat(path,Process.SYSTEM_UID,true,dexCodeInstructionSet);
-                didDexOptLibraryOrTool=true;
               }
             }
  catch (            FileNotFoundException e) {
@@ -289,7 +293,8 @@ catch (            IOException e) {
       if (!mRestoredSettings && !onlyCore) {
         mSettings.readDefaultPreferredAppsLPw(this,0);
       }
-      if (!Build.FINGERPRINT.equals(mSettings.mFingerprint) && !onlyCore) {
+      mIsUpgrade=!Build.FINGERPRINT.equals(mSettings.mFingerprint);
+      if (mIsUpgrade && !onlyCore) {
         Slog.i(TAG,"Build fingerprint changed; clearing code caches");
         for (        String pkgName : mSettings.mPackages.keySet()) {
           deleteCodeCacheDirsLI(pkgName);

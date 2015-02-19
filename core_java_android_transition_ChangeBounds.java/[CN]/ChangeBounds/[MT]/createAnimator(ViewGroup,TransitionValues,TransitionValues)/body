@@ -13,132 +13,122 @@
   if (parentMatches(startParent,endParent)) {
     Rect startBounds=(Rect)startValues.values.get(PROPNAME_BOUNDS);
     Rect endBounds=(Rect)endValues.values.get(PROPNAME_BOUNDS);
-    int startLeft=startBounds.left;
-    int endLeft=endBounds.left;
-    int startTop=startBounds.top;
-    int endTop=endBounds.top;
-    int startRight=startBounds.right;
-    int endRight=endBounds.right;
-    int startBottom=startBounds.bottom;
-    int endBottom=endBounds.bottom;
-    int startWidth=startRight - startLeft;
-    int startHeight=startBottom - startTop;
-    int endWidth=endRight - endLeft;
-    int endHeight=endBottom - endTop;
+    final int startLeft=startBounds.left;
+    final int endLeft=endBounds.left;
+    final int startTop=startBounds.top;
+    final int endTop=endBounds.top;
+    final int startRight=startBounds.right;
+    final int endRight=endBounds.right;
+    final int startBottom=startBounds.bottom;
+    final int endBottom=endBounds.bottom;
+    final int startWidth=startRight - startLeft;
+    final int startHeight=startBottom - startTop;
+    final int endWidth=endRight - endLeft;
+    final int endHeight=endBottom - endTop;
+    Rect startClip=(Rect)startValues.values.get(PROPNAME_CLIP);
+    Rect endClip=(Rect)endValues.values.get(PROPNAME_CLIP);
     int numChanges=0;
     if ((startWidth != 0 && startHeight != 0) || (endWidth != 0 && endHeight != 0)) {
       if (startLeft != endLeft || startTop != endTop)       ++numChanges;
       if (startRight != endRight || startBottom != endBottom)       ++numChanges;
     }
+    if ((startClip != null && !startClip.equals(endClip)) || (startClip == null && endClip != null)) {
+      ++numChanges;
+    }
     if (numChanges > 0) {
+      Animator anim;
       if (!mResizeClip) {
-        Animator anim;
-        if (startWidth == endWidth && startHeight == endHeight) {
-          view.offsetLeftAndRight(startLeft - view.getLeft());
-          view.offsetTopAndBottom(startTop - view.getTop());
-          Path positionPath=getPathMotion().getPath(0,0,endLeft - startLeft,endTop - startTop);
-          anim=ObjectAnimator.ofInt(view,new HorizontalOffsetProperty(),new VerticalOffsetProperty(),positionPath);
+        view.setLeftTopRightBottom(startLeft,startTop,startRight,startBottom);
+        if (numChanges == 2) {
+          if (startWidth == endWidth && startHeight == endHeight) {
+            Path topLeftPath=getPathMotion().getPath(startLeft,startTop,endLeft,endTop);
+            anim=ObjectAnimator.ofObject(view,POSITION_PROPERTY,null,topLeftPath);
+          }
+ else {
+            final ViewBounds viewBounds=new ViewBounds(view);
+            Path topLeftPath=getPathMotion().getPath(startLeft,startTop,endLeft,endTop);
+            ObjectAnimator topLeftAnimator=ObjectAnimator.ofObject(viewBounds,TOP_LEFT_PROPERTY,null,topLeftPath);
+            Path bottomRightPath=getPathMotion().getPath(startRight,startBottom,endRight,endBottom);
+            ObjectAnimator bottomRightAnimator=ObjectAnimator.ofObject(viewBounds,BOTTOM_RIGHT_PROPERTY,null,bottomRightPath);
+            AnimatorSet set=new AnimatorSet();
+            set.playTogether(topLeftAnimator,bottomRightAnimator);
+            anim=set;
+            set.addListener(new AnimatorListenerAdapter(){
+              private ViewBounds mViewBounds=viewBounds;
+            }
+);
+          }
+        }
+ else         if (startLeft != endLeft || startTop != endTop) {
+          Path topLeftPath=getPathMotion().getPath(startLeft,startTop,endLeft,endTop);
+          anim=ObjectAnimator.ofObject(view,TOP_LEFT_ONLY_PROPERTY,null,topLeftPath);
         }
  else {
-          if (startLeft != endLeft)           view.setLeft(startLeft);
-          if (startTop != endTop)           view.setTop(startTop);
-          if (startRight != endRight)           view.setRight(startRight);
-          if (startBottom != endBottom)           view.setBottom(startBottom);
-          ObjectAnimator topLeftAnimator=null;
-          if (startLeft != endLeft || startTop != endTop) {
-            Path topLeftPath=getPathMotion().getPath(startLeft,startTop,endLeft,endTop);
-            topLeftAnimator=ObjectAnimator.ofInt(view,"left","top",topLeftPath);
-          }
-          ObjectAnimator bottomRightAnimator=null;
-          if (startRight != endRight || startBottom != endBottom) {
-            Path bottomRightPath=getPathMotion().getPath(startRight,startBottom,endRight,endBottom);
-            bottomRightAnimator=ObjectAnimator.ofInt(view,"right","bottom",bottomRightPath);
-          }
-          anim=TransitionUtils.mergeAnimators(topLeftAnimator,bottomRightAnimator);
+          Path bottomRight=getPathMotion().getPath(startRight,startBottom,endRight,endBottom);
+          anim=ObjectAnimator.ofObject(view,BOTTOM_RIGHT_ONLY_PROPERTY,null,bottomRight);
         }
-        if (view.getParent() instanceof ViewGroup) {
-          final ViewGroup parent=(ViewGroup)view.getParent();
-          parent.suppressLayout(true);
-          TransitionListener transitionListener=new TransitionListenerAdapter(){
-            boolean mCanceled=false;
-            @Override public void onTransitionCancel(            Transition transition){
-              parent.suppressLayout(false);
-              mCanceled=true;
-            }
-            @Override public void onTransitionEnd(            Transition transition){
-              if (!mCanceled) {
-                parent.suppressLayout(false);
-              }
-            }
-            @Override public void onTransitionPause(            Transition transition){
-              parent.suppressLayout(false);
-            }
-            @Override public void onTransitionResume(            Transition transition){
-              parent.suppressLayout(true);
-            }
-          }
-;
-          addListener(transitionListener);
-        }
-        return anim;
       }
  else {
-        if (startWidth != endWidth)         view.setRight(endLeft + Math.max(startWidth,endWidth));
-        if (startHeight != endHeight)         view.setBottom(endTop + Math.max(startHeight,endHeight));
-        if (startLeft != endLeft)         view.setTranslationX(startLeft - endLeft);
-        if (startTop != endTop)         view.setTranslationY(startTop - endTop);
-        float transXDelta=endLeft - startLeft;
-        float transYDelta=endTop - startTop;
-        int widthDelta=endWidth - startWidth;
-        int heightDelta=endHeight - startHeight;
-        numChanges=0;
-        if (transXDelta != 0)         numChanges++;
-        if (transYDelta != 0)         numChanges++;
-        if (widthDelta != 0 || heightDelta != 0)         numChanges++;
-        ObjectAnimator translationAnimator=null;
-        if (transXDelta != 0 || transYDelta != 0) {
-          Path topLeftPath=getPathMotion().getPath(0,0,transXDelta,transYDelta);
-          translationAnimator=ObjectAnimator.ofFloat(view,View.TRANSLATION_X,View.TRANSLATION_Y,topLeftPath);
+        int maxWidth=Math.max(startWidth,endWidth);
+        int maxHeight=Math.max(startHeight,endHeight);
+        view.setLeftTopRightBottom(startLeft,startTop,startLeft + maxWidth,startTop + maxHeight);
+        ObjectAnimator positionAnimator=null;
+        if (startLeft != endLeft || startTop != endTop) {
+          Path topLeftPath=getPathMotion().getPath(startLeft,startTop,endLeft,endTop);
+          positionAnimator=ObjectAnimator.ofObject(view,POSITION_PROPERTY,null,topLeftPath);
+        }
+        final Rect finalClip=endClip;
+        if (startClip == null) {
+          startClip=new Rect(0,0,startWidth,startHeight);
+        }
+        if (endClip == null) {
+          endClip=new Rect(0,0,endWidth,endHeight);
         }
         ObjectAnimator clipAnimator=null;
-        if (widthDelta != 0 || heightDelta != 0) {
-          Rect tempStartBounds=new Rect(0,0,startWidth,startHeight);
-          Rect tempEndBounds=new Rect(0,0,endWidth,endHeight);
-          clipAnimator=ObjectAnimator.ofObject(view,"clipBounds",sRectEvaluator,tempStartBounds,tempEndBounds);
-        }
-        Animator anim=TransitionUtils.mergeAnimators(translationAnimator,clipAnimator);
-        if (view.getParent() instanceof ViewGroup) {
-          final ViewGroup parent=(ViewGroup)view.getParent();
-          parent.suppressLayout(true);
-          TransitionListener transitionListener=new TransitionListenerAdapter(){
-            boolean mCanceled=false;
-            @Override public void onTransitionCancel(            Transition transition){
-              parent.suppressLayout(false);
-              mCanceled=true;
+        if (!startClip.equals(endClip)) {
+          view.setClipBounds(startClip);
+          clipAnimator=ObjectAnimator.ofObject(view,"clipBounds",sRectEvaluator,startClip,endClip);
+          clipAnimator.addListener(new AnimatorListenerAdapter(){
+            private boolean mIsCanceled;
+            @Override public void onAnimationCancel(            Animator animation){
+              mIsCanceled=true;
             }
-            @Override public void onTransitionEnd(            Transition transition){
-              if (!mCanceled) {
-                parent.suppressLayout(false);
+            @Override public void onAnimationEnd(            Animator animation){
+              if (!mIsCanceled) {
+                view.setClipBounds(finalClip);
+                view.setLeftTopRightBottom(endLeft,endTop,endRight,endBottom);
               }
             }
-            @Override public void onTransitionPause(            Transition transition){
+          }
+);
+        }
+        anim=TransitionUtils.mergeAnimators(positionAnimator,clipAnimator);
+      }
+      if (view.getParent() instanceof ViewGroup) {
+        final ViewGroup parent=(ViewGroup)view.getParent();
+        parent.suppressLayout(true);
+        TransitionListener transitionListener=new TransitionListenerAdapter(){
+          boolean mCanceled=false;
+          @Override public void onTransitionCancel(          Transition transition){
+            parent.suppressLayout(false);
+            mCanceled=true;
+          }
+          @Override public void onTransitionEnd(          Transition transition){
+            if (!mCanceled) {
               parent.suppressLayout(false);
             }
-            @Override public void onTransitionResume(            Transition transition){
-              parent.suppressLayout(true);
-            }
           }
+          @Override public void onTransitionPause(          Transition transition){
+            parent.suppressLayout(false);
+          }
+          @Override public void onTransitionResume(          Transition transition){
+            parent.suppressLayout(true);
+          }
+        }
 ;
-          addListener(transitionListener);
-        }
-        anim.addListener(new AnimatorListenerAdapter(){
-          @Override public void onAnimationEnd(          Animator animation){
-            view.setClipBounds(null);
-          }
-        }
-);
-        return anim;
+        addListener(transitionListener);
       }
+      return anim;
     }
   }
  else {

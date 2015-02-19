@@ -1,0 +1,41 @@
+{
+  if (userId != UserHandle.USER_ALL && userId < UserHandle.USER_OWNER) {
+    Log.e(TAG,"refreshDeviceLockedForUser(userId=" + userId + "): Invalid user handle,"+ " must be USER_ALL or a specific user.",new Throwable("here"));
+    userId=UserHandle.USER_ALL;
+  }
+  List<UserInfo> userInfos;
+  if (userId == UserHandle.USER_ALL) {
+    userInfos=mUserManager.getUsers(true);
+  }
+ else {
+    userInfos=new ArrayList<>();
+    userInfos.add(mUserManager.getUserInfo(userId));
+  }
+  IWindowManager wm=WindowManagerGlobal.getWindowManagerService();
+  for (int i=0; i < userInfos.size(); i++) {
+    UserInfo info=userInfos.get(i);
+    if (info == null || info.partial || !info.isEnabled() || info.guestToRemove || !info.supportsSwitchTo()) {
+      continue;
+    }
+    int id=info.id;
+    boolean secure=mLockPatternUtils.isSecure(id);
+    boolean trusted=aggregateIsTrusted(id);
+    boolean showingKeyguard=true;
+    if (mCurrentUser == id) {
+      try {
+        showingKeyguard=wm.isKeyguardLocked();
+      }
+ catch (      RemoteException e) {
+      }
+    }
+    boolean deviceLocked=secure && showingKeyguard && !trusted;
+    boolean changed;
+synchronized (mDeviceLockedForUser) {
+      changed=isDeviceLockedInner(id) != deviceLocked;
+      mDeviceLockedForUser.put(id,deviceLocked);
+    }
+    if (changed) {
+      dispatchDeviceLocked(id,deviceLocked);
+    }
+  }
+}

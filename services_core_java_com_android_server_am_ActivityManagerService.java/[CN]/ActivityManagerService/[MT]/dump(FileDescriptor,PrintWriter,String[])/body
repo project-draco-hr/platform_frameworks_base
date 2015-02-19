@@ -19,9 +19,20 @@
  else     if ("-c".equals(opt)) {
       dumpClient=true;
     }
+ else     if ("-p".equals(opt)) {
+      if (opti < args.length) {
+        dumpPackage=args[opti];
+        opti++;
+      }
+ else {
+        pw.println("Error: -p option requires package argument");
+        return;
+      }
+      dumpClient=true;
+    }
  else     if ("-h".equals(opt)) {
       pw.println("Activity manager dump options:");
-      pw.println("  [-a] [-c] [-h] [cmd] ...");
+      pw.println("  [-a] [-c] [-p package] [-h] [cmd] ...");
       pw.println("  cmd may be one of:");
       pw.println("    a[ctivities]: activity stack state");
       pw.println("    r[recents]: recent activities state");
@@ -32,17 +43,21 @@
       pw.println("    prov[iders] [COMP_SPEC ...]: content provider state");
       pw.println("    provider [COMP_SPEC]: provider client-side state");
       pw.println("    s[ervices] [COMP_SPEC ...]: service state");
+      pw.println("    as[sociations]: tracked app associations");
       pw.println("    service [COMP_SPEC]: service client-side state");
       pw.println("    package [PACKAGE_NAME]: all state related to given package");
       pw.println("    all: dump all activities");
       pw.println("    top: dump the top activity");
       pw.println("    write: write all pending state to storage");
+      pw.println("    track-associations: enable association tracking");
+      pw.println("    untrack-associations: disable and clear association tracking");
       pw.println("  cmd may also be a COMP_SPEC to dump activities.");
       pw.println("  COMP_SPEC may be a component name (com.foo/.myApp),");
       pw.println("    a partial substring in a component name, a");
       pw.println("    hex object identifier.");
       pw.println("  -a: include all available server state.");
       pw.println("  -c: include client state.");
+      pw.println("  -p: limit output to given package.");
       return;
     }
  else {
@@ -56,12 +71,12 @@
     opti++;
     if ("activities".equals(cmd) || "a".equals(cmd)) {
 synchronized (this) {
-        dumpActivitiesLocked(fd,pw,args,opti,true,dumpClient,null);
+        dumpActivitiesLocked(fd,pw,args,opti,true,dumpClient,dumpPackage);
       }
     }
  else     if ("recents".equals(cmd) || "r".equals(cmd)) {
 synchronized (this) {
-        dumpRecentsLocked(fd,pw,args,opti,true,null);
+        dumpRecentsLocked(fd,pw,args,opti,true,dumpPackage);
       }
     }
  else     if ("broadcasts".equals(cmd) || "b".equals(cmd)) {
@@ -72,13 +87,13 @@ synchronized (this) {
         newArgs=EMPTY_STRING_ARRAY;
       }
  else {
-        name=args[opti];
+        dumpPackage=args[opti];
         opti++;
         newArgs=new String[args.length - opti];
         if (args.length > 2)         System.arraycopy(args,opti,newArgs,0,args.length - opti);
       }
 synchronized (this) {
-        dumpBroadcastsLocked(fd,pw,args,opti,true,name);
+        dumpBroadcastsLocked(fd,pw,args,opti,true,dumpPackage);
       }
     }
  else     if ("intents".equals(cmd) || "i".equals(cmd)) {
@@ -89,13 +104,13 @@ synchronized (this) {
         newArgs=EMPTY_STRING_ARRAY;
       }
  else {
-        name=args[opti];
+        dumpPackage=args[opti];
         opti++;
         newArgs=new String[args.length - opti];
         if (args.length > 2)         System.arraycopy(args,opti,newArgs,0,args.length - opti);
       }
 synchronized (this) {
-        dumpPendingIntentsLocked(fd,pw,args,opti,true,name);
+        dumpPendingIntentsLocked(fd,pw,args,opti,true,dumpPackage);
       }
     }
  else     if ("processes".equals(cmd) || "p".equals(cmd)) {
@@ -106,13 +121,13 @@ synchronized (this) {
         newArgs=EMPTY_STRING_ARRAY;
       }
  else {
-        name=args[opti];
+        dumpPackage=args[opti];
         opti++;
         newArgs=new String[args.length - opti];
         if (args.length > 2)         System.arraycopy(args,opti,newArgs,0,args.length - opti);
       }
 synchronized (this) {
-        dumpProcessesLocked(fd,pw,args,opti,true,name);
+        dumpProcessesLocked(fd,pw,args,opti,true,dumpPackage);
       }
     }
  else     if ("oom".equals(cmd) || "o".equals(cmd)) {
@@ -177,14 +192,44 @@ synchronized (this) {
         more=true;
       }
     }
+ else     if ("associations".equals(cmd) || "as".equals(cmd)) {
+synchronized (this) {
+        dumpAssociationsLocked(fd,pw,args,opti,true,dumpClient,dumpPackage);
+      }
+    }
  else     if ("services".equals(cmd) || "s".equals(cmd)) {
 synchronized (this) {
-        mServices.dumpServicesLocked(fd,pw,args,opti,true,dumpClient,null);
+        mServices.dumpServicesLocked(fd,pw,args,opti,true,dumpClient,dumpPackage);
       }
     }
  else     if ("write".equals(cmd)) {
       mTaskPersister.flush();
       pw.println("All tasks persisted.");
+      return;
+    }
+ else     if ("track-associations".equals(cmd)) {
+synchronized (this) {
+        if (!mTrackingAssociations) {
+          mTrackingAssociations=true;
+          pw.println("Association tracking started.");
+        }
+ else {
+          pw.println("Association tracking already enabled.");
+        }
+      }
+      return;
+    }
+ else     if ("untrack-associations".equals(cmd)) {
+synchronized (this) {
+        if (mTrackingAssociations) {
+          mTrackingAssociations=false;
+          mAssociations.clear();
+          pw.println("Association tracking stopped.");
+        }
+ else {
+          pw.println("Association tracking not running.");
+        }
+      }
       return;
     }
  else {
@@ -225,6 +270,13 @@ synchronized (this) {
       pw.println("-------------------------------------------------------------------------------");
     }
     dumpActivitiesLocked(fd,pw,args,opti,dumpAll,dumpClient,dumpPackage);
+    if (mAssociations.size() > 0) {
+      pw.println();
+      if (dumpAll) {
+        pw.println("-------------------------------------------------------------------------------");
+      }
+      dumpAssociationsLocked(fd,pw,args,opti,dumpAll,dumpClient,dumpPackage);
+    }
     pw.println();
     if (dumpAll) {
       pw.println("-------------------------------------------------------------------------------");

@@ -1,48 +1,120 @@
 {
   super(delegator,context);
   final TypedArray a=mContext.obtainStyledAttributes(attrs,R.styleable.TimePicker,defStyleAttr,defStyleRes);
-  final LayoutInflater inflater=(LayoutInflater)mContext.getSystemService(Context.LAYOUT_INFLATER_SERVICE);
-  final Resources res=mContext.getResources();
-  mHourPickerDescription=res.getString(R.string.hour_picker_description);
-  mSelectHours=res.getString(R.string.select_hours);
-  mMinutePickerDescription=res.getString(R.string.minute_picker_description);
-  mSelectMinutes=res.getString(R.string.select_minutes);
-  String[] amPmStrings=TimePickerClockDelegate.getAmPmStrings(context);
-  mAmText=amPmStrings[0];
-  mPmText=amPmStrings[1];
-  final int layoutResourceId=a.getResourceId(R.styleable.TimePicker_internalLayout,R.layout.time_picker_holo);
-  final View mainView=inflater.inflate(layoutResourceId,null);
-  mDelegator.addView(mainView);
-  mHourView=(TextView)mainView.findViewById(R.id.hours);
-  mSeparatorView=(TextView)mainView.findViewById(R.id.separator);
-  mMinuteView=(TextView)mainView.findViewById(R.id.minutes);
-  mAmPmTextView=(TextView)mainView.findViewById(R.id.ampm_label);
-  final int headerTimeTextAppearance=a.getResourceId(R.styleable.TimePicker_headerTimeTextAppearance,0);
-  if (headerTimeTextAppearance != 0) {
-    mHourView.setTextAppearance(context,headerTimeTextAppearance);
-    mSeparatorView.setTextAppearance(context,headerTimeTextAppearance);
-    mMinuteView.setTextAppearance(context,headerTimeTextAppearance);
-  }
-  final int headerSelectedTextColor=a.getColor(R.styleable.TimePicker_headerSelectedTextColor,res.getColor(R.color.timepicker_default_selector_color_material));
-  mHourView.setTextColor(ColorStateList.addFirstIfMissing(mHourView.getTextColors(),R.attr.state_selected,headerSelectedTextColor));
-  mMinuteView.setTextColor(ColorStateList.addFirstIfMissing(mMinuteView.getTextColors(),R.attr.state_selected,headerSelectedTextColor));
-  final int headerAmPmTextAppearance=a.getResourceId(R.styleable.TimePicker_headerAmPmTextAppearance,0);
-  if (headerAmPmTextAppearance != 0) {
-    mAmPmTextView.setTextAppearance(context,headerAmPmTextAppearance);
-  }
-  mHeaderView=mainView.findViewById(R.id.time_header);
-  mHeaderView.setBackground(a.getDrawable(R.styleable.TimePicker_headerBackground));
+  final int layoutResourceId=a.getResourceId(R.styleable.TimePicker_legacyLayout,R.layout.time_picker_legacy);
   a.recycle();
-  mRadialTimePickerView=(RadialTimePickerView)mainView.findViewById(R.id.radial_picker);
-  setupListeners();
-  mAllowAutoAdvance=true;
-  mDoublePlaceholderText=res.getString(R.string.time_placeholder);
-  mDeletedKeyFormat=res.getString(R.string.deleted_key);
-  mPlaceholderText=mDoublePlaceholderText.charAt(0);
-  mAmKeyCode=mPmKeyCode=-1;
-  generateLegalTimesTree();
-  final Calendar calendar=Calendar.getInstance(mCurrentLocale);
-  final int currentHour=calendar.get(Calendar.HOUR_OF_DAY);
-  final int currentMinute=calendar.get(Calendar.MINUTE);
-  initialize(currentHour,currentMinute,false,HOUR_INDEX);
+  final LayoutInflater inflater=LayoutInflater.from(mContext);
+  inflater.inflate(layoutResourceId,mDelegator,true);
+  mHourSpinner=(NumberPicker)delegator.findViewById(R.id.hour);
+  mHourSpinner.setOnValueChangedListener(new NumberPicker.OnValueChangeListener(){
+    public void onValueChange(    NumberPicker spinner,    int oldVal,    int newVal){
+      updateInputState();
+      if (!is24HourView()) {
+        if ((oldVal == HOURS_IN_HALF_DAY - 1 && newVal == HOURS_IN_HALF_DAY) || (oldVal == HOURS_IN_HALF_DAY && newVal == HOURS_IN_HALF_DAY - 1)) {
+          mIsAm=!mIsAm;
+          updateAmPmControl();
+        }
+      }
+      onTimeChanged();
+    }
+  }
+);
+  mHourSpinnerInput=(EditText)mHourSpinner.findViewById(R.id.numberpicker_input);
+  mHourSpinnerInput.setImeOptions(EditorInfo.IME_ACTION_NEXT);
+  mDivider=(TextView)mDelegator.findViewById(R.id.divider);
+  if (mDivider != null) {
+    setDividerText();
+  }
+  mMinuteSpinner=(NumberPicker)mDelegator.findViewById(R.id.minute);
+  mMinuteSpinner.setMinValue(0);
+  mMinuteSpinner.setMaxValue(59);
+  mMinuteSpinner.setOnLongPressUpdateInterval(100);
+  mMinuteSpinner.setFormatter(NumberPicker.getTwoDigitFormatter());
+  mMinuteSpinner.setOnValueChangedListener(new NumberPicker.OnValueChangeListener(){
+    public void onValueChange(    NumberPicker spinner,    int oldVal,    int newVal){
+      updateInputState();
+      int minValue=mMinuteSpinner.getMinValue();
+      int maxValue=mMinuteSpinner.getMaxValue();
+      if (oldVal == maxValue && newVal == minValue) {
+        int newHour=mHourSpinner.getValue() + 1;
+        if (!is24HourView() && newHour == HOURS_IN_HALF_DAY) {
+          mIsAm=!mIsAm;
+          updateAmPmControl();
+        }
+        mHourSpinner.setValue(newHour);
+      }
+ else       if (oldVal == minValue && newVal == maxValue) {
+        int newHour=mHourSpinner.getValue() - 1;
+        if (!is24HourView() && newHour == HOURS_IN_HALF_DAY - 1) {
+          mIsAm=!mIsAm;
+          updateAmPmControl();
+        }
+        mHourSpinner.setValue(newHour);
+      }
+      onTimeChanged();
+    }
+  }
+);
+  mMinuteSpinnerInput=(EditText)mMinuteSpinner.findViewById(R.id.numberpicker_input);
+  mMinuteSpinnerInput.setImeOptions(EditorInfo.IME_ACTION_NEXT);
+  mAmPmStrings=getAmPmStrings(context);
+  final View amPmView=mDelegator.findViewById(R.id.amPm);
+  if (amPmView instanceof Button) {
+    mAmPmSpinner=null;
+    mAmPmSpinnerInput=null;
+    mAmPmButton=(Button)amPmView;
+    mAmPmButton.setOnClickListener(new View.OnClickListener(){
+      public void onClick(      View button){
+        button.requestFocus();
+        mIsAm=!mIsAm;
+        updateAmPmControl();
+        onTimeChanged();
+      }
+    }
+);
+  }
+ else {
+    mAmPmButton=null;
+    mAmPmSpinner=(NumberPicker)amPmView;
+    mAmPmSpinner.setMinValue(0);
+    mAmPmSpinner.setMaxValue(1);
+    mAmPmSpinner.setDisplayedValues(mAmPmStrings);
+    mAmPmSpinner.setOnValueChangedListener(new NumberPicker.OnValueChangeListener(){
+      public void onValueChange(      NumberPicker picker,      int oldVal,      int newVal){
+        updateInputState();
+        picker.requestFocus();
+        mIsAm=!mIsAm;
+        updateAmPmControl();
+        onTimeChanged();
+      }
+    }
+);
+    mAmPmSpinnerInput=(EditText)mAmPmSpinner.findViewById(R.id.numberpicker_input);
+    mAmPmSpinnerInput.setImeOptions(EditorInfo.IME_ACTION_DONE);
+  }
+  if (isAmPmAtStart()) {
+    ViewGroup amPmParent=(ViewGroup)delegator.findViewById(R.id.timePickerLayout);
+    amPmParent.removeView(amPmView);
+    amPmParent.addView(amPmView,0);
+    ViewGroup.MarginLayoutParams lp=(ViewGroup.MarginLayoutParams)amPmView.getLayoutParams();
+    final int startMargin=lp.getMarginStart();
+    final int endMargin=lp.getMarginEnd();
+    if (startMargin != endMargin) {
+      lp.setMarginStart(endMargin);
+      lp.setMarginEnd(startMargin);
+    }
+  }
+  getHourFormatData();
+  updateHourControl();
+  updateMinuteControl();
+  updateAmPmControl();
+  setCurrentHour(mTempCalendar.get(Calendar.HOUR_OF_DAY));
+  setCurrentMinute(mTempCalendar.get(Calendar.MINUTE));
+  if (!isEnabled()) {
+    setEnabled(false);
+  }
+  setContentDescriptions();
+  if (mDelegator.getImportantForAccessibility() == IMPORTANT_FOR_ACCESSIBILITY_AUTO) {
+    mDelegator.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_YES);
+  }
 }

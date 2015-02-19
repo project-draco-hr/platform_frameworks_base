@@ -7,8 +7,10 @@
   boolean dumpDetails=false;
   boolean dumpFullDetails=false;
   boolean dumpAll=false;
+  boolean quit=false;
   int aggregateHours=0;
   int lastIndex=0;
+  int maxNum=2;
   boolean activeOnly=false;
   String reqPackage=null;
   boolean csvSepScreenStats=false;
@@ -118,6 +120,22 @@
           return;
         }
       }
+ else       if ("--max".equals(arg)) {
+        i++;
+        if (i >= args.length) {
+          pw.println("Error: argument required for --max");
+          dumpHelp(pw);
+          return;
+        }
+        try {
+          maxNum=Integer.parseInt(args[i]);
+        }
+ catch (        NumberFormatException e) {
+          pw.println("Error: --max argument not an int -- " + args[i]);
+          dumpHelp(pw);
+          return;
+        }
+      }
  else       if ("--active".equals(arg)) {
         activeOnly=true;
         currentOnly=true;
@@ -130,15 +148,15 @@ synchronized (mAm) {
           mProcessStats.mFlags|=ProcessStats.FLAG_COMPLETE;
           writeStateLocked(true,true);
           pw.println("Process stats committed.");
+          quit=true;
         }
-        return;
       }
  else       if ("--reset".equals(arg)) {
 synchronized (mAm) {
           mProcessStats.resetSafely();
           pw.println("Process stats reset.");
+          quit=true;
         }
-        return;
       }
  else       if ("--clear".equals(arg)) {
 synchronized (mAm) {
@@ -150,22 +168,36 @@ synchronized (mAm) {
             }
           }
           pw.println("All process stats cleared.");
+          quit=true;
         }
-        return;
       }
  else       if ("--write".equals(arg)) {
 synchronized (mAm) {
           writeStateSyncLocked();
           pw.println("Process stats written.");
+          quit=true;
         }
-        return;
       }
  else       if ("--read".equals(arg)) {
 synchronized (mAm) {
           readLocked(mProcessStats,mFile);
           pw.println("Process stats read.");
+          quit=true;
         }
-        return;
+      }
+ else       if ("--start-testing".equals(arg)) {
+synchronized (mAm) {
+          mAm.setTestPssMode(true);
+          pw.println("Started high frequency sampling.");
+          quit=true;
+        }
+      }
+ else       if ("--stop-testing".equals(arg)) {
+synchronized (mAm) {
+          mAm.setTestPssMode(false);
+          pw.println("Stopped high frequency sampling.");
+          quit=true;
+        }
       }
  else       if ("-h".equals(arg)) {
         dumpHelp(pw);
@@ -185,6 +217,9 @@ synchronized (mAm) {
         dumpDetails=true;
       }
     }
+  }
+  if (quit) {
+    return;
   }
   if (isCsv) {
     pw.print("Processes running summed over");
@@ -270,7 +305,11 @@ synchronized (mAm) {
     try {
       ArrayList<String> files=getCommittedFiles(0,false,!isCheckin);
       if (files != null) {
-        for (int i=0; i < files.size(); i++) {
+        int start=isCheckin ? 0 : (files.size() - maxNum);
+        if (start < 0) {
+          start=0;
+        }
+        for (int i=start; i < files.size(); i++) {
           if (DEBUG)           Slog.d(TAG,"Retrieving state: " + files.get(i));
           try {
             AtomicFile file=new AtomicFile(new File(files.get(i)));
@@ -326,17 +365,6 @@ synchronized (mAm) {
     }
   }
   if (!isCheckin) {
-    if (!currentOnly) {
-      if (sepNeeded) {
-        pw.println();
-      }
-      pw.println("AGGREGATED OVER LAST 24 HOURS:");
-      dumpAggregatedStats(pw,24,now,reqPackage,isCompact,dumpDetails,dumpFullDetails,dumpAll,activeOnly);
-      pw.println();
-      pw.println("AGGREGATED OVER LAST 3 HOURS:");
-      dumpAggregatedStats(pw,3,now,reqPackage,isCompact,dumpDetails,dumpFullDetails,dumpAll,activeOnly);
-      sepNeeded=true;
-    }
 synchronized (mAm) {
       if (isCompact) {
         mProcessStats.dumpCheckinLocked(pw,reqPackage);
@@ -356,7 +384,18 @@ synchronized (mAm) {
  else {
           mProcessStats.dumpSummaryLocked(pw,reqPackage,now,activeOnly);
         }
+        sepNeeded=true;
       }
+    }
+    if (!currentOnly) {
+      if (sepNeeded) {
+        pw.println();
+      }
+      pw.println("AGGREGATED OVER LAST 24 HOURS:");
+      dumpAggregatedStats(pw,24,now,reqPackage,isCompact,dumpDetails,dumpFullDetails,dumpAll,activeOnly);
+      pw.println();
+      pw.println("AGGREGATED OVER LAST 3 HOURS:");
+      dumpAggregatedStats(pw,3,now,reqPackage,isCompact,dumpDetails,dumpFullDetails,dumpAll,activeOnly);
     }
   }
 }

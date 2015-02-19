@@ -45,7 +45,10 @@ synchronized (mSessionCallbackRecordMap) {
           Log.e(TAG,"Callback not found for seq " + seq);
           return;
         }
-        record.postTracksChanged(tracks);
+        if (record.mSession.updateTracks(tracks)) {
+          record.postTracksChanged(tracks);
+          postVideoSizeChangedIfNeededLocked(record);
+        }
       }
     }
     @Override public void onTrackSelected(    int type,    String trackId,    int seq){
@@ -55,7 +58,16 @@ synchronized (mSessionCallbackRecordMap) {
           Log.e(TAG,"Callback not found for seq " + seq);
           return;
         }
-        record.postTrackSelected(type,trackId);
+        if (record.mSession.updateTrackSelection(type,trackId)) {
+          record.postTrackSelected(type,trackId);
+          postVideoSizeChangedIfNeededLocked(record);
+        }
+      }
+    }
+    private void postVideoSizeChangedIfNeededLocked(    SessionCallbackRecord record){
+      TvTrackInfo track=record.mSession.getVideoTrackToNotify();
+      if (track != null) {
+        record.postVideoSizeChanged(track.getVideoWidth(),track.getVideoHeight());
       }
     }
     @Override public void onVideoAvailable(    int seq){
@@ -157,9 +169,19 @@ synchronized (mLock) {
   try {
     if (mService != null) {
       mService.registerCallback(mManagerCallback,mUserId);
+      List<TvInputInfo> infos=mService.getTvInputList(mUserId);
+synchronized (mLock) {
+        for (        TvInputInfo info : infos) {
+          String inputId=info.getId();
+          int state=mService.getTvInputState(inputId,mUserId);
+          if (state != INPUT_STATE_UNKNOWN) {
+            mStateMap.put(inputId,state);
+          }
+        }
+      }
     }
   }
  catch (  RemoteException e) {
-    Log.e(TAG,"mService.registerCallback failed: " + e);
+    Log.e(TAG,"TvInputManager initialization failed: " + e);
   }
 }
