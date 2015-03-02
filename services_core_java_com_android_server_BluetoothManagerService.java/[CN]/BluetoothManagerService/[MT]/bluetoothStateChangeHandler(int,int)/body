@@ -1,27 +1,63 @@
 {
+  boolean isStandardBroadcast=true;
   if (prevState != newState) {
-    if (newState == BluetoothAdapter.STATE_ON || newState == BluetoothAdapter.STATE_OFF) {
-      boolean isUp=(newState == BluetoothAdapter.STATE_ON);
-      sendBluetoothStateCallback(isUp);
-      if (isUp) {
-        if (mContext.getPackageManager().hasSystemFeature(PackageManager.FEATURE_BLUETOOTH_LE)) {
-          Intent i=new Intent(IBluetoothGatt.class.getName());
-          doBind(i,mConnection,Context.BIND_AUTO_CREATE | Context.BIND_IMPORTANT,UserHandle.CURRENT);
-        }
-      }
- else {
-        if (!isUp && canUnbindBluetoothService()) {
-          unbindAllBluetoothProfileServices();
+    if (newState == BluetoothAdapter.STATE_BLE_ON || newState == BluetoothAdapter.STATE_OFF) {
+      boolean intermediate_off=(prevState == BluetoothAdapter.STATE_TURNING_OFF && newState == BluetoothAdapter.STATE_BLE_ON);
+      if (newState == BluetoothAdapter.STATE_OFF) {
+        if (DBG)         Log.d(TAG,"Bluetooth is complete turn off");
+        if (canUnbindBluetoothService()) {
+          if (DBG)           Log.d(TAG,"Good to unbind!");
           sendBluetoothServiceDownCallback();
           unbindAndFinish();
+          sendBleStateChanged(prevState,newState);
+          isStandardBroadcast=false;
         }
       }
+ else       if (!intermediate_off) {
+        if (DBG)         Log.d(TAG,"Bluetooth is in LE only mode");
+        if (mBluetoothGatt != null) {
+          if (DBG)           Log.d(TAG,"Calling BluetoothGattServiceUp");
+          onBluetoothGattServiceUp();
+        }
+ else {
+          if (DBG)           Log.d(TAG,"Binding Bluetooth GATT service");
+          if (mContext.getPackageManager().hasSystemFeature(PackageManager.FEATURE_BLUETOOTH_LE)) {
+            Intent i=new Intent(IBluetoothGatt.class.getName());
+            doBind(i,mConnection,Context.BIND_AUTO_CREATE | Context.BIND_IMPORTANT,UserHandle.CURRENT);
+          }
+        }
+        sendBleStateChanged(prevState,newState);
+        isStandardBroadcast=false;
+      }
+ else       if (intermediate_off) {
+        if (DBG)         Log.d(TAG,"Intermediate off, back to LE only mode");
+        sendBleStateChanged(prevState,newState);
+        sendBluetoothStateCallback(false);
+        newState=BluetoothAdapter.STATE_OFF;
+        sendBrEdrDownCallback();
+      }
     }
-    Intent intent=new Intent(BluetoothAdapter.ACTION_STATE_CHANGED);
-    intent.putExtra(BluetoothAdapter.EXTRA_PREVIOUS_STATE,prevState);
-    intent.putExtra(BluetoothAdapter.EXTRA_STATE,newState);
-    intent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY_BEFORE_BOOT);
-    if (DBG)     Log.d(TAG,"Bluetooth State Change Intent: " + prevState + " -> "+ newState);
-    mContext.sendBroadcastAsUser(intent,UserHandle.ALL,BLUETOOTH_PERM);
+ else     if (newState == BluetoothAdapter.STATE_ON) {
+      boolean isUp=(newState == BluetoothAdapter.STATE_ON);
+      sendBluetoothStateCallback(isUp);
+      sendBleStateChanged(prevState,newState);
+    }
+ else     if (newState == BluetoothAdapter.STATE_BLE_TURNING_ON || newState == BluetoothAdapter.STATE_BLE_TURNING_OFF) {
+      sendBleStateChanged(prevState,newState);
+      isStandardBroadcast=false;
+    }
+ else     if (newState == BluetoothAdapter.STATE_TURNING_ON || newState == BluetoothAdapter.STATE_TURNING_OFF) {
+      sendBleStateChanged(prevState,newState);
+    }
+    if (isStandardBroadcast) {
+      if (prevState == BluetoothAdapter.STATE_BLE_ON) {
+        prevState=BluetoothAdapter.STATE_OFF;
+      }
+      Intent intent=new Intent(BluetoothAdapter.ACTION_STATE_CHANGED);
+      intent.putExtra(BluetoothAdapter.EXTRA_PREVIOUS_STATE,prevState);
+      intent.putExtra(BluetoothAdapter.EXTRA_STATE,newState);
+      intent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY_BEFORE_BOOT);
+      mContext.sendBroadcastAsUser(intent,UserHandle.ALL,BLUETOOTH_PERM);
+    }
   }
 }
