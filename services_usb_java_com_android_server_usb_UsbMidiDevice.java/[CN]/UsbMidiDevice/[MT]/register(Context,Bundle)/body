@@ -1,0 +1,44 @@
+{
+  MidiManager midiManager=(MidiManager)context.getSystemService(Context.MIDI_SERVICE);
+  if (midiManager == null) {
+    Log.e(TAG,"No MidiManager in UsbMidiDevice.create()");
+    return false;
+  }
+  int outputCount=mOutputStreams.length;
+  mServer=midiManager.createDeviceServer(mInputPortReceivers,outputCount,properties,MidiDeviceInfo.TYPE_USB);
+  if (mServer == null) {
+    return false;
+  }
+  final MidiReceiver[] outputReceivers=mServer.getOutputPortReceivers();
+  new Thread(){
+    @Override public void run(){
+      byte[] buffer=new byte[MidiPort.MAX_PACKET_DATA_SIZE];
+      try {
+        boolean done=false;
+        while (!done) {
+          for (int index=0; index < mPollFDs.length; index++) {
+            StructPollfd pfd=mPollFDs[index];
+            if ((pfd.revents & OsConstants.POLLIN) != 0) {
+              pfd.revents=0;
+              int count=mInputStreams[index].read(buffer);
+              long timestamp=System.nanoTime();
+              outputReceivers[index].post(buffer,0,count,timestamp);
+            }
+ else             if ((pfd.revents & (OsConstants.POLLERR | OsConstants.POLLHUP)) != 0) {
+              done=true;
+            }
+          }
+          Os.poll(mPollFDs,-1);
+        }
+      }
+ catch (      IOException e) {
+        Log.d(TAG,"reader thread exiting");
+      }
+catch (      ErrnoException e) {
+        Log.d(TAG,"reader thread exiting");
+      }
+    }
+  }
+.start();
+  return true;
+}
