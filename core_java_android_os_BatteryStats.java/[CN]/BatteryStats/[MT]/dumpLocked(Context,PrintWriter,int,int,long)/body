@@ -1,6 +1,6 @@
 {
   prepareForDumpLocked();
-  final boolean filtering=(flags & (DUMP_HISTORY_ONLY | DUMP_UNPLUGGED_ONLY | DUMP_CHARGED_ONLY)) != 0;
+  final boolean filtering=(flags & (DUMP_HISTORY_ONLY | DUMP_UNPLUGGED_ONLY | DUMP_CHARGED_ONLY| DUMP_DAILY_ONLY)) != 0;
   if ((flags & DUMP_HISTORY_ONLY) != 0 || !filtering) {
     final long historyTotalSize=getHistoryTotalSize();
     final long historyUsedSize=getHistoryUsedSize();
@@ -43,7 +43,7 @@
       }
     }
   }
-  if (filtering && (flags & (DUMP_UNPLUGGED_ONLY | DUMP_CHARGED_ONLY)) == 0) {
+  if (filtering && (flags & (DUMP_UNPLUGGED_ONLY | DUMP_CHARGED_ONLY | DUMP_DAILY_ONLY)) == 0) {
     return;
   }
   if (!filtering) {
@@ -75,24 +75,20 @@
     }
   }
   if (!filtering || (flags & DUMP_CHARGED_ONLY) != 0) {
-    if (dumpDurationSteps(pw,"Discharge step durations:",getDischargeStepDurationsArray(),getNumDischargeStepDurations(),false)) {
+    if (dumpDurationSteps(pw,"  ","Discharge step durations:",getDischargeLevelStepTracker(),false)) {
       long timeRemaining=computeBatteryTimeRemaining(SystemClock.elapsedRealtime());
       if (timeRemaining >= 0) {
         pw.print("  Estimated discharge time remaining: ");
         TimeUtils.formatDuration(timeRemaining / 1000,pw);
         pw.println();
       }
-      dumpTimeEstimate(pw,"  Estimated screen off time: ",getDischargeStepDurationsArray(),getNumDischargeStepDurations(),STEP_LEVEL_MODE_SCREEN_STATE | STEP_LEVEL_MODE_POWER_SAVE,(Display.STATE_OFF - 1));
-      dumpTimeEstimate(pw,"  Estimated screen off power save time: ",getDischargeStepDurationsArray(),getNumDischargeStepDurations(),STEP_LEVEL_MODE_SCREEN_STATE | STEP_LEVEL_MODE_POWER_SAVE,(Display.STATE_OFF - 1) | STEP_LEVEL_MODE_POWER_SAVE);
-      dumpTimeEstimate(pw,"  Estimated screen on time: ",getDischargeStepDurationsArray(),getNumDischargeStepDurations(),STEP_LEVEL_MODE_SCREEN_STATE | STEP_LEVEL_MODE_POWER_SAVE,(Display.STATE_ON - 1));
-      dumpTimeEstimate(pw,"  Estimated screen on power save time: ",getDischargeStepDurationsArray(),getNumDischargeStepDurations(),STEP_LEVEL_MODE_SCREEN_STATE | STEP_LEVEL_MODE_POWER_SAVE,(Display.STATE_ON - 1) | STEP_LEVEL_MODE_POWER_SAVE);
-      dumpTimeEstimate(pw,"  Estimated screen doze time: ",getDischargeStepDurationsArray(),getNumDischargeStepDurations(),STEP_LEVEL_MODE_SCREEN_STATE | STEP_LEVEL_MODE_POWER_SAVE,(Display.STATE_DOZE - 1));
-      dumpTimeEstimate(pw,"  Estimated screen doze power save time: ",getDischargeStepDurationsArray(),getNumDischargeStepDurations(),STEP_LEVEL_MODE_SCREEN_STATE | STEP_LEVEL_MODE_POWER_SAVE,(Display.STATE_DOZE - 1) | STEP_LEVEL_MODE_POWER_SAVE);
-      dumpTimeEstimate(pw,"  Estimated screen doze suspend time: ",getDischargeStepDurationsArray(),getNumDischargeStepDurations(),STEP_LEVEL_MODE_SCREEN_STATE | STEP_LEVEL_MODE_POWER_SAVE,(Display.STATE_DOZE_SUSPEND - 1));
-      dumpTimeEstimate(pw,"  Estimated screen doze suspend power save time: ",getDischargeStepDurationsArray(),getNumDischargeStepDurations(),STEP_LEVEL_MODE_SCREEN_STATE | STEP_LEVEL_MODE_POWER_SAVE,(Display.STATE_DOZE_SUSPEND - 1) | STEP_LEVEL_MODE_POWER_SAVE);
+      final LevelStepTracker steps=getDischargeLevelStepTracker();
+      for (int i=0; i < STEP_LEVEL_MODES_OF_INTEREST.length; i++) {
+        dumpTimeEstimate(pw,"  Estimated ",STEP_LEVEL_MODE_LABELS[i]," time: ",steps.computeTimeEstimate(STEP_LEVEL_MODES_OF_INTEREST[i],STEP_LEVEL_MODE_VALUES[i],null));
+      }
       pw.println();
     }
-    if (dumpDurationSteps(pw,"Charge step durations:",getChargeStepDurationsArray(),getNumChargeStepDurations(),false)) {
+    if (dumpDurationSteps(pw,"  ","Charge step durations:",getChargeLevelStepTracker(),false)) {
       long timeRemaining=computeChargeTimeRemaining(SystemClock.elapsedRealtime());
       if (timeRemaining >= 0) {
         pw.print("  Estimated charge time remaining: ");
@@ -101,6 +97,62 @@
       }
       pw.println();
     }
+  }
+  if (!filtering || (flags & (DUMP_CHARGED_ONLY | DUMP_DAILY_ONLY)) != 0) {
+    pw.println("Daily stats:");
+    pw.print("  Current start time: ");
+    pw.println(DateFormat.format("yyyy-MM-dd-HH-mm-ss",getCurrentDailyStartTime()).toString());
+    pw.print("  Next min deadline: ");
+    pw.println(DateFormat.format("yyyy-MM-dd-HH-mm-ss",getNextMinDailyDeadline()).toString());
+    pw.print("  Next max deadline: ");
+    pw.println(DateFormat.format("yyyy-MM-dd-HH-mm-ss",getNextMaxDailyDeadline()).toString());
+    StringBuilder sb=new StringBuilder(64);
+    int[] outInt=new int[1];
+    LevelStepTracker dsteps=getDailyDischargeLevelStepTracker();
+    LevelStepTracker csteps=getDailyChargeLevelStepTracker();
+    if (dsteps.mNumStepDurations > 0 || csteps.mNumStepDurations > 0) {
+      if ((flags & DUMP_DAILY_ONLY) != 0) {
+        if (dumpDurationSteps(pw,"    ","  Current daily discharge step durations:",dsteps,false)) {
+          dumpDailyLevelStepSummary(pw,"      ","Discharge",dsteps,sb,outInt);
+        }
+        if (dumpDurationSteps(pw,"    ","  Current daily charge step durations:",csteps,false)) {
+          dumpDailyLevelStepSummary(pw,"      ","Charge",csteps,sb,outInt);
+        }
+      }
+ else {
+        pw.println("  Current daily steps:");
+        dumpDailyLevelStepSummary(pw,"    ","Discharge",dsteps,sb,outInt);
+        dumpDailyLevelStepSummary(pw,"    ","Charge",csteps,sb,outInt);
+      }
+    }
+    DailyItem dit;
+    int curIndex=0;
+    while ((dit=getDailyItemLocked(curIndex)) != null) {
+      curIndex++;
+      if ((flags & DUMP_DAILY_ONLY) != 0) {
+        pw.println();
+      }
+      pw.print("  Daily from ");
+      pw.print(DateFormat.format("yyyy-MM-dd-HH-mm-ss",dit.mStartTime).toString());
+      pw.print(" to ");
+      pw.print(DateFormat.format("yyyy-MM-dd-HH-mm-ss",dit.mEndTime).toString());
+      pw.println(":");
+      if ((flags & DUMP_DAILY_ONLY) != 0) {
+        if (dumpDurationSteps(pw,"      ","    Discharge step durations:",dit.mDischargeSteps,false)) {
+          dumpDailyLevelStepSummary(pw,"        ","Discharge",dit.mDischargeSteps,sb,outInt);
+        }
+        if (dumpDurationSteps(pw,"      ","    Charge step durations:",dit.mChargeSteps,false)) {
+          dumpDailyLevelStepSummary(pw,"        ","Charge",dit.mChargeSteps,sb,outInt);
+        }
+      }
+ else {
+        dumpDailyLevelStepSummary(pw,"    ","Discharge",dit.mDischargeSteps,sb,outInt);
+        dumpDailyLevelStepSummary(pw,"    ","Charge",dit.mChargeSteps,sb,outInt);
+      }
+    }
+    pw.println();
+  }
+  if (!filtering || (flags & DUMP_CHARGED_ONLY) != 0) {
     pw.println("Statistics since last charge:");
     pw.println("  System starts: " + getStartCount() + ", currently on battery: "+ getIsOnBattery());
     dumpLocked(context,pw,"",STATS_SINCE_CHARGED,reqUid,(flags & DUMP_DEVICE_WIFI_ONLY) != 0);
