@@ -547,5 +547,65 @@ p.thread.notifyCleartextNetwork(firstPacket);
 }
 break;
 }
+case POST_DUMP_HEAP_NOTIFICATION_MSG:
+{
+final String procName;
+final int uid;
+final long memLimit;
+synchronized (ActivityManagerService.this) {
+procName=mMemWatchDumpProcName;
+uid=mMemWatchDumpUid;
+Long limit=mMemWatchProcesses.get(procName);
+memLimit=limit != null ? limit : 0;
+}
+if (procName == null) {
+return;
+}
+if (DEBUG_PSS) Slog.d(TAG,"Showing dump heap notification from " + procName + "/"+ uid);
+INotificationManager inm=NotificationManager.getService();
+if (inm == null) {
+return;
+}
+String text=mContext.getString(R.string.dump_heap_notification,procName);
+Notification notification=new Notification();
+notification.icon=com.android.internal.R.drawable.stat_sys_adb;
+notification.when=0;
+notification.flags=Notification.FLAG_ONGOING_EVENT | Notification.FLAG_AUTO_CANCEL;
+notification.tickerText=text;
+notification.defaults=0;
+notification.sound=null;
+notification.vibrate=null;
+notification.color=mContext.getResources().getColor(com.android.internal.R.color.system_notification_accent_color);
+Intent deleteIntent=new Intent();
+deleteIntent.setAction(DumpHeapActivity.ACTION_DELETE_DUMPHEAP);
+notification.deleteIntent=PendingIntent.getBroadcastAsUser(mContext,0,deleteIntent,0,UserHandle.OWNER);
+Intent intent=new Intent();
+intent.setClassName("android",DumpHeapActivity.class.getName());
+intent.putExtra(DumpHeapActivity.KEY_PROCESS,procName);
+intent.putExtra(DumpHeapActivity.KEY_SIZE,memLimit);
+int userId=UserHandle.getUserId(uid);
+notification.setLatestEventInfo(mContext,text,mContext.getText(R.string.dump_heap_notification_detail),PendingIntent.getActivityAsUser(mContext,0,intent,PendingIntent.FLAG_CANCEL_CURRENT,null,new UserHandle(userId)));
+try {
+int[] outId=new int[1];
+inm.enqueueNotificationWithTag("android","android",null,R.string.dump_heap_notification,notification,outId,userId);
+}
+ catch (RuntimeException e) {
+Slog.w(ActivityManagerService.TAG,"Error showing notification for dump heap",e);
+}
+catch (RemoteException e) {
+}
+}
+break;
+case DELETE_DUMPHEAP_MSG:
+{
+revokeUriPermission(ActivityThread.currentActivityThread().getApplicationThread(),DumpHeapActivity.JAVA_URI,Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION,UserHandle.myUserId());
+synchronized (ActivityManagerService.this) {
+mMemWatchDumpFile=null;
+mMemWatchDumpProcName=null;
+mMemWatchDumpPid=-1;
+mMemWatchDumpUid=-1;
+}
+}
+break;
 }
 }
