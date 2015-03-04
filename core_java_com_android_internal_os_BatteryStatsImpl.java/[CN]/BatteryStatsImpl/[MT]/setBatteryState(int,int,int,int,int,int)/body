@@ -3,7 +3,6 @@ synchronized (this) {
     final boolean onBattery=plugType == BATTERY_PLUGGED_NONE;
     final long uptime=SystemClock.uptimeMillis();
     final long elapsedRealtime=SystemClock.elapsedRealtime();
-    int oldStatus=mHistoryCur.batteryStatus;
     if (!mHaveBatteryLevel) {
       mHaveBatteryLevel=true;
       if (onBattery == mOnBattery) {
@@ -14,8 +13,14 @@ synchronized (this) {
           mHistoryCur.states|=HistoryItem.STATE_BATTERY_PLUGGED_FLAG;
         }
       }
-      oldStatus=status;
+      mHistoryCur.batteryStatus=(byte)status;
+      mHistoryCur.batteryLevel=(byte)level;
+      mMaxChargeStepLevel=mMinDischargeStepLevel=mLastChargeStepLevel=mLastDischargeStepLevel=level;
     }
+ else     if (mCurrentBatteryLevel != level || mOnBattery != onBattery) {
+      recordDailyStatsIfNeededLocked(level >= 100 && onBattery);
+    }
+    int oldStatus=mHistoryCur.batteryStatus;
     if (onBattery) {
       mDischargeCurrentLevel=level;
       if (!mRecordingHistory) {
@@ -74,20 +79,20 @@ synchronized (this) {
       long modeBits=(((long)mInitStepMode) << STEP_LEVEL_INITIAL_MODE_SHIFT) | (((long)mModStepMode) << STEP_LEVEL_MODIFIED_MODE_SHIFT) | (((long)(level & 0xff)) << STEP_LEVEL_LEVEL_SHIFT);
       if (onBattery) {
         if (mLastDischargeStepLevel != level && mMinDischargeStepLevel > level) {
-          mNumDischargeStepDurations=addLevelSteps(mDischargeStepDurations,mNumDischargeStepDurations,mLastDischargeStepTime,mLastDischargeStepLevel - level,modeBits,elapsedRealtime);
+          mDischargeStepTracker.addLevelSteps(mLastDischargeStepLevel - level,modeBits,elapsedRealtime);
+          mDailyDischargeStepTracker.addLevelSteps(mLastDischargeStepLevel - level,modeBits,elapsedRealtime);
           mLastDischargeStepLevel=level;
           mMinDischargeStepLevel=level;
-          mLastDischargeStepTime=elapsedRealtime;
           mInitStepMode=mCurStepMode;
           mModStepMode=0;
         }
       }
  else {
         if (mLastChargeStepLevel != level && mMaxChargeStepLevel < level) {
-          mNumChargeStepDurations=addLevelSteps(mChargeStepDurations,mNumChargeStepDurations,mLastChargeStepTime,level - mLastChargeStepLevel,modeBits,elapsedRealtime);
+          mChargeStepTracker.addLevelSteps(level - mLastChargeStepLevel,modeBits,elapsedRealtime);
+          mDailyChargeStepTracker.addLevelSteps(level - mLastChargeStepLevel,modeBits,elapsedRealtime);
           mLastChargeStepLevel=level;
           mMaxChargeStepLevel=level;
-          mLastChargeStepTime=elapsedRealtime;
           mInitStepMode=mCurStepMode;
           mModStepMode=0;
         }
