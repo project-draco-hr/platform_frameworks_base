@@ -4,8 +4,10 @@
     return;
   }
   while (r.pendingStarts.size() > 0) {
+    Exception caughtException=null;
+    ServiceRecord.StartItem si;
     try {
-      ServiceRecord.StartItem si=r.pendingStarts.remove(0);
+      si=r.pendingStarts.remove(0);
       if (DEBUG_SERVICE)       Slog.v(TAG_SERVICE,"Sending arguments to: " + r + " "+ r.intent+ " args="+ si.intent);
       if (si.intent == null && N > 1) {
         continue;
@@ -30,12 +32,24 @@
       }
       r.app.thread.scheduleServiceArgs(r,si.taskRemoved,si.id,flags,si.intent);
     }
- catch (    RemoteException e) {
-      if (DEBUG_SERVICE)       Slog.v(TAG_SERVICE,"Crashed while scheduling start: " + r);
-      break;
+ catch (    TransactionTooLargeException e) {
+      if (DEBUG_SERVICE)       Slog.v(TAG_SERVICE,"Transaction too large: intent=" + si.intent);
+      caughtException=e;
+    }
+catch (    RemoteException e) {
+      if (DEBUG_SERVICE)       Slog.v(TAG_SERVICE,"Crashed while sending args: " + r);
+      caughtException=e;
     }
 catch (    Exception e) {
       Slog.w(TAG,"Unexpected exception",e);
+      caughtException=e;
+    }
+    if (caughtException != null) {
+      final boolean inDestroying=mDestroyingServices.contains(r);
+      serviceDoneExecutingLocked(r,inDestroying,inDestroying);
+      if (caughtException instanceof TransactionTooLargeException) {
+        throw (TransactionTooLargeException)caughtException;
+      }
       break;
     }
   }
