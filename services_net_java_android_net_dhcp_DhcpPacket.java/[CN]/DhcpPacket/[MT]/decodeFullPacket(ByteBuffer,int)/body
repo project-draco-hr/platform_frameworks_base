@@ -26,6 +26,9 @@
   byte dhcpType=(byte)0xFF;
   packet.order(ByteOrder.BIG_ENDIAN);
   if (pktType == ENCAP_L2) {
+    if (packet.remaining() < MIN_PACKET_LENGTH_L2) {
+      return null;
+    }
     byte[] l2dst=new byte[6];
     byte[] l2src=new byte[6];
     packet.get(l2dst);
@@ -34,6 +37,9 @@
     if (l2type != OsConstants.ETH_P_IP)     return null;
   }
   if (pktType <= ENCAP_L3) {
+    if (packet.remaining() < MIN_PACKET_LENGTH_L3) {
+      return null;
+    }
     byte ipTypeAndLength=packet.get();
     int ipVersion=(ipTypeAndLength & 0xf0) >> 4;
     if (ipVersion != 4) {
@@ -59,6 +65,9 @@
     short udpLen=packet.getShort();
     short udpChkSum=packet.getShort();
     if ((udpSrcPort != DHCP_SERVER) && (udpSrcPort != DHCP_CLIENT))     return null;
+  }
+  if (pktType > ENCAP_BOOTP || packet.remaining() < MIN_PACKET_LENGTH_BOOTP) {
+    return null;
   }
   byte type=packet.get();
   byte hwType=packet.get();
@@ -89,24 +98,24 @@
   if (dhcpMagicCookie != 0x63825363)   return null;
   boolean notFinishedOptions=true;
   while ((packet.position() < packet.limit()) && notFinishedOptions) {
-    byte optionType=packet.get();
-    if (optionType == (byte)0xFF) {
-      notFinishedOptions=false;
-    }
+    try {
+      byte optionType=packet.get();
+      if (optionType == (byte)0xFF) {
+        notFinishedOptions=false;
+      }
  else {
-      byte optionLen=packet.get();
-      int expectedLen=0;
+        int optionLen=packet.get() & 0xFF;
+        int expectedLen=0;
 switch (optionType) {
 case DHCP_SUBNET_MASK:
-        netMask=readIpAddress(packet);
-      expectedLen=4;
-    break;
+          netMask=readIpAddress(packet);
+        expectedLen=4;
+      break;
 case DHCP_ROUTER:
-  gateway=readIpAddress(packet);
-expectedLen=4;
+    gateway=readIpAddress(packet);
+  expectedLen=4;
 break;
 case DHCP_DNS_SERVER:
-expectedLen=0;
 for (expectedLen=0; expectedLen < optionLen; expectedLen+=4) {
 dnsServers.add(readIpAddress(packet));
 }
@@ -184,6 +193,10 @@ byte throwaway=packet.get();
 if (expectedLen != optionLen) {
 return null;
 }
+}
+}
+ catch (BufferUnderflowException e) {
+return null;
 }
 }
 DhcpPacket newPacket;
