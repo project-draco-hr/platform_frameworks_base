@@ -1,102 +1,78 @@
 {
 switch (msg.what) {
-case H_UNMOUNT_PM_UPDATE:
-{
-      if (DEBUG_UNMOUNT)       Slog.i(TAG,"H_UNMOUNT_PM_UPDATE");
-      UnmountCallBack ucb=(UnmountCallBack)msg.obj;
-      mForceUnmounts.add(ucb);
-      if (DEBUG_UNMOUNT)       Slog.i(TAG," registered = " + mUpdatingStatus);
-      if (!mUpdatingStatus) {
-        if (DEBUG_UNMOUNT)         Slog.i(TAG,"Updating external media status on PackageManager");
-        mUpdatingStatus=true;
-        mPms.updateExternalMediaStatus(false,true);
-      }
-      break;
-    }
-case H_UNMOUNT_PM_DONE:
-{
-    if (DEBUG_UNMOUNT)     Slog.i(TAG,"H_UNMOUNT_PM_DONE");
-    if (DEBUG_UNMOUNT)     Slog.i(TAG,"Updated status. Processing requests");
-    mUpdatingStatus=false;
-    int size=mForceUnmounts.size();
-    int sizeArr[]=new int[size];
-    int sizeArrN=0;
-    ActivityManagerService ams=(ActivityManagerService)ServiceManager.getService("activity");
-    for (int i=0; i < size; i++) {
-      UnmountCallBack ucb=mForceUnmounts.get(i);
-      String path=ucb.path;
-      boolean done=false;
-      if (!ucb.force) {
-        done=true;
-      }
- else {
-        int pids[]=getStorageUsers(path);
-        if (pids == null || pids.length == 0) {
-          done=true;
-        }
- else {
-          ams.killPids(pids,"unmount media",true);
-          pids=getStorageUsers(path);
-          if (pids == null || pids.length == 0) {
-            done=true;
-          }
-        }
-      }
-      if (!done && (ucb.retries < MAX_UNMOUNT_RETRIES)) {
-        Slog.i(TAG,"Retrying to kill storage users again");
-        mHandler.sendMessageDelayed(mHandler.obtainMessage(H_UNMOUNT_PM_DONE,ucb.retries++),RETRY_UNMOUNT_DELAY);
-      }
- else {
-        if (ucb.retries >= MAX_UNMOUNT_RETRIES) {
-          Slog.i(TAG,"Failed to unmount media inspite of " + MAX_UNMOUNT_RETRIES + " retries. Forcibly killing processes now");
-        }
-        sizeArr[sizeArrN++]=i;
-        mHandler.sendMessage(mHandler.obtainMessage(H_UNMOUNT_MS,ucb));
-      }
-    }
-    for (int i=(sizeArrN - 1); i >= 0; i--) {
-      mForceUnmounts.remove(sizeArr[i]);
-    }
-    break;
-  }
-case H_UNMOUNT_MS:
-{
-  if (DEBUG_UNMOUNT)   Slog.i(TAG,"H_UNMOUNT_MS");
-  UnmountCallBack ucb=(UnmountCallBack)msg.obj;
-  ucb.handleFinished();
-  break;
-}
 case H_SYSTEM_READY:
 {
-try {
-  handleSystemReady();
+      handleSystemReady();
+      break;
+    }
+case H_DAEMON_CONNECTED:
+{
+    handleDaemonConnected();
+    break;
+  }
+case H_FSTRIM:
+{
+  waitForReady();
+  Slog.i(TAG,"Running fstrim idle maintenance");
+  try {
+    mLastMaintenance=System.currentTimeMillis();
+    mLastMaintenanceFile.setLastModified(mLastMaintenance);
+  }
+ catch (  Exception e) {
+    Slog.e(TAG,"Unable to record last fstrim!");
+  }
+  try {
+    mConnector.execute("fstrim","dotrim");
+    EventLogTags.writeFstrimStart(SystemClock.elapsedRealtime());
+  }
+ catch (  NativeDaemonConnectorException ndce) {
+    Slog.e(TAG,"Failed to run fstrim!");
+  }
+  Runnable callback=(Runnable)msg.obj;
+  if (callback != null) {
+    callback.run();
+  }
+  break;
 }
- catch (Exception ex) {
-  Slog.e(TAG,"Boot-time mount exception",ex);
+case H_SHUTDOWN:
+{
+final IMountShutdownObserver obs=(IMountShutdownObserver)msg.obj;
+boolean success=false;
+try {
+  success=mConnector.execute("volume","shutdown").isClassOk();
+}
+ catch (NativeDaemonConnectorException ignored) {
+}
+if (obs != null) {
+  try {
+    obs.onShutDownComplete(success ? 0 : -1);
+  }
+ catch (  RemoteException ignored) {
+  }
 }
 break;
 }
-case H_FSTRIM:
+case H_VOLUME_MOUNT:
 {
-waitForReady();
-Slog.i(TAG,"Running fstrim idle maintenance");
+final Volume vol=(Volume)msg.obj;
 try {
-mLastMaintenance=System.currentTimeMillis();
-mLastMaintenanceFile.setLastModified(mLastMaintenance);
+vol.mount();
 }
- catch (Exception e) {
-Slog.e(TAG,"Unable to record last fstrim!");
+ catch (NativeDaemonConnectorException ignored) {
 }
-try {
-mConnector.execute("fstrim","dotrim");
-EventLogTags.writeFstrimStart(SystemClock.elapsedRealtime());
+break;
 }
- catch (NativeDaemonConnectorException ndce) {
-Slog.e(TAG,"Failed to run fstrim!");
-}
-Runnable callback=(Runnable)msg.obj;
-if (callback != null) {
-callback.run();
+case H_VOLUME_BROADCAST:
+{
+final StorageVolume userVol=(StorageVolume)msg.obj;
+final String state=userVol.getState();
+Slog.d(TAG,"Volume " + userVol.getId() + " broadcasting "+ state+ " to "+ userVol.getOwner());
+final String action=sEnvironmentToBroadcast.get(state);
+if (action != null) {
+final Intent intent=new Intent(action,Uri.fromFile(userVol.getPathFile()));
+intent.putExtra(StorageVolume.EXTRA_STORAGE_VOLUME,userVol);
+intent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY_BEFORE_BOOT);
+mContext.sendBroadcastAsUser(intent,userVol.getOwner());
 }
 break;
 }
