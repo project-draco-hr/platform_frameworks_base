@@ -1,4 +1,48 @@
 {
+  if (mDisplayFrozen) {
+    if (mLastWindowForcedOrientation != ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) {
+      if (DEBUG_ORIENTATION)       Slog.v(TAG,"Display is frozen, return " + mLastWindowForcedOrientation);
+      return mLastWindowForcedOrientation;
+    }
+  }
+ else {
+    final WindowList windows=getDefaultWindowListLocked();
+    int pos=windows.size() - 1;
+    while (pos >= 0) {
+      WindowState win=windows.get(pos);
+      pos--;
+      if (win.mAppToken != null) {
+        break;
+      }
+      if (!win.isVisibleLw() || !win.mPolicyVisibilityAfterAnim) {
+        continue;
+      }
+      int req=win.mAttrs.screenOrientation;
+      if ((req == ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) || (req == ActivityInfo.SCREEN_ORIENTATION_BEHIND)) {
+        continue;
+      }
+      if (DEBUG_ORIENTATION)       Slog.v(TAG,win + " forcing orientation to " + req);
+      if (mPolicy.isKeyguardHostWindow(win.mAttrs)) {
+        mLastKeyguardForcedOrientation=req;
+      }
+      return (mLastWindowForcedOrientation=req);
+    }
+    mLastWindowForcedOrientation=ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
+    if (mPolicy.isKeyguardLocked()) {
+      WindowState winShowWhenLocked=(WindowState)mPolicy.getWinShowWhenLockedLw();
+      AppWindowToken appShowWhenLocked=winShowWhenLocked == null ? null : winShowWhenLocked.mAppToken;
+      if (appShowWhenLocked != null) {
+        int req=appShowWhenLocked.requestedOrientation;
+        if (req == ActivityInfo.SCREEN_ORIENTATION_BEHIND) {
+          req=mLastKeyguardForcedOrientation;
+        }
+        if (DEBUG_ORIENTATION)         Slog.v(TAG,"Done at " + appShowWhenLocked + " -- show when locked, return "+ req);
+        return req;
+      }
+      if (DEBUG_ORIENTATION)       Slog.v(TAG,"No one is requesting an orientation when the screen is locked");
+      return mLastKeyguardForcedOrientation;
+    }
+  }
   int lastOrientation=ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
   boolean findingBehind=false;
   boolean lastFullscreen=false;
@@ -40,6 +84,6 @@
       findingBehind|=(or == ActivityInfo.SCREEN_ORIENTATION_BEHIND);
     }
   }
-  if (DEBUG_ORIENTATION)   Slog.v(TAG,"No app is requesting an orientation");
-  return ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
+  if (DEBUG_ORIENTATION)   Slog.v(TAG,"No app is requesting an orientation, return " + mForcedAppOrientation);
+  return mForcedAppOrientation;
 }
