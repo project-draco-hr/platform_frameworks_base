@@ -3,29 +3,21 @@
   if (ps == null) {
     return;
   }
-  final GrantedPermissions gp=ps.sharedUser != null ? ps.sharedUser : ps;
-  ArraySet<String> origPermissions=gp.grantedPermissions;
+  PermissionsState permissionsState=ps.getPermissionsState();
+  PermissionsState origPermissions=permissionsState;
   boolean changedPermission=false;
   if (replace) {
     ps.permissionsFixed=false;
-    if (gp == ps) {
-      origPermissions=new ArraySet<String>(gp.grantedPermissions);
-      gp.grantedPermissions.clear();
-      gp.gids=mGlobalGids;
-    }
+    origPermissions=new PermissionsState(permissionsState);
+    permissionsState.reset();
   }
-  if (gp.gids == null) {
-    gp.gids=mGlobalGids;
-  }
+  permissionsState.setGlobalGids(mGlobalGids);
   final int N=pkg.requestedPermissions.size();
   for (int i=0; i < N; i++) {
     final String name=pkg.requestedPermissions.get(i);
-    final boolean required=pkg.requestedPermissionsRequired.get(i);
     final BasePermission bp=mSettings.mPermissions.get(name);
     if (DEBUG_INSTALL) {
-      if (gp != ps) {
-        Log.i(TAG,"Package " + pkg.packageName + " checking "+ name+ ": "+ bp);
-      }
+      Log.i(TAG,"Package " + pkg.packageName + " checking "+ name+ ": "+ bp);
     }
     if (bp == null || bp.packageSetting == null) {
       if (packageOfInterest == null || packageOfInterest.equals(pkg.packageName)) {
@@ -34,8 +26,8 @@
       continue;
     }
     final String perm=bp.name;
-    boolean allowed;
     boolean allowedSig=false;
+    int grant=GRANT_DENIED;
     if ((bp.protectionLevel & PermissionInfo.PROTECTION_FLAG_APPOP) != 0) {
       ArraySet<String> pkgs=mAppOpPermissionPackages.get(bp.name);
       if (pkgs == null) {
@@ -45,63 +37,101 @@
       pkgs.add(pkg.packageName);
     }
     final int level=bp.protectionLevel & PermissionInfo.PROTECTION_MASK_BASE;
-    if (level == PermissionInfo.PROTECTION_NORMAL || level == PermissionInfo.PROTECTION_DANGEROUS) {
-      allowed=(required || origPermissions.contains(perm) || (isSystemApp(ps) && !isUpdatedSystemApp(ps)));
-    }
- else     if (bp.packageSetting == null) {
-      allowed=false;
-    }
- else     if (level == PermissionInfo.PROTECTION_SIGNATURE) {
-      allowed=grantSignaturePermission(perm,pkg,bp,origPermissions);
-      if (allowed) {
-        allowedSig=true;
+switch (level) {
+case PermissionInfo.PROTECTION_NORMAL:
+{
+        grant=GRANT_INSTALL;
       }
+    break;
+case PermissionInfo.PROTECTION_DANGEROUS:
+{
+    if (!RUNTIME_PERMISSIONS_ENABLED || pkg.applicationInfo.targetSdkVersion <= Build.VERSION_CODES.LOLLIPOP_MR1) {
+      grant=GRANT_INSTALL;
     }
- else {
-      allowed=false;
-    }
-    if (DEBUG_INSTALL) {
-      if (gp != ps) {
-        Log.i(TAG,"Package " + pkg.packageName + " granting "+ perm);
-      }
-    }
-    if (allowed) {
-      if (!isSystemApp(ps) && ps.permissionsFixed) {
-        if (!allowedSig && !gp.grantedPermissions.contains(perm)) {
-          allowed=isNewPlatformPermissionForPackage(perm,pkg);
-        }
-      }
-      if (allowed) {
-        if (!gp.grantedPermissions.contains(perm)) {
-          changedPermission=true;
-          gp.grantedPermissions.add(perm);
-          gp.gids=appendInts(gp.gids,bp.gids);
-        }
- else         if (!ps.haveGids) {
-          gp.gids=appendInts(gp.gids,bp.gids);
-        }
-      }
- else {
-        if (packageOfInterest == null || packageOfInterest.equals(pkg.packageName)) {
-          Slog.w(TAG,"Not granting permission " + perm + " to package "+ pkg.packageName+ " because it was previously installed without");
-        }
-      }
+ else     if ((pkg.applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) != 0) {
+      grant=GRANT_INSTALL;
     }
  else {
-      if (gp.grantedPermissions.remove(perm)) {
-        changedPermission=true;
-        gp.gids=removeInts(gp.gids,bp.gids);
-        Slog.i(TAG,"Un-granting permission " + perm + " from package "+ pkg.packageName+ " (protectionLevel="+ bp.protectionLevel+ " flags=0x"+ Integer.toHexString(pkg.applicationInfo.flags)+ ")");
+      if (origPermissions.hasInstallPermission(bp.name)) {
+        grant=GRANT_UPGRADE;
       }
- else       if ((bp.protectionLevel & PermissionInfo.PROTECTION_FLAG_APPOP) == 0) {
-        if (packageOfInterest == null || packageOfInterest.equals(pkg.packageName)) {
-          Slog.w(TAG,"Not granting permission " + perm + " to package "+ pkg.packageName+ " (protectionLevel="+ bp.protectionLevel+ " flags=0x"+ Integer.toHexString(pkg.applicationInfo.flags)+ ")");
-        }
+ else       if (replace) {
+        grant=GRANT_RUNTIME;
       }
     }
   }
-  if ((changedPermission || replace) && !ps.permissionsFixed && !isSystemApp(ps) || isUpdatedSystemApp(ps)) {
-    ps.permissionsFixed=true;
-  }
-  ps.haveGids=true;
+break;
+case PermissionInfo.PROTECTION_SIGNATURE:
+{
+allowedSig=grantSignaturePermission(perm,pkg,bp,origPermissions);
+if (allowedSig) {
+  grant=GRANT_INSTALL;
+}
+}
+break;
+}
+if (DEBUG_INSTALL) {
+Log.i(TAG,"Package " + pkg.packageName + " granting "+ perm);
+}
+if (grant != GRANT_DENIED) {
+if (!isSystemApp(ps) && ps.permissionsFixed) {
+if (!allowedSig && !origPermissions.hasInstallPermission(perm)) {
+if (!isNewPlatformPermissionForPackage(perm,pkg)) {
+grant=GRANT_DENIED;
+}
+}
+}
+switch (grant) {
+case GRANT_INSTALL:
+{
+if (permissionsState.grantInstallPermission(bp) != PermissionsState.PERMISSION_OPERATION_FAILURE) {
+changedPermission=true;
+}
+}
+break;
+case GRANT_RUNTIME:
+{
+for (int userId : UserManagerService.getInstance().getUserIds()) {
+if (origPermissions.hasRuntimePermission(bp.name,userId)) {
+if (permissionsState.grantRuntimePermission(bp,userId) != PermissionsState.PERMISSION_OPERATION_FAILURE) {
+changedPermission=true;
+}
+}
+}
+}
+break;
+case GRANT_UPGRADE:
+{
+permissionsState.revokeInstallPermission(bp);
+for (int userId : UserManagerService.getInstance().getUserIds()) {
+if (permissionsState.grantRuntimePermission(bp,userId) != PermissionsState.PERMISSION_OPERATION_FAILURE) {
+changedPermission=true;
+}
+}
+}
+break;
+default :
+{
+if (packageOfInterest == null || packageOfInterest.equals(pkg.packageName)) {
+Slog.w(TAG,"Not granting permission " + perm + " to package "+ pkg.packageName+ " because it was previously installed without");
+}
+}
+break;
+}
+}
+ else {
+if (permissionsState.revokeInstallPermission(bp) != PermissionsState.PERMISSION_OPERATION_FAILURE) {
+changedPermission=true;
+Slog.i(TAG,"Un-granting permission " + perm + " from package "+ pkg.packageName+ " (protectionLevel="+ bp.protectionLevel+ " flags=0x"+ Integer.toHexString(pkg.applicationInfo.flags)+ ")");
+}
+ else if ((bp.protectionLevel & PermissionInfo.PROTECTION_FLAG_APPOP) == 0) {
+if (packageOfInterest == null || packageOfInterest.equals(pkg.packageName)) {
+Slog.w(TAG,"Not granting permission " + perm + " to package "+ pkg.packageName+ " (protectionLevel="+ bp.protectionLevel+ " flags=0x"+ Integer.toHexString(pkg.applicationInfo.flags)+ ")");
+}
+}
+}
+}
+if ((changedPermission || replace) && !ps.permissionsFixed && !isSystemApp(ps) || isUpdatedSystemApp(ps)) {
+ps.permissionsFixed=true;
+}
 }
