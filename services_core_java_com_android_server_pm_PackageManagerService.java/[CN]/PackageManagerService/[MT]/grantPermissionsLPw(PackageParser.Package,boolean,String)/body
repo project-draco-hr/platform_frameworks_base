@@ -7,9 +7,10 @@
   PermissionsState origPermissions=permissionsState;
   final int[] currentUserIds=UserManagerService.getInstance().getUserIds();
   int[] upgradeUserIds=PermissionsState.USERS_NONE;
-  boolean changedPermission=false;
+  int[] changedRuntimePermissionUserIds=PermissionsState.USERS_NONE;
+  boolean changedInstallPermission=false;
   if (replace) {
-    ps.permissionsFixed=false;
+    ps.installPermissionsFixed=false;
     origPermissions=new PermissionsState(permissionsState);
     permissionsState.reset();
   }
@@ -89,7 +90,7 @@ if (DEBUG_INSTALL) {
 Log.i(TAG,"Package " + pkg.packageName + " granting "+ perm);
 }
 if (grant != GRANT_DENIED) {
-if (!isSystemApp(ps) && ps.permissionsFixed) {
+if (!isSystemApp(ps) && ps.installPermissionsFixed) {
 if (!allowedSig && !origPermissions.hasInstallPermission(perm)) {
 if (!isNewPlatformPermissionForPackage(perm,pkg)) {
 grant=GRANT_DENIED;
@@ -100,7 +101,7 @@ switch (grant) {
 case GRANT_INSTALL:
 {
 if (permissionsState.grantInstallPermission(bp) != PermissionsState.PERMISSION_OPERATION_FAILURE) {
-changedPermission=true;
+changedInstallPermission=true;
 }
 }
 break;
@@ -108,8 +109,8 @@ case GRANT_RUNTIME:
 {
 for (int userId : UserManagerService.getInstance().getUserIds()) {
 if (origPermissions.hasRuntimePermission(bp.name,userId)) {
-if (permissionsState.grantRuntimePermission(bp,userId) != PermissionsState.PERMISSION_OPERATION_FAILURE) {
-changedPermission=true;
+if (permissionsState.grantRuntimePermission(bp,userId) == PermissionsState.PERMISSION_OPERATION_FAILURE) {
+changedRuntimePermissionUserIds=ArrayUtils.appendInt(changedRuntimePermissionUserIds,userId);
 }
 }
 }
@@ -120,7 +121,7 @@ case GRANT_UPGRADE:
 permissionsState.revokeInstallPermission(bp);
 for (int userId : upgradeUserIds) {
 if (permissionsState.grantRuntimePermission(bp,userId) != PermissionsState.PERMISSION_OPERATION_FAILURE) {
-changedPermission=true;
+changedRuntimePermissionUserIds=ArrayUtils.appendInt(changedRuntimePermissionUserIds,userId);
 }
 }
 }
@@ -136,7 +137,7 @@ break;
 }
  else {
 if (permissionsState.revokeInstallPermission(bp) != PermissionsState.PERMISSION_OPERATION_FAILURE) {
-changedPermission=true;
+changedInstallPermission=true;
 Slog.i(TAG,"Un-granting permission " + perm + " from package "+ pkg.packageName+ " (protectionLevel="+ bp.protectionLevel+ " flags=0x"+ Integer.toHexString(pkg.applicationInfo.flags)+ ")");
 }
  else if ((bp.protectionLevel & PermissionInfo.PROTECTION_FLAG_APPOP) == 0) {
@@ -146,8 +147,11 @@ Slog.w(TAG,"Not granting permission " + perm + " to package "+ pkg.packageName+ 
 }
 }
 }
-if ((changedPermission || replace) && !ps.permissionsFixed && !isSystemApp(ps) || isUpdatedSystemApp(ps)) {
-ps.permissionsFixed=true;
+if ((changedInstallPermission || replace) && !ps.installPermissionsFixed && !isSystemApp(ps) || isUpdatedSystemApp(ps)) {
+ps.installPermissionsFixed=true;
 }
-ps.setPermissionsUpdatedForUserIds(currentUserIds);
+ps.setPermissionsUpdatedForUserIds(changedRuntimePermissionUserIds);
+for (int userId : changedRuntimePermissionUserIds) {
+mSettings.writeRuntimePermissionsForUserLPr(userId,true);
+}
 }
