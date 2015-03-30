@@ -1,0 +1,91 @@
+{
+  if (inputLength == 0) {
+    return EMPTY_BYTE_ARRAY;
+  }
+  ByteArrayOutputStream bufferedOutput=null;
+  while (inputLength > 0) {
+    byte[] chunk;
+    int inputBytesInChunk;
+    if ((mBufferedLength + inputLength) > mMaxChunkSize) {
+      chunk=new byte[mMaxChunkSize];
+      System.arraycopy(mBuffered,mBufferedOffset,chunk,0,mBufferedLength);
+      inputBytesInChunk=chunk.length - mBufferedLength;
+      System.arraycopy(input,inputOffset,chunk,mBufferedLength,inputBytesInChunk);
+    }
+ else {
+      if ((mBufferedLength == 0) && (inputOffset == 0) && (inputLength == input.length)) {
+        chunk=input;
+        inputBytesInChunk=input.length;
+      }
+ else {
+        chunk=new byte[mBufferedLength + inputLength];
+        inputBytesInChunk=inputLength;
+        System.arraycopy(mBuffered,mBufferedOffset,chunk,0,mBufferedLength);
+        System.arraycopy(input,inputOffset,chunk,mBufferedLength,inputLength);
+      }
+    }
+    inputOffset+=inputBytesInChunk;
+    inputLength-=inputBytesInChunk;
+    OperationResult opResult=mKeyStoreOperation.update(chunk);
+    if (opResult == null) {
+      throw new KeyStoreConnectException();
+    }
+ else     if (opResult.resultCode != KeyStore.NO_ERROR) {
+      throw KeymasterUtils.getExceptionForKeymasterError(opResult.resultCode);
+    }
+    if (opResult.inputConsumed == chunk.length) {
+      mBuffered=EMPTY_BYTE_ARRAY;
+      mBufferedOffset=0;
+      mBufferedLength=0;
+    }
+ else     if (opResult.inputConsumed == 0) {
+      if (inputLength > 0) {
+        throw new CryptoOperationException("Nothing consumed from max-sized chunk: " + chunk.length + " bytes");
+      }
+      mBuffered=chunk;
+      mBufferedOffset=0;
+      mBufferedLength=chunk.length;
+    }
+ else     if (opResult.inputConsumed < chunk.length) {
+      mBuffered=chunk;
+      mBufferedOffset=opResult.inputConsumed;
+      mBufferedLength=chunk.length - opResult.inputConsumed;
+    }
+ else {
+      throw new CryptoOperationException("Consumed more than provided: " + opResult.inputConsumed + ", provided: "+ chunk.length);
+    }
+    if ((opResult.output != null) && (opResult.output.length > 0)) {
+      if (inputLength > 0) {
+        if (bufferedOutput == null) {
+          bufferedOutput=new ByteArrayOutputStream();
+          try {
+            bufferedOutput.write(opResult.output);
+          }
+ catch (          IOException e) {
+            throw new CryptoOperationException("Failed to buffer output",e);
+          }
+        }
+      }
+ else {
+        if (bufferedOutput == null) {
+          return opResult.output;
+        }
+ else {
+          try {
+            bufferedOutput.write(opResult.output);
+          }
+ catch (          IOException e) {
+            throw new CryptoOperationException("Failed to buffer output",e);
+          }
+          return bufferedOutput.toByteArray();
+        }
+      }
+    }
+  }
+  if (bufferedOutput == null) {
+    return EMPTY_BYTE_ARRAY;
+  }
+ else {
+    return bufferedOutput.toByteArray();
+  }
+}
