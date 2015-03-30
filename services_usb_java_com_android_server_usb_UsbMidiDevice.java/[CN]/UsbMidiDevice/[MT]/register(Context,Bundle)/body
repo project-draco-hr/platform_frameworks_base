@@ -4,13 +4,18 @@
     Log.e(TAG,"No MidiManager in UsbMidiDevice.create()");
     return false;
   }
+  int inputCount=mInputStreams.length;
   int outputCount=mOutputStreams.length;
-  mServer=midiManager.createDeviceServer(mInputPortReceivers,outputCount,null,null,properties,MidiDeviceInfo.TYPE_USB,null);
+  MidiReceiver[] inputPortReceivers=new MidiReceiver[inputCount];
+  for (int port=0; port < inputCount; port++) {
+    inputPortReceivers[port]=mEventScheduler.getReceiver(port);
+  }
+  mServer=midiManager.createDeviceServer(inputPortReceivers,outputCount,null,null,properties,MidiDeviceInfo.TYPE_USB,null);
   if (mServer == null) {
     return false;
   }
   final MidiReceiver[] outputReceivers=mServer.getOutputPortReceivers();
-  new Thread(){
+  new Thread("UsbMidiDevice input thread"){
     @Override public void run(){
       byte[] buffer=new byte[BUFFER_SIZE];
       try {
@@ -36,6 +41,32 @@
 catch (      ErrnoException e) {
         Log.d(TAG,"reader thread exiting");
       }
+      Log.d(TAG,"input thread exit");
+    }
+  }
+.start();
+  new Thread("UsbMidiDevice output thread"){
+    @Override public void run(){
+      while (true) {
+        MidiEvent event;
+        try {
+          event=(MidiEvent)mEventScheduler.waitNextEvent();
+        }
+ catch (        InterruptedException e) {
+          continue;
+        }
+        if (event == null) {
+          break;
+        }
+        try {
+          mOutputStreams[event.portNumber].write(event.data,0,event.count);
+        }
+ catch (        IOException e) {
+          Log.e(TAG,"write failed for port " + event.portNumber);
+        }
+        mEventScheduler.addEventToPool(event);
+      }
+      Log.d(TAG,"output thread exit");
     }
   }
 .start();
