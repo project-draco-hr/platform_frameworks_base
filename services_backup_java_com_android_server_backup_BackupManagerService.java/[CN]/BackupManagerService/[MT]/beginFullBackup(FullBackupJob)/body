@@ -1,6 +1,7 @@
 {
   long now=System.currentTimeMillis();
   FullBackupEntry entry=null;
+  long latency=MIN_FULL_BACKUP_INTERVAL;
   if (!mEnabled || !mProvisioned) {
     if (MORE_DEBUG) {
       Slog.i(TAG,"beginFullBackup but e=" + mEnabled + " p="+ mProvisioned+ "; ignoring");
@@ -21,16 +22,30 @@ synchronized (mQueueLock) {
       }
       return false;
     }
-    entry=mFullBackupQueue.get(0);
-    long timeSinceRun=now - entry.lastBackup;
-    if (timeSinceRun < MIN_FULL_BACKUP_INTERVAL) {
+    boolean runBackup=true;
+    if (!fullBackupAllowable(getTransport(mCurrentTransport))) {
       if (MORE_DEBUG) {
-        Slog.i(TAG,"Device ready but too early to back up next app");
+        Slog.i(TAG,"Preconditions not met; not running full backup");
       }
-      final long latency=MIN_FULL_BACKUP_INTERVAL - timeSinceRun;
+      runBackup=false;
+      latency=KeyValueBackupJob.BATCH_INTERVAL;
+    }
+    if (runBackup) {
+      entry=mFullBackupQueue.get(0);
+      long timeSinceRun=now - entry.lastBackup;
+      runBackup=(timeSinceRun >= MIN_FULL_BACKUP_INTERVAL);
+      if (!runBackup) {
+        if (MORE_DEBUG) {
+          Slog.i(TAG,"Device ready but too early to back up next app");
+        }
+        latency=MIN_FULL_BACKUP_INTERVAL - timeSinceRun;
+      }
+    }
+    if (!runBackup) {
+      final long deferTime=latency;
       mBackupHandler.post(new Runnable(){
         @Override public void run(){
-          FullBackupJob.schedule(mContext,latency);
+          FullBackupJob.schedule(mContext,deferTime);
         }
       }
 );
