@@ -7,35 +7,45 @@
   if (mQuickScaleEnabled) {
     mGestureDetector.onTouchEvent(event);
   }
-  final boolean streamComplete=action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL;
+  final int count=event.getPointerCount();
+  final int toolType=event.getToolType(0);
+  final boolean isButtonTool=toolType == MotionEvent.TOOL_TYPE_STYLUS || toolType == MotionEvent.TOOL_TYPE_MOUSE;
+  final boolean isAnchoredScaleButtonDown=isButtonTool && (count == 1) && (event.getButtonState() & MotionEvent.BUTTON_SECONDARY) != 0;
+  final boolean anchoredScaleCancelled=mAnchoredScaleMode == ANCHORED_SCALE_MODE_BUTTON && !isAnchoredScaleButtonDown;
+  final boolean streamComplete=action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL || anchoredScaleCancelled;
   if (action == MotionEvent.ACTION_DOWN || streamComplete) {
     if (mInProgress) {
       mListener.onScaleEnd(this);
       mInProgress=false;
       mInitialSpan=0;
-      mDoubleTapMode=DOUBLE_TAP_MODE_NONE;
+      mAnchoredScaleMode=ANCHORED_SCALE_MODE_NONE;
     }
- else     if (mDoubleTapMode == DOUBLE_TAP_MODE_IN_PROGRESS && streamComplete) {
+ else     if (inAnchoredScaleMode() && streamComplete) {
       mInProgress=false;
       mInitialSpan=0;
-      mDoubleTapMode=DOUBLE_TAP_MODE_NONE;
+      mAnchoredScaleMode=ANCHORED_SCALE_MODE_NONE;
     }
     if (streamComplete) {
       clearTouchHistory();
       return true;
     }
   }
-  final boolean configChanged=action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_UP || action == MotionEvent.ACTION_POINTER_DOWN;
+  if (!mInProgress && mButtonScaleEnabled && !inAnchoredScaleMode()&& !streamComplete&& isAnchoredScaleButtonDown) {
+    mAnchoredScaleStartX=event.getX();
+    mAnchoredScaleStartY=event.getY();
+    mAnchoredScaleMode=ANCHORED_SCALE_MODE_BUTTON;
+    mInitialSpan=0;
+  }
+  final boolean configChanged=action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_UP || action == MotionEvent.ACTION_POINTER_DOWN || anchoredScaleCancelled;
   final boolean pointerUp=action == MotionEvent.ACTION_POINTER_UP;
   final int skipIndex=pointerUp ? event.getActionIndex() : -1;
   float sumX=0, sumY=0;
-  final int count=event.getPointerCount();
   final int div=pointerUp ? count - 1 : count;
   final float focusX;
   final float focusY;
-  if (mDoubleTapMode == DOUBLE_TAP_MODE_IN_PROGRESS) {
-    focusX=mDoubleTapEvent.getX();
-    focusY=mDoubleTapEvent.getY();
+  if (inAnchoredScaleMode()) {
+    focusX=mAnchoredScaleStartX;
+    focusY=mAnchoredScaleStartY;
     if (event.getY() < focusY) {
       mEventBeforeOrAboveStartingGestureEvent=true;
     }
@@ -65,7 +75,7 @@
   final float spanX=devX * 2;
   final float spanY=devY * 2;
   final float span;
-  if (inDoubleTapMode()) {
+  if (inAnchoredScaleMode()) {
     span=spanY;
   }
  else {
@@ -74,18 +84,17 @@
   final boolean wasInProgress=mInProgress;
   mFocusX=focusX;
   mFocusY=focusY;
-  if (!inDoubleTapMode() && mInProgress && (span < mMinSpan || configChanged)) {
+  if (!inAnchoredScaleMode() && mInProgress && (span < mMinSpan || configChanged)) {
     mListener.onScaleEnd(this);
     mInProgress=false;
     mInitialSpan=span;
-    mDoubleTapMode=DOUBLE_TAP_MODE_NONE;
   }
   if (configChanged) {
     mPrevSpanX=mCurrSpanX=spanX;
     mPrevSpanY=mCurrSpanY=spanY;
     mInitialSpan=mPrevSpan=mCurrSpan=span;
   }
-  final int minSpan=inDoubleTapMode() ? mSpanSlop : mMinSpan;
+  final int minSpan=inAnchoredScaleMode() ? mSpanSlop : mMinSpan;
   if (!mInProgress && span >= minSpan && (wasInProgress || Math.abs(span - mInitialSpan) > mSpanSlop)) {
     mPrevSpanX=mCurrSpanX=spanX;
     mPrevSpanY=mCurrSpanY=spanY;
