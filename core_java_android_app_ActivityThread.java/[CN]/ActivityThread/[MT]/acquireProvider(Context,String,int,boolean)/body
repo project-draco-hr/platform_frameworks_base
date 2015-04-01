@@ -1,13 +1,51 @@
 {
-  final IContentProvider provider=acquireExistingProvider(c,auth,userId,stable);
+  final ProviderKey key=new ProviderKey(auth,userId);
+  final IContentProvider provider=acquireExistingProvider(c,key,stable);
   if (provider != null) {
     return provider;
   }
-  IActivityManager.ContentProviderHolder holder=null;
-  try {
-    holder=ActivityManagerNative.getDefault().getContentProvider(getApplicationThread(),auth,userId,stable);
+  AcquiringProviderRecord r;
+  boolean first=false;
+synchronized (mAcquiringProviderMap) {
+    r=mAcquiringProviderMap.get(key);
+    if (r == null) {
+      r=new AcquiringProviderRecord();
+      mAcquiringProviderMap.put(key,r);
+      first=true;
+    }
+ else {
+      r.requests++;
+    }
   }
- catch (  RemoteException ex) {
+  IActivityManager.ContentProviderHolder holder=null;
+  if (first) {
+    try {
+      holder=ActivityManagerNative.getDefault().getContentProvider(getApplicationThread(),auth,userId,stable);
+    }
+ catch (    RemoteException ex) {
+    }
+synchronized (r) {
+      r.holder=holder;
+      r.acquiring=false;
+      r.notifyAll();
+    }
+  }
+ else {
+synchronized (r) {
+      while (r.acquiring) {
+        try {
+          r.wait();
+        }
+ catch (        InterruptedException e) {
+        }
+      }
+      holder=r.holder;
+    }
+  }
+synchronized (mAcquiringProviderMap) {
+    if (--r.requests == 0) {
+      mAcquiringProviderMap.remove(key);
+    }
   }
   if (holder == null) {
     Slog.e(TAG,"Failed to find provider info for " + auth);
