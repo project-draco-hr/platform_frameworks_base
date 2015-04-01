@@ -1,25 +1,36 @@
 {
   if (task == null) {
-    if (mLockTaskModeTask != null) {
-      final Message lockTaskMsg=Message.obtain();
-      lockTaskMsg.arg1=mLockTaskModeTask.userId;
-      lockTaskMsg.what=LOCK_TASK_END_MSG;
-      mLockTaskModeTask=null;
-      mHandler.sendMessage(lockTaskMsg);
+    final TaskRecord lockedTask=getLockedTaskLocked();
+    if (lockedTask != null) {
+      removeLockedTaskLocked(lockedTask);
+      if (!mLockTaskModeTasks.isEmpty()) {
+        lockedTask.performClearTaskLocked();
+        resumeTopActivitiesLocked();
+        return;
+      }
     }
     return;
   }
-  if (isLockTaskModeViolation(task)) {
-    Slog.e(TAG,"setLockTaskMode: Attempt to start a second Lock Task Mode task.");
+  if (task.mLockTaskAuth == LOCK_TASK_AUTH_DONT_LOCK) {
     return;
   }
-  mLockTaskModeTask=task;
+  if (isLockTaskModeViolation(task)) {
+    Slog.e(TAG,"setLockTaskMode: Attempt to start an unauthorized lock task.");
+    return;
+  }
+  if (mLockTaskModeTasks.isEmpty()) {
+    final Message lockTaskMsg=Message.obtain();
+    lockTaskMsg.obj=task.intent.getComponent().getPackageName();
+    lockTaskMsg.arg1=task.userId;
+    lockTaskMsg.what=LOCK_TASK_START_MSG;
+    lockTaskMsg.arg2=lockTaskModeState;
+    mHandler.sendMessage(lockTaskMsg);
+  }
+  mLockTaskModeTasks.remove(task);
+  mLockTaskModeTasks.add(task);
+  if (task.mLockTaskUid == -1) {
+    task.mLockTaskUid=task.mCallingUid;
+  }
   findTaskToMoveToFrontLocked(task,0,null,reason);
   resumeTopActivitiesLocked();
-  final Message lockTaskMsg=Message.obtain();
-  lockTaskMsg.obj=mLockTaskModeTask.intent.getComponent().getPackageName();
-  lockTaskMsg.arg1=mLockTaskModeTask.userId;
-  lockTaskMsg.what=LOCK_TASK_START_MSG;
-  lockTaskMsg.arg2=lockTaskModeState;
-  mHandler.sendMessage(lockTaskMsg);
 }
