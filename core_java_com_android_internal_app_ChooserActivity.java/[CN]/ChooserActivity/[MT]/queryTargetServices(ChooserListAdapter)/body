@@ -1,0 +1,44 @@
+{
+  final PackageManager pm=getPackageManager();
+  int targetsToQuery=0;
+  for (int i=0, N=adapter.getDisplayResolveInfoCount(); i < N; i++) {
+    final DisplayResolveInfo dri=adapter.getDisplayResolveInfo(i);
+    final ActivityInfo ai=dri.getResolveInfo().activityInfo;
+    final Bundle md=ai.metaData;
+    final String serviceName=md != null ? convertServiceName(ai.packageName,md.getString(ChooserTargetService.META_DATA_NAME)) : null;
+    if (serviceName != null) {
+      final ComponentName serviceComponent=new ComponentName(ai.packageName,serviceName);
+      final Intent serviceIntent=new Intent(ChooserTargetService.SERVICE_INTERFACE).setComponent(serviceComponent);
+      if (DEBUG) {
+        Log.d(TAG,"queryTargets found target with service " + serviceComponent);
+      }
+      try {
+        final String perm=pm.getServiceInfo(serviceComponent,0).permission;
+        if (!ChooserTargetService.BIND_PERMISSION.equals(perm)) {
+          Log.w(TAG,"ChooserTargetService " + serviceComponent + " does not require"+ " permission "+ ChooserTargetService.BIND_PERMISSION+ " - this service will not be queried for ChooserTargets."+ " add android:permission=\""+ ChooserTargetService.BIND_PERMISSION+ "\""+ " to the <service> tag for "+ serviceComponent+ " in the manifest.");
+          continue;
+        }
+      }
+ catch (      NameNotFoundException e) {
+        Log.e(TAG,"Could not look up service " + serviceComponent,e);
+        continue;
+      }
+      final ChooserTargetServiceConnection conn=new ChooserTargetServiceConnection(dri);
+      if (bindServiceAsUser(serviceIntent,conn,BIND_AUTO_CREATE | BIND_NOT_FOREGROUND,UserHandle.CURRENT)) {
+        if (DEBUG) {
+          Log.d(TAG,"Binding service connection for target " + dri + " intent "+ serviceIntent);
+        }
+        mServiceConnections.add(conn);
+        targetsToQuery++;
+      }
+    }
+    if (targetsToQuery >= QUERY_TARGET_LIMIT) {
+      if (DEBUG)       Log.d(TAG,"queryTargets hit query target limit " + QUERY_TARGET_LIMIT);
+      break;
+    }
+  }
+  if (!mServiceConnections.isEmpty()) {
+    if (DEBUG)     Log.d(TAG,"queryTargets setting watchdog timer for " + WATCHDOG_TIMEOUT_MILLIS + "ms");
+    mTargetResultHandler.sendEmptyMessageDelayed(CHOOSER_TARGET_SERVICE_WATCHDOG_TIMEOUT,WATCHDOG_TIMEOUT_MILLIS);
+  }
+}
