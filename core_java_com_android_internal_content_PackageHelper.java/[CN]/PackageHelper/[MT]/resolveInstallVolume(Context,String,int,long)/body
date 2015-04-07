@@ -1,0 +1,53 @@
+{
+  ApplicationInfo existingInfo=null;
+  try {
+    existingInfo=context.getPackageManager().getApplicationInfo(packageName,PackageManager.GET_UNINSTALLED_PACKAGES);
+  }
+ catch (  NameNotFoundException ignored) {
+  }
+  final StorageManager storageManager=context.getSystemService(StorageManager.class);
+  final boolean fitsOnInternal=fitsOnInternal(context,sizeBytes);
+  final ArraySet<String> allCandidates=new ArraySet<>();
+  VolumeInfo bestCandidate=null;
+  long bestCandidateAvailBytes=Long.MIN_VALUE;
+  for (  VolumeInfo vol : storageManager.getVolumes()) {
+    if (vol.type == VolumeInfo.TYPE_PRIVATE && vol.state == VolumeInfo.STATE_MOUNTED) {
+      final long availBytes=storageManager.getStorageBytesUntilLow(new File(vol.path));
+      if (availBytes >= sizeBytes) {
+        allCandidates.add(vol.fsUuid);
+      }
+      if (availBytes >= bestCandidateAvailBytes) {
+        bestCandidate=vol;
+        bestCandidateAvailBytes=availBytes;
+      }
+    }
+  }
+  if (existingInfo != null && existingInfo.isSystemApp()) {
+    installLocation=PackageInfo.INSTALL_LOCATION_INTERNAL_ONLY;
+  }
+  if (installLocation == PackageInfo.INSTALL_LOCATION_INTERNAL_ONLY) {
+    if (fitsOnInternal) {
+      return null;
+    }
+ else {
+      throw new IOException("Requested internal only, but not enough space");
+    }
+  }
+  if (existingInfo != null) {
+    if (existingInfo.volumeUuid == null && fitsOnInternal) {
+      return null;
+    }
+    if (allCandidates.contains(existingInfo.volumeUuid)) {
+      return existingInfo.volumeUuid;
+    }
+  }
+  if (bestCandidate != null) {
+    return bestCandidate.fsUuid;
+  }
+ else   if (fitsOnInternal) {
+    return null;
+  }
+ else {
+    throw new IOException("No special requests, but no room anywhere");
+  }
+}
