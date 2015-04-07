@@ -1,45 +1,241 @@
 {
   final boolean forAllUsers=(asUsers.get(UserHandle.USER_ALL) != null);
+  final SensorManager sensorManager=(SensorManager)mContext.getSystemService(Context.SENSOR_SERVICE);
+  final int which=mStatsType;
+  final int speedSteps=mPowerProfile.getNumSpeedSteps();
+  final double[] powerCpuNormal=new double[speedSteps];
+  final long[] cpuSpeedStepTimes=new long[speedSteps];
+  for (int p=0; p < speedSteps; p++) {
+    powerCpuNormal[p]=mPowerProfile.getAveragePower(PowerProfile.POWER_CPU_ACTIVE,p);
+  }
+  final double mobilePowerPerPacket=getMobilePowerPerPacket();
+  final double mobilePowerPerMs=getMobilePowerPerMs();
+  final double wifiPowerPerPacket=getWifiPowerPerPacket();
+  long totalAppWakelockTimeUs=0;
+  BatterySipper osApp=null;
   mStatsPeriod=mTypeBatteryRealtime;
+  final ArrayList<BatterySipper> appList=new ArrayList<>();
+  double maxWifiPower=0;
+  double maxCpuPower=0;
+  double maxWakeLockPower=0;
+  double maxMobileRadioPower=0;
+  double maxGpsPower=0;
+  double maxSensorPower=0;
   final SparseArray<? extends Uid> uidStats=mStats.getUidStats();
   final int NU=uidStats.size();
   for (int iu=0; iu < NU; iu++) {
     final Uid u=uidStats.valueAt(iu);
-    final BatterySipper app=new BatterySipper(BatterySipper.DrainType.APP,u,0);
-    mCpuPowerCalculator.calculateApp(app,u,mRawRealtime,mRawUptime,mStatsType);
-    mWakelockPowerCalculator.calculateApp(app,u,mRawRealtime,mRawUptime,mStatsType);
-    mMobileRadioPowerCalculator.calculateApp(app,u,mRawRealtime,mRawUptime,mStatsType);
-    mWifiPowerCalculator.calculateApp(app,u,mRawRealtime,mRawUptime,mStatsType);
-    mBluetoothPowerCalculator.calculateApp(app,u,mRawRealtime,mRawUptime,mStatsType);
-    mSensorPowerCalculator.calculateApp(app,u,mRawRealtime,mRawUptime,mStatsType);
-    final double totalPower=app.sumPower();
-    if (DEBUG && totalPower != 0) {
-      Log.d(TAG,String.format("UID %d: total power=%s",u.getUid(),makemAh(totalPower)));
-    }
-    if (totalPower != 0 || u.getUid() == 0) {
-      final int uid=app.getUid();
-      final int userId=UserHandle.getUserId(uid);
-      if (uid == Process.WIFI_UID) {
-        mWifiSippers.add(app);
-      }
- else       if (uid == Process.BLUETOOTH_UID) {
-        mBluetoothSippers.add(app);
-      }
- else       if (!forAllUsers && asUsers.get(userId) == null && UserHandle.getAppId(uid) >= Process.FIRST_APPLICATION_UID) {
-        List<BatterySipper> list=mUserSippers.get(userId);
-        if (list == null) {
-          list=new ArrayList<>();
-          mUserSippers.put(userId,list);
+    final BatterySipper app=new BatterySipper(BatterySipper.DrainType.APP,u,new double[]{0});
+    final Map<String,? extends BatteryStats.Uid.Proc> processStats=u.getProcessStats();
+    if (processStats.size() > 0) {
+      double highestDrain=0;
+      for (      Map.Entry<String,? extends BatteryStats.Uid.Proc> ent : processStats.entrySet()) {
+        Uid.Proc ps=ent.getValue();
+        app.cpuFgTime+=ps.getForegroundTime(which);
+        final long totalCpuTime=ps.getUserTime(which) + ps.getSystemTime(which);
+        app.cpuTime+=totalCpuTime;
+        long totalTimeAtSpeeds=0;
+        for (int step=0; step < speedSteps; step++) {
+          cpuSpeedStepTimes[step]=ps.getTimeAtCpuSpeedStep(step,which);
+          totalTimeAtSpeeds+=cpuSpeedStepTimes[step];
         }
-        list.add(app);
-      }
- else {
-        mUsageList.add(app);
-      }
-      if (uid == 0) {
-        mWakelockPowerCalculator.calculateRemaining(app,mStats,mRawRealtime,mRawUptime,mStatsType);
-        app.sumPower();
+        totalTimeAtSpeeds=Math.max(totalTimeAtSpeeds,1);
+        double cpuPower=0;
+        for (int step=0; step < speedSteps; step++) {
+          final double ratio=(double)cpuSpeedStepTimes[step] / totalTimeAtSpeeds;
+          final double cpuSpeedStepPower=ratio * totalCpuTime * powerCpuNormal[step];
+          if (DEBUG && ratio != 0) {
+            Log.d(TAG,"UID " + u.getUid() + ": CPU step #"+ step+ " ratio="+ makemAh(ratio)+ " power="+ makemAh(cpuSpeedStepPower / (60 * 60 * 1000)));
+          }
+          cpuPower+=cpuSpeedStepPower;
+        }
+        if (DEBUG && cpuPower != 0) {
+          Log.d(TAG,String.format("process %s, cpu power=%s",ent.getKey(),makemAh(cpuPower / (60 * 60 * 1000))));
+        }
+        app.cpuPower+=cpuPower;
+        if (app.packageWithHighestDrain == null || app.packageWithHighestDrain.startsWith("*")) {
+          highestDrain=cpuPower;
+          app.packageWithHighestDrain=ent.getKey();
+        }
+ else         if (highestDrain < cpuPower && !ent.getKey().startsWith("*")) {
+          highestDrain=cpuPower;
+          app.packageWithHighestDrain=ent.getKey();
+        }
       }
     }
-  }
+    if (app.cpuFgTime > app.cpuTime) {
+      if (DEBUG && app.cpuFgTime > app.cpuTime + 10000) {
+        Log.d(TAG,"WARNING! Cputime is more than 10 seconds behind Foreground time");
+      }
+      app.cpuTime=app.cpuFgTime;
+    }
+    app.cpuPower/=(60 * 60 * 1000);
+    maxCpuPower=Math.max(maxCpuPower,app.cpuPower);
+    final Map<String,? extends BatteryStats.Uid.Wakelock> wakelockStats=u.getWakelockStats();
+    long wakeLockTimeUs=0;
+    for (    Map.Entry<String,? extends BatteryStats.Uid.Wakelock> wakelockEntry : wakelockStats.entrySet()) {
+      final Uid.Wakelock wakelock=wakelockEntry.getValue();
+      BatteryStats.Timer timer=wakelock.getWakeTime(BatteryStats.WAKE_TYPE_PARTIAL);
+      if (timer != null) {
+        wakeLockTimeUs+=timer.getTotalTimeLocked(mRawRealtime,which);
+      }
+    }
+    app.wakeLockTime=wakeLockTimeUs / 1000;
+    totalAppWakelockTimeUs+=wakeLockTimeUs;
+    app.wakeLockPower=(app.wakeLockTime * mPowerProfile.getAveragePower(PowerProfile.POWER_CPU_AWAKE)) / (60 * 60 * 1000);
+    if (DEBUG && app.wakeLockPower != 0) {
+      Log.d(TAG,"UID " + u.getUid() + ": wake "+ app.wakeLockTime+ " power="+ makemAh(app.wakeLockPower));
+    }
+    maxWakeLockPower=Math.max(maxWakeLockPower,app.wakeLockPower);
+    final long mobileActive=u.getMobileRadioActiveTime(mStatsType);
+    app.mobileRxPackets=u.getNetworkActivityPackets(NETWORK_MOBILE_RX_DATA,mStatsType);
+    app.mobileTxPackets=u.getNetworkActivityPackets(NETWORK_MOBILE_TX_DATA,mStatsType);
+    app.mobileActive=mobileActive / 1000;
+    app.mobileActiveCount=u.getMobileRadioActiveCount(mStatsType);
+    app.mobileRxBytes=u.getNetworkActivityBytes(NETWORK_MOBILE_RX_DATA,mStatsType);
+    app.mobileTxBytes=u.getNetworkActivityBytes(NETWORK_MOBILE_TX_DATA,mStatsType);
+    if (mobileActive > 0) {
+      mAppMobileActive+=mobileActive;
+      app.mobileRadioPower=(mobilePowerPerMs * mobileActive) / 1000;
+    }
+ else {
+      app.mobileRadioPower=(app.mobileRxPackets + app.mobileTxPackets) * mobilePowerPerPacket;
+    }
+    if (DEBUG && app.mobileRadioPower != 0) {
+      Log.d(TAG,"UID " + u.getUid() + ": mobile packets "+ (app.mobileRxPackets + app.mobileTxPackets)+ " active time "+ mobileActive+ " power="+ makemAh(app.mobileRadioPower));
+    }
+    maxMobileRadioPower=Math.max(maxMobileRadioPower,app.mobileRadioPower);
+    app.wifiRxPackets=u.getNetworkActivityPackets(NETWORK_WIFI_RX_DATA,mStatsType);
+    app.wifiTxPackets=u.getNetworkActivityPackets(NETWORK_WIFI_TX_DATA,mStatsType);
+    app.wifiRxBytes=u.getNetworkActivityBytes(NETWORK_WIFI_RX_DATA,mStatsType);
+    app.wifiTxBytes=u.getNetworkActivityBytes(NETWORK_WIFI_TX_DATA,mStatsType);
+    final double wifiPacketPower=(app.wifiRxPackets + app.wifiTxPackets) * wifiPowerPerPacket;
+    if (DEBUG && wifiPacketPower != 0) {
+      Log.d(TAG,"UID " + u.getUid() + ": wifi packets "+ (app.wifiRxPackets + app.wifiTxPackets)+ " power="+ makemAh(wifiPacketPower));
+    }
+    app.wifiRunningTime=u.getWifiRunningTime(mRawRealtime,which) / 1000;
+    mAppWifiRunning+=app.wifiRunningTime;
+    final double wifiLockPower=(app.wifiRunningTime * mPowerProfile.getAveragePower(PowerProfile.POWER_WIFI_ON)) / (60 * 60 * 1000);
+    if (DEBUG && wifiLockPower != 0) {
+      Log.d(TAG,"UID " + u.getUid() + ": wifi running "+ app.wifiRunningTime+ " power="+ makemAh(wifiLockPower));
+    }
+    final long wifiScanTimeMs=u.getWifiScanTime(mRawRealtime,which) / 1000;
+    final double wifiScanPower=(wifiScanTimeMs * mPowerProfile.getAveragePower(PowerProfile.POWER_WIFI_SCAN)) / (60 * 60 * 1000);
+    if (DEBUG && wifiScanPower != 0) {
+      Log.d(TAG,"UID " + u.getUid() + ": wifi scan "+ wifiScanTimeMs+ " power="+ makemAh(wifiScanPower));
+    }
+    double wifiBatchScanPower=0;
+    for (int bin=0; bin < BatteryStats.Uid.NUM_WIFI_BATCHED_SCAN_BINS; bin++) {
+      final long batchScanTimeMs=u.getWifiBatchedScanTime(bin,mRawRealtime,which) / 1000;
+      final double batchScanPower=((batchScanTimeMs * mPowerProfile.getAveragePower(PowerProfile.POWER_WIFI_BATCHED_SCAN,bin))) / (60 * 60 * 1000);
+      if (DEBUG && batchScanPower != 0) {
+        Log.d(TAG,"UID " + u.getUid() + ": wifi batched scan # "+ bin+ " time="+ batchScanTimeMs+ " power="+ makemAh(batchScanPower));
+      }
+      wifiBatchScanPower+=batchScanPower;
+    }
+    app.wifiPower=wifiPacketPower + wifiLockPower + wifiScanPower+ wifiBatchScanPower;
+    maxWifiPower=Math.max(maxWifiPower,app.wifiPower);
+    final SparseArray<? extends BatteryStats.Uid.Sensor> sensorStats=u.getSensorStats();
+    final int NSE=sensorStats.size();
+    for (int ise=0; ise < NSE; ise++) {
+      final Uid.Sensor sensor=sensorStats.valueAt(ise);
+      final int sensorHandle=sensorStats.keyAt(ise);
+      final BatteryStats.Timer timer=sensor.getSensorTime();
+      final long sensorTime=timer.getTotalTimeLocked(mRawRealtime,which) / 1000;
+      double sensorPower=0;
+switch (sensorHandle) {
+case Uid.Sensor.GPS:
+        app.gpsTime=sensorTime;
+      app.gpsPower=(app.gpsTime * mPowerProfile.getAveragePower(PowerProfile.POWER_GPS_ON)) / (60 * 60 * 1000);
+    sensorPower=app.gpsPower;
+  maxGpsPower=Math.max(maxGpsPower,app.gpsPower);
+break;
+default :
+List<Sensor> sensorList=sensorManager.getSensorList(android.hardware.Sensor.TYPE_ALL);
+for (android.hardware.Sensor s : sensorList) {
+if (s.getHandle() == sensorHandle) {
+sensorPower=(sensorTime * s.getPower()) / (60 * 60 * 1000);
+app.sensorPower+=sensorPower;
+break;
+}
+}
+}
+if (DEBUG && sensorPower != 0) {
+Log.d(TAG,"UID " + u.getUid() + ": sensor #"+ sensorHandle+ " time="+ sensorTime+ " power="+ makemAh(sensorPower));
+}
+}
+maxSensorPower=Math.max(maxSensorPower,app.sensorPower);
+final double totalUnnormalizedPower=app.cpuPower + app.wifiPower + app.wakeLockPower+ app.mobileRadioPower+ app.gpsPower+ app.sensorPower;
+if (DEBUG && totalUnnormalizedPower != 0) {
+Log.d(TAG,String.format("UID %d: total power=%s",u.getUid(),makemAh(totalUnnormalizedPower)));
+}
+if (totalUnnormalizedPower != 0 || u.getUid() == 0) {
+appList.add(app);
+}
+}
+double actualTotalWifiPower=0.0;
+if (mStats.getWifiControllerActivity(BatteryStats.CONTROLLER_ENERGY,mStatsType) != 0) {
+final double kDefaultVoltage=3.36;
+final long energy=mStats.getWifiControllerActivity(BatteryStats.CONTROLLER_ENERGY,mStatsType);
+final double voltage=mPowerProfile.getAveragePowerOrDefault(PowerProfile.OPERATING_VOLTAGE_WIFI,kDefaultVoltage);
+actualTotalWifiPower=energy / (voltage * 1000 * 60* 60);
+}
+final int appCount=appList.size();
+for (int i=0; i < appCount; i++) {
+final BatterySipper app=appList.get(i);
+if (actualTotalWifiPower != 0) {
+app.wifiPower=(app.wifiPower / maxWifiPower) * actualTotalWifiPower;
+}
+final double power=app.wifiPower + app.cpuPower + app.wakeLockPower+ app.mobileRadioPower+ app.gpsPower+ app.sensorPower;
+app.values[0]=app.value=power;
+final int uid=app.getUid();
+final int userId=UserHandle.getUserId(uid);
+if (uid == Process.WIFI_UID) {
+mWifiSippers.add(app);
+mWifiPower+=power;
+}
+ else if (uid == Process.BLUETOOTH_UID) {
+mBluetoothSippers.add(app);
+mBluetoothPower+=power;
+}
+ else if (!forAllUsers && asUsers.get(userId) == null && UserHandle.getAppId(uid) >= Process.FIRST_APPLICATION_UID) {
+List<BatterySipper> list=mUserSippers.get(userId);
+if (list == null) {
+list=new ArrayList<>();
+mUserSippers.put(userId,list);
+}
+list.add(app);
+Double userPower=mUserPower.get(userId);
+if (userPower == null) {
+userPower=power;
+}
+ else {
+userPower+=power;
+}
+mUserPower.put(userId,userPower);
+}
+ else {
+mUsageList.add(app);
+if (power > mMaxPower) mMaxPower=power;
+if (power > mMaxRealPower) mMaxRealPower=power;
+mComputedPower+=power;
+}
+if (uid == 0) {
+osApp=app;
+}
+}
+if (osApp != null) {
+long wakeTimeMillis=mBatteryUptime / 1000;
+wakeTimeMillis-=(totalAppWakelockTimeUs / 1000) + (mStats.getScreenOnTime(mRawRealtime,which) / 1000);
+if (wakeTimeMillis > 0) {
+double power=(wakeTimeMillis * mPowerProfile.getAveragePower(PowerProfile.POWER_CPU_AWAKE)) / (60 * 60 * 1000);
+if (DEBUG) Log.d(TAG,"OS wakeLockTime " + wakeTimeMillis + " power "+ makemAh(power));
+osApp.wakeLockTime+=wakeTimeMillis;
+osApp.value+=power;
+osApp.values[0]+=power;
+if (osApp.value > mMaxPower) mMaxPower=osApp.value;
+if (osApp.value > mMaxRealPower) mMaxRealPower=osApp.value;
+mComputedPower+=power;
+}
+}
 }
