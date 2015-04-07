@@ -1,0 +1,40 @@
+{
+  final Context context=getApplicationContext();
+  final ContentResolver resolver=context.getContentResolver();
+  final Uri writableDstUri=DocumentsContract.buildDocumentUriUsingTree(destinationUri,DocumentsContract.getTreeDocumentId(destinationUri));
+  final Uri dstFileUri=DocumentsContract.createDocument(resolver,writableDstUri,srcInfo.mimeType,srcInfo.displayName);
+  CancellationSignal canceller=new CancellationSignal();
+  ParcelFileDescriptor srcFile=null;
+  ParcelFileDescriptor dstFile=null;
+  InputStream src=null;
+  OutputStream dst=null;
+  boolean errorOccurred=false;
+  try {
+    srcFile=resolver.openFileDescriptor(srcInfo.derivedUri,"r",canceller);
+    dstFile=resolver.openFileDescriptor(dstFileUri,"w",canceller);
+    src=new ParcelFileDescriptor.AutoCloseInputStream(srcFile);
+    dst=new ParcelFileDescriptor.AutoCloseOutputStream(dstFile);
+    byte[] buffer=new byte[8192];
+    int len;
+    while (!mIsCancelled && ((len=src.read(buffer)) != -1)) {
+      dst.write(buffer,0,len);
+      makeProgress(len);
+    }
+    srcFile.checkError();
+    dstFile.checkError();
+  }
+ catch (  IOException e) {
+    errorOccurred=true;
+    Log.e(TAG,"Error while copying " + srcInfo.displayName,e);
+  }
+ finally {
+    IoUtils.closeQuietly(src);
+    IoUtils.closeQuietly(dst);
+  }
+  if (errorOccurred || mIsCancelled) {
+    canceller.cancel();
+    if (!DocumentsContract.deleteDocument(resolver,dstFileUri)) {
+      Log.w(TAG,"Failed to clean up: " + srcInfo.displayName);
+    }
+  }
+}
