@@ -1,16 +1,28 @@
 {
   CallbackRecord callbacks;
 synchronized (mLock) {
-    final long now=SystemClock.uptimeMillis();
-    callbacks=mCallbackQueues[callbackType].extractDueCallbacksLocked(now);
+    final long now=System.nanoTime();
+    callbacks=mCallbackQueues[callbackType].extractDueCallbacksLocked(now / TimeUtils.NANOS_PER_MS);
     if (callbacks == null) {
       return;
     }
     mCallbacksRunning=true;
+    if (callbackType == Choreographer.CALLBACK_COMMIT) {
+      final long jitterNanos=now - frameTimeNanos;
+      if (jitterNanos >= 2 * mFrameIntervalNanos) {
+        final long lastFrameOffset=jitterNanos % mFrameIntervalNanos + mFrameIntervalNanos;
+        if (DEBUG_JANK) {
+          Log.d(TAG,"Commit callback delayed by " + (jitterNanos * 0.000001f) + " ms which is more than twice the frame interval of "+ (mFrameIntervalNanos * 0.000001f)+ " ms!  "+ "Setting frame time to "+ (lastFrameOffset * 0.000001f)+ " ms in the past.");
+          mDebugPrintNextFrameTimeDelta=true;
+        }
+        frameTimeNanos=now - lastFrameOffset;
+        mLastFrameTimeNanos=frameTimeNanos;
+      }
+    }
   }
   try {
     for (CallbackRecord c=callbacks; c != null; c=c.next) {
-      if (DEBUG) {
+      if (DEBUG_FRAMES) {
         Log.d(TAG,"RunCallback: type=" + callbackType + ", action="+ c.action+ ", token="+ c.token+ ", latencyMillis="+ (SystemClock.uptimeMillis() - c.dueTime));
       }
       c.run(frameTimeNanos);
