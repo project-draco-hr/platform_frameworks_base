@@ -1,0 +1,66 @@
+{
+  if ((a.flags & AlarmManager.FLAG_IDLE_UNTIL) != 0) {
+    final int N=mAlarmBatches.size();
+    for (int i=0; i < N; i++) {
+      Batch b=mAlarmBatches.get(i);
+      if (a.whenElapsed > b.end) {
+        break;
+      }
+      if ((b.flags & AlarmManager.FLAG_WAKE_FROM_IDLE) != 0) {
+        a.when=a.whenElapsed=a.maxWhenElapsed=b.end;
+        break;
+      }
+    }
+    final long nowElapsed=SystemClock.elapsedRealtime();
+    long fuzz=fuzzForDuration(a.whenElapsed - nowElapsed);
+    if (fuzz > 0) {
+      if (mRandom == null) {
+        mRandom=new Random();
+      }
+      a.whenElapsed-=mRandom.nextLong() % fuzz;
+    }
+  }
+ else   if (mPendingIdleUntil != null) {
+    if ((a.flags & (AlarmManager.FLAG_ALLOW_WHILE_IDLE | AlarmManager.FLAG_WAKE_FROM_IDLE)) == 0) {
+      mPendingWhileIdleAlarms.add(a);
+      return;
+    }
+  }
+  int whichBatch=((a.flags & AlarmManager.FLAG_STANDALONE) != 0) ? -1 : attemptCoalesceLocked(a.whenElapsed,a.maxWhenElapsed);
+  if (whichBatch < 0) {
+    Batch batch=new Batch(a);
+    addBatchLocked(mAlarmBatches,batch);
+  }
+ else {
+    Batch batch=mAlarmBatches.get(whichBatch);
+    if (batch.add(a)) {
+      mAlarmBatches.remove(whichBatch);
+      addBatchLocked(mAlarmBatches,batch);
+    }
+  }
+  if (a.alarmClock != null) {
+    mNextAlarmClockMayChange=true;
+  }
+  boolean needRebatch=false;
+  if ((a.flags & AlarmManager.FLAG_IDLE_UNTIL) != 0) {
+    mPendingIdleUntil=a;
+    needRebatch=true;
+  }
+ else   if ((a.flags & AlarmManager.FLAG_WAKE_FROM_IDLE) != 0 && mPendingIdleUntil != null) {
+    needRebatch=true;
+  }
+  if (!rebatching) {
+    if (DEBUG_VALIDATE) {
+      if (doValidate && !validateConsistencyLocked()) {
+        Slog.v(TAG,"Tipping-point operation: type=" + a.type + " when="+ a.when+ " when(hex)="+ Long.toHexString(a.when)+ " whenElapsed="+ a.whenElapsed+ " maxWhenElapsed="+ a.maxWhenElapsed+ " interval="+ a.repeatInterval+ " op="+ a.operation+ " flags=0x"+ Integer.toHexString(a.flags));
+        rebatchAllAlarmsLocked(false);
+        needRebatch=false;
+      }
+    }
+    if (needRebatch) {
+      rebatchAllAlarmsLocked(false);
+    }
+    rescheduleKernelAlarmsLocked();
+    updateNextAlarmClockLocked();
+  }
+}
