@@ -73,11 +73,18 @@
       throw new KeyStoreException("At least one digest algorithm must be specified" + " for key algorithm " + keyAlgorithmString);
     }
   }
-  int purposes=params.getPurposes();
+  @KeyStoreKeyConstraints.PurposeEnum int purposes=params.getPurposes();
+  @KeyStoreKeyConstraints.BlockModeEnum int blockModes=params.getBlockModes();
+  if (((purposes & KeyStoreKeyConstraints.Purpose.ENCRYPT) != 0) && (params.isRandomizedEncryptionRequired())) {
+    @KeyStoreKeyConstraints.BlockModeEnum int incompatibleBlockModes=blockModes & ~KeyStoreKeyConstraints.BlockMode.IND_CPA_COMPATIBLE_MODES;
+    if (incompatibleBlockModes != 0) {
+      throw new KeyStoreException("Randomized encryption (IND-CPA) required but may be" + " violated by block mode(s): " + KeyStoreKeyConstraints.BlockMode.allToString(incompatibleBlockModes) + ". See KeyStoreParameter documentation.");
+    }
+  }
   for (  int keymasterPurpose : KeyStoreKeyConstraints.Purpose.allToKeymaster(purposes)) {
     args.addInt(KeymasterDefs.KM_TAG_PURPOSE,keymasterPurpose);
   }
-  for (  int keymasterBlockMode : KeyStoreKeyConstraints.BlockMode.allToKeymaster(params.getBlockModes())) {
+  for (  int keymasterBlockMode : KeyStoreKeyConstraints.BlockMode.allToKeymaster(blockModes)) {
     args.addInt(KeymasterDefs.KM_TAG_BLOCK_MODE,keymasterBlockMode);
   }
   for (  int keymasterPadding : KeyStoreKeyConstraints.Padding.allToKeymaster(params.getPaddings())) {
@@ -98,7 +105,7 @@
   args.addDate(KeymasterDefs.KM_TAG_ORIGINATION_EXPIRE_DATETIME,(params.getKeyValidityForOriginationEnd() != null) ? params.getKeyValidityForOriginationEnd() : new Date(Long.MAX_VALUE));
   args.addDate(KeymasterDefs.KM_TAG_USAGE_EXPIRE_DATETIME,(params.getKeyValidityForConsumptionEnd() != null) ? params.getKeyValidityForConsumptionEnd() : new Date(Long.MAX_VALUE));
   args.addInt(KeymasterDefs.KM_TAG_KEY_SIZE,keyMaterial.length * 8);
-  if (((purposes & KeyStoreKeyConstraints.Purpose.ENCRYPT) != 0) || ((purposes & KeyStoreKeyConstraints.Purpose.DECRYPT) != 0)) {
+  if (((purposes & KeyStoreKeyConstraints.Purpose.ENCRYPT) != 0) && (!params.isRandomizedEncryptionRequired())) {
     args.addBoolean(KeymasterDefs.KM_TAG_CALLER_NONCE);
   }
   Credentials.deleteAllTypesForAlias(mKeyStore,entryAlias);
