@@ -8,16 +8,23 @@
   HeaderSet request=new HeaderSet();
   HeaderSet reply=new HeaderSet();
   int bytesReceived;
+  if (V)   Log.v(TAG,"handleConnectRequest()");
   packetLength=mInput.read();
   packetLength=(packetLength << 8) + mInput.read();
+  if (V)   Log.v(TAG,"handleConnectRequest() - packetLength: " + packetLength);
   version=mInput.read();
   flags=mInput.read();
   mMaxPacketLength=mInput.read();
   mMaxPacketLength=(mMaxPacketLength << 8) + mInput.read();
+  if (V)   Log.v(TAG,"handleConnectRequest() - version: " + version + " MaxLength: "+ mMaxPacketLength+ " flags: "+ flags);
   if (mMaxPacketLength > ObexHelper.MAX_PACKET_SIZE_INT) {
     mMaxPacketLength=ObexHelper.MAX_PACKET_SIZE_INT;
   }
-  if (packetLength > ObexHelper.MAX_PACKET_SIZE_INT) {
+  if (mMaxPacketLength > ObexHelper.getMaxTxPacketSize(mTransport)) {
+    Log.w(TAG,"Requested MaxObexPacketSize " + mMaxPacketLength + " is larger than the max size supported by the transport: "+ ObexHelper.getMaxTxPacketSize(mTransport)+ " Reducing to this size.");
+    mMaxPacketLength=ObexHelper.getMaxTxPacketSize(mTransport);
+  }
+  if (packetLength > ObexHelper.getMaxRxPacketSize(mTransport)) {
     code=ResponseCodes.OBEX_HTTP_REQ_TOO_LARGE;
     totalLength=7;
   }
@@ -77,7 +84,7 @@
         }
       }
  catch (      Exception e) {
-        e.printStackTrace();
+        if (V)         Log.d(TAG,"Exception occured - sending OBEX_HTTP_INTERNAL_ERROR reply",e);
         totalLength=7;
         head=null;
         code=ResponseCodes.OBEX_HTTP_INTERNAL_ERROR;
@@ -86,13 +93,14 @@
   }
   byte[] length=ObexHelper.convertToByteArray(totalLength);
   byte[] sendData=new byte[totalLength];
+  int maxRxLength=ObexHelper.getMaxRxPacketSize(mTransport);
   sendData[0]=(byte)code;
   sendData[1]=length[2];
   sendData[2]=length[3];
   sendData[3]=(byte)0x10;
   sendData[4]=(byte)0x00;
-  sendData[5]=(byte)(ObexHelper.MAX_PACKET_SIZE_INT >> 8);
-  sendData[6]=(byte)(ObexHelper.MAX_PACKET_SIZE_INT & 0xFF);
+  sendData[5]=(byte)(maxRxLength >> 8);
+  sendData[6]=(byte)(maxRxLength & 0xFF);
   if (head != null) {
     System.arraycopy(head,0,sendData,7,head.length);
   }
