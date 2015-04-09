@@ -23,37 +23,40 @@
     }
     for (    String path : paths) {
       try {
-        final byte isDexOptNeeded=DexFile.isDexOptNeededInternal(path,pkg.packageName,dexCodeInstructionSet,defer);
-        if (forceDex || (!defer && isDexOptNeeded == DexFile.DEXOPT_NEEDED)) {
-          File oatDir=createOatDirIfSupported(pkg,dexCodeInstructionSet);
-          Log.i(TAG,"Running dexopt on: " + path + " pkg="+ pkg.applicationInfo.packageName+ " isa="+ dexCodeInstructionSet+ " vmSafeMode="+ vmSafeMode+ " debuggable="+ debuggable+ " oatDir = "+ oatDir);
-          final int sharedGid=UserHandle.getSharedAppGid(pkg.applicationInfo.uid);
-          if (oatDir != null) {
-            int ret=mPackageManagerService.mInstaller.dexopt(path,sharedGid,!pkg.isForwardLocked(),pkg.packageName,dexCodeInstructionSet,vmSafeMode,debuggable,oatDir.getAbsolutePath());
-            if (ret < 0) {
-              return DEX_OPT_FAILED;
-            }
+        final int dexoptNeeded;
+        if (forceDex) {
+          dexoptNeeded=DexFile.DEX2OAT_NEEDED;
+        }
+ else {
+          dexoptNeeded=DexFile.getDexOptNeeded(path,pkg.packageName,dexCodeInstructionSet,defer);
+        }
+        if (!forceDex && defer && dexoptNeeded != DexFile.NO_DEXOPT_NEEDED) {
+          addPackageForDeferredDexopt(pkg);
+          return DEX_OPT_DEFERRED;
+        }
+        if (dexoptNeeded != DexFile.NO_DEXOPT_NEEDED) {
+          final String dexoptType;
+          String oatDir=null;
+          if (dexoptNeeded == DexFile.DEX2OAT_NEEDED) {
+            dexoptType="dex2oat";
+            oatDir=createOatDirIfSupported(pkg,dexCodeInstructionSet);
+          }
+ else           if (dexoptNeeded == DexFile.PATCHOAT_NEEDED) {
+            dexoptType="patchoat";
+          }
+ else           if (dexoptNeeded == DexFile.SELF_PATCHOAT_NEEDED) {
+            dexoptType="self patchoat";
           }
  else {
-            final int ret=mPackageManagerService.mInstaller.dexopt(path,sharedGid,!pkg.isForwardLocked(),pkg.packageName,dexCodeInstructionSet,vmSafeMode,debuggable,null);
-            if (ret < 0) {
-              return DEX_OPT_FAILED;
-            }
+            throw new IllegalStateException("Invalid dexopt needed: " + dexoptNeeded);
           }
-          performedDexOpt=true;
-        }
- else         if (!defer && isDexOptNeeded == DexFile.PATCHOAT_NEEDED) {
-          Log.i(TAG,"Running patchoat on: " + pkg.applicationInfo.packageName);
+          Log.i(TAG,"Running dexopt (" + dexoptType + ") on: "+ path+ " pkg="+ pkg.applicationInfo.packageName+ " isa="+ dexCodeInstructionSet+ " vmSafeMode="+ vmSafeMode+ " debuggable="+ debuggable+ " oatDir = "+ oatDir);
           final int sharedGid=UserHandle.getSharedAppGid(pkg.applicationInfo.uid);
-          final int ret=mPackageManagerService.mInstaller.patchoat(path,sharedGid,!pkg.isForwardLocked(),pkg.packageName,dexCodeInstructionSet);
+          final int ret=mPackageManagerService.mInstaller.dexopt(path,sharedGid,!pkg.isForwardLocked(),pkg.packageName,dexCodeInstructionSet,dexoptNeeded,vmSafeMode,debuggable,oatDir);
           if (ret < 0) {
             return DEX_OPT_FAILED;
           }
           performedDexOpt=true;
-        }
-        if (defer && isDexOptNeeded != DexFile.UP_TO_DATE) {
-          addPackageForDeferredDexopt(pkg);
-          return DEX_OPT_DEFERRED;
         }
       }
  catch (      FileNotFoundException e) {
