@@ -12,9 +12,11 @@
         mHistoryCur.states|=HistoryItem.STATE_BATTERY_PLUGGED_FLAG;
       }
     }
+    mHistoryCur.states|=HistoryItem.STATE_CHARGING_FLAG;
     mHistoryCur.batteryStatus=(byte)status;
     mHistoryCur.batteryLevel=(byte)level;
     mMaxChargeStepLevel=mMinDischargeStepLevel=mLastChargeStepLevel=mLastDischargeStepLevel=level;
+    mLastChargingStateLevel=level;
   }
  else   if (mCurrentBatteryLevel != level || mOnBattery != onBattery) {
     recordDailyStatsIfNeededLocked(level >= 100 && onBattery);
@@ -73,11 +75,9 @@
       mHistoryCur.batteryVoltage=(char)volt;
       changed=true;
     }
-    if (changed) {
-      addHistoryRecordLocked(elapsedRealtime,uptime);
-    }
     long modeBits=(((long)mInitStepMode) << STEP_LEVEL_INITIAL_MODE_SHIFT) | (((long)mModStepMode) << STEP_LEVEL_MODIFIED_MODE_SHIFT) | (((long)(level & 0xff)) << STEP_LEVEL_LEVEL_SHIFT);
     if (onBattery) {
+      changed|=setChargingLocked(false);
       if (mLastDischargeStepLevel != level && mMinDischargeStepLevel > level) {
         mDischargeStepTracker.addLevelSteps(mLastDischargeStepLevel - level,modeBits,elapsedRealtime);
         mDailyDischargeStepTracker.addLevelSteps(mLastDischargeStepLevel - level,modeBits,elapsedRealtime);
@@ -88,6 +88,22 @@
       }
     }
  else {
+      if (level >= 90) {
+        changed|=setChargingLocked(true);
+        mLastChargeStepLevel=level;
+      }
+      if (!mCharging) {
+        if (mLastChargeStepLevel < level) {
+          changed|=setChargingLocked(true);
+          mLastChargeStepLevel=level;
+        }
+      }
+ else {
+        if (mLastChargeStepLevel > level) {
+          changed|=setChargingLocked(false);
+          mLastChargeStepLevel=level;
+        }
+      }
       if (mLastChargeStepLevel != level && mMaxChargeStepLevel < level) {
         mChargeStepTracker.addLevelSteps(level - mLastChargeStepLevel,modeBits,elapsedRealtime);
         mDailyChargeStepTracker.addLevelSteps(level - mLastChargeStepLevel,modeBits,elapsedRealtime);
@@ -96,6 +112,9 @@
         mInitStepMode=mCurStepMode;
         mModStepMode=0;
       }
+    }
+    if (changed) {
+      addHistoryRecordLocked(elapsedRealtime,uptime);
     }
   }
   if (!onBattery && status == BatteryManager.BATTERY_STATUS_FULL) {
