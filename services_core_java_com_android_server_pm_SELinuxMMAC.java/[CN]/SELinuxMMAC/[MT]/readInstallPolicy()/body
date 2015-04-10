@@ -1,7 +1,5 @@
 {
   List<Policy> policies=new ArrayList<>();
-  Policy defaultPolicy=null;
-  Set<Set<Signature>> knownCerts=new HashSet<>();
   FileReader policyFile=null;
   XmlPullParser parser=Xml.newPullParser();
   try {
@@ -14,53 +12,48 @@
       if (parser.getEventType() != XmlPullParser.START_TAG) {
         continue;
       }
-      String tagName=parser.getName();
-      if ("signer".equals(tagName)) {
-        Policy signerPolicy=readSignerOrThrow(parser);
-        Set<Signature> certs=signerPolicy.getSignatures();
-        if (knownCerts.contains(certs)) {
-          String msg="Separate stanzas have identical certs";
-          throw new IllegalStateException(msg);
-        }
-        knownCerts.add(certs);
-        policies.add(signerPolicy);
-      }
- else       if ("default".equals(tagName)) {
-        Policy defPolicy=readDefaultOrThrow(parser);
-        if (defaultPolicy != null) {
-          String msg="Multiple default stanzas identified";
-          throw new IllegalStateException(msg);
-        }
-        defaultPolicy=defPolicy;
-      }
- else {
-        skip(parser);
-      }
-    }
-  }
- catch (  IllegalStateException|IllegalArgumentException|XmlPullParserException ex) {
-    StringBuilder sb=new StringBuilder("Exception @");
-    sb.append(parser.getPositionDescription());
-    sb.append(" while parsing ");
-    sb.append(MAC_PERMISSIONS);
-    sb.append(":");
-    sb.append(ex);
-    Slog.w(TAG,sb.toString());
-    return false;
-  }
-catch (  IOException ioe) {
-    Slog.w(TAG,"Exception parsing " + MAC_PERMISSIONS,ioe);
-    return false;
-  }
+switch (parser.getName()) {
+case "signer":
+        policies.add(readSignerOrThrow(parser));
+      break;
+case "default":
+    policies.add(readDefaultOrThrow(parser));
+  break;
+default :
+skip(parser);
+}
+}
+}
+ catch (IllegalStateException|IllegalArgumentException|XmlPullParserException ex) {
+StringBuilder sb=new StringBuilder("Exception @");
+sb.append(parser.getPositionDescription());
+sb.append(" while parsing ");
+sb.append(MAC_PERMISSIONS);
+sb.append(":");
+sb.append(ex);
+Slog.w(TAG,sb.toString());
+return false;
+}
+catch (IOException ioe) {
+Slog.w(TAG,"Exception parsing " + MAC_PERMISSIONS,ioe);
+return false;
+}
  finally {
-    IoUtils.closeQuietly(policyFile);
-  }
-  if (defaultPolicy != null) {
-    policies.add(defaultPolicy);
-  }
+IoUtils.closeQuietly(policyFile);
+}
+PolicyComparator policySort=new PolicyComparator();
+Collections.sort(policies,policySort);
+if (policySort.foundDuplicate()) {
+Slog.w(TAG,"ERROR! Duplicate entries found parsing " + MAC_PERMISSIONS);
+return false;
+}
 synchronized (sPolicies) {
-    sPolicies.clear();
-    sPolicies.addAll(policies);
-  }
-  return true;
+sPolicies=policies;
+if (DEBUG_POLICY_ORDER) {
+for (Policy policy : sPolicies) {
+Slog.d(TAG,"Policy: " + policy.toString());
+}
+}
+}
+return true;
 }
