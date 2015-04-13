@@ -1,0 +1,47 @@
+{
+  final File file=mStorage.get(docId);
+  if (file == null || !file.isFile())   throw new FileNotFoundException();
+  ParcelFileDescriptor[] pipe;
+  try {
+    pipe=ParcelFileDescriptor.createReliablePipe();
+  }
+ catch (  IOException exception) {
+    throw new FileNotFoundException();
+  }
+  final ParcelFileDescriptor readPipe=pipe[0];
+  final ParcelFileDescriptor writePipe=pipe[1];
+  new Thread(){
+    @Override public void run(){
+      try {
+        final FileInputStream inputStream=new FileInputStream(readPipe.getFileDescriptor());
+        final FileOutputStream outputStream=new FileOutputStream(file);
+        byte[] buffer=new byte[32 * 1024];
+        int bytesToRead;
+        int bytesRead=0;
+        while (bytesRead != -1) {
+synchronized (mWriteLock) {
+            bytesToRead=Math.min(STORAGE_SIZE - mStorageUsedBytes,buffer.length);
+            if (bytesToRead == 0) {
+              closePipeWithErrorSilently(readPipe,"Not enough space.");
+              break;
+            }
+            bytesRead=inputStream.read(buffer,0,bytesToRead);
+            if (bytesRead == -1) {
+              break;
+            }
+            outputStream.write(buffer,0,bytesRead);
+            mStorageUsedBytes+=bytesRead;
+          }
+        }
+      }
+ catch (      IOException e) {
+        closePipeWithErrorSilently(readPipe,e.getMessage());
+      }
+ finally {
+        closePipeSilently(readPipe);
+      }
+    }
+  }
+.start();
+  return writePipe;
+}
