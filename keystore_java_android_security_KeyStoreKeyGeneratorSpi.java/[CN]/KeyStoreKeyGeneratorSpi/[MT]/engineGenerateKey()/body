@@ -7,43 +7,40 @@
     throw new IllegalStateException("Android KeyStore must be in initialized and unlocked state if encryption is" + " required");
   }
   KeymasterArguments args=new KeymasterArguments();
-  args.addInt(KeymasterDefs.KM_TAG_ALGORITHM,KeyStoreKeyConstraints.Algorithm.toKeymaster(mAlgorithm));
-  if (mDigest != null) {
-    args.addInt(KeymasterDefs.KM_TAG_DIGEST,KeyStoreKeyConstraints.Digest.toKeymaster(mDigest));
-    Integer digestOutputSizeBytes=KeyStoreKeyConstraints.Digest.getOutputSizeBytes(mDigest);
-    if (digestOutputSizeBytes != null) {
+  args.addInt(KeymasterDefs.KM_TAG_ALGORITHM,mKeymasterAlgorithm);
+  if (mKeymasterDigest != -1) {
+    args.addInt(KeymasterDefs.KM_TAG_DIGEST,mKeymasterDigest);
+    int digestOutputSizeBytes=KeymasterUtils.getDigestOutputSizeBytes(mKeymasterDigest);
+    if (digestOutputSizeBytes != -1) {
       args.addInt(KeymasterDefs.KM_TAG_MAC_LENGTH,digestOutputSizeBytes);
     }
   }
-  if (mAlgorithm == KeyStoreKeyConstraints.Algorithm.HMAC) {
-    if (mDigest == null) {
-      throw new IllegalStateException("Digest algorithm must be specified for key" + " algorithm " + KeyStoreKeyConstraints.Algorithm.toString(mAlgorithm));
+  if (mKeymasterAlgorithm == KeymasterDefs.KM_ALGORITHM_HMAC) {
+    if (mKeymasterDigest == -1) {
+      throw new IllegalStateException("Digest algorithm must be specified for HMAC key");
     }
   }
   int keySizeBits=(spec.getKeySize() != null) ? spec.getKeySize() : mDefaultKeySizeBits;
   args.addInt(KeymasterDefs.KM_TAG_KEY_SIZE,keySizeBits);
-  @KeyStoreKeyConstraints.PurposeEnum int purposes=spec.getPurposes();
-  @KeyStoreKeyConstraints.BlockModeEnum int blockModes=spec.getBlockModes();
-  if (((purposes & KeyStoreKeyConstraints.Purpose.ENCRYPT) != 0) && (spec.isRandomizedEncryptionRequired())) {
-    @KeyStoreKeyConstraints.BlockModeEnum int incompatibleBlockModes=blockModes & ~KeyStoreKeyConstraints.BlockMode.IND_CPA_COMPATIBLE_MODES;
-    if (incompatibleBlockModes != 0) {
-      throw new IllegalStateException("Randomized encryption (IND-CPA) required but may be violated by block" + " mode(s): " + KeyStoreKeyConstraints.BlockMode.allToString(incompatibleBlockModes) + ". See KeyGeneratorSpec documentation.");
+  @KeyStoreKeyProperties.PurposeEnum int purposes=spec.getPurposes();
+  int[] keymasterBlockModes=KeymasterUtils.getKeymasterBlockModesFromJcaBlockModes(spec.getBlockModes());
+  if (((purposes & KeyStoreKeyProperties.Purpose.ENCRYPT) != 0) && (spec.isRandomizedEncryptionRequired())) {
+    for (    int keymasterBlockMode : keymasterBlockModes) {
+      if (!KeymasterUtils.isKeymasterBlockModeIndCpaCompatible(keymasterBlockMode)) {
+        throw new IllegalStateException("Randomized encryption (IND-CPA) required but may be violated by block" + " mode: " + KeymasterUtils.getJcaBlockModeFromKeymasterBlockMode(keymasterBlockMode) + ". See KeyGeneratorSpec documentation.");
+      }
     }
   }
-  for (  int keymasterPurpose : KeyStoreKeyConstraints.Purpose.allToKeymaster(purposes)) {
+  for (  int keymasterPurpose : KeyStoreKeyProperties.Purpose.allToKeymaster(purposes)) {
     args.addInt(KeymasterDefs.KM_TAG_PURPOSE,keymasterPurpose);
   }
-  for (  int keymasterBlockMode : KeyStoreKeyConstraints.BlockMode.allToKeymaster(blockModes)) {
-    args.addInt(KeymasterDefs.KM_TAG_BLOCK_MODE,keymasterBlockMode);
-  }
-  for (  int keymasterPadding : KeyStoreKeyConstraints.Padding.allToKeymaster(spec.getPaddings())) {
-    args.addInt(KeymasterDefs.KM_TAG_PADDING,keymasterPadding);
-  }
+  args.addInts(KeymasterDefs.KM_TAG_BLOCK_MODE,keymasterBlockModes);
+  args.addInts(KeymasterDefs.KM_TAG_PADDING,KeymasterUtils.getKeymasterPaddingsFromJcaEncryptionPaddings(spec.getEncryptionPaddings()));
   if (spec.getUserAuthenticators() == 0) {
     args.addBoolean(KeymasterDefs.KM_TAG_NO_AUTH_REQUIRED);
   }
  else {
-    args.addInt(KeymasterDefs.KM_TAG_USER_AUTH_TYPE,KeyStoreKeyConstraints.UserAuthenticator.allToKeymaster(spec.getUserAuthenticators()));
+    args.addInt(KeymasterDefs.KM_TAG_USER_AUTH_TYPE,KeyStoreKeyProperties.UserAuthenticator.allToKeymaster(spec.getUserAuthenticators()));
   }
   if (spec.isInvalidatedOnNewFingerprintEnrolled()) {
   }
@@ -53,7 +50,7 @@
   args.addDate(KeymasterDefs.KM_TAG_ACTIVE_DATETIME,(spec.getKeyValidityStart() != null) ? spec.getKeyValidityStart() : new Date(0));
   args.addDate(KeymasterDefs.KM_TAG_ORIGINATION_EXPIRE_DATETIME,(spec.getKeyValidityForOriginationEnd() != null) ? spec.getKeyValidityForOriginationEnd() : new Date(Long.MAX_VALUE));
   args.addDate(KeymasterDefs.KM_TAG_USAGE_EXPIRE_DATETIME,(spec.getKeyValidityForConsumptionEnd() != null) ? spec.getKeyValidityForConsumptionEnd() : new Date(Long.MAX_VALUE));
-  if (((purposes & KeyStoreKeyConstraints.Purpose.ENCRYPT) != 0) && (!spec.isRandomizedEncryptionRequired())) {
+  if (((purposes & KeyStoreKeyProperties.Purpose.ENCRYPT) != 0) && (!spec.isRandomizedEncryptionRequired())) {
     args.addBoolean(KeymasterDefs.KM_TAG_CALLER_NONCE);
   }
   byte[] additionalEntropy=null;
@@ -68,6 +65,6 @@
   if (errorCode != KeyStore.NO_ERROR) {
     throw KeyStore.getCryptoOperationException(errorCode);
   }
-  String keyAlgorithmJCA=KeyStoreKeyConstraints.Algorithm.toJCASecretKeyAlgorithm(mAlgorithm,mDigest);
+  String keyAlgorithmJCA=KeymasterUtils.getJcaSecretKeyAlgorithm(mKeymasterAlgorithm,mKeymasterDigest);
   return new KeyStoreSecretKey(keyAliasInKeystore,keyAlgorithmJCA);
 }
