@@ -6,7 +6,8 @@
   if (mPrivateOutput != null) {
     bodyLength=mPrivateOutput.size();
   }
-  if ((ObexHelper.BASE_PACKET_LENGTH + headerArray.length) > mMaxPacketSize) {
+  final int MINIMUM_BODY_LENGTH=3;
+  if ((ObexHelper.BASE_PACKET_LENGTH + headerArray.length + MINIMUM_BODY_LENGTH) > mMaxPacketSize) {
     int end=0;
     int start=0;
     while (end != headerArray.length) {
@@ -26,7 +27,7 @@
       }
       byte[] sendHeader=new byte[end - start];
       System.arraycopy(headerArray,start,sendHeader,0,sendHeader.length);
-      if (!mParent.sendRequest(opCode,sendHeader,mReplyHeader,mPrivateInput)) {
+      if (!mParent.sendRequest(opCode,sendHeader,mReplyHeader,mPrivateInput,false)) {
         return false;
       }
       if (mReplyHeader.responseCode != ResponseCodes.OBEX_HTTP_CONTINUE) {
@@ -34,6 +35,7 @@
       }
       start=end;
     }
+    checkForSrm();
     if (bodyLength > 0) {
       return true;
     }
@@ -42,6 +44,9 @@
     }
   }
  else {
+    if (mSendBodyHeader == false) {
+      opCode|=ObexHelper.OBEX_OPCODE_FINAL_BIT_MASK;
+    }
     out.write(headerArray);
   }
   if (bodyLength > 0) {
@@ -50,12 +55,12 @@
       bodyLength=mMaxPacketSize - headerArray.length - 6;
     }
     byte[] body=mPrivateOutput.readBytes(bodyLength);
-    if ((mPrivateOutput.isClosed()) && (!returnValue) && (!mEndOfBodySent)&& ((opCode & 0x80) != 0)) {
-      out.write(0x49);
+    if ((mPrivateOutput.isClosed()) && (!returnValue) && (!mEndOfBodySent)&& ((opCode & ObexHelper.OBEX_OPCODE_FINAL_BIT_MASK) != 0)) {
+      out.write(HeaderSet.END_OF_BODY);
       mEndOfBodySent=true;
     }
  else {
-      out.write(0x48);
+      out.write(HeaderSet.BODY);
     }
     bodyLength+=3;
     out.write((byte)(bodyLength >> 8));
@@ -65,11 +70,11 @@
     }
   }
   if (mPrivateOutputOpen && bodyLength <= 0 && !mEndOfBodySent) {
-    if ((opCode & 0x80) == 0) {
-      out.write(0x48);
+    if ((opCode & ObexHelper.OBEX_OPCODE_FINAL_BIT_MASK) == 0) {
+      out.write(HeaderSet.BODY);
     }
  else {
-      out.write(0x49);
+      out.write(HeaderSet.END_OF_BODY);
       mEndOfBodySent=true;
     }
     bodyLength=3;
@@ -77,14 +82,16 @@
     out.write((byte)bodyLength);
   }
   if (out.size() == 0) {
-    if (!mParent.sendRequest(opCode,null,mReplyHeader,mPrivateInput)) {
+    if (!mParent.sendRequest(opCode,null,mReplyHeader,mPrivateInput,mSrmActive)) {
       return false;
     }
+    checkForSrm();
     return returnValue;
   }
-  if ((out.size() > 0) && (!mParent.sendRequest(opCode,out.toByteArray(),mReplyHeader,mPrivateInput))) {
+  if ((out.size() > 0) && (!mParent.sendRequest(opCode,out.toByteArray(),mReplyHeader,mPrivateInput,mSrmActive))) {
     return false;
   }
+  checkForSrm();
   if ((mPrivateOutput != null) && (mPrivateOutput.size() > 0))   returnValue=true;
   return returnValue;
 }
