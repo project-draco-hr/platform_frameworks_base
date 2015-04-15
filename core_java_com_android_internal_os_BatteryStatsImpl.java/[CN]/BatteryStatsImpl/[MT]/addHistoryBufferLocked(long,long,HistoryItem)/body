@@ -3,8 +3,8 @@
     return;
   }
   final long timeDiff=(mHistoryBaseTime + elapsedRealtimeMs) - mHistoryLastWritten.time;
-  final int diffStates=mHistoryLastWritten.states ^ cur.states;
-  final int diffStates2=mHistoryLastWritten.states2 ^ cur.states2;
+  final int diffStates=mHistoryLastWritten.states ^ (cur.states & mActiveHistoryStates);
+  final int diffStates2=mHistoryLastWritten.states2 ^ (cur.states2 & mActiveHistoryStates2);
   final int lastDiffStates=mHistoryLastWritten.states ^ mHistoryLastLastWritten.states;
   final int lastDiffStates2=mHistoryLastWritten.states2 ^ mHistoryLastLastWritten.states2;
   if (DEBUG)   Slog.i(TAG,"ADD: tdelta=" + timeDiff + " diff="+ Integer.toHexString(diffStates)+ " lastDiff="+ Integer.toHexString(lastDiffStates)+ " diff2="+ Integer.toHexString(diffStates2)+ " lastDiff2="+ Integer.toHexString(lastDiffStates2));
@@ -37,7 +37,20 @@
       addHistoryBufferLocked(elapsedRealtimeMs,uptimeMs,HistoryItem.CMD_OVERFLOW,cur);
       return;
     }
-    if (mHistoryLastWritten.batteryLevel == cur.batteryLevel && (dataSize >= MAX_MAX_HISTORY_BUFFER || ((mHistoryLastWritten.states ^ cur.states) & HistoryItem.MOST_INTERESTING_STATES) == 0 || ((mHistoryLastWritten.states2 ^ cur.states2) & HistoryItem.MOST_INTERESTING_STATES2) == 0)) {
+    boolean writeAnyway=false;
+    final int curStates=cur.states & HistoryItem.SETTLE_TO_ZERO_STATES & mActiveHistoryStates;
+    if (mHistoryLastWritten.states != curStates) {
+      int old=mActiveHistoryStates;
+      mActiveHistoryStates&=curStates | ~HistoryItem.SETTLE_TO_ZERO_STATES;
+      writeAnyway|=old != mActiveHistoryStates;
+    }
+    final int curStates2=cur.states2 & HistoryItem.SETTLE_TO_ZERO_STATES2 & mActiveHistoryStates2;
+    if (mHistoryLastWritten.states2 != curStates2) {
+      int old=mActiveHistoryStates2;
+      mActiveHistoryStates2&=curStates2 | ~HistoryItem.SETTLE_TO_ZERO_STATES2;
+      writeAnyway|=old != mActiveHistoryStates2;
+    }
+    if (!writeAnyway && mHistoryLastWritten.batteryLevel == cur.batteryLevel && (dataSize >= MAX_MAX_HISTORY_BUFFER || ((mHistoryLastWritten.states ^ cur.states) & HistoryItem.MOST_INTERESTING_STATES) == 0 || ((mHistoryLastWritten.states2 ^ cur.states2) & HistoryItem.MOST_INTERESTING_STATES2) == 0)) {
       return;
     }
     addHistoryBufferLocked(elapsedRealtimeMs,uptimeMs,HistoryItem.CMD_UPDATE,cur);
