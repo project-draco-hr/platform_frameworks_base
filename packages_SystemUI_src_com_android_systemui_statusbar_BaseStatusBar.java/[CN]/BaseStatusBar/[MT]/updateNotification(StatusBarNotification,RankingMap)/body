@@ -1,121 +1,49 @@
 {
   if (DEBUG)   Log.d(TAG,"updateNotification(" + notification + ")");
   final String key=notification.getKey();
-  boolean wasHeadsUp=isHeadsUp(key);
-  Entry oldEntry;
-  if (wasHeadsUp) {
-    oldEntry=mHeadsUpNotificationView.getEntry();
-  }
- else {
-    oldEntry=mNotificationData.get(key);
-  }
-  if (oldEntry == null) {
+  Entry entry=mNotificationData.get(key);
+  if (entry == null) {
     return;
   }
-  final StatusBarNotification oldNotification=oldEntry.notification;
-  final RemoteViews oldContentView=oldNotification.getNotification().contentView;
   Notification n=notification.getNotification();
-  final RemoteViews contentView=n.contentView;
-  final RemoteViews oldBigContentView=oldNotification.getNotification().bigContentView;
-  final RemoteViews bigContentView=n.bigContentView;
-  final RemoteViews oldHeadsUpContentView=oldNotification.getNotification().headsUpContentView;
-  final RemoteViews headsUpContentView=n.headsUpContentView;
-  final Notification oldPublicNotification=oldNotification.getNotification().publicVersion;
-  final RemoteViews oldPublicContentView=oldPublicNotification != null ? oldPublicNotification.contentView : null;
-  final Notification publicNotification=n.publicVersion;
-  final RemoteViews publicContentView=publicNotification != null ? publicNotification.contentView : null;
   if (DEBUG) {
-    Log.d(TAG,"old notification: when=" + oldNotification.getNotification().when + " ongoing="+ oldNotification.isOngoing()+ " expanded="+ oldEntry.expanded+ " contentView="+ oldContentView+ " bigContentView="+ oldBigContentView+ " publicView="+ oldPublicContentView+ " rowParent="+ oldEntry.row.getParent());
-    Log.d(TAG,"new notification: when=" + n.when + " ongoing="+ oldNotification.isOngoing()+ " contentView="+ contentView+ " bigContentView="+ bigContentView+ " publicView="+ publicContentView);
+    logUpdate(entry,n);
   }
-  boolean contentsUnchanged=oldEntry.expanded != null && contentView.getPackage() != null && oldContentView.getPackage() != null && oldContentView.getPackage().equals(contentView.getPackage()) && oldContentView.getLayoutId() == contentView.getLayoutId();
-  boolean bigContentsUnchanged=(oldEntry.getBigContentView() == null && bigContentView == null) || ((oldEntry.getBigContentView() != null && bigContentView != null) && bigContentView.getPackage() != null && oldBigContentView.getPackage() != null && oldBigContentView.getPackage().equals(bigContentView.getPackage()) && oldBigContentView.getLayoutId() == bigContentView.getLayoutId());
-  boolean headsUpContentsUnchanged=(oldHeadsUpContentView == null && headsUpContentView == null) || ((oldHeadsUpContentView != null && headsUpContentView != null) && headsUpContentView.getPackage() != null && oldHeadsUpContentView.getPackage() != null && oldHeadsUpContentView.getPackage().equals(headsUpContentView.getPackage()) && oldHeadsUpContentView.getLayoutId() == headsUpContentView.getLayoutId());
-  boolean publicUnchanged=(oldPublicContentView == null && publicContentView == null) || ((oldPublicContentView != null && publicContentView != null) && publicContentView.getPackage() != null && oldPublicContentView.getPackage() != null && oldPublicContentView.getPackage().equals(publicContentView.getPackage()) && oldPublicContentView.getLayoutId() == publicContentView.getLayoutId());
+  boolean applyInPlace=shouldApplyInPlace(entry,n);
   final boolean shouldInterrupt=shouldInterrupt(notification);
-  final boolean alertAgain=shouldInterrupt && alertAgain(oldEntry,n);
+  final boolean alertAgain=alertAgain(entry,n);
+  entry.notification=notification;
+  mGroupManager.onEntryUpdated(entry,entry.notification);
   boolean updateSuccessful=false;
-  if (contentsUnchanged && bigContentsUnchanged && headsUpContentsUnchanged&& publicUnchanged) {
+  if (applyInPlace) {
     if (DEBUG)     Log.d(TAG,"reusing notification for key: " + key);
-    oldEntry.notification=notification;
-    mGroupManager.onEntryUpdated(oldEntry,oldNotification);
     try {
-      if (oldEntry.icon != null) {
+      if (entry.icon != null) {
         final StatusBarIcon ic=new StatusBarIcon(notification.getPackageName(),notification.getUser(),n.icon,n.iconLevel,n.number,n.tickerText);
-        oldEntry.icon.setNotification(n);
-        if (!oldEntry.icon.set(ic)) {
+        entry.icon.setNotification(n);
+        if (!entry.icon.set(ic)) {
           handleNotificationError(notification,"Couldn't update icon: " + ic);
           return;
         }
       }
-      if (wasHeadsUp) {
-        updateHeadsUpViews(oldEntry,notification);
-        mHeadsUpNotificationView.updateNotification(oldEntry,alertAgain);
-        if (!shouldInterrupt) {
-          mHeadsUpNotificationView.release();
-          return;
-        }
-      }
- else {
-        if (shouldInterrupt && alertAgain) {
-          mStackScroller.setRemoveAnimationEnabled(false);
-          removeNotificationViews(key,ranking);
-          mStackScroller.setRemoveAnimationEnabled(true);
-          addNotification(notification,ranking,oldEntry);
-        }
- else {
-          updateNotificationViews(oldEntry,notification);
-        }
-      }
-      mNotificationData.updateRanking(ranking);
-      updateNotifications();
+      updateNotificationViews(entry,notification);
       updateSuccessful=true;
     }
  catch (    RuntimeException e) {
-      Log.w(TAG,"Couldn't reapply views for package " + contentView.getPackage(),e);
+      Log.w(TAG,"Couldn't reapply views for package " + n.contentView.getPackage(),e);
     }
   }
   if (!updateSuccessful) {
     if (DEBUG)     Log.d(TAG,"not reusing notification for key: " + key);
-    if (wasHeadsUp) {
-      if (DEBUG)       Log.d(TAG,"rebuilding heads up for key: " + key);
-      ViewGroup holder=mHeadsUpNotificationView.getHolder();
-      if (inflateViewsForHeadsUp(oldEntry,holder)) {
-        mHeadsUpNotificationView.updateNotification(oldEntry,alertAgain);
-      }
- else {
-        Log.w(TAG,"Couldn't create new updated headsup for package " + contentView.getPackage());
-      }
-      if (!shouldInterrupt) {
-        if (DEBUG)         Log.d(TAG,"releasing heads up for key: " + key);
-        oldEntry.notification=notification;
-        mGroupManager.onEntryUpdated(oldEntry,oldNotification);
-        mHeadsUpNotificationView.release();
-        return;
-      }
-    }
- else {
-      if (shouldInterrupt && alertAgain) {
-        if (DEBUG)         Log.d(TAG,"reposting to invoke heads up for key: " + key);
-        mStackScroller.setRemoveAnimationEnabled(false);
-        removeNotificationViews(key,ranking);
-        mStackScroller.setRemoveAnimationEnabled(true);
-        addNotification(notification,ranking,oldEntry);
-      }
- else {
-        if (DEBUG)         Log.d(TAG,"rebuilding update in place for key: " + key);
-        oldEntry.notification=notification;
-        mGroupManager.onEntryUpdated(oldEntry,oldNotification);
-        final StatusBarIcon ic=new StatusBarIcon(notification.getPackageName(),notification.getUser(),n.icon,n.iconLevel,n.number,n.tickerText);
-        oldEntry.icon.setNotification(n);
-        oldEntry.icon.set(ic);
-        inflateViews(oldEntry,mStackScroller,wasHeadsUp);
-        mNotificationData.updateRanking(ranking);
-        updateNotifications();
-      }
-    }
+    final StatusBarIcon ic=new StatusBarIcon(notification.getPackageName(),notification.getUser(),n.icon,n.iconLevel,n.number,n.tickerText);
+    entry.icon.setNotification(n);
+    entry.icon.set(ic);
+    inflateViews(entry,mStackScroller);
   }
-  updateNotificationVetoButton(oldEntry.row,notification);
+  updateHeadsUp(key,entry,shouldInterrupt,alertAgain);
+  mNotificationData.updateRanking(ranking);
+  updateNotifications();
+  updateNotificationVetoButton(entry.row,notification);
   boolean isForCurrentUser=isNotificationForCurrentProfiles(notification);
   if (DEBUG)   Log.d(TAG,"notification is " + (isForCurrentUser ? "" : "not ") + "for you");
   setAreThereNotifications();
