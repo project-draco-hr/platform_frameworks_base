@@ -1,12 +1,22 @@
 {
   ByteArrayOutputStream out=new ByteArrayOutputStream();
-  int bytesReceived;
+  boolean skipSend=false;
+  boolean skipReceive=false;
+  boolean srmRespSendPending=false;
   long id=mListener.getConnectionId();
   if (id == -1) {
     replyHeader.mConnectionID=null;
   }
  else {
     replyHeader.mConnectionID=ObexHelper.convertToByteArray(id);
+  }
+  if (mSrmEnabled && !mSrmResponseSent) {
+    if (V)     Log.v(TAG,"mSrmEnabled==true, sending SRM enable response.");
+    replyHeader.setHeader(HeaderSet.SINGLE_RESPONSE_MODE,(byte)ObexHelper.OBEX_SRM_ENABLE);
+    srmRespSendPending=true;
+  }
+  if (mSrmEnabled && !mGetOperation && mSrmLocalWait) {
+    replyHeader.setHeader(HeaderSet.SINGLE_RESPONSE_MODE,(byte)ObexHelper.OBEX_SRMP_WAIT);
   }
   byte[] headerArray=ObexHelper.createHeader(replyHeader,true);
   int bodyLength=-1;
@@ -49,6 +59,22 @@
   if (mGetOperation && type == ResponseCodes.OBEX_HTTP_OK) {
     finalBitSet=true;
   }
+  if (mSrmActive) {
+    if (!mGetOperation && type == ResponseCodes.OBEX_HTTP_CONTINUE && mSrmResponseSent == true) {
+      skipSend=true;
+    }
+ else     if (mGetOperation && mRequestFinished == false && mSrmResponseSent == true) {
+      skipSend=true;
+    }
+ else     if (mGetOperation && mRequestFinished == true) {
+      skipReceive=true;
+    }
+    if (V)     Log.v(TAG,"type==" + type + " skipSend=="+ skipSend+ " skipReceive=="+ skipReceive);
+  }
+  if (srmRespSendPending) {
+    if (V)     Log.v(TAG,"SRM Enabled (srmRespSendPending == true)- sending SRM Enable response");
+    mSrmResponseSent=true;
+  }
   if ((finalBitSet) || (headerArray.length < (mMaxPacketLength - 20))) {
     if (bodyLength > 0) {
       if (bodyLength > (mMaxPacketLength - headerArray.length - 6)) {
@@ -76,87 +102,50 @@
     }
   }
   if ((finalBitSet) && (type == ResponseCodes.OBEX_HTTP_OK) && (orginalBodyLength <= 0)) {
-    if (mSendBodyHeader == true) {
+    if (mSendBodyHeader) {
       out.write(0x49);
       orginalBodyLength=3;
       out.write((byte)(orginalBodyLength >> 8));
       out.write((byte)orginalBodyLength);
     }
   }
-  mResponseSize=3;
-  mParent.sendResponse(type,out.toByteArray());
+  if (skipSend == false) {
+    mResponseSize=3;
+    mParent.sendResponse(type,out.toByteArray());
+  }
   if (type == ResponseCodes.OBEX_HTTP_CONTINUE) {
-    int headerID=mInput.read();
-    int length=mInput.read();
-    length=(length << 8) + mInput.read();
-    if ((headerID != ObexHelper.OBEX_OPCODE_PUT) && (headerID != ObexHelper.OBEX_OPCODE_PUT_FINAL) && (headerID != ObexHelper.OBEX_OPCODE_GET)&& (headerID != ObexHelper.OBEX_OPCODE_GET_FINAL)) {
-      if (length > 3) {
-        byte[] temp=new byte[length - 3];
-        bytesReceived=mInput.read(temp);
-        while (bytesReceived != temp.length) {
-          bytesReceived+=mInput.read(temp,bytesReceived,temp.length - bytesReceived);
-        }
-      }
-      if (headerID == ObexHelper.OBEX_OPCODE_ABORT) {
-        mParent.sendResponse(ResponseCodes.OBEX_HTTP_OK,null);
-        mClosed=true;
-        isAborted=true;
-        mExceptionString="Abort Received";
-        throw new IOException("Abort Received");
-      }
- else {
-        mParent.sendResponse(ResponseCodes.OBEX_HTTP_BAD_REQUEST,null);
-        mClosed=true;
-        mExceptionString="Bad Request Received";
-        throw new IOException("Bad Request Received");
-      }
+    if (mGetOperation && skipReceive) {
+      checkSrmRemoteAbort();
     }
  else {
-      if ((headerID == ObexHelper.OBEX_OPCODE_PUT_FINAL)) {
-        finalBitSet=true;
-      }
- else       if (headerID == ObexHelper.OBEX_OPCODE_GET_FINAL) {
-        mRequestFinished=true;
-      }
-      if (length > ObexHelper.MAX_PACKET_SIZE_INT) {
-        mParent.sendResponse(ResponseCodes.OBEX_HTTP_REQ_TOO_LARGE,null);
-        throw new IOException("Packet received was too large");
-      }
-      if (length > 3) {
-        byte[] data=new byte[length - 3];
-        bytesReceived=mInput.read(data);
-        while (bytesReceived != data.length) {
-          bytesReceived+=mInput.read(data,bytesReceived,data.length - bytesReceived);
-        }
-        byte[] body=ObexHelper.updateHeaderSet(requestHeader,data);
-        if (body != null) {
-          mHasBody=true;
-        }
-        if (mListener.getConnectionId() != -1 && requestHeader.mConnectionID != null) {
-          mListener.setConnectionId(ObexHelper.convertToLong(requestHeader.mConnectionID));
+      ObexPacket packet=ObexPacket.read(mInput);
+      int headerId=packet.mHeaderId;
+      if ((headerId != ObexHelper.OBEX_OPCODE_PUT) && (headerId != ObexHelper.OBEX_OPCODE_PUT_FINAL) && (headerId != ObexHelper.OBEX_OPCODE_GET)&& (headerId != ObexHelper.OBEX_OPCODE_GET_FINAL)) {
+        if (headerId == ObexHelper.OBEX_OPCODE_ABORT) {
+          handleRemoteAbort();
         }
  else {
-          mListener.setConnectionId(1);
+          mParent.sendResponse(ResponseCodes.OBEX_HTTP_BAD_REQUEST,null);
+          mClosed=true;
+          mExceptionString="Bad Request Received";
+          throw new IOException("Bad Request Received");
         }
-        if (requestHeader.mAuthResp != null) {
-          if (!mParent.handleAuthResp(requestHeader.mAuthResp)) {
-            mExceptionString="Authentication Failed";
-            mParent.sendResponse(ResponseCodes.OBEX_HTTP_UNAUTHORIZED,null);
-            mClosed=true;
-            requestHeader.mAuthResp=null;
+      }
+ else {
+        if ((headerId == ObexHelper.OBEX_OPCODE_PUT_FINAL)) {
+          finalBitSet=true;
+        }
+ else         if (headerId == ObexHelper.OBEX_OPCODE_GET_FINAL) {
+          mRequestFinished=true;
+        }
+        if (packet.mLength > ObexHelper.getMaxRxPacketSize(mTransport)) {
+          mParent.sendResponse(ResponseCodes.OBEX_HTTP_REQ_TOO_LARGE,null);
+          throw new IOException("Packet received was too large");
+        }
+        if (packet.mLength > 3 || (mSrmEnabled && packet.mLength == 3)) {
+          if (handleObexPacket(packet) == false) {
             return false;
           }
-          requestHeader.mAuthResp=null;
-        }
-        if (requestHeader.mAuthChall != null) {
-          mParent.handleAuthChall(requestHeader);
-          replyHeader.mAuthResp=new byte[requestHeader.mAuthResp.length];
-          System.arraycopy(requestHeader.mAuthResp,0,replyHeader.mAuthResp,0,replyHeader.mAuthResp.length);
-          requestHeader.mAuthResp=null;
-          requestHeader.mAuthChall=null;
-        }
-        if (body != null) {
-          mPrivateInput.writeBytes(body,1);
         }
       }
     }
