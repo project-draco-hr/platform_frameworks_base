@@ -1,48 +1,48 @@
 {
   mRoots.clear();
-  mIdToPath.clear();
-  mIdToRoot.clear();
-  final StorageVolume[] volumes=mStorageManager.getVolumeList();
-  for (  StorageVolume volume : volumes) {
-    final boolean mounted=Environment.MEDIA_MOUNTED.equals(volume.getState()) || Environment.MEDIA_MOUNTED_READ_ONLY.equals(volume.getState());
-    if (!mounted)     continue;
+  final int userId=UserHandle.myUserId();
+  final List<VolumeInfo> volumes=mStorageManager.getVolumes();
+  for (  VolumeInfo volume : volumes) {
+    if (!volume.isMountedReadable())     continue;
     final String rootId;
-    if (volume.isPrimary() && volume.isEmulated()) {
+    if (VolumeInfo.ID_EMULATED_INTERNAL.equals(volume.getId())) {
       rootId=ROOT_ID_PRIMARY_EMULATED;
     }
- else     if (volume.getUuid() != null) {
-      rootId=volume.getUuid();
+ else     if (volume.getType() == VolumeInfo.TYPE_EMULATED) {
+      final VolumeInfo privateVol=mStorageManager.findPrivateForEmulated(volume);
+      rootId=privateVol.getFsUuid();
+    }
+ else     if (volume.getType() == VolumeInfo.TYPE_PUBLIC) {
+      rootId=volume.getFsUuid();
     }
  else {
-      Log.d(TAG,"Missing UUID for " + volume.getPath() + "; skipping");
       continue;
     }
-    if (mIdToPath.containsKey(rootId)) {
-      Log.w(TAG,"Duplicate UUID " + rootId + "; skipping");
+    if (TextUtils.isEmpty(rootId)) {
+      Log.d(TAG,"Missing UUID for " + volume.getId() + "; skipping");
+      continue;
+    }
+    if (mRoots.containsKey(rootId)) {
+      Log.w(TAG,"Duplicate UUID " + rootId + " for "+ volume.getId()+ "; skipping");
       continue;
     }
     try {
-      final File path=volume.getPathFile();
-      mIdToPath.put(rootId,path);
       final RootInfo root=new RootInfo();
+      mRoots.put(rootId,root);
       root.rootId=rootId;
       root.flags=Root.FLAG_SUPPORTS_CREATE | Root.FLAG_LOCAL_ONLY | Root.FLAG_ADVANCED| Root.FLAG_SUPPORTS_SEARCH| Root.FLAG_SUPPORTS_IS_CHILD;
       if (ROOT_ID_PRIMARY_EMULATED.equals(rootId)) {
         root.title=getContext().getString(R.string.root_internal_storage);
       }
  else {
-        final String userLabel=volume.getUserLabel();
-        if (!TextUtils.isEmpty(userLabel)) {
-          root.title=userLabel;
-        }
- else {
-          root.title=volume.getDescription(getContext());
-        }
+        root.title=mStorageManager.getBestVolumeDescription(volume);
+      }
+      if (volume.getType() == VolumeInfo.TYPE_PUBLIC) {
         root.flags|=Root.FLAG_HAS_SETTINGS;
       }
-      root.docId=getDocIdForFile(path);
-      mRoots.add(root);
-      mIdToRoot.put(rootId,root);
+      root.visiblePath=volume.getPathForUser(userId);
+      root.path=volume.getInternalPathForUser(userId);
+      root.docId=getDocIdForFile(root.path);
     }
  catch (    FileNotFoundException e) {
       throw new IllegalStateException(e);
