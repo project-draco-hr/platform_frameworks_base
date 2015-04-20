@@ -3,19 +3,30 @@
   if (name == null) {
     return null;
   }
-  Parcelable.Creator<T> creator;
+  Parcelable.Creator<?> creator;
 synchronized (mCreators) {
-    HashMap<String,Parcelable.Creator> map=mCreators.get(loader);
+    HashMap<String,Parcelable.Creator<?>> map=mCreators.get(loader);
     if (map == null) {
-      map=new HashMap<String,Parcelable.Creator>();
+      map=new HashMap<>();
       mCreators.put(loader,map);
     }
     creator=map.get(name);
     if (creator == null) {
       try {
-        Class c=loader == null ? Class.forName(name) : Class.forName(name,true,loader);
-        Field f=c.getField("CREATOR");
-        creator=(Parcelable.Creator)f.get(null);
+        ClassLoader parcelableClassLoader=(loader == null ? getClass().getClassLoader() : loader);
+        Class<?> parcelableClass=Class.forName(name,false,parcelableClassLoader);
+        if (!Parcelable.class.isAssignableFrom(parcelableClass)) {
+          throw new BadParcelableException("Parcelable protocol requires that the " + "class implements Parcelable");
+        }
+        Field f=parcelableClass.getField("CREATOR");
+        if ((f.getModifiers() & Modifier.STATIC) == 0) {
+          throw new BadParcelableException("Parcelable protocol requires " + "the CREATOR object to be static on class " + name);
+        }
+        Class<?> creatorType=f.getType();
+        if (!Parcelable.Creator.class.isAssignableFrom(creatorType)) {
+          throw new BadParcelableException("Parcelable protocol requires a " + "Parcelable.Creator object called " + "CREATOR on class "+ name);
+        }
+        creator=(Parcelable.Creator<?>)f.get(null);
       }
  catch (      IllegalAccessException e) {
         Log.e(TAG,"Illegal access when unmarshalling: " + name,e);
@@ -25,17 +36,11 @@ catch (      ClassNotFoundException e) {
         Log.e(TAG,"Class not found when unmarshalling: " + name,e);
         throw new BadParcelableException("ClassNotFoundException when unmarshalling: " + name);
       }
-catch (      ClassCastException e) {
-        throw new BadParcelableException("Parcelable protocol requires a " + "Parcelable.Creator object called " + " CREATOR on class "+ name);
-      }
 catch (      NoSuchFieldException e) {
-        throw new BadParcelableException("Parcelable protocol requires a " + "Parcelable.Creator object called " + " CREATOR on class "+ name);
-      }
-catch (      NullPointerException e) {
-        throw new BadParcelableException("Parcelable protocol requires " + "the CREATOR object to be static on class " + name);
+        throw new BadParcelableException("Parcelable protocol requires a " + "Parcelable.Creator object called " + "CREATOR on class "+ name);
       }
       if (creator == null) {
-        throw new BadParcelableException("Parcelable protocol requires a " + "Parcelable.Creator object called " + " CREATOR on class "+ name);
+        throw new BadParcelableException("Parcelable protocol requires a " + "non-null Parcelable.Creator object called " + "CREATOR on class "+ name);
       }
       map.put(name,creator);
     }
