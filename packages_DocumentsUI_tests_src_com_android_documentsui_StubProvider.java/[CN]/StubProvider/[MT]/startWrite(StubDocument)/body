@@ -10,15 +10,17 @@
   final ParcelFileDescriptor writePipe=pipe[1];
   new Thread(){
     @Override public void run(){
+      InputStream inputStream=null;
+      OutputStream outputStream=null;
       try {
-        final FileInputStream inputStream=new FileInputStream(readPipe.getFileDescriptor());
-        final FileOutputStream outputStream=new FileOutputStream(document.file);
+        inputStream=new ParcelFileDescriptor.AutoCloseInputStream(readPipe);
+        outputStream=new FileOutputStream(document.file);
         byte[] buffer=new byte[32 * 1024];
         int bytesToRead;
         int bytesRead=0;
         while (bytesRead != -1) {
 synchronized (mWriteLock) {
-            bytesToRead=Math.min(STORAGE_SIZE - mStorageUsedBytes,buffer.length);
+            bytesToRead=(int)Math.min(document.rootInfo.getRemainingCapacity(),buffer.length);
             if (bytesToRead == 0) {
               closePipeWithErrorSilently(readPipe,"Not enough space.");
               break;
@@ -28,7 +30,7 @@ synchronized (mWriteLock) {
               break;
             }
             outputStream.write(buffer,0,bytesRead);
-            mStorageUsedBytes+=bytesRead;
+            document.rootInfo.size+=bytesRead;
           }
         }
       }
@@ -36,7 +38,8 @@ synchronized (mWriteLock) {
         closePipeWithErrorSilently(readPipe,e.getMessage());
       }
  finally {
-        closePipeSilently(readPipe);
+        IoUtils.closeQuietly(inputStream);
+        IoUtils.closeQuietly(outputStream);
         notifyParentChanged(document.parentId);
       }
     }
