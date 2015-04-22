@@ -1,6 +1,6 @@
 {
   int action=event.getActionMasked();
-  if (mMotionCancelled && action != MotionEvent.ACTION_DOWN && action != MotionEvent.ACTION_UP && action != MotionEvent.ACTION_CANCEL) {
+  if (mMotionCancelled && action != MotionEvent.ACTION_DOWN) {
     return false;
   }
   final float y=event.getY();
@@ -8,41 +8,60 @@
   boolean isUp=false;
 switch (action) {
 case MotionEvent.ACTION_DOWN:
-    if (mSwipingInProgress) {
-      cancelAnimation();
-    }
-  mInitialTouchY=y;
+    View targetView=getIconAtPosition(x,y);
+  if (targetView == null || (mTargetedView != null && mTargetedView != targetView)) {
+    mMotionCancelled=true;
+    return false;
+  }
+if (mTargetedView != null) {
+  cancelAnimation();
+}
+ else {
+  mTouchSlopExeeded=false;
+}
+mCallback.onSwipingStarted(targetView == mLeftIcon);
+mSwipingInProgress=true;
+mTargetedView=targetView;
 mInitialTouchX=x;
+mInitialTouchY=y;
 mTranslationOnDown=mTranslation;
 initVelocityTracker();
 trackMovement(event);
-mMotionPerformedByUser=false;
 mMotionCancelled=false;
 break;
 case MotionEvent.ACTION_POINTER_DOWN:
 mMotionCancelled=true;
-endMotion(event,true);
+endMotion(true,x,y);
 break;
 case MotionEvent.ACTION_MOVE:
-final float w=x - mInitialTouchX;
 trackMovement(event);
-if (((leftSwipePossible() && w > mTouchSlop) || (rightSwipePossible() && w < -mTouchSlop)) && Math.abs(w) > Math.abs(y - mInitialTouchY) && !mSwipingInProgress) {
-cancelAnimation();
-mInitialTouchY=y;
-mInitialTouchX=x;
-mTranslationOnDown=mTranslation;
-mSwipingInProgress=true;
-mCallback.onSwipingStarted(w < -mTouchSlop);
+float xDist=x - mInitialTouchX;
+float yDist=y - mInitialTouchY;
+float distance=(float)Math.hypot(xDist,yDist);
+if (!mTouchSlopExeeded && distance > mTouchSlop) {
+mTouchSlopExeeded=true;
 }
 if (mSwipingInProgress) {
-setTranslation(mTranslationOnDown + x - mInitialTouchX,false,false);
+if (mTargetedView == mRightIcon) {
+distance=mTranslationOnDown - distance;
+distance=Math.min(0,distance);
+}
+ else {
+distance=mTranslationOnDown + distance;
+distance=Math.max(0,distance);
+}
+setTranslation(distance,false,false);
 }
 break;
 case MotionEvent.ACTION_UP:
 isUp=true;
 case MotionEvent.ACTION_CANCEL:
+boolean hintOnTheRight=mTargetedView == mRightIcon;
 trackMovement(event);
-endMotion(event,!isUp);
+endMotion(!isUp,x,y);
+if (!mTouchSlopExeeded && isUp) {
+mCallback.onIconClicked(hintOnTheRight);
+}
 break;
 }
 return true;
