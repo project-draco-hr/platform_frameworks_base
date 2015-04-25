@@ -10,8 +10,12 @@
   }
   final int uidPolicy=mUidPolicy.get(uid,POLICY_NONE);
   final boolean uidForeground=isUidForegroundLocked(uid);
+  final boolean uidIdle=isUidIdle(uid);
   int uidRules=RULE_ALLOW_ALL;
-  if (!uidForeground && (uidPolicy & POLICY_REJECT_METERED_BACKGROUND) != 0) {
+  if (uidIdle && !mPowerSaveWhitelistAppIds.get(UserHandle.getAppId(uid))) {
+    uidRules=RULE_REJECT_ALL;
+  }
+ else   if (!uidForeground && (uidPolicy & POLICY_REJECT_METERED_BACKGROUND) != 0) {
     uidRules=RULE_REJECT_METERED;
   }
  else   if (mRestrictBackground) {
@@ -25,15 +29,26 @@
       uidRules=RULE_REJECT_METERED;
     }
   }
+  final int oldRules=mUidRules.get(uid);
   if (uidRules == RULE_ALLOW_ALL) {
     mUidRules.delete(uid);
   }
  else {
     mUidRules.put(uid,uidRules);
   }
+  final boolean oldRejectMetered=(oldRules & RULE_REJECT_METERED) != 0;
   final boolean rejectMetered=(uidRules & RULE_REJECT_METERED) != 0;
-  setUidNetworkRules(uid,rejectMetered);
-  mHandler.obtainMessage(MSG_RULES_CHANGED,uid,uidRules).sendToTarget();
+  if (oldRejectMetered != rejectMetered) {
+    setUidNetworkRules(uid,rejectMetered);
+  }
+  final boolean oldFirewallReject=(oldRules & RULE_REJECT_ALL) != 0;
+  final boolean firewallReject=(uidRules & RULE_REJECT_ALL) != 0;
+  if (oldFirewallReject != firewallReject) {
+    setUidFirewallRules(uid,firewallReject);
+  }
+  if (oldRules != uidRules) {
+    mHandler.obtainMessage(MSG_RULES_CHANGED,uid,uidRules).sendToTarget();
+  }
   try {
     mNetworkStats.setUidForeground(uid,uidForeground);
   }
