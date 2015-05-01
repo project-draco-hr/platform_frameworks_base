@@ -1,0 +1,51 @@
+{
+  Set<String> disabledClasses=null;
+  boolean packageDisabled=false;
+  IPackageManager pm=AppGlobals.getPackageManager();
+  if (changedClasses == null) {
+    return;
+  }
+  int enabled=PackageManager.COMPONENT_ENABLED_STATE_DEFAULT;
+  for (int i=changedClasses.length - 1; i >= 0; i--) {
+    final String changedClass=changedClasses[i];
+    if (changedClass.equals(packageName)) {
+      try {
+        enabled=pm.getApplicationEnabledSetting(packageName,(userId != UserHandle.USER_ALL) ? userId : UserHandle.USER_OWNER);
+      }
+ catch (      RemoteException e) {
+      }
+      packageDisabled=enabled != PackageManager.COMPONENT_ENABLED_STATE_ENABLED && enabled != PackageManager.COMPONENT_ENABLED_STATE_DEFAULT;
+      if (packageDisabled) {
+        disabledClasses=null;
+        break;
+      }
+    }
+ else {
+      try {
+        enabled=pm.getComponentEnabledSetting(new ComponentName(packageName,changedClass),(userId != UserHandle.USER_ALL) ? userId : UserHandle.USER_OWNER);
+      }
+ catch (      RemoteException e) {
+      }
+      if (enabled != PackageManager.COMPONENT_ENABLED_STATE_ENABLED && enabled != PackageManager.COMPONENT_ENABLED_STATE_DEFAULT) {
+        if (disabledClasses == null) {
+          disabledClasses=new ArraySet<>(changedClasses.length);
+        }
+        disabledClasses.add(changedClass);
+      }
+    }
+  }
+  if (!packageDisabled && disabledClasses == null) {
+    return;
+  }
+  if (mStackSupervisor.finishDisabledPackageActivitiesLocked(packageName,disabledClasses,true,false,userId) && mBooted) {
+    mStackSupervisor.resumeTopActivitiesLocked();
+    mStackSupervisor.scheduleIdleLocked();
+  }
+  cleanupDisabledPackageTasksLocked(packageName,disabledClasses,userId);
+  mServices.bringDownDisabledPackageServicesLocked(packageName,disabledClasses,userId,false,true);
+  ArrayList<ContentProviderRecord> providers=new ArrayList<>();
+  mProviderMap.collectPackageProvidersLocked(packageName,disabledClasses,true,false,userId,providers);
+  for (int i=providers.size() - 1; i >= 0; i--) {
+    removeDyingProviderLocked(null,providers.get(i),true);
+  }
+}
