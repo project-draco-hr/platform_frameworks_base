@@ -1,5 +1,22 @@
 {
-  ApplicationInfo appInfo=getApplicationInfo();
+  FullBackup.BackupScheme backupScheme=FullBackup.getBackupScheme(this);
+  if (!backupScheme.isFullBackupContentEnabled()) {
+    return;
+  }
+  Map<String,Set<String>> manifestIncludeMap;
+  ArraySet<String> manifestExcludeSet;
+  try {
+    manifestIncludeMap=backupScheme.maybeParseAndGetCanonicalIncludePaths();
+    manifestExcludeSet=backupScheme.maybeParseAndGetCanonicalExcludePaths();
+  }
+ catch (  IOException|XmlPullParserException e) {
+    if (Log.isLoggable(FullBackup.TAG_XML_PARSER,Log.VERBOSE)) {
+      Log.v(FullBackup.TAG_XML_PARSER,"Exception trying to parse fullBackupContent xml file!" + " Aborting full backup.",e);
+    }
+    return;
+  }
+  final String packageName=getPackageName();
+  final ApplicationInfo appInfo=getApplicationInfo();
   String rootDir=new File(appInfo.dataDir).getCanonicalPath();
   String filesDir=getFilesDir().getCanonicalPath();
   String nobackupDir=getNoBackupFilesDir().getCanonicalPath();
@@ -8,31 +25,31 @@
   String cacheDir=getCacheDir().getCanonicalPath();
   String codeCacheDir=getCodeCacheDir().getCanonicalPath();
   String libDir=(appInfo.nativeLibraryDir != null) ? new File(appInfo.nativeLibraryDir).getCanonicalPath() : null;
-  HashSet<String> filterSet=new HashSet<String>();
-  String packageName=getPackageName();
+  final ArraySet<String> traversalExcludeSet=new ArraySet<String>();
+  traversalExcludeSet.add(cacheDir);
+  traversalExcludeSet.add(codeCacheDir);
+  traversalExcludeSet.add(nobackupDir);
   if (libDir != null) {
-    filterSet.add(libDir);
+    traversalExcludeSet.add(libDir);
   }
-  filterSet.add(cacheDir);
-  filterSet.add(codeCacheDir);
-  filterSet.add(databaseDir);
-  filterSet.add(sharedPrefsDir);
-  filterSet.add(filesDir);
-  filterSet.add(nobackupDir);
-  fullBackupFileTree(packageName,FullBackup.ROOT_TREE_TOKEN,rootDir,filterSet,data);
-  filterSet.add(rootDir);
-  filterSet.remove(filesDir);
-  fullBackupFileTree(packageName,FullBackup.DATA_TREE_TOKEN,filesDir,filterSet,data);
-  filterSet.add(filesDir);
-  filterSet.remove(databaseDir);
-  fullBackupFileTree(packageName,FullBackup.DATABASE_TREE_TOKEN,databaseDir,filterSet,data);
-  filterSet.add(databaseDir);
-  filterSet.remove(sharedPrefsDir);
-  fullBackupFileTree(packageName,FullBackup.SHAREDPREFS_TREE_TOKEN,sharedPrefsDir,filterSet,data);
+  traversalExcludeSet.add(databaseDir);
+  traversalExcludeSet.add(sharedPrefsDir);
+  traversalExcludeSet.add(filesDir);
+  applyXmlFiltersAndDoFullBackupForDomain(packageName,FullBackup.ROOT_TREE_TOKEN,manifestIncludeMap,manifestExcludeSet,traversalExcludeSet,data);
+  traversalExcludeSet.add(rootDir);
+  traversalExcludeSet.remove(filesDir);
+  applyXmlFiltersAndDoFullBackupForDomain(packageName,FullBackup.DATA_TREE_TOKEN,manifestIncludeMap,manifestExcludeSet,traversalExcludeSet,data);
+  traversalExcludeSet.add(filesDir);
+  traversalExcludeSet.remove(databaseDir);
+  applyXmlFiltersAndDoFullBackupForDomain(packageName,FullBackup.DATABASE_TREE_TOKEN,manifestIncludeMap,manifestExcludeSet,traversalExcludeSet,data);
+  traversalExcludeSet.add(databaseDir);
+  traversalExcludeSet.remove(sharedPrefsDir);
+  applyXmlFiltersAndDoFullBackupForDomain(packageName,FullBackup.SHAREDPREFS_TREE_TOKEN,manifestIncludeMap,manifestExcludeSet,traversalExcludeSet,data);
+  traversalExcludeSet.add(sharedPrefsDir);
   if (Process.myUid() != Process.SYSTEM_UID) {
     File efLocation=getExternalFilesDir(null);
     if (efLocation != null) {
-      fullBackupFileTree(packageName,FullBackup.MANAGED_EXTERNAL_TREE_TOKEN,efLocation.getCanonicalPath(),null,data);
+      applyXmlFiltersAndDoFullBackupForDomain(packageName,FullBackup.MANAGED_EXTERNAL_TREE_TOKEN,manifestIncludeMap,manifestExcludeSet,traversalExcludeSet,data);
     }
   }
 }
