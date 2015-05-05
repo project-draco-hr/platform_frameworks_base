@@ -1,0 +1,44 @@
+{
+  final Uri.Builder uriBuilder=Instances.CONTENT_URI.buildUpon();
+  ContentUris.appendId(uriBuilder,time);
+  ContentUris.appendId(uriBuilder,time + EVENT_CHECK_LOOKAHEAD);
+  final Uri uri=uriBuilder.build();
+  final Cursor cursor=mContext.getContentResolver().query(uri,INSTANCE_PROJECTION,null,null,INSTANCE_ORDER_BY);
+  final CheckEventResult result=new CheckEventResult();
+  result.recheckAt=time + EVENT_CHECK_LOOKAHEAD;
+  try {
+    while (cursor.moveToNext()) {
+      final long begin=cursor.getLong(0);
+      final long end=cursor.getLong(1);
+      final String title=cursor.getString(2);
+      final boolean visible=cursor.getInt(3) == 1;
+      final int eventId=cursor.getInt(4);
+      final String owner=cursor.getString(5);
+      final long calendarId=cursor.getLong(6);
+      if (DEBUG)       Log.d(TAG,String.format("%s %s-%s v=%s eid=%s o=%s cid=%s",title,new Date(begin),new Date(end),visible,eventId,owner,calendarId));
+      final boolean meetsTime=time >= begin && time < end;
+      final boolean meetsCalendar=visible && (filter.calendar == 0 || filter.calendar == calendarId);
+      if (meetsCalendar) {
+        if (DEBUG)         Log.d(TAG,"  MEETS CALENDAR");
+        final boolean meetsAttendee=meetsAttendee(filter,eventId,owner);
+        if (meetsAttendee) {
+          if (DEBUG)           Log.d(TAG,"    MEETS ATTENDEE");
+          if (meetsTime) {
+            if (DEBUG)             Log.d(TAG,"      MEETS TIME");
+            result.inEvent=true;
+          }
+          if (begin > time && begin < result.recheckAt) {
+            result.recheckAt=begin;
+          }
+ else           if (end > time && end < result.recheckAt) {
+            result.recheckAt=end;
+          }
+        }
+      }
+    }
+  }
+  finally {
+    cursor.close();
+  }
+  return result;
+}
