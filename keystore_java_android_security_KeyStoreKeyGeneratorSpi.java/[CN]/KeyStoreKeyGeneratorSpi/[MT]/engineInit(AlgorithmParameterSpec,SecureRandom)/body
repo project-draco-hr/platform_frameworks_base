@@ -1,11 +1,43 @@
 {
-  if ((params == null) || (!(params instanceof KeyGeneratorSpec))) {
-    throw new InvalidAlgorithmParameterException("Cannot initialize without an " + KeyGeneratorSpec.class.getName() + " parameter");
+  resetAll();
+  boolean success=false;
+  try {
+    if ((params == null) || (!(params instanceof KeyGeneratorSpec))) {
+      throw new InvalidAlgorithmParameterException("Cannot initialize without an " + KeyGeneratorSpec.class.getName() + " parameter");
+    }
+    KeyGeneratorSpec spec=(KeyGeneratorSpec)params;
+    if (spec.getKeystoreAlias() == null) {
+      throw new InvalidAlgorithmParameterException("KeyStore entry alias not provided");
+    }
+    mRng=random;
+    mSpec=spec;
+    mKeySizeBits=(spec.getKeySize() != -1) ? spec.getKeySize() : mDefaultKeySizeBits;
+    if (mKeySizeBits <= 0) {
+      throw new InvalidAlgorithmParameterException("Key size must be positive: " + mKeySizeBits);
+    }
+ else     if ((mKeySizeBits % 8) != 0) {
+      throw new InvalidAlgorithmParameterException("Key size in must be a multiple of 8: " + mKeySizeBits);
+    }
+    try {
+      mKeymasterPurposes=KeyStoreKeyProperties.Purpose.allToKeymaster(spec.getPurposes());
+      mKeymasterPaddings=KeyStoreKeyProperties.EncryptionPadding.allToKeymaster(spec.getEncryptionPaddings());
+      mKeymasterBlockModes=KeyStoreKeyProperties.BlockMode.allToKeymaster(spec.getBlockModes());
+      if (((spec.getPurposes() & KeyStoreKeyProperties.Purpose.ENCRYPT) != 0) && (spec.isRandomizedEncryptionRequired())) {
+        for (        int keymasterBlockMode : mKeymasterBlockModes) {
+          if (!KeymasterUtils.isKeymasterBlockModeIndCpaCompatible(keymasterBlockMode)) {
+            throw new InvalidAlgorithmParameterException("Randomized encryption (IND-CPA) required but may be violated" + " by block mode: " + KeyStoreKeyProperties.BlockMode.fromKeymaster(keymasterBlockMode) + ". See "+ KeyGeneratorSpec.class.getName()+ " documentation.");
+          }
+        }
+      }
+    }
+ catch (    IllegalArgumentException e) {
+      throw new InvalidAlgorithmParameterException(e);
+    }
+    success=true;
   }
-  KeyGeneratorSpec spec=(KeyGeneratorSpec)params;
-  if (spec.getKeystoreAlias() == null) {
-    throw new InvalidAlgorithmParameterException("KeyStore entry alias not provided");
+  finally {
+    if (!success) {
+      resetAll();
+    }
   }
-  mSpec=spec;
-  mRng=random;
 }
