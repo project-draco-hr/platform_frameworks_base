@@ -1,10 +1,47 @@
 {
-  SurfaceControl.PhysicalDisplayInfo newPhys=physicalDisplayInfos[activeDisplayInfo];
-  if (!mPhys.equals(newPhys)) {
-    mPhys.copyFrom(newPhys);
-    updateSupportedRefreshRatesLocked(physicalDisplayInfos,mPhys);
-    mHavePendingChanges=true;
-    return true;
+  boolean modesAdded=false;
+  DisplayModeRecord activeRecord=null;
+  ArrayList<DisplayModeRecord> records=new ArrayList<DisplayModeRecord>();
+  for (int i=0; i < physicalDisplayInfos.length; i++) {
+    SurfaceControl.PhysicalDisplayInfo info=physicalDisplayInfos[i];
+    DisplayModeRecord record=findDisplayModeRecord(info);
+    if (record != null) {
+      record.mPhysIndex=i;
+    }
+ else {
+      record=new DisplayModeRecord(info,i);
+      modesAdded=true;
+    }
+    records.add(record);
+    if (i == activeDisplayInfo) {
+      activeRecord=record;
+    }
   }
-  return false;
+  if (mActiveModeId != 0 && mActiveModeId != activeRecord.mMode.getModeId()) {
+    mActiveModeInvalid=true;
+    sendTraversalRequestLocked();
+  }
+  if (records.size() == mSupportedModes.size() && !modesAdded) {
+    return false;
+  }
+  mHavePendingChanges=true;
+  mSupportedModes.clear();
+  for (  DisplayModeRecord record : records) {
+    mSupportedModes.put(record.mMode.getModeId(),record);
+  }
+  if (mSupportedModes.indexOfKey(mDefaultModeId) < 0) {
+    if (mDefaultModeId != 0) {
+      Slog.w(TAG,"Default display mode no longer available, using currently active" + " mode as default.");
+    }
+    mDefaultModeId=activeRecord.mMode.getModeId();
+  }
+  if (mSupportedModes.indexOfKey(mActiveModeId) < 0) {
+    if (mActiveModeId != 0) {
+      Slog.w(TAG,"Active display mode no longer available, reverting to default" + " mode.");
+    }
+    mActiveModeId=mDefaultModeId;
+    mActiveModeInvalid=true;
+  }
+  sendTraversalRequestLocked();
+  return true;
 }
