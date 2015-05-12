@@ -6,8 +6,8 @@
   PermissionsState permissionsState=ps.getPermissionsState();
   PermissionsState origPermissions=permissionsState;
   final int[] currentUserIds=UserManagerService.getInstance().getUserIds();
-  int[] upgradeUserIds=PermissionsState.USERS_NONE;
-  int[] changedRuntimePermissionUserIds=PermissionsState.USERS_NONE;
+  int[] upgradeUserIds=EMPTY_INT_ARRAY;
+  int[] changedRuntimePermissionUserIds=EMPTY_INT_ARRAY;
   boolean changedInstallPermission=false;
   if (replace) {
     ps.installPermissionsFixed=false;
@@ -111,8 +111,13 @@ case GRANT_RUNTIME:
 {
 for (int userId : UserManagerService.getInstance().getUserIds()) {
 if (origPermissions.hasRuntimePermission(bp.name,userId)) {
+PermissionState permissionState=origPermissions.getRuntimePermissionState(bp.name,userId);
+final int flags=permissionState.getFlags();
 if (permissionsState.grantRuntimePermission(bp,userId) == PermissionsState.PERMISSION_OPERATION_FAILURE) {
 changedRuntimePermissionUserIds=ArrayUtils.appendInt(changedRuntimePermissionUserIds,userId);
+}
+ else {
+permissionsState.updatePermissionFlags(bp,userId,flags,flags);
 }
 }
 }
@@ -120,10 +125,16 @@ changedRuntimePermissionUserIds=ArrayUtils.appendInt(changedRuntimePermissionUse
 break;
 case GRANT_UPGRADE:
 {
-permissionsState.revokeInstallPermission(bp);
+PermissionState permissionState=origPermissions.getInstallPermissionState(bp.name);
+final int flags=permissionState != null ? permissionState.getFlags() : 0;
+origPermissions.revokeInstallPermission(bp);
+origPermissions.updatePermissionFlags(bp,UserHandle.USER_ALL,PackageManager.MASK_PERMISSION_FLAGS,0);
+if ((flags & PackageManager.FLAG_PERMISSION_REVOKE_ON_UPGRADE) == 0) {
 for (int userId : upgradeUserIds) {
 if (permissionsState.grantRuntimePermission(bp,userId) != PermissionsState.PERMISSION_OPERATION_FAILURE) {
+permissionsState.updatePermissionFlags(bp,userId,flags,flags);
 changedRuntimePermissionUserIds=ArrayUtils.appendInt(changedRuntimePermissionUserIds,userId);
+}
 }
 }
 }
@@ -139,6 +150,7 @@ break;
 }
  else {
 if (permissionsState.revokeInstallPermission(bp) != PermissionsState.PERMISSION_OPERATION_FAILURE) {
+permissionsState.updatePermissionFlags(bp,UserHandle.USER_ALL,PackageManager.MASK_PERMISSION_FLAGS,0);
 changedInstallPermission=true;
 Slog.i(TAG,"Un-granting permission " + perm + " from package "+ pkg.packageName+ " (protectionLevel="+ bp.protectionLevel+ " flags=0x"+ Integer.toHexString(pkg.applicationInfo.flags)+ ")");
 }
