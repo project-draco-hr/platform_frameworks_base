@@ -22,58 +22,51 @@
       continue;
     }
     for (    String path : paths) {
-      try {
-        final int dexoptNeeded;
-        if (forceDex) {
-          dexoptNeeded=DexFile.DEX2OAT_NEEDED;
-        }
+      final int dexoptNeeded;
+      if (forceDex) {
+        dexoptNeeded=DexFile.DEX2OAT_NEEDED;
+      }
  else {
+        try {
           dexoptNeeded=DexFile.getDexOptNeeded(path,pkg.packageName,dexCodeInstructionSet,defer);
         }
-        if (!forceDex && defer && dexoptNeeded != DexFile.NO_DEXOPT_NEEDED) {
-          addPackageForDeferredDexopt(pkg);
-          return DEX_OPT_DEFERRED;
+ catch (        IOException ioe) {
+          Slog.w(TAG,"IOException reading apk: " + path,ioe);
+          return DEX_OPT_FAILED;
         }
-        if (dexoptNeeded != DexFile.NO_DEXOPT_NEEDED) {
-          final String dexoptType;
-          String oatDir=null;
-          if (dexoptNeeded == DexFile.DEX2OAT_NEEDED) {
-            dexoptType="dex2oat";
+      }
+      if (!forceDex && defer && dexoptNeeded != DexFile.NO_DEXOPT_NEEDED) {
+        addPackageForDeferredDexopt(pkg);
+        return DEX_OPT_DEFERRED;
+      }
+      if (dexoptNeeded != DexFile.NO_DEXOPT_NEEDED) {
+        final String dexoptType;
+        String oatDir=null;
+        if (dexoptNeeded == DexFile.DEX2OAT_NEEDED) {
+          dexoptType="dex2oat";
+          try {
             oatDir=createOatDirIfSupported(pkg,dexCodeInstructionSet);
           }
- else           if (dexoptNeeded == DexFile.PATCHOAT_NEEDED) {
-            dexoptType="patchoat";
-          }
- else           if (dexoptNeeded == DexFile.SELF_PATCHOAT_NEEDED) {
-            dexoptType="self patchoat";
-          }
- else {
-            throw new IllegalStateException("Invalid dexopt needed: " + dexoptNeeded);
-          }
-          Log.i(TAG,"Running dexopt (" + dexoptType + ") on: "+ path+ " pkg="+ pkg.applicationInfo.packageName+ " isa="+ dexCodeInstructionSet+ " vmSafeMode="+ vmSafeMode+ " debuggable="+ debuggable+ " oatDir = "+ oatDir);
-          final int sharedGid=UserHandle.getSharedAppGid(pkg.applicationInfo.uid);
-          final int ret=mPackageManagerService.mInstaller.dexopt(path,sharedGid,!pkg.isForwardLocked(),pkg.packageName,dexCodeInstructionSet,dexoptNeeded,vmSafeMode,debuggable,oatDir);
-          if (ret < 0) {
+ catch (          IOException ioe) {
+            Slog.w(TAG,"Unable to create oatDir for package: " + pkg.packageName);
             return DEX_OPT_FAILED;
           }
+        }
+ else         if (dexoptNeeded == DexFile.PATCHOAT_NEEDED) {
+          dexoptType="patchoat";
+        }
+ else         if (dexoptNeeded == DexFile.SELF_PATCHOAT_NEEDED) {
+          dexoptType="self patchoat";
+        }
+ else {
+          throw new IllegalStateException("Invalid dexopt needed: " + dexoptNeeded);
+        }
+        Log.i(TAG,"Running dexopt (" + dexoptType + ") on: "+ path+ " pkg="+ pkg.applicationInfo.packageName+ " isa="+ dexCodeInstructionSet+ " vmSafeMode="+ vmSafeMode+ " debuggable="+ debuggable+ " oatDir = "+ oatDir);
+        final int sharedGid=UserHandle.getSharedAppGid(pkg.applicationInfo.uid);
+        final int ret=mPackageManagerService.mInstaller.dexopt(path,sharedGid,!pkg.isForwardLocked(),pkg.packageName,dexCodeInstructionSet,dexoptNeeded,vmSafeMode,debuggable,oatDir);
+        if (ret == 0) {
           performedDexOpt=true;
         }
-      }
- catch (      FileNotFoundException e) {
-        Slog.w(TAG,"Apk not found for dexopt: " + path);
-        return DEX_OPT_FAILED;
-      }
-catch (      IOException e) {
-        Slog.w(TAG,"IOException reading apk: " + path,e);
-        return DEX_OPT_FAILED;
-      }
-catch (      StaleDexCacheError e) {
-        Slog.w(TAG,"StaleDexCacheError when reading apk: " + path,e);
-        return DEX_OPT_FAILED;
-      }
-catch (      Exception e) {
-        Slog.w(TAG,"Exception when doing dexopt : ",e);
-        return DEX_OPT_FAILED;
       }
     }
     pkg.mDexOptPerformed.add(dexCodeInstructionSet);
