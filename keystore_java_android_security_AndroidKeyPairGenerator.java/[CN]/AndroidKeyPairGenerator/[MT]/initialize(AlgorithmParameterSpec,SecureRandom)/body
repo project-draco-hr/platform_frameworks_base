@@ -1,12 +1,54 @@
 {
   if (params == null) {
-    throw new InvalidAlgorithmParameterException("must supply params of type android.security.KeyPairGeneratorSpec");
+    throw new InvalidAlgorithmParameterException("Must supply params of type " + KeyGenParameterSpec.class.getName() + " or "+ KeyPairGeneratorSpec.class.getName());
   }
- else   if (!(params instanceof KeyPairGeneratorSpec)) {
-    throw new InvalidAlgorithmParameterException("params must be of type android.security.KeyPairGeneratorSpec");
+  String keyAlgorithm;
+  KeyGenParameterSpec spec;
+  if (params instanceof KeyPairGeneratorSpec) {
+    KeyPairGeneratorSpec legacySpec=(KeyPairGeneratorSpec)params;
+    try {
+      KeyGenParameterSpec.Builder specBuilder;
+      keyAlgorithm=getKeyAlgorithm(legacySpec).toUpperCase(Locale.US);
+      if (KeyProperties.KEY_ALGORITHM_EC.equalsIgnoreCase(keyAlgorithm)) {
+        specBuilder=new KeyGenParameterSpec.Builder(legacySpec.getKeystoreAlias(),KeyProperties.PURPOSE_SIGN | KeyProperties.PURPOSE_VERIFY);
+        specBuilder.setDigests(KeyProperties.DIGEST_NONE,KeyProperties.DIGEST_MD5,KeyProperties.DIGEST_SHA1,KeyProperties.DIGEST_SHA224,KeyProperties.DIGEST_SHA256,KeyProperties.DIGEST_SHA384,KeyProperties.DIGEST_SHA512);
+      }
+ else       if (KeyProperties.KEY_ALGORITHM_RSA.equalsIgnoreCase(keyAlgorithm)) {
+        specBuilder=new KeyGenParameterSpec.Builder(legacySpec.getKeystoreAlias(),KeyProperties.PURPOSE_ENCRYPT | KeyProperties.PURPOSE_DECRYPT | KeyProperties.PURPOSE_SIGN| KeyProperties.PURPOSE_VERIFY);
+        specBuilder.setDigests(KeyProperties.DIGEST_NONE,KeyProperties.DIGEST_MD5,KeyProperties.DIGEST_SHA1,KeyProperties.DIGEST_SHA224,KeyProperties.DIGEST_SHA256,KeyProperties.DIGEST_SHA384,KeyProperties.DIGEST_SHA512);
+        specBuilder.setSignaturePaddings(KeyProperties.SIGNATURE_PADDING_RSA_PKCS1);
+        specBuilder.setBlockModes(KeyProperties.BLOCK_MODE_ECB);
+        specBuilder.setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE,KeyProperties.ENCRYPTION_PADDING_RSA_PKCS1);
+        specBuilder.setRandomizedEncryptionRequired(false);
+      }
+ else {
+        throw new InvalidAlgorithmParameterException("Unsupported key algorithm: " + keyAlgorithm);
+      }
+      if (legacySpec.getKeySize() != -1) {
+        specBuilder.setKeySize(legacySpec.getKeySize());
+      }
+      if (legacySpec.getAlgorithmParameterSpec() != null) {
+        specBuilder.setAlgorithmParameterSpec(legacySpec.getAlgorithmParameterSpec());
+      }
+      specBuilder.setCertificateSubject(legacySpec.getSubjectDN());
+      specBuilder.setCertificateSerialNumber(legacySpec.getSerialNumber());
+      specBuilder.setCertificateNotBefore(legacySpec.getStartDate());
+      specBuilder.setCertificateNotAfter(legacySpec.getEndDate());
+      specBuilder.setEncryptionAtRestRequired(legacySpec.isEncryptionRequired());
+      specBuilder.setUserAuthenticationRequired(false);
+      spec=specBuilder.build();
+    }
+ catch (    NullPointerException|IllegalArgumentException e) {
+      throw new InvalidAlgorithmParameterException(e);
+    }
   }
-  KeyPairGeneratorSpec spec=(KeyPairGeneratorSpec)params;
-  @KeyStoreKeyProperties.KeyAlgorithmEnum String keyAlgorithm=getKeyAlgorithm(spec);
+ else   if (params instanceof KeyGenParameterSpec) {
+    spec=(KeyGenParameterSpec)params;
+    keyAlgorithm=getAlgorithm();
+  }
+ else {
+    throw new InvalidAlgorithmParameterException("Unsupported params class: " + params.getClass().getName() + ". Supported: "+ KeyGenParameterSpec.class.getName()+ ", "+ KeyPairGeneratorSpec.class);
+  }
   int keyType=KeyStore.getKeyTypeForAlgorithm(keyAlgorithm);
   if (keyType == -1) {
     throw new InvalidAlgorithmParameterException("Unsupported key algorithm: " + keyAlgorithm);
@@ -24,5 +66,5 @@
   mKeyType=keyType;
   mKeySize=keySize;
   mSpec=spec;
-  mKeyStore=android.security.KeyStore.getInstance();
+  mKeyStore=KeyStore.getInstance();
 }
