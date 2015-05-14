@@ -1,0 +1,132 @@
+{
+  KeyProtection spec;
+  if (param instanceof KeyStoreParameter) {
+    KeyStoreParameter legacySpec=(KeyStoreParameter)param;
+    try {
+      String keyAlgorithm=key.getAlgorithm();
+      KeyProtection.Builder specBuilder;
+      if (KeyProperties.KEY_ALGORITHM_EC.equalsIgnoreCase(keyAlgorithm)) {
+        specBuilder=new KeyProtection.Builder(KeyProperties.PURPOSE_SIGN | KeyProperties.PURPOSE_VERIFY);
+        specBuilder.setDigests(KeyProperties.DIGEST_NONE,KeyProperties.DIGEST_MD5,KeyProperties.DIGEST_SHA1,KeyProperties.DIGEST_SHA224,KeyProperties.DIGEST_SHA256,KeyProperties.DIGEST_SHA384,KeyProperties.DIGEST_SHA512);
+      }
+ else       if (KeyProperties.KEY_ALGORITHM_RSA.equalsIgnoreCase(keyAlgorithm)) {
+        specBuilder=new KeyProtection.Builder(KeyProperties.PURPOSE_ENCRYPT | KeyProperties.PURPOSE_DECRYPT | KeyProperties.PURPOSE_SIGN| KeyProperties.PURPOSE_VERIFY);
+        specBuilder.setDigests(KeyProperties.DIGEST_NONE,KeyProperties.DIGEST_MD5,KeyProperties.DIGEST_SHA1,KeyProperties.DIGEST_SHA224,KeyProperties.DIGEST_SHA256,KeyProperties.DIGEST_SHA384,KeyProperties.DIGEST_SHA512);
+        specBuilder.setSignaturePaddings(KeyProperties.SIGNATURE_PADDING_RSA_PKCS1);
+        specBuilder.setBlockModes(KeyProperties.BLOCK_MODE_ECB);
+        specBuilder.setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE,KeyProperties.ENCRYPTION_PADDING_RSA_PKCS1);
+        specBuilder.setRandomizedEncryptionRequired(false);
+      }
+ else {
+        throw new KeyStoreException("Unsupported key algorithm: " + keyAlgorithm);
+      }
+      specBuilder.setEncryptionAtRestRequired(legacySpec.isEncryptionRequired());
+      specBuilder.setUserAuthenticationRequired(false);
+      spec=specBuilder.build();
+    }
+ catch (    NullPointerException|IllegalArgumentException e) {
+      throw new KeyStoreException("Unsupported protection parameter",e);
+    }
+  }
+ else   if (param instanceof KeyProtection) {
+    spec=(KeyProtection)param;
+  }
+ else   if (param != null) {
+    throw new KeyStoreException("Unsupported protection parameter class:" + param.getClass().getName() + ". Supported: "+ KeyStoreParameter.class.getName()+ ", "+ KeyProtection.class.getName());
+  }
+ else {
+    spec=null;
+  }
+  byte[] keyBytes=null;
+  final String pkeyAlias;
+  if (key instanceof OpenSSLKeyHolder) {
+    pkeyAlias=((OpenSSLKeyHolder)key).getOpenSSLKey().getAlias();
+  }
+ else {
+    pkeyAlias=null;
+  }
+  final boolean shouldReplacePrivateKey;
+  if (pkeyAlias != null && pkeyAlias.startsWith(Credentials.USER_PRIVATE_KEY)) {
+    final String keySubalias=pkeyAlias.substring(Credentials.USER_PRIVATE_KEY.length());
+    if (!alias.equals(keySubalias)) {
+      throw new KeyStoreException("Can only replace keys with same alias: " + alias + " != "+ keySubalias);
+    }
+    shouldReplacePrivateKey=false;
+  }
+ else {
+    final String keyFormat=key.getFormat();
+    if ((keyFormat == null) || (!"PKCS#8".equals(keyFormat))) {
+      throw new KeyStoreException("Only PrivateKeys that can be encoded into PKCS#8 are supported");
+    }
+    keyBytes=key.getEncoded();
+    if (keyBytes == null) {
+      throw new KeyStoreException("PrivateKey has no encoding");
+    }
+    shouldReplacePrivateKey=true;
+  }
+  if ((chain == null) || (chain.length == 0)) {
+    throw new KeyStoreException("Must supply at least one Certificate with PrivateKey");
+  }
+  X509Certificate[] x509chain=new X509Certificate[chain.length];
+  for (int i=0; i < chain.length; i++) {
+    if (!"X.509".equals(chain[i].getType())) {
+      throw new KeyStoreException("Certificates must be in X.509 format: invalid cert #" + i);
+    }
+    if (!(chain[i] instanceof X509Certificate)) {
+      throw new KeyStoreException("Certificates must be in X.509 format: invalid cert #" + i);
+    }
+    x509chain[i]=(X509Certificate)chain[i];
+  }
+  final byte[] userCertBytes;
+  try {
+    userCertBytes=x509chain[0].getEncoded();
+  }
+ catch (  CertificateEncodingException e) {
+    throw new KeyStoreException("Couldn't encode certificate #1",e);
+  }
+  final byte[] chainBytes;
+  if (chain.length > 1) {
+    final byte[][] certsBytes=new byte[x509chain.length - 1][];
+    int totalCertLength=0;
+    for (int i=0; i < certsBytes.length; i++) {
+      try {
+        certsBytes[i]=x509chain[i + 1].getEncoded();
+        totalCertLength+=certsBytes[i].length;
+      }
+ catch (      CertificateEncodingException e) {
+        throw new KeyStoreException("Can't encode Certificate #" + i,e);
+      }
+    }
+    chainBytes=new byte[totalCertLength];
+    int outputOffset=0;
+    for (int i=0; i < certsBytes.length; i++) {
+      final int certLength=certsBytes[i].length;
+      System.arraycopy(certsBytes[i],0,chainBytes,outputOffset,certLength);
+      outputOffset+=certLength;
+      certsBytes[i]=null;
+    }
+  }
+ else {
+    chainBytes=null;
+  }
+  if (shouldReplacePrivateKey) {
+    Credentials.deleteAllTypesForAlias(mKeyStore,alias);
+  }
+ else {
+    Credentials.deleteCertificateTypesForAlias(mKeyStore,alias);
+    Credentials.deleteSecretKeyTypeForAlias(mKeyStore,alias);
+  }
+  final int flags=(spec == null) ? 0 : spec.getFlags();
+  if (shouldReplacePrivateKey && !mKeyStore.importKey(Credentials.USER_PRIVATE_KEY + alias,keyBytes,android.security.KeyStore.UID_SELF,flags)) {
+    Credentials.deleteAllTypesForAlias(mKeyStore,alias);
+    throw new KeyStoreException("Couldn't put private key in keystore");
+  }
+ else   if (!mKeyStore.put(Credentials.USER_CERTIFICATE + alias,userCertBytes,android.security.KeyStore.UID_SELF,flags)) {
+    Credentials.deleteAllTypesForAlias(mKeyStore,alias);
+    throw new KeyStoreException("Couldn't put certificate #1 in keystore");
+  }
+ else   if (chainBytes != null && !mKeyStore.put(Credentials.CA_CERTIFICATE + alias,chainBytes,android.security.KeyStore.UID_SELF,flags)) {
+    Credentials.deleteAllTypesForAlias(mKeyStore,alias);
+    throw new KeyStoreException("Couldn't put certificate chain in keystore");
+  }
+}
