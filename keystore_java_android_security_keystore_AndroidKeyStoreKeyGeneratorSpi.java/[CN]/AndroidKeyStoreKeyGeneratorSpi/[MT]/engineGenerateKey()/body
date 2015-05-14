@@ -1,0 +1,39 @@
+{
+  KeyGenParameterSpec spec=mSpec;
+  if (spec == null) {
+    throw new IllegalStateException("Not initialized");
+  }
+  if ((spec.isEncryptionAtRestRequired()) && (mKeyStore.state() != KeyStore.State.UNLOCKED)) {
+    throw new IllegalStateException("Requested to import a key which must be encrypted at rest using secure lock" + " screen credential, but the credential hasn't yet been entered by the user");
+  }
+  KeymasterArguments args=new KeymasterArguments();
+  args.addInt(KeymasterDefs.KM_TAG_KEY_SIZE,mKeySizeBits);
+  args.addInt(KeymasterDefs.KM_TAG_ALGORITHM,mKeymasterAlgorithm);
+  args.addInts(KeymasterDefs.KM_TAG_PURPOSE,mKeymasterPurposes);
+  args.addInts(KeymasterDefs.KM_TAG_BLOCK_MODE,mKeymasterBlockModes);
+  args.addInts(KeymasterDefs.KM_TAG_PADDING,mKeymasterPaddings);
+  args.addInts(KeymasterDefs.KM_TAG_DIGEST,mKeymasterDigests);
+  KeymasterUtils.addUserAuthArgs(args,spec.isUserAuthenticationRequired(),spec.getUserAuthenticationValidityDurationSeconds());
+  args.addDate(KeymasterDefs.KM_TAG_ACTIVE_DATETIME,(spec.getKeyValidityStart() != null) ? spec.getKeyValidityStart() : new Date(0));
+  args.addDate(KeymasterDefs.KM_TAG_ORIGINATION_EXPIRE_DATETIME,(spec.getKeyValidityForOriginationEnd() != null) ? spec.getKeyValidityForOriginationEnd() : new Date(Long.MAX_VALUE));
+  args.addDate(KeymasterDefs.KM_TAG_USAGE_EXPIRE_DATETIME,(spec.getKeyValidityForConsumptionEnd() != null) ? spec.getKeyValidityForConsumptionEnd() : new Date(Long.MAX_VALUE));
+  if (((spec.getPurposes() & KeyProperties.PURPOSE_ENCRYPT) != 0) && (!spec.isRandomizedEncryptionRequired())) {
+    args.addBoolean(KeymasterDefs.KM_TAG_CALLER_NONCE);
+  }
+  byte[] additionalEntropy=KeyStoreCryptoOperationUtils.getRandomBytesToMixIntoKeystoreRng(mRng,(mKeySizeBits + 7) / 8);
+  int flags=spec.getFlags();
+  String keyAliasInKeystore=Credentials.USER_SECRET_KEY + spec.getKeystoreAlias();
+  KeyCharacteristics resultingKeyCharacteristics=new KeyCharacteristics();
+  int errorCode=mKeyStore.generateKey(keyAliasInKeystore,args,additionalEntropy,flags,resultingKeyCharacteristics);
+  if (errorCode != KeyStore.NO_ERROR) {
+    throw new ProviderException("Keystore operation failed",KeyStore.getKeyStoreException(errorCode));
+  }
+  @KeyProperties.KeyAlgorithmEnum String keyAlgorithmJCA;
+  try {
+    keyAlgorithmJCA=KeyProperties.KeyAlgorithm.fromKeymasterSecretKeyAlgorithm(mKeymasterAlgorithm,mKeymasterDigest);
+  }
+ catch (  IllegalArgumentException e) {
+    throw new ProviderException("Failed to obtain JCA secret key algorithm name",e);
+  }
+  return new AndroidKeyStoreSecretKey(keyAliasInKeystore,keyAlgorithmJCA);
+}
