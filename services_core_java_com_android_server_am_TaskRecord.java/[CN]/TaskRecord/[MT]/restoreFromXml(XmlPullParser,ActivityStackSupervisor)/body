@@ -1,3 +1,168 @@
 {
-  return restoreFromXml(in,stackSupervisor,INVALID_TASK_ID);
+  Intent intent=null;
+  Intent affinityIntent=null;
+  ArrayList<ActivityRecord> activities=new ArrayList<ActivityRecord>();
+  ComponentName realActivity=null;
+  ComponentName origActivity=null;
+  String affinity=null;
+  String rootAffinity=null;
+  boolean hasRootAffinity=false;
+  boolean rootHasReset=false;
+  boolean autoRemoveRecents=false;
+  boolean askedCompatMode=false;
+  int taskType=ActivityRecord.APPLICATION_ACTIVITY_TYPE;
+  int userId=0;
+  int effectiveUid=-1;
+  String lastDescription=null;
+  long firstActiveTime=-1;
+  long lastActiveTime=-1;
+  long lastTimeOnTop=0;
+  boolean neverRelinquishIdentity=true;
+  int taskId=INVALID_TASK_ID;
+  final int outerDepth=in.getDepth();
+  TaskDescription taskDescription=new TaskDescription();
+  int taskAffiliation=INVALID_TASK_ID;
+  int taskAffiliationColor=0;
+  int prevTaskId=INVALID_TASK_ID;
+  int nextTaskId=INVALID_TASK_ID;
+  int callingUid=-1;
+  String callingPackage="";
+  boolean resizeable=false;
+  boolean privileged=false;
+  for (int attrNdx=in.getAttributeCount() - 1; attrNdx >= 0; --attrNdx) {
+    final String attrName=in.getAttributeName(attrNdx);
+    final String attrValue=in.getAttributeValue(attrNdx);
+    if (TaskPersister.DEBUG)     Slog.d(TaskPersister.TAG,"TaskRecord: attribute name=" + attrName + " value="+ attrValue);
+    if (ATTR_TASKID.equals(attrName)) {
+      if (taskId == INVALID_TASK_ID)       taskId=Integer.valueOf(attrValue);
+    }
+ else     if (ATTR_REALACTIVITY.equals(attrName)) {
+      realActivity=ComponentName.unflattenFromString(attrValue);
+    }
+ else     if (ATTR_ORIGACTIVITY.equals(attrName)) {
+      origActivity=ComponentName.unflattenFromString(attrValue);
+    }
+ else     if (ATTR_AFFINITY.equals(attrName)) {
+      affinity=attrValue;
+    }
+ else     if (ATTR_ROOT_AFFINITY.equals(attrName)) {
+      rootAffinity=attrValue;
+      hasRootAffinity=true;
+    }
+ else     if (ATTR_ROOTHASRESET.equals(attrName)) {
+      rootHasReset=Boolean.valueOf(attrValue);
+    }
+ else     if (ATTR_AUTOREMOVERECENTS.equals(attrName)) {
+      autoRemoveRecents=Boolean.valueOf(attrValue);
+    }
+ else     if (ATTR_ASKEDCOMPATMODE.equals(attrName)) {
+      askedCompatMode=Boolean.valueOf(attrValue);
+    }
+ else     if (ATTR_USERID.equals(attrName)) {
+      userId=Integer.valueOf(attrValue);
+    }
+ else     if (ATTR_EFFECTIVE_UID.equals(attrName)) {
+      effectiveUid=Integer.valueOf(attrValue);
+    }
+ else     if (ATTR_TASKTYPE.equals(attrName)) {
+      taskType=Integer.valueOf(attrValue);
+    }
+ else     if (ATTR_FIRSTACTIVETIME.equals(attrName)) {
+      firstActiveTime=Long.valueOf(attrValue);
+    }
+ else     if (ATTR_LASTACTIVETIME.equals(attrName)) {
+      lastActiveTime=Long.valueOf(attrValue);
+    }
+ else     if (ATTR_LASTDESCRIPTION.equals(attrName)) {
+      lastDescription=attrValue;
+    }
+ else     if (ATTR_LASTTIMEMOVED.equals(attrName)) {
+      lastTimeOnTop=Long.valueOf(attrValue);
+    }
+ else     if (ATTR_NEVERRELINQUISH.equals(attrName)) {
+      neverRelinquishIdentity=Boolean.valueOf(attrValue);
+    }
+ else     if (attrName.startsWith(TaskDescription.ATTR_TASKDESCRIPTION_PREFIX)) {
+      taskDescription.restoreFromXml(attrName,attrValue);
+    }
+ else     if (ATTR_TASK_AFFILIATION.equals(attrName)) {
+      taskAffiliation=Integer.valueOf(attrValue);
+    }
+ else     if (ATTR_PREV_AFFILIATION.equals(attrName)) {
+      prevTaskId=Integer.valueOf(attrValue);
+    }
+ else     if (ATTR_NEXT_AFFILIATION.equals(attrName)) {
+      nextTaskId=Integer.valueOf(attrValue);
+    }
+ else     if (ATTR_TASK_AFFILIATION_COLOR.equals(attrName)) {
+      taskAffiliationColor=Integer.valueOf(attrValue);
+    }
+ else     if (ATTR_CALLING_UID.equals(attrName)) {
+      callingUid=Integer.valueOf(attrValue);
+    }
+ else     if (ATTR_CALLING_PACKAGE.equals(attrName)) {
+      callingPackage=attrValue;
+    }
+ else     if (ATTR_RESIZEABLE.equals(attrName)) {
+      resizeable=Boolean.valueOf(attrValue);
+    }
+ else     if (ATTR_PRIVILEGED.equals(attrName)) {
+      privileged=Boolean.valueOf(attrValue);
+    }
+ else {
+      Slog.w(TAG,"TaskRecord: Unknown attribute=" + attrName);
+    }
+  }
+  int event;
+  while (((event=in.next()) != XmlPullParser.END_DOCUMENT) && (event != XmlPullParser.END_TAG || in.getDepth() < outerDepth)) {
+    if (event == XmlPullParser.START_TAG) {
+      final String name=in.getName();
+      if (TaskPersister.DEBUG)       Slog.d(TaskPersister.TAG,"TaskRecord: START_TAG name=" + name);
+      if (TAG_AFFINITYINTENT.equals(name)) {
+        affinityIntent=Intent.restoreFromXml(in);
+      }
+ else       if (TAG_INTENT.equals(name)) {
+        intent=Intent.restoreFromXml(in);
+      }
+ else       if (TAG_ACTIVITY.equals(name)) {
+        ActivityRecord activity=ActivityRecord.restoreFromXml(in,stackSupervisor);
+        if (TaskPersister.DEBUG)         Slog.d(TaskPersister.TAG,"TaskRecord: activity=" + activity);
+        if (activity != null) {
+          activities.add(activity);
+        }
+      }
+ else {
+        Slog.e(TAG,"restoreTask: Unexpected name=" + name);
+        XmlUtils.skipCurrentTag(in);
+      }
+    }
+  }
+  if (!hasRootAffinity) {
+    rootAffinity=affinity;
+  }
+ else   if ("@".equals(rootAffinity)) {
+    rootAffinity=null;
+  }
+  if (effectiveUid <= 0) {
+    Intent checkIntent=intent != null ? intent : affinityIntent;
+    effectiveUid=0;
+    if (checkIntent != null) {
+      IPackageManager pm=AppGlobals.getPackageManager();
+      try {
+        ApplicationInfo ai=pm.getApplicationInfo(checkIntent.getComponent().getPackageName(),PackageManager.GET_UNINSTALLED_PACKAGES | PackageManager.GET_DISABLED_COMPONENTS,userId);
+        if (ai != null) {
+          effectiveUid=ai.uid;
+        }
+      }
+ catch (      RemoteException e) {
+      }
+    }
+    Slog.w(TAG,"Updating task #" + taskId + " for "+ checkIntent+ ": effectiveUid="+ effectiveUid);
+  }
+  final TaskRecord task=new TaskRecord(stackSupervisor.mService,taskId,intent,affinityIntent,affinity,rootAffinity,realActivity,origActivity,rootHasReset,autoRemoveRecents,askedCompatMode,taskType,userId,effectiveUid,lastDescription,activities,firstActiveTime,lastActiveTime,lastTimeOnTop,neverRelinquishIdentity,taskDescription,taskAffiliation,prevTaskId,nextTaskId,taskAffiliationColor,callingUid,callingPackage,resizeable,privileged);
+  for (int activityNdx=activities.size() - 1; activityNdx >= 0; --activityNdx) {
+    activities.get(activityNdx).task=task;
+  }
+  if (DEBUG_RECENTS)   Slog.d(TAG_RECENTS,"Restored task=" + task);
+  return task;
 }
