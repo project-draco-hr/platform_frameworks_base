@@ -280,7 +280,6 @@ synchronized (mPackages) {
     pkgSetting.uidError=uidError;
   }
   final String path=scanFile.getPath();
-  final String codePath=pkg.applicationInfo.getCodePath();
   final String cpuAbiOverride=deriveAbiOverride(pkg.cpuAbiOverride,pkgSetting);
   if (isSystemApp(pkg) && !pkg.isUpdatedSystemApp()) {
     setBundledAppAbisAndRoots(pkg,pkgSetting);
@@ -302,88 +301,20 @@ synchronized (mPackages) {
     setNativeLibraryPaths(pkg);
   }
  else {
-    setNativeLibraryPaths(pkg);
-    final boolean isAsec=pkg.isForwardLocked() || isExternal(pkg);
-    final String nativeLibraryRootStr=pkg.applicationInfo.nativeLibraryRootDir;
-    final boolean useIsaSpecificSubdirs=pkg.applicationInfo.nativeLibraryRootRequiresIsa;
-    NativeLibraryHelper.Handle handle=null;
-    try {
-      handle=NativeLibraryHelper.Handle.create(scanFile);
-      final File nativeLibraryRoot=new File(nativeLibraryRootStr);
-      pkg.applicationInfo.primaryCpuAbi=null;
-      pkg.applicationInfo.secondaryCpuAbi=null;
-      if (isMultiArch(pkg.applicationInfo)) {
-        if (pkg.cpuAbiOverride != null && !NativeLibraryHelper.CLEAR_ABI_OVERRIDE.equals(pkg.cpuAbiOverride)) {
-          Slog.w(TAG,"Ignoring abiOverride for multi arch application.");
-        }
-        int abi32=PackageManager.NO_NATIVE_LIBRARIES;
-        int abi64=PackageManager.NO_NATIVE_LIBRARIES;
-        if (Build.SUPPORTED_32_BIT_ABIS.length > 0) {
-          if (isAsec) {
-            abi32=NativeLibraryHelper.findSupportedAbi(handle,Build.SUPPORTED_32_BIT_ABIS);
-          }
+    if ((scanFlags & SCAN_NEW_INSTALL) == 0) {
+      deriveNonSystemPackageAbi(pkg,scanFile,cpuAbiOverride,true);
+    }
  else {
-            abi32=NativeLibraryHelper.copyNativeBinariesForSupportedAbi(handle,nativeLibraryRoot,Build.SUPPORTED_32_BIT_ABIS,useIsaSpecificSubdirs);
-          }
-        }
-        maybeThrowExceptionForMultiArchCopy("Error unpackaging 32 bit native libs for multiarch app.",abi32);
-        if (Build.SUPPORTED_64_BIT_ABIS.length > 0) {
-          if (isAsec) {
-            abi64=NativeLibraryHelper.findSupportedAbi(handle,Build.SUPPORTED_64_BIT_ABIS);
-          }
- else {
-            abi64=NativeLibraryHelper.copyNativeBinariesForSupportedAbi(handle,nativeLibraryRoot,Build.SUPPORTED_64_BIT_ABIS,useIsaSpecificSubdirs);
-          }
-        }
-        maybeThrowExceptionForMultiArchCopy("Error unpackaging 64 bit native libs for multiarch app.",abi64);
-        if (abi64 >= 0) {
-          pkg.applicationInfo.primaryCpuAbi=Build.SUPPORTED_64_BIT_ABIS[abi64];
-        }
-        if (abi32 >= 0) {
-          final String abi=Build.SUPPORTED_32_BIT_ABIS[abi32];
-          if (abi64 >= 0) {
-            pkg.applicationInfo.secondaryCpuAbi=abi;
-          }
- else {
-            pkg.applicationInfo.primaryCpuAbi=abi;
-          }
-        }
+      String oldPrimaryCpuAbi=pkg.applicationInfo.primaryCpuAbi;
+      String oldSecondaryCpuAbi=pkg.applicationInfo.secondaryCpuAbi;
+      deriveNonSystemPackageAbi(pkg,scanFile,cpuAbiOverride,false);
+      if (!TextUtils.equals(oldPrimaryCpuAbi,pkg.applicationInfo.primaryCpuAbi)) {
+        throw new IllegalStateException("unexpected abi change for " + pkg.packageName + " ("+ oldPrimaryCpuAbi+ "-> "+ pkg.applicationInfo.primaryCpuAbi);
       }
- else {
-        String[] abiList=(cpuAbiOverride != null) ? new String[]{cpuAbiOverride} : Build.SUPPORTED_ABIS;
-        boolean needsRenderScriptOverride=false;
-        if (Build.SUPPORTED_64_BIT_ABIS.length > 0 && cpuAbiOverride == null && NativeLibraryHelper.hasRenderscriptBitcode(handle)) {
-          abiList=Build.SUPPORTED_32_BIT_ABIS;
-          needsRenderScriptOverride=true;
-        }
-        final int copyRet;
-        if (isAsec) {
-          copyRet=NativeLibraryHelper.findSupportedAbi(handle,abiList);
-        }
- else {
-          copyRet=NativeLibraryHelper.copyNativeBinariesForSupportedAbi(handle,nativeLibraryRoot,abiList,useIsaSpecificSubdirs);
-        }
-        if (copyRet < 0 && copyRet != PackageManager.NO_NATIVE_LIBRARIES) {
-          throw new PackageManagerException(INSTALL_FAILED_INTERNAL_ERROR,"Error unpackaging native libs for app, errorCode=" + copyRet);
-        }
-        if (copyRet >= 0) {
-          pkg.applicationInfo.primaryCpuAbi=abiList[copyRet];
-        }
- else         if (copyRet == PackageManager.NO_NATIVE_LIBRARIES && cpuAbiOverride != null) {
-          pkg.applicationInfo.primaryCpuAbi=cpuAbiOverride;
-        }
- else         if (needsRenderScriptOverride) {
-          pkg.applicationInfo.primaryCpuAbi=abiList[0];
-        }
+      if (!TextUtils.equals(oldSecondaryCpuAbi,pkg.applicationInfo.secondaryCpuAbi)) {
+        throw new IllegalStateException("unexpected abi change for " + pkg.packageName + " ("+ oldSecondaryCpuAbi+ "-> "+ pkg.applicationInfo.secondaryCpuAbi);
       }
     }
- catch (    IOException ioe) {
-      Slog.e(TAG,"Unable to get canonical file " + ioe.toString());
-    }
- finally {
-      IoUtils.closeQuietly(handle);
-    }
-    setNativeLibraryPaths(pkg);
     if (DEBUG_INSTALL)     Slog.i(TAG,"Linking native library dir for " + path);
     final int[] userIds=sUserManager.getUserIds();
 synchronized (mInstallLock) {
@@ -399,6 +330,11 @@ synchronized (mInstallLock) {
   }
   if (mPlatformPackage == pkg) {
     pkg.applicationInfo.primaryCpuAbi=VMRuntime.getRuntime().is64Bit() ? Build.SUPPORTED_64_BIT_ABIS[0] : Build.SUPPORTED_32_BIT_ABIS[0];
+  }
+  if ((scanFlags & SCAN_NO_DEX) == 0 && (scanFlags & SCAN_NEW_INSTALL) != 0) {
+    if (cpuAbiOverride == null && pkgSetting.cpuAbiOverrideString != null) {
+      Slog.w(TAG,"Ignoring persisted ABI override " + cpuAbiOverride + " for package: "+ pkg.packageName);
+    }
   }
   pkgSetting.primaryCpuAbiString=pkg.applicationInfo.primaryCpuAbi;
   pkgSetting.secondaryCpuAbiString=pkg.applicationInfo.secondaryCpuAbi;
