@@ -1,0 +1,56 @@
+{
+  int N;
+synchronized (this) {
+    N=mPendingUidChanges.size();
+    if (mActiveUidChanges.length < N) {
+      mActiveUidChanges=new UidRecord.ChangeItem[N];
+    }
+    for (int i=0; i < N; i++) {
+      final UidRecord.ChangeItem change=mPendingUidChanges.get(i);
+      mActiveUidChanges[i]=change;
+      change.uidRecord.pendingChange=null;
+      change.uidRecord=null;
+    }
+    mPendingUidChanges.clear();
+    if (DEBUG_UID_OBSERVERS)     Slog.i(TAG_UID_OBSERVERS,"*** Delivering " + N + " uid changes");
+  }
+  if (mLocalPowerManager != null) {
+    for (int j=0; j < N; j++) {
+      UidRecord.ChangeItem item=mActiveUidChanges[j];
+      if (item.gone) {
+        mLocalPowerManager.uidGone(item.uid);
+      }
+ else {
+        mLocalPowerManager.updateUidProcState(item.uid,item.processState);
+      }
+    }
+  }
+  int i=mUidObservers.beginBroadcast();
+  while (i > 0) {
+    i--;
+    final IUidObserver observer=mUidObservers.getBroadcastItem(i);
+    if (observer != null) {
+      try {
+        for (int j=0; j < N; j++) {
+          UidRecord.ChangeItem item=mActiveUidChanges[j];
+          if (item.gone) {
+            if (DEBUG_UID_OBSERVERS)             Slog.i(TAG_UID_OBSERVERS,"UID gone uid=" + item.uid);
+            observer.onUidGone(item.uid);
+          }
+ else {
+            if (DEBUG_UID_OBSERVERS)             Slog.i(TAG_UID_OBSERVERS,"UID CHANGED uid=" + item.uid + ": "+ item.processState);
+            observer.onUidStateChanged(item.uid,item.processState);
+          }
+        }
+      }
+ catch (      RemoteException e) {
+      }
+    }
+  }
+  mUidObservers.finishBroadcast();
+synchronized (this) {
+    for (int j=0; j < N; j++) {
+      mAvailUidChanges.add(mActiveUidChanges[j]);
+    }
+  }
+}
