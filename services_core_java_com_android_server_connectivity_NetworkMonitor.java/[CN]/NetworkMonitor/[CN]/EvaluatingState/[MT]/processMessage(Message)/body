@@ -2,11 +2,12 @@
   if (DBG)   log(getName() + message.toString());
 switch (message.what) {
 case CMD_REEVALUATE:
-    if (message.arg1 != mReevaluateToken)     return HANDLED;
+    if (message.arg1 != mReevaluateToken || mUserDoesNotWant)     return HANDLED;
   if (!mDefaultRequest.networkCapabilities.satisfiedByNetworkCapabilities(mNetworkAgentInfo.networkCapabilities)) {
     transitionTo(mValidatedState);
     return HANDLED;
   }
+mAttempts++;
 int httpResponseCode=isCaptivePortal();
 if (httpResponseCode == 204) {
 transitionTo(mValidatedState);
@@ -14,16 +15,21 @@ transitionTo(mValidatedState);
  else if (httpResponseCode >= 200 && httpResponseCode <= 399) {
 transitionTo(mCaptivePortalState);
 }
- else if (++mAttempt > mMaxAttempts) {
-transitionTo(mOfflineState);
-}
- else if (mReevaluateDelayMs >= 0) {
+ else {
 Message msg=obtainMessage(CMD_REEVALUATE,++mReevaluateToken,0);
 sendMessageDelayed(msg,mReevaluateDelayMs);
+if (mAttempts >= INITIAL_EVALUATION_ATTEMPTS) {
+mConnectivityServiceHandler.sendMessage(obtainMessage(EVENT_NETWORK_TESTED,NETWORK_TEST_RESULT_INVALID,0,mNetworkAgentInfo));
+TrafficStats.clearThreadStatsUid();
+}
+mReevaluateDelayMs*=2;
+if (mReevaluateDelayMs > MAX_REEVALUATE_DELAY_MS) {
+mReevaluateDelayMs=MAX_REEVALUATE_DELAY_MS;
+}
 }
 return HANDLED;
 case CMD_FORCE_REEVALUATION:
-return HANDLED;
+return mAttempts < IGNORE_REEVALUATE_ATTEMPTS ? HANDLED : NOT_HANDLED;
 default :
 return NOT_HANDLED;
 }
