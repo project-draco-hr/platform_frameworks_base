@@ -26,9 +26,15 @@
   final boolean customTokens=authenticatorInfo != null && authenticatorInfo.type.customTokens;
   final int callerUid=Binder.getCallingUid();
   final boolean permissionGranted=customTokens || permissionIsGranted(account,authTokenType,callerUid);
-  final Bundle loginOptions=(loginOptionsIn == null) ? new Bundle() : loginOptionsIn;
+  final String callerPkg=loginOptions.getString(AccountManager.KEY_ANDROID_PACKAGE_NAME);
+  List<String> callerOwnedPackageNames=Arrays.asList(mPackageManager.getPackagesForUid(callerUid));
+  if (callerPkg == null || !callerOwnedPackageNames.contains(callerPkg)) {
+    String msg=String.format("Uid %s is attempting to illegally masquerade as package %s!",callerUid,callerPkg);
+    throw new SecurityException(msg);
+  }
   loginOptions.putInt(AccountManager.KEY_CALLER_UID,callerUid);
   loginOptions.putInt(AccountManager.KEY_CALLER_PID,Binder.getCallingPid());
+  final byte[] callerPkgSigDigest=calculatePackageSignatureDigest(callerPkg);
   if (notifyOnAuthFailure) {
     loginOptions.putBoolean(AccountManager.KEY_NOTIFY_ON_FAILURE,true);
   }
@@ -39,6 +45,17 @@
       if (authToken != null) {
         Bundle result=new Bundle();
         result.putString(AccountManager.KEY_AUTHTOKEN,authToken);
+        result.putString(AccountManager.KEY_ACCOUNT_NAME,account.name);
+        result.putString(AccountManager.KEY_ACCOUNT_TYPE,account.type);
+        onResult(response,result);
+        return;
+      }
+    }
+    if (customTokens) {
+      String token=readCachedTokenInternal(accounts,account,authTokenType,callerPkg,callerPkgSigDigest);
+      if (token != null) {
+        Bundle result=new Bundle();
+        result.putString(AccountManager.KEY_AUTHTOKEN,token);
         result.putString(AccountManager.KEY_ACCOUNT_NAME,account.name);
         result.putString(AccountManager.KEY_ACCOUNT_TYPE,account.type);
         onResult(response,result);
@@ -75,8 +92,13 @@
               onError(AccountManager.ERROR_CODE_INVALID_RESPONSE,"the type and name should not be empty");
               return;
             }
+            Account resultAccount=new Account(name,type);
             if (!customTokens) {
-              saveAuthTokenToDatabase(mAccounts,new Account(name,type),authTokenType,authToken);
+              saveAuthTokenToDatabase(mAccounts,resultAccount,authTokenType,authToken);
+            }
+            long expiryMillis=result.getLong(AbstractAccountAuthenticator.KEY_CUSTOM_TOKEN_EXPIRY,0L);
+            if (customTokens && expiryMillis > System.currentTimeMillis()) {
+              saveCachedToken(mAccounts,account,callerPkg,callerPkgSigDigest,authTokenType,authToken,expiryMillis);
             }
           }
           Intent intent=result.getParcelable(AccountManager.KEY_INTENT);
