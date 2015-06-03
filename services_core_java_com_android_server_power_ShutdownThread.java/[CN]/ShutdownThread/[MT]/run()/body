@@ -25,12 +25,19 @@ synchronized (mActionDoneSync) {
         Log.w(TAG,"Shutdown broadcast timed out");
         break;
       }
+ else       if (mRebootUpdate) {
+        int status=(int)((MAX_BROADCAST_TIME - delay) * 1.0 * BROADCAST_STOP_PERCENT / MAX_BROADCAST_TIME);
+        sInstance.setRebootProgress(status,null);
+      }
       try {
-        mActionDoneSync.wait(delay);
+        mActionDoneSync.wait(Math.min(delay,PHONE_STATE_POLL_SLEEP_MSEC));
       }
  catch (      InterruptedException e) {
       }
     }
+  }
+  if (mRebootUpdate) {
+    sInstance.setRebootProgress(BROADCAST_STOP_PERCENT,null);
   }
   Log.i(TAG,"Shutting down activity manager...");
   final IActivityManager am=ActivityManagerNative.asInterface(ServiceManager.checkService("activity"));
@@ -41,12 +48,21 @@ synchronized (mActionDoneSync) {
  catch (    RemoteException e) {
     }
   }
+  if (mRebootUpdate) {
+    sInstance.setRebootProgress(ACTIVITY_MANAGER_STOP_PERCENT,null);
+  }
   Log.i(TAG,"Shutting down package manager...");
   final PackageManagerService pm=(PackageManagerService)ServiceManager.getService("package");
   if (pm != null) {
     pm.shutdown();
   }
+  if (mRebootUpdate) {
+    sInstance.setRebootProgress(PACKAGE_MANAGER_STOP_PERCENT,null);
+  }
   shutdownRadios(MAX_RADIO_WAIT_TIME);
+  if (mRebootUpdate) {
+    sInstance.setRebootProgress(RADIO_STOP_PERCENT,null);
+  }
   IMountShutdownObserver observer=new IMountShutdownObserver.Stub(){
     public void onShutDownComplete(    int statusCode) throws RemoteException {
       Log.w(TAG,"Result code " + statusCode + " from MountService.shutdown");
@@ -76,14 +92,20 @@ synchronized (mActionDoneSync) {
         Log.w(TAG,"Shutdown wait timed out");
         break;
       }
+ else       if (mRebootUpdate) {
+        int status=(int)((MAX_SHUTDOWN_WAIT_TIME - delay) * 1.0 * (MOUNT_SERVICE_STOP_PERCENT - RADIO_STOP_PERCENT) / MAX_SHUTDOWN_WAIT_TIME);
+        status+=RADIO_STOP_PERCENT;
+        sInstance.setRebootProgress(status,null);
+      }
       try {
-        mActionDoneSync.wait(delay);
+        mActionDoneSync.wait(Math.min(delay,PHONE_STATE_POLL_SLEEP_MSEC));
       }
  catch (      InterruptedException e) {
       }
     }
   }
-  if (PowerManager.REBOOT_RECOVERY.equals(mRebootReason)) {
+  if (mRebootUpdate) {
+    sInstance.setRebootProgress(MOUNT_SERVICE_STOP_PERCENT,null);
     uncrypt();
   }
   rebootOrShutdown(mContext,mReboot,mRebootReason);
