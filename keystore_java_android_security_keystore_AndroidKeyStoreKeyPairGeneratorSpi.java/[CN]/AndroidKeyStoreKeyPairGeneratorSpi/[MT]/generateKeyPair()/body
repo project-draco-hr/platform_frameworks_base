@@ -6,14 +6,34 @@
   if (((flags & KeyStore.FLAG_ENCRYPTED) != 0) && (mKeyStore.state() != KeyStore.State.UNLOCKED)) {
     throw new IllegalStateException("Encryption at rest using secure lock screen credential requested for key pair" + ", but the user has not yet entered the credential");
   }
-  final String alias=mSpec.getKeystoreAlias();
-  byte[][] args=getArgsForKeyType(mKeyType,mSpec.getAlgorithmParameterSpec());
-  final String privateKeyAlias=Credentials.USER_PRIVATE_KEY + alias;
+  KeymasterArguments args=new KeymasterArguments();
+  args.addInt(KeymasterDefs.KM_TAG_KEY_SIZE,mKeySizeBits);
+  args.addInt(KeymasterDefs.KM_TAG_ALGORITHM,mKeymasterAlgorithm);
+  args.addInts(KeymasterDefs.KM_TAG_PURPOSE,mKeymasterPurposes);
+  args.addInts(KeymasterDefs.KM_TAG_BLOCK_MODE,mKeymasterBlockModes);
+  args.addInts(KeymasterDefs.KM_TAG_PADDING,mKeymasterEncryptionPaddings);
+  args.addInts(KeymasterDefs.KM_TAG_PADDING,mKeymasterSignaturePaddings);
+  args.addInts(KeymasterDefs.KM_TAG_DIGEST,mKeymasterDigests);
+  if (!com.android.internal.util.ArrayUtils.contains(mKeymasterDigests,KeymasterDefs.KM_DIGEST_NONE)) {
+    args.addInt(KeymasterDefs.KM_TAG_DIGEST,KeymasterDefs.KM_DIGEST_NONE);
+  }
+  if ((!com.android.internal.util.ArrayUtils.contains(mKeymasterSignaturePaddings,KeymasterDefs.KM_PAD_NONE)) && (!com.android.internal.util.ArrayUtils.contains(mKeymasterEncryptionPaddings,KeymasterDefs.KM_PAD_NONE))) {
+    args.addInt(KeymasterDefs.KM_TAG_PADDING,KeymasterDefs.KM_PAD_NONE);
+  }
+  KeymasterUtils.addUserAuthArgs(args,mSpec.isUserAuthenticationRequired(),mSpec.getUserAuthenticationValidityDurationSeconds());
+  args.addDate(KeymasterDefs.KM_TAG_ACTIVE_DATETIME,(mSpec.getKeyValidityStart() != null) ? mSpec.getKeyValidityStart() : new Date(0));
+  args.addDate(KeymasterDefs.KM_TAG_ORIGINATION_EXPIRE_DATETIME,(mSpec.getKeyValidityForOriginationEnd() != null) ? mSpec.getKeyValidityForOriginationEnd() : new Date(Long.MAX_VALUE));
+  args.addDate(KeymasterDefs.KM_TAG_USAGE_EXPIRE_DATETIME,(mSpec.getKeyValidityForConsumptionEnd() != null) ? mSpec.getKeyValidityForConsumptionEnd() : new Date(Long.MAX_VALUE));
+  addAlgorithmSpecificParameters(args);
+  byte[] additionalEntropy=KeyStoreCryptoOperationUtils.getRandomBytesToMixIntoKeystoreRng(mRng,(mKeySizeBits + 7) / 8);
+  final String privateKeyAlias=Credentials.USER_PRIVATE_KEY + mEntryAlias;
   boolean success=false;
   try {
-    Credentials.deleteAllTypesForAlias(mKeyStore,alias);
-    if (!mKeyStore.generate(privateKeyAlias,KeyStore.UID_SELF,mKeyType,mKeySize,flags,args)) {
-      throw new IllegalStateException("could not generate key in keystore");
+    Credentials.deleteAllTypesForAlias(mKeyStore,mEntryAlias);
+    KeyCharacteristics resultingKeyCharacteristics=new KeyCharacteristics();
+    int errorCode=mKeyStore.generateKey(privateKeyAlias,args,additionalEntropy,flags,resultingKeyCharacteristics);
+    if (errorCode != KeyStore.NO_ERROR) {
+      throw new ProviderException("Failed to generate key pair",KeyStore.getKeyStoreException(errorCode));
     }
     final PrivateKey privKey;
     final OpenSSLEngine engine=OpenSSLEngine.getInstance("keystore");
@@ -21,43 +41,44 @@
       privKey=engine.getPrivateKeyById(privateKeyAlias);
     }
  catch (    InvalidKeyException e) {
-      throw new RuntimeException("Can't get key",e);
+      throw new ProviderException("Failed to obtain generated private key",e);
     }
     ExportResult exportResult=mKeyStore.exportKey(privateKeyAlias,KeymasterDefs.KM_KEY_FORMAT_X509,null,null);
     if (exportResult == null) {
       throw new KeyStoreConnectException();
     }
  else     if (exportResult.resultCode != KeyStore.NO_ERROR) {
-      throw new ProviderException("Failed to obtain public key in X.509 format",KeyStore.getKeyStoreException(exportResult.resultCode));
+      throw new ProviderException("Failed to obtain X.509 form of generated public key",KeyStore.getKeyStoreException(exportResult.resultCode));
     }
     final byte[] pubKeyBytes=exportResult.exportData;
     final PublicKey pubKey;
     try {
-      final KeyFactory keyFact=KeyFactory.getInstance(mKeyAlgorithm);
+      final KeyFactory keyFact=KeyFactory.getInstance(mJcaKeyAlgorithm);
       pubKey=keyFact.generatePublic(new X509EncodedKeySpec(pubKeyBytes));
     }
  catch (    NoSuchAlgorithmException e) {
-      throw new IllegalStateException("Can't instantiate key generator",e);
+      throw new ProviderException("Failed to obtain " + mJcaKeyAlgorithm + " KeyFactory",e);
     }
 catch (    InvalidKeySpecException e) {
-      throw new IllegalStateException("keystore returned invalid key encoding",e);
+      throw new ProviderException("Invalid X.509 encoding of generated public key",e);
     }
     final X509Certificate cert;
     try {
-      cert=generateCertificate(privKey,pubKey);
+      cert=generateSelfSignedCertificate(privKey,pubKey);
     }
  catch (    Exception e) {
-      throw new IllegalStateException("Can't generate certificate",e);
+      throw new ProviderException("Failed to generate self-signed certificate",e);
     }
     byte[] certBytes;
     try {
       certBytes=cert.getEncoded();
     }
  catch (    CertificateEncodingException e) {
-      throw new IllegalStateException("Can't get encoding of certificate",e);
+      throw new ProviderException("Failed to obtain encoded form of self-signed certificate",e);
     }
-    if (!mKeyStore.put(Credentials.USER_CERTIFICATE + alias,certBytes,KeyStore.UID_SELF,flags)) {
-      throw new IllegalStateException("Can't store certificate in AndroidKeyStore");
+    int insertErrorCode=mKeyStore.insert(Credentials.USER_CERTIFICATE + mEntryAlias,certBytes,KeyStore.UID_SELF,flags);
+    if (insertErrorCode != KeyStore.NO_ERROR) {
+      throw new ProviderException("Failed to store self-signed certificate",KeyStore.getKeyStoreException(insertErrorCode));
     }
     KeyPair result=new KeyPair(pubKey,privKey);
     success=true;
@@ -65,7 +86,7 @@ catch (    InvalidKeySpecException e) {
   }
   finally {
     if (!success) {
-      Credentials.deleteAllTypesForAlias(mKeyStore,alias);
+      Credentials.deleteAllTypesForAlias(mKeyStore,mEntryAlias);
     }
   }
 }
