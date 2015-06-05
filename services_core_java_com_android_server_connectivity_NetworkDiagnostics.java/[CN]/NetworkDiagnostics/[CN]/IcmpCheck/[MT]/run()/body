@@ -1,0 +1,41 @@
+{
+  if (mMeasurement.finishTime > 0) {
+    mCountDownLatch.countDown();
+    return;
+  }
+  try {
+    setupSocket(SOCK_DGRAM,mProtocol,TIMEOUT_SEND,TIMEOUT_RECV,0);
+  }
+ catch (  ErrnoException|IOException e) {
+    mMeasurement.recordFailure(e.toString());
+    return;
+  }
+  mMeasurement.description+=" src{" + getSocketAddressString() + "}";
+  final byte[] icmpPacket={(byte)mIcmpType,0,0,0,0,0,0,0};
+  int count=0;
+  mMeasurement.startTime=now();
+  while (now() < mDeadlineTime - (TIMEOUT_SEND + TIMEOUT_RECV)) {
+    count++;
+    icmpPacket[icmpPacket.length - 1]=(byte)count;
+    try {
+      Os.write(mFileDescriptor,icmpPacket,0,icmpPacket.length);
+    }
+ catch (    ErrnoException|InterruptedIOException e) {
+      mMeasurement.recordFailure(e.toString());
+      break;
+    }
+    try {
+      ByteBuffer reply=ByteBuffer.allocate(PACKET_BUFSIZE);
+      Os.read(mFileDescriptor,reply);
+      mMeasurement.recordSuccess("1/" + count);
+      break;
+    }
+ catch (    ErrnoException|InterruptedIOException e) {
+      continue;
+    }
+  }
+  if (mMeasurement.finishTime == 0) {
+    mMeasurement.recordFailure("0/" + count);
+  }
+  close();
+}
