@@ -14,12 +14,6 @@
   args.addInts(KeymasterDefs.KM_TAG_PADDING,mKeymasterEncryptionPaddings);
   args.addInts(KeymasterDefs.KM_TAG_PADDING,mKeymasterSignaturePaddings);
   args.addInts(KeymasterDefs.KM_TAG_DIGEST,mKeymasterDigests);
-  if (!com.android.internal.util.ArrayUtils.contains(mKeymasterDigests,KeymasterDefs.KM_DIGEST_NONE)) {
-    args.addInt(KeymasterDefs.KM_TAG_DIGEST,KeymasterDefs.KM_DIGEST_NONE);
-  }
-  if ((!com.android.internal.util.ArrayUtils.contains(mKeymasterSignaturePaddings,KeymasterDefs.KM_PAD_NONE)) && (!com.android.internal.util.ArrayUtils.contains(mKeymasterEncryptionPaddings,KeymasterDefs.KM_PAD_NONE))) {
-    args.addInt(KeymasterDefs.KM_TAG_PADDING,KeymasterDefs.KM_PAD_NONE);
-  }
   KeymasterUtils.addUserAuthArgs(args,mSpec.isUserAuthenticationRequired(),mSpec.getUserAuthenticationValidityDurationSeconds());
   args.addDate(KeymasterDefs.KM_TAG_ACTIVE_DATETIME,(mSpec.getKeyValidityStart() != null) ? mSpec.getKeyValidityStart() : new Date(0));
   args.addDate(KeymasterDefs.KM_TAG_ORIGINATION_EXPIRE_DATETIME,(mSpec.getKeyValidityForOriginationEnd() != null) ? mSpec.getKeyValidityForOriginationEnd() : new Date(Long.MAX_VALUE));
@@ -35,36 +29,19 @@
     if (errorCode != KeyStore.NO_ERROR) {
       throw new ProviderException("Failed to generate key pair",KeyStore.getKeyStoreException(errorCode));
     }
-    final PrivateKey privKey;
-    final OpenSSLEngine engine=OpenSSLEngine.getInstance("keystore");
+    KeyPair result;
     try {
-      privKey=engine.getPrivateKeyById(privateKeyAlias);
+      result=AndroidKeyStoreProvider.loadAndroidKeyStoreKeyPairFromKeystore(mKeyStore,privateKeyAlias);
     }
- catch (    InvalidKeyException e) {
-      throw new ProviderException("Failed to obtain generated private key",e);
+ catch (    UnrecoverableKeyException e) {
+      throw new ProviderException("Failed to load generated key pair from keystore",e);
     }
-    ExportResult exportResult=mKeyStore.exportKey(privateKeyAlias,KeymasterDefs.KM_KEY_FORMAT_X509,null,null);
-    if (exportResult == null) {
-      throw new KeyStoreConnectException();
-    }
- else     if (exportResult.resultCode != KeyStore.NO_ERROR) {
-      throw new ProviderException("Failed to obtain X.509 form of generated public key",KeyStore.getKeyStoreException(exportResult.resultCode));
-    }
-    final byte[] pubKeyBytes=exportResult.exportData;
-    final PublicKey pubKey;
-    try {
-      final KeyFactory keyFact=KeyFactory.getInstance(mJcaKeyAlgorithm);
-      pubKey=keyFact.generatePublic(new X509EncodedKeySpec(pubKeyBytes));
-    }
- catch (    NoSuchAlgorithmException e) {
-      throw new ProviderException("Failed to obtain " + mJcaKeyAlgorithm + " KeyFactory",e);
-    }
-catch (    InvalidKeySpecException e) {
-      throw new ProviderException("Invalid X.509 encoding of generated public key",e);
+    if (!mJcaKeyAlgorithm.equalsIgnoreCase(result.getPrivate().getAlgorithm())) {
+      throw new ProviderException("Generated key pair algorithm does not match requested algorithm: " + result.getPrivate().getAlgorithm() + " vs "+ mJcaKeyAlgorithm);
     }
     final X509Certificate cert;
     try {
-      cert=generateSelfSignedCertificate(privKey,pubKey);
+      cert=generateSelfSignedCertificate(result.getPrivate(),result.getPublic());
     }
  catch (    Exception e) {
       throw new ProviderException("Failed to generate self-signed certificate",e);
@@ -80,7 +57,6 @@ catch (    InvalidKeySpecException e) {
     if (insertErrorCode != KeyStore.NO_ERROR) {
       throw new ProviderException("Failed to store self-signed certificate",KeyStore.getKeyStoreException(insertErrorCode));
     }
-    KeyPair result=new KeyPair(pubKey,privKey);
     success=true;
     return result;
   }
