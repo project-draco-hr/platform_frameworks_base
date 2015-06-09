@@ -1,0 +1,43 @@
+{
+  if (mMeasurement.finishTime > 0) {
+    mCountDownLatch.countDown();
+    return;
+  }
+  try {
+    setupSocket(SOCK_DGRAM,IPPROTO_UDP,TIMEOUT_SEND,TIMEOUT_RECV,DNS_SERVER_PORT);
+  }
+ catch (  ErrnoException|IOException e) {
+    mMeasurement.recordFailure(e.toString());
+    return;
+  }
+  mMeasurement.description+=" src{" + getSocketAddressString() + "}";
+  final String sixRandomDigits=Integer.valueOf(mRandom.nextInt(900000) + 100000).toString();
+  mMeasurement.description+=" qtype{" + mQueryType + "}"+ " qname{"+ sixRandomDigits+ "-android-ds.metric.gstatic.com}";
+  final byte[] dnsPacket=getDnsQueryPacket(sixRandomDigits);
+  int count=0;
+  mMeasurement.startTime=now();
+  while (now() < mDeadlineTime - (TIMEOUT_RECV + TIMEOUT_RECV)) {
+    count++;
+    try {
+      Os.write(mFileDescriptor,dnsPacket,0,dnsPacket.length);
+    }
+ catch (    ErrnoException|InterruptedIOException e) {
+      mMeasurement.recordFailure(e.toString());
+      break;
+    }
+    try {
+      ByteBuffer reply=ByteBuffer.allocate(PACKET_BUFSIZE);
+      Os.read(mFileDescriptor,reply);
+      final String rcodeStr=(reply.limit() > 3) ? " " + responseCodeStr((int)(reply.get(3)) & 0x0f) : "";
+      mMeasurement.recordSuccess("1/" + count + rcodeStr);
+      break;
+    }
+ catch (    ErrnoException|InterruptedIOException e) {
+      continue;
+    }
+  }
+  if (mMeasurement.finishTime == 0) {
+    mMeasurement.recordFailure("0/" + count);
+  }
+  close();
+}
