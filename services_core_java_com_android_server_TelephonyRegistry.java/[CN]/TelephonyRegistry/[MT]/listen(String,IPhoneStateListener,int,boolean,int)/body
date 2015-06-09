@@ -1,18 +1,17 @@
 {
-  int callerUid=UserHandle.getCallingUserId();
-  int myUid=UserHandle.myUserId();
+  int callerUserId=UserHandle.getCallingUserId();
   if (VDBG) {
-    log("listen: E pkg=" + callingPackage + " events=0x"+ Integer.toHexString(events)+ " notifyNow="+ notifyNow+ " subId="+ subId+ " myUid="+ myUid+ " callerUid="+ callerUid);
+    log("listen: E pkg=" + callingPackage + " events=0x"+ Integer.toHexString(events)+ " notifyNow="+ notifyNow+ " subId="+ subId+ " myUserId="+ UserHandle.myUserId()+ " callerUserId="+ callerUserId);
   }
   if (events != PhoneStateListener.LISTEN_NONE) {
     checkListenerPermission(events);
-    if ((events & PHONE_STATE_PERMISSION_MASK) != 0) {
+    if ((events & ENFORCE_PHONE_STATE_PERMISSION_MASK) != 0) {
       if (mAppOps.noteOp(AppOpsManager.OP_READ_PHONE_STATE,Binder.getCallingUid(),callingPackage) != AppOpsManager.MODE_ALLOWED) {
         return;
       }
     }
 synchronized (mRecords) {
-      Record r=null;
+      Record r;
       find_and_add: {
         IBinder b=callback.asBinder();
         final int N=mRecords.size();
@@ -29,7 +28,9 @@ synchronized (mRecords) {
       }
       r.callback=callback;
       r.callingPackage=callingPackage;
-      r.callerUid=callerUid;
+      r.callerUserId=callerUserId;
+      boolean isPhoneStateEvent=(events & (CHECK_PHONE_STATE_PERMISSION_MASK | ENFORCE_PHONE_STATE_PERMISSION_MASK)) != 0;
+      r.canReadPhoneState=isPhoneStateEvent && canReadPhoneState(callingPackage);
       if (!SubscriptionManager.isValidSubscriptionId(subId)) {
         r.subId=SubscriptionManager.DEFAULT_SUBSCRIPTION_ID;
       }
@@ -89,7 +90,7 @@ synchronized (mRecords) {
         }
         if ((events & PhoneStateListener.LISTEN_CALL_STATE) != 0) {
           try {
-            r.callback.onCallStateChanged(mCallState[phoneId],mCallIncomingNumber[phoneId]);
+            r.callback.onCallStateChanged(mCallState[phoneId],getCallIncomingNumber(r,phoneId));
           }
  catch (          RemoteException ex) {
             remove(r.binder);
