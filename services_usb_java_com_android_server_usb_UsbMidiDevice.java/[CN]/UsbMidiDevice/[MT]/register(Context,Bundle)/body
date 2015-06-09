@@ -4,76 +4,9 @@
     Log.e(TAG,"No MidiManager in UsbMidiDevice.create()");
     return false;
   }
-  int inputCount=mInputStreams.length;
-  int outputCount=mOutputStreams.length;
-  MidiReceiver[] inputPortReceivers=new MidiReceiver[inputCount];
-  for (int port=0; port < inputCount; port++) {
-    inputPortReceivers[port]=mEventSchedulers[port].getReceiver();
-  }
-  mServer=midiManager.createDeviceServer(inputPortReceivers,outputCount,null,null,properties,MidiDeviceInfo.TYPE_USB,null);
+  mServer=midiManager.createDeviceServer(mInputPortReceivers,mSubdeviceCount,null,null,properties,MidiDeviceInfo.TYPE_USB,mCallback);
   if (mServer == null) {
     return false;
-  }
-  final MidiReceiver[] outputReceivers=mServer.getOutputPortReceivers();
-  new Thread("UsbMidiDevice input thread"){
-    @Override public void run(){
-      byte[] buffer=new byte[BUFFER_SIZE];
-      try {
-        boolean done=false;
-        while (!done) {
-          for (int index=0; index < mPollFDs.length; index++) {
-            StructPollfd pfd=mPollFDs[index];
-            if ((pfd.revents & OsConstants.POLLIN) != 0) {
-              pfd.revents=0;
-              int count=mInputStreams[index].read(buffer);
-              outputReceivers[index].send(buffer,0,count);
-            }
- else             if ((pfd.revents & (OsConstants.POLLERR | OsConstants.POLLHUP)) != 0) {
-              done=true;
-            }
-          }
-          Os.poll(mPollFDs,-1);
-        }
-      }
- catch (      IOException e) {
-        Log.d(TAG,"reader thread exiting");
-      }
-catch (      ErrnoException e) {
-        Log.d(TAG,"reader thread exiting");
-      }
-      Log.d(TAG,"input thread exit");
-    }
-  }
-.start();
-  for (int port=0; port < outputCount; port++) {
-    final MidiEventScheduler eventSchedulerF=mEventSchedulers[port];
-    final FileOutputStream outputStreamF=mOutputStreams[port];
-    final int portF=port;
-    new Thread("UsbMidiDevice output thread " + port){
-      @Override public void run(){
-        while (true) {
-          MidiEvent event;
-          try {
-            event=(MidiEvent)eventSchedulerF.waitNextEvent();
-          }
- catch (          InterruptedException e) {
-            continue;
-          }
-          if (event == null) {
-            break;
-          }
-          try {
-            outputStreamF.write(event.data,0,event.count);
-          }
- catch (          IOException e) {
-            Log.e(TAG,"write failed for port " + portF);
-          }
-          eventSchedulerF.addEventToPool(event);
-        }
-        Log.d(TAG,"output thread exit");
-      }
-    }
-.start();
   }
   return true;
 }
