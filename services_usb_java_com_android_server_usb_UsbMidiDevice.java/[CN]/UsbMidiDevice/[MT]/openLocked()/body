@@ -1,0 +1,96 @@
+{
+  FileDescriptor[] fileDescriptors=nativeOpen(mAlsaCard,mAlsaDevice,mSubdeviceCount);
+  if (fileDescriptors == null) {
+    Log.e(TAG,"nativeOpen failed");
+    return false;
+  }
+  mFileDescriptors=fileDescriptors;
+  int inputCount=fileDescriptors.length;
+  int outputCount=fileDescriptors.length - 1;
+  mPollFDs=new StructPollfd[inputCount];
+  mInputStreams=new FileInputStream[inputCount];
+  for (int i=0; i < inputCount; i++) {
+    FileDescriptor fd=fileDescriptors[i];
+    StructPollfd pollfd=new StructPollfd();
+    pollfd.fd=fd;
+    pollfd.events=(short)OsConstants.POLLIN;
+    mPollFDs[i]=pollfd;
+    mInputStreams[i]=new FileInputStream(fd);
+  }
+  mOutputStreams=new FileOutputStream[outputCount];
+  mEventSchedulers=new MidiEventScheduler[outputCount];
+  for (int i=0; i < outputCount; i++) {
+    mOutputStreams[i]=new FileOutputStream(fileDescriptors[i]);
+    MidiEventScheduler scheduler=new MidiEventScheduler();
+    mEventSchedulers[i]=scheduler;
+    mInputPortReceivers[i].setReceiver(scheduler.getReceiver());
+  }
+  final MidiReceiver[] outputReceivers=mServer.getOutputPortReceivers();
+  new Thread("UsbMidiDevice input thread"){
+    @Override public void run(){
+      byte[] buffer=new byte[BUFFER_SIZE];
+      try {
+        while (true) {
+synchronized (mLock) {
+            if (!mIsOpen)             break;
+            for (int index=0; index < mPollFDs.length; index++) {
+              StructPollfd pfd=mPollFDs[index];
+              if ((pfd.revents & (OsConstants.POLLERR | OsConstants.POLLHUP)) != 0) {
+                break;
+              }
+ else               if ((pfd.revents & OsConstants.POLLIN) != 0) {
+                pfd.revents=0;
+                if (index == mInputStreams.length - 1) {
+                  break;
+                }
+                int count=mInputStreams[index].read(buffer);
+                outputReceivers[index].send(buffer,0,count);
+              }
+            }
+          }
+          Os.poll(mPollFDs,-1);
+        }
+      }
+ catch (      IOException e) {
+        Log.d(TAG,"reader thread exiting");
+      }
+catch (      ErrnoException e) {
+        Log.d(TAG,"reader thread exiting");
+      }
+      Log.d(TAG,"input thread exit");
+    }
+  }
+.start();
+  for (int port=0; port < outputCount; port++) {
+    final MidiEventScheduler eventSchedulerF=mEventSchedulers[port];
+    final FileOutputStream outputStreamF=mOutputStreams[port];
+    final int portF=port;
+    new Thread("UsbMidiDevice output thread " + port){
+      @Override public void run(){
+        while (true) {
+          MidiEvent event;
+          try {
+            event=(MidiEvent)eventSchedulerF.waitNextEvent();
+          }
+ catch (          InterruptedException e) {
+            continue;
+          }
+          if (event == null) {
+            break;
+          }
+          try {
+            outputStreamF.write(event.data,0,event.count);
+          }
+ catch (          IOException e) {
+            Log.e(TAG,"write failed for port " + portF);
+          }
+          eventSchedulerF.addEventToPool(event);
+        }
+        Log.d(TAG,"output thread exit");
+      }
+    }
+.start();
+  }
+  mIsOpen=true;
+  return true;
+}
