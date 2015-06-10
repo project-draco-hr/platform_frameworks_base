@@ -1,0 +1,62 @@
+{
+  Log.i(TAG,"Calling uncrypt and monitoring the progress...");
+  sInstance.prepareUncryptProgress();
+  final boolean[] done=new boolean[1];
+  done[0]=false;
+  Thread t=new Thread(){
+    @Override public void run(){
+      new File(UNCRYPT_STATUS_FILE).delete();
+      try {
+        Os.mkfifo(UNCRYPT_STATUS_FILE,0600);
+      }
+ catch (      ErrnoException e) {
+        Log.w(TAG,"ErrnoException when creating named pipe \"" + UNCRYPT_STATUS_FILE + "\": "+ e.getMessage());
+      }
+      SystemProperties.set("ctl.start","uncrypt");
+      try (BufferedReader reader=new BufferedReader(new FileReader(UNCRYPT_STATUS_FILE))){
+        int last_status=Integer.MIN_VALUE;
+        while (true) {
+          String str=reader.readLine();
+          try {
+            int status=Integer.parseInt(str);
+            if (status == last_status && last_status != Integer.MIN_VALUE) {
+              continue;
+            }
+            last_status=status;
+            if (status >= 0 && status < 100) {
+              Log.d(TAG,"uncrypt read status: " + status);
+              sInstance.setUncryptProgress(status);
+            }
+ else             if (status == 100) {
+              Log.d(TAG,"uncrypt successfully finished.");
+              sInstance.setUncryptProgress(status);
+              break;
+            }
+ else {
+              Log.d(TAG,"uncrypt failed with status: " + status);
+              break;
+            }
+          }
+ catch (          NumberFormatException unused) {
+            Log.d(TAG,"uncrypt invalid status received: " + str);
+            break;
+          }
+        }
+      }
+ catch (      IOException unused) {
+        Log.w(TAG,"IOException when reading \"" + UNCRYPT_STATUS_FILE + "\".");
+      }
+      done[0]=true;
+    }
+  }
+;
+  t.start();
+  try {
+    t.join(MAX_UNCRYPT_WAIT_TIME);
+  }
+ catch (  InterruptedException unused) {
+  }
+  if (!done[0]) {
+    Log.w(TAG,"Timed out waiting for uncrypt.");
+  }
+}
