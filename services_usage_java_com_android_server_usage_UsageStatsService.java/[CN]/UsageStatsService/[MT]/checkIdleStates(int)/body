@@ -1,24 +1,31 @@
 {
-  final int[] runningUsers;
+  final int[] userIds;
   try {
-    runningUsers=ActivityManagerNative.getDefault().getRunningUserIds();
+    if (checkUserId == UserHandle.USER_ALL) {
+      userIds=ActivityManagerNative.getDefault().getRunningUserIds();
+    }
+ else {
+      userIds=new int[]{checkUserId};
+    }
   }
  catch (  RemoteException re) {
     return;
   }
-  for (int i=0; i < runningUsers.length; i++) {
-    final int userId=runningUsers[i];
+  for (int i=0; i < userIds.length; i++) {
+    final int userId=userIds[i];
     List<PackageInfo> packages=getContext().getPackageManager().getInstalledPackages(PackageManager.GET_DISABLED_COMPONENTS | PackageManager.GET_UNINSTALLED_PACKAGES,userId);
 synchronized (mLock) {
       final long timeNow=checkAndGetTimeLocked();
+      final long screenOnTime=getScreenOnTimeLocked(timeNow);
+      UserUsageStatsService service=getUserDataAndInitializeIfNeededLocked(userId,timeNow);
       final int packageCount=packages.size();
       for (int p=0; p < packageCount; p++) {
         final String packageName=packages.get(p).packageName;
-        final boolean isIdle=isAppIdleFiltered(packageName,userId,timeNow);
+        final boolean isIdle=isAppIdleFiltered(packageName,userId,service,timeNow,screenOnTime);
         mHandler.sendMessage(mHandler.obtainMessage(MSG_INFORM_LISTENERS,userId,isIdle ? 1 : 0,packageName));
         mAppIdleHistory.addEntry(packageName,userId,isIdle,timeNow);
       }
     }
   }
-  mHandler.sendEmptyMessageDelayed(MSG_CHECK_IDLE_STATES,mCheckIdleIntervalMillis);
+  mHandler.sendMessageDelayed(mHandler.obtainMessage(MSG_CHECK_IDLE_STATES,checkUserId,0),mCheckIdleIntervalMillis);
 }
