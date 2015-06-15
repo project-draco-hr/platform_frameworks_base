@@ -3,27 +3,21 @@
   filter.addCapability(NET_CAPABILITY_INTERNET);
   final HandlerThread handlerThread=new HandlerThread("testNetworkFactoryRequests");
   handlerThread.start();
-  MockNetworkFactory testFactory=new MockNetworkFactory(handlerThread.getLooper(),mServiceContext,"testFactory",filter);
+  final MockNetworkFactory testFactory=new MockNetworkFactory(handlerThread.getLooper(),mServiceContext,"testFactory",filter);
   testFactory.setScoreFilter(40);
+  ConditionVariable cv=testFactory.getNetworkStartedCV();
   testFactory.register();
-  try {
-    Thread.sleep(500);
-  }
- catch (  Exception e) {
-  }
+  cv.block();
   assertEquals(1,testFactory.getMyRequestCount());
   assertEquals(true,testFactory.getMyStartRequested());
   MockNetworkAgent testAgent=new MockNetworkAgent(TRANSPORT_CELLULAR);
-  ConditionVariable cv=waitForConnectivityBroadcasts(1);
+  cv=waitForConnectivityBroadcasts(1);
+  ConditionVariable cvRelease=testFactory.getNetworkStoppedCV();
   testAgent.connect(true);
   cv.block();
-  try {
-    Thread.sleep(500);
-  }
- catch (  Exception e) {
-  }
-  assertEquals(1,testFactory.getMyRequestCount());
+  cvRelease.block();
   assertEquals(false,testFactory.getMyStartRequested());
+  testFactory.waitForNetworkRequests(1);
   ConnectivityManager.NetworkCallback[] networkCallbacks=new ConnectivityManager.NetworkCallback[10];
   for (int i=0; i < networkCallbacks.length; i++) {
     networkCallbacks[i]=new ConnectivityManager.NetworkCallback();
@@ -31,22 +25,12 @@
     builder.addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);
     mCm.requestNetwork(builder.build(),networkCallbacks[i]);
   }
-  try {
-    Thread.sleep(1000);
-  }
- catch (  Exception e) {
-  }
-  assertEquals(11,testFactory.getMyRequestCount());
+  testFactory.waitForNetworkRequests(11);
   assertEquals(false,testFactory.getMyStartRequested());
   for (int i=0; i < networkCallbacks.length; i++) {
     mCm.unregisterNetworkCallback(networkCallbacks[i]);
   }
-  try {
-    Thread.sleep(500);
-  }
- catch (  Exception e) {
-  }
-  assertEquals(1,testFactory.getMyRequestCount());
+  testFactory.waitForNetworkRequests(1);
   assertEquals(false,testFactory.getMyStartRequested());
   cv=waitForConnectivityBroadcasts(1);
   testAgent.disconnect();
