@@ -24,7 +24,11 @@ if (nai == null) {
   loge("EVENT_NETWORK_CAPABILITIES_CHANGED from unknown NetworkAgent");
 }
  else {
-  updateCapabilities(nai,(NetworkCapabilities)msg.obj);
+  final NetworkCapabilities networkCapabilities=(NetworkCapabilities)msg.obj;
+  if (networkCapabilities.hasCapability(NET_CAPABILITY_CAPTIVE_PORTAL) || networkCapabilities.hasCapability(NET_CAPABILITY_VALIDATED)) {
+    Slog.wtf(TAG,"BUG: " + nai + " has stateful capability.");
+  }
+  updateCapabilities(nai,networkCapabilities,NascentState.NOT_JUST_VALIDATED);
 }
 break;
 }
@@ -117,25 +121,17 @@ case NetworkMonitor.EVENT_NETWORK_TESTED:
 NetworkAgentInfo nai=(NetworkAgentInfo)msg.obj;
 if (isLiveNetworkAgent(nai,"EVENT_NETWORK_TESTED")) {
 final boolean valid=(msg.arg1 == NetworkMonitor.NETWORK_TEST_RESULT_VALID);
-final boolean validationChanged=(valid != nai.lastValidated);
+if (DBG) log(nai.name() + " validation " + (valid ? " passed" : "failed"));
+if (valid != nai.lastValidated) {
+final int oldScore=nai.getCurrentScore();
+final NascentState nascent=(valid && !nai.everValidated) ? NascentState.JUST_VALIDATED : NascentState.NOT_JUST_VALIDATED;
 nai.lastValidated=valid;
-if (valid) {
-if (DBG) log("Validated " + nai.name());
-nai.networkCapabilities.addCapability(NET_CAPABILITY_VALIDATED);
-if (!nai.everValidated) {
-nai.everValidated=true;
-rematchNetworkAndRequests(nai,NascentState.JUST_VALIDATED,ReapUnvalidatedNetworks.REAP);
-sendUpdatedScoreToFactories(nai);
-}
-}
- else {
-nai.networkCapabilities.removeCapability(NET_CAPABILITY_VALIDATED);
+nai.everValidated|=valid;
+updateCapabilities(nai,nai.networkCapabilities,nascent);
+if (oldScore != nai.getCurrentScore()) sendUpdatedScoreToFactories(nai);
 }
 updateInetCondition(nai);
 nai.asyncChannel.sendMessage(android.net.NetworkAgent.CMD_REPORT_NETWORK_STATUS,(valid ? NetworkAgent.VALID_NETWORK : NetworkAgent.INVALID_NETWORK),0,null);
-if (validationChanged) {
-notifyNetworkCallbacks(nai,ConnectivityManager.CALLBACK_CAP_CHANGED);
-}
 }
 break;
 }
@@ -158,7 +154,7 @@ nai=mNetworkForNetId.get(netId);
 if (nai != null && (visible != nai.lastCaptivePortalDetected)) {
 nai.lastCaptivePortalDetected=visible;
 nai.everCaptivePortalDetected|=visible;
-updateCapabilities(nai,nai.networkCapabilities);
+updateCapabilities(nai,nai.networkCapabilities,NascentState.NOT_JUST_VALIDATED);
 }
 if (!visible) {
 setProvNotificationVisibleIntent(false,netId,null,0,null,null);
