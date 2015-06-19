@@ -1,0 +1,119 @@
+{
+  if (DEBUG_ENERGY_CPU) {
+    Slog.d(TAG,"!Cpu updating!");
+  }
+  final int wakelockWeight=50;
+  final int cpuSpeedSteps=getCpuSpeedSteps();
+  final long[] cpuSpeeds=mKernelCpuSpeedReader.readDelta();
+  int numWakelocks=0;
+  final int numPartialTimers=mPartialTimers.size();
+  if (mOnBatteryScreenOffTimeBase.isRunning()) {
+    for (int i=0; i < numPartialTimers; i++) {
+      final StopwatchTimer timer=mPartialTimers.get(i);
+      if (timer.mInList && timer.mUid != null && timer.mUid.mUid != Process.SYSTEM_UID) {
+        numWakelocks++;
+      }
+    }
+  }
+  final int numWakelocksF=numWakelocks;
+  mTempTotalCpuUserTimeUs=0;
+  mTempTotalCpuSystemTimeUs=0;
+  final long startTimeMs=SystemClock.elapsedRealtime();
+  mKernelUidCpuTimeReader.readDelta(!mOnBatteryInternal ? null : new KernelUidCpuTimeReader.Callback(){
+    @Override public void onUidCpuTime(    int uid,    long userTimeUs,    long systemTimeUs){
+      final Uid u=getUidStatsLocked(mapUid(uid));
+      mTempTotalCpuUserTimeUs+=userTimeUs;
+      mTempTotalCpuSystemTimeUs+=systemTimeUs;
+      StringBuilder sb=null;
+      if (DEBUG_ENERGY_CPU) {
+        sb=new StringBuilder();
+        sb.append("  got time for uid=").append(u.mUid).append(": u=");
+        TimeUtils.formatDuration(userTimeUs / 1000,sb);
+        sb.append(" s=");
+        TimeUtils.formatDuration(systemTimeUs / 1000,sb);
+        sb.append("\n");
+      }
+      if (numWakelocksF > 0) {
+        userTimeUs=(userTimeUs * wakelockWeight) / 100;
+        systemTimeUs=(systemTimeUs * wakelockWeight) / 100;
+      }
+      if (sb != null) {
+        sb.append("  adding to uid=").append(u.mUid).append(": u=");
+        TimeUtils.formatDuration(userTimeUs / 1000,sb);
+        sb.append(" s=");
+        TimeUtils.formatDuration(systemTimeUs / 1000,sb);
+        Slog.d(TAG,sb.toString());
+      }
+      u.mUserCpuTime.addCountLocked(userTimeUs);
+      u.mSystemCpuTime.addCountLocked(systemTimeUs);
+      for (int i=0; i < cpuSpeedSteps; i++) {
+        if (u.mSpeedBins[i] == null) {
+          u.mSpeedBins[i]=new LongSamplingCounter(mOnBatteryTimeBase);
+        }
+        u.mSpeedBins[i].addCountLocked(cpuSpeeds[i]);
+      }
+    }
+  }
+);
+  if (DEBUG_ENERGY_CPU) {
+    Slog.d(TAG,"Reading cpu stats took " + (SystemClock.elapsedRealtime() - startTimeMs) + " ms");
+  }
+  if (mOnBatteryInternal && numWakelocks > 0) {
+    mTempTotalCpuUserTimeUs=(mTempTotalCpuUserTimeUs * (100 - wakelockWeight)) / 100;
+    mTempTotalCpuSystemTimeUs=(mTempTotalCpuSystemTimeUs * (100 - wakelockWeight)) / 100;
+    for (int i=0; i < numPartialTimers; i++) {
+      final StopwatchTimer timer=mPartialTimers.get(i);
+      if (timer.mInList && timer.mUid != null && timer.mUid.mUid != Process.SYSTEM_UID) {
+        int userTimeUs=(int)(mTempTotalCpuUserTimeUs / numWakelocks);
+        int systemTimeUs=(int)(mTempTotalCpuSystemTimeUs / numWakelocks);
+        if (DEBUG_ENERGY_CPU) {
+          StringBuilder sb=new StringBuilder();
+          sb.append("  Distributing wakelock uid=").append(timer.mUid.mUid).append(": u=");
+          TimeUtils.formatDuration(userTimeUs / 1000,sb);
+          sb.append(" s=");
+          TimeUtils.formatDuration(systemTimeUs / 1000,sb);
+          Slog.d(TAG,sb.toString());
+        }
+        timer.mUid.mUserCpuTime.addCountLocked(userTimeUs);
+        timer.mUid.mSystemCpuTime.addCountLocked(systemTimeUs);
+        final Uid.Proc proc=timer.mUid.getProcessStatsLocked("*wakelock*");
+        proc.addCpuTimeLocked(userTimeUs,systemTimeUs);
+        mTempTotalCpuUserTimeUs-=userTimeUs;
+        mTempTotalCpuSystemTimeUs-=systemTimeUs;
+        numWakelocks--;
+      }
+    }
+    if (mTempTotalCpuUserTimeUs > 0 || mTempTotalCpuSystemTimeUs > 0) {
+      if (DEBUG_ENERGY_CPU) {
+        StringBuilder sb=new StringBuilder();
+        sb.append("  Distributing lost time to system: u=");
+        TimeUtils.formatDuration(mTempTotalCpuUserTimeUs / 1000,sb);
+        sb.append(" s=");
+        TimeUtils.formatDuration(mTempTotalCpuSystemTimeUs / 1000,sb);
+        Slog.d(TAG,sb.toString());
+      }
+      final Uid u=getUidStatsLocked(Process.SYSTEM_UID);
+      u.mUserCpuTime.addCountLocked(mTempTotalCpuUserTimeUs);
+      u.mSystemCpuTime.addCountLocked(mTempTotalCpuSystemTimeUs);
+      final Uid.Proc proc=u.getProcessStatsLocked("*lost*");
+      proc.addCpuTimeLocked((int)mTempTotalCpuUserTimeUs,(int)mTempTotalCpuSystemTimeUs);
+    }
+  }
+  if (ArrayUtils.referenceEquals(mPartialTimers,mLastPartialTimers)) {
+    for (int i=0; i < numPartialTimers; i++) {
+      mPartialTimers.get(i).mInList=true;
+    }
+  }
+ else {
+    final int numLastPartialTimers=mLastPartialTimers.size();
+    for (int i=0; i < numLastPartialTimers; i++) {
+      mLastPartialTimers.get(i).mInList=false;
+    }
+    mLastPartialTimers.clear();
+    for (int i=0; i < numPartialTimers; i++) {
+      final StopwatchTimer timer=mPartialTimers.get(i);
+      timer.mInList=true;
+      mLastPartialTimers.add(timer);
+    }
+  }
+}
