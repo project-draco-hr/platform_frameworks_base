@@ -6,7 +6,6 @@
   PermissionsState permissionsState=ps.getPermissionsState();
   PermissionsState origPermissions=permissionsState;
   final int[] currentUserIds=UserManagerService.getInstance().getUserIds();
-  int[] upgradeUserIds=EMPTY_INT_ARRAY;
   int[] changedRuntimePermissionUserIds=EMPTY_INT_ARRAY;
   boolean changedInstallPermission=false;
   if (replace) {
@@ -53,28 +52,10 @@ case PermissionInfo.PROTECTION_DANGEROUS:
     if (pkg.applicationInfo.targetSdkVersion <= Build.VERSION_CODES.LOLLIPOP_MR1) {
       grant=GRANT_INSTALL_LEGACY;
     }
- else     if (ps.isSystem()) {
-      final int[] updatedUserIds=ps.getPermissionsUpdatedForUserIds();
-      if (origPermissions.hasInstallPermission(bp.name)) {
-        grant=GRANT_UPGRADE;
-        upgradeUserIds=currentUserIds;
-      }
- else       if (!Arrays.equals(updatedUserIds,currentUserIds)) {
-        grant=GRANT_UPGRADE;
-        upgradeUserIds=currentUserIds;
-        for (        int userId : updatedUserIds) {
-          upgradeUserIds=ArrayUtils.removeInt(upgradeUserIds,userId);
-        }
-      }
- else {
-        grant=GRANT_RUNTIME;
-      }
-    }
  else     if (origPermissions.hasInstallPermission(bp.name)) {
       grant=GRANT_UPGRADE;
-      upgradeUserIds=currentUserIds;
     }
- else     if (replace) {
+ else {
       grant=GRANT_RUNTIME;
     }
   }
@@ -124,17 +105,14 @@ break;
 case GRANT_RUNTIME:
 {
 for (int userId : UserManagerService.getInstance().getUserIds()) {
-if (origPermissions.hasRuntimePermission(bp.name,userId)) {
 PermissionState permissionState=origPermissions.getRuntimePermissionState(bp.name,userId);
-final int flags=permissionState.getFlags();
+final int flags=permissionState != null ? permissionState.getFlags() : 0;
+if (origPermissions.hasRuntimePermission(bp.name,userId)) {
 if (permissionsState.grantRuntimePermission(bp,userId) == PermissionsState.PERMISSION_OPERATION_FAILURE) {
 changedRuntimePermissionUserIds=ArrayUtils.appendInt(changedRuntimePermissionUserIds,userId);
 }
- else {
-final int newFlags=!isSystemComponentOrPersistentPrivApp(pkg) ? flags : flags | PackageManager.FLAG_PERMISSION_SYSTEM_FIXED;
-permissionsState.updatePermissionFlags(bp,userId,newFlags,newFlags);
 }
-}
+permissionsState.updatePermissionFlags(bp,userId,flags,flags);
 }
 }
 break;
@@ -142,13 +120,14 @@ case GRANT_UPGRADE:
 {
 PermissionState permissionState=origPermissions.getInstallPermissionState(bp.name);
 final int flags=permissionState != null ? permissionState.getFlags() : 0;
-origPermissions.revokeInstallPermission(bp);
+if (origPermissions.revokeInstallPermission(bp) != PermissionsState.PERMISSION_OPERATION_FAILURE) {
 origPermissions.updatePermissionFlags(bp,UserHandle.USER_ALL,PackageManager.MASK_PERMISSION_FLAGS,0);
+changedInstallPermission=true;
+}
 if ((flags & PackageManager.FLAG_PERMISSION_REVOKE_ON_UPGRADE) == 0) {
-for (int userId : upgradeUserIds) {
+for (int userId : currentUserIds) {
 if (permissionsState.grantRuntimePermission(bp,userId) != PermissionsState.PERMISSION_OPERATION_FAILURE) {
-final int newFlags=!isSystemComponentOrPersistentPrivApp(pkg) ? flags : flags | PackageManager.FLAG_PERMISSION_SYSTEM_FIXED;
-permissionsState.updatePermissionFlags(bp,userId,newFlags,newFlags);
+permissionsState.updatePermissionFlags(bp,userId,flags,flags);
 changedRuntimePermissionUserIds=ArrayUtils.appendInt(changedRuntimePermissionUserIds,userId);
 }
 }
@@ -180,7 +159,6 @@ Slog.w(TAG,"Not granting permission " + perm + " to package "+ pkg.packageName+ 
 if ((changedInstallPermission || replace) && !ps.installPermissionsFixed && !isSystemApp(ps) || isUpdatedSystemApp(ps)) {
 ps.installPermissionsFixed=true;
 }
-ps.setPermissionsUpdatedForUserIds(currentUserIds);
 for (int userId : changedRuntimePermissionUserIds) {
 mSettings.writeRuntimePermissionsForUserLPr(userId,false);
 }
