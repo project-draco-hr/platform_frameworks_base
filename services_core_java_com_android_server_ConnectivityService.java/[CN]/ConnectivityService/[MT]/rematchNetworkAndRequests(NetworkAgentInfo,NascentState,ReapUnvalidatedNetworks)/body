@@ -8,6 +8,7 @@
   NetworkAgentInfo oldDefaultNetwork=null;
   if (DBG)   log("rematching " + newNetwork.name());
   ArrayList<NetworkAgentInfo> affectedNetworks=new ArrayList<NetworkAgentInfo>();
+  ArrayList<NetworkRequestInfo> addedRequests=new ArrayList<NetworkRequestInfo>();
   if (VDBG)   log(" network has: " + newNetwork.networkCapabilities);
   for (  NetworkRequestInfo nri : mNetworkRequests.values()) {
     NetworkAgentInfo currentNetwork=mNetworkForRequestId.get(nri.request.requestId);
@@ -21,7 +22,7 @@
     if (VDBG)     log("  checking if request is satisfied: " + nri.request);
     if (newNetwork.satisfies(nri.request)) {
       if (!nri.isRequest) {
-        newNetwork.addRequest(nri.request);
+        if (newNetwork.addRequest(nri.request))         addedRequests.add(nri);
         continue;
       }
       if (VDBG) {
@@ -39,7 +40,10 @@
         }
         unlinger(newNetwork);
         mNetworkForRequestId.put(nri.request.requestId,newNetwork);
-        newNetwork.addRequest(nri.request);
+        if (!newNetwork.addRequest(nri.request)) {
+          Slog.wtf(TAG,"BUG: " + newNetwork.name() + " already has "+ nri.request);
+        }
+        addedRequests.add(nri);
         keep=true;
         sendUpdatedScoreToFactories(nri.request,newNetwork.getCurrentScore());
         if (mDefaultRequest.requestId == nri.request.requestId) {
@@ -67,7 +71,7 @@ synchronized (ConnectivityService.this) {
         }
       }
     }
-    notifyNetworkCallbacks(newNetwork,ConnectivityManager.CALLBACK_AVAILABLE);
+    for (    NetworkRequestInfo nri : addedRequests)     notifyNetworkCallback(newNetwork,nri);
     if (isNewDefault) {
       if (oldDefaultNetwork != null) {
         mLegacyTypeTracker.remove(oldDefaultNetwork.networkInfo.getType(),oldDefaultNetwork,true);
