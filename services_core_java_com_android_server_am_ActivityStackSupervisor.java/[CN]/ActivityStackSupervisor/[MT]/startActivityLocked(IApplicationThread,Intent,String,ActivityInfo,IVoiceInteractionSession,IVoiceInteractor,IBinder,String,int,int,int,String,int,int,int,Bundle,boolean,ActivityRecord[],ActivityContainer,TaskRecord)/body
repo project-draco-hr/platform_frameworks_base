@@ -86,31 +86,38 @@
     ActivityOptions.abort(options);
     return err;
   }
-  final int startAnyPerm=mService.checkPermission(START_ANY_ACTIVITY,callingPid,callingUid);
-  final int componentPerm=mService.checkComponentPermission(aInfo.permission,callingPid,callingUid,aInfo.applicationInfo.uid,aInfo.exported);
-  final int actionRestriction=getActionRestrictionForCallingPackage(intent.getAction(),callingPackage,callingPid,callingUid);
-  if (startAnyPerm != PERMISSION_GRANTED && (componentPerm != PERMISSION_GRANTED || actionRestriction == ACTION_RESTRICTION_PERMISSION)) {
-    if (resultRecord != null) {
-      resultStack.sendActivityResultLocked(-1,resultRecord,resultWho,requestCode,Activity.RESULT_CANCELED,null);
-    }
-    String msg;
-    if (actionRestriction == ACTION_RESTRICTION_PERMISSION) {
-      msg="Permission Denial: starting " + intent.toString() + " from "+ callerApp+ " (pid="+ callingPid+ ", uid="+ callingUid+ ")"+ " with revoked permission "+ ACTION_TO_RUNTIME_PERMISSION.get(intent.getAction());
-    }
- else     if (!aInfo.exported) {
-      msg="Permission Denial: starting " + intent.toString() + " from "+ callerApp+ " (pid="+ callingPid+ ", uid="+ callingUid+ ")"+ " not exported from uid "+ aInfo.applicationInfo.uid;
-    }
- else {
-      msg="Permission Denial: starting " + intent.toString() + " from "+ callerApp+ " (pid="+ callingPid+ ", uid="+ callingUid+ ")"+ " requires "+ aInfo.permission;
-    }
-    Slog.w(TAG,msg);
-    throw new SecurityException(msg);
-  }
   boolean abort=false;
-  if (startAnyPerm != PERMISSION_GRANTED && actionRestriction == ACTION_RESTRICTION_APPOP) {
-    String msg="Permission Denial: starting " + intent.toString() + " from "+ callerApp+ " (pid="+ callingPid+ ", uid="+ callingUid+ ")"+ " requires "+ aInfo.permission;
-    Slog.w(TAG,msg);
-    abort=true;
+  final int startAnyPerm=mService.checkPermission(START_ANY_ACTIVITY,callingPid,callingUid);
+  if (startAnyPerm != PERMISSION_GRANTED) {
+    final int componentRestriction=getComponentRestrictionForCallingPackage(aInfo,callingPackage,callingPid,callingUid);
+    final int actionRestriction=getActionRestrictionForCallingPackage(intent.getAction(),callingPackage,callingPid,callingUid);
+    if (componentRestriction == ACTIVITY_RESTRICTION_PERMISSION || actionRestriction == ACTIVITY_RESTRICTION_PERMISSION) {
+      if (resultRecord != null) {
+        resultStack.sendActivityResultLocked(-1,resultRecord,resultWho,requestCode,Activity.RESULT_CANCELED,null);
+      }
+      String msg;
+      if (actionRestriction == ACTIVITY_RESTRICTION_PERMISSION) {
+        msg="Permission Denial: starting " + intent.toString() + " from "+ callerApp+ " (pid="+ callingPid+ ", uid="+ callingUid+ ")"+ " with revoked permission "+ ACTION_TO_RUNTIME_PERMISSION.get(intent.getAction());
+      }
+ else       if (!aInfo.exported) {
+        msg="Permission Denial: starting " + intent.toString() + " from "+ callerApp+ " (pid="+ callingPid+ ", uid="+ callingUid+ ")"+ " not exported from uid "+ aInfo.applicationInfo.uid;
+      }
+ else {
+        msg="Permission Denial: starting " + intent.toString() + " from "+ callerApp+ " (pid="+ callingPid+ ", uid="+ callingUid+ ")"+ " requires "+ aInfo.permission;
+      }
+      Slog.w(TAG,msg);
+      throw new SecurityException(msg);
+    }
+    if (actionRestriction == ACTIVITY_RESTRICTION_APPOP) {
+      String message="Appop Denial: starting " + intent.toString() + " from "+ callerApp+ " (pid="+ callingPid+ ", uid="+ callingUid+ ")"+ " requires "+ AppOpsManager.permissionToOp(ACTION_TO_RUNTIME_PERMISSION.get(intent.getAction()));
+      Slog.w(TAG,message);
+      abort=true;
+    }
+ else     if (componentRestriction == ACTIVITY_RESTRICTION_APPOP) {
+      String message="Appop Denial: starting " + intent.toString() + " from "+ callerApp+ " (pid="+ callingPid+ ", uid="+ callingUid+ ")"+ " requires appop "+ AppOpsManager.permissionToOp(aInfo.permission);
+      Slog.w(TAG,message);
+      abort=true;
+    }
   }
   abort|=!mService.mIntentFirewall.checkStartActivity(intent,callingUid,callingPid,resolvedType,aInfo.applicationInfo);
   if (mService.mController != null) {
