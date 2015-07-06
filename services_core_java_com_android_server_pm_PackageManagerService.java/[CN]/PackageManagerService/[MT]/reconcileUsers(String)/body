@@ -1,0 +1,51 @@
+{
+  final File[] files=Environment.getDataUserDirectory(volumeUuid).listFiles();
+  if (ArrayUtils.isEmpty(files)) {
+    Slog.d(TAG,"No users found on " + volumeUuid);
+    return;
+  }
+  for (  File file : files) {
+    if (!file.isDirectory())     continue;
+    final int userId;
+    final UserInfo info;
+    try {
+      userId=Integer.parseInt(file.getName());
+      info=sUserManager.getUserInfo(userId);
+    }
+ catch (    NumberFormatException e) {
+      Slog.w(TAG,"Invalid user directory " + file);
+      continue;
+    }
+    boolean destroyUser=false;
+    if (info == null) {
+      logCriticalInfo(Log.WARN,"Destroying user directory " + file + " because no matching user was found");
+      destroyUser=true;
+    }
+ else {
+      try {
+        UserManagerService.enforceSerialNumber(file,info.serialNumber);
+      }
+ catch (      IOException e) {
+        logCriticalInfo(Log.WARN,"Destroying user directory " + file + " because we failed to enforce serial number: "+ e);
+        destroyUser=true;
+      }
+    }
+    if (destroyUser) {
+synchronized (mInstallLock) {
+        mInstaller.removeUserDataDirs(volumeUuid,userId);
+      }
+    }
+  }
+  final UserManager um=mContext.getSystemService(UserManager.class);
+  for (  UserInfo user : um.getUsers()) {
+    final File userDir=Environment.getDataUserDirectory(volumeUuid,user.id);
+    if (userDir.exists())     continue;
+    try {
+      UserManagerService.prepareUserDirectory(mContext,volumeUuid,user.id);
+      UserManagerService.enforceSerialNumber(userDir,user.serialNumber);
+    }
+ catch (    IOException e) {
+      Log.wtf(TAG,"Failed to create user directory on " + volumeUuid,e);
+    }
+  }
+}
