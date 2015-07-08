@@ -2,7 +2,7 @@
   final UserManager userManager=mContext.getSystemService(UserManager.class);
   final PackageManager packageManager=mContext.getPackageManager();
   final List<UserInfo> users=userManager.getUsers();
-  final int currentUser=ActivityManager.getCurrentUser();
+  final List<UserInfo> currentProfiles=userManager.getEnabledProfiles(ActivityManager.getCurrentUser());
   final MeasurementDetails details=new MeasurementDetails();
   final Message finished=mMeasurementHandler.obtainMessage(MeasurementHandler.MSG_COMPLETED,details);
   if (mVolume == null || !mVolume.isMountedReadable()) {
@@ -10,13 +10,18 @@
     return;
   }
   if (mSharedVolume != null && mSharedVolume.isMountedReadable()) {
-    final File basePath=mSharedVolume.getPathForUser(currentUser);
-    for (    String type : sMeasureMediaTypes) {
-      final File path=new File(basePath,type);
-      final long size=getDirectorySize(imcs,path);
-      details.mediaSize.put(type,size);
+    for (    UserInfo currentUserInfo : currentProfiles) {
+      final int userId=currentUserInfo.id;
+      final File basePath=mSharedVolume.getPathForUser(userId);
+      HashMap<String,Long> mediaMap=new HashMap<>(sMeasureMediaTypes.size());
+      details.mediaSize.put(userId,mediaMap);
+      for (      String type : sMeasureMediaTypes) {
+        final File path=new File(basePath,type);
+        final long size=getDirectorySize(imcs,path);
+        mediaMap.put(type,size);
+      }
+      addValue(details.miscSize,userId,measureMisc(imcs,basePath));
     }
-    details.miscSize=measureMisc(imcs,basePath);
     if (mSharedVolume.getType() == VolumeInfo.TYPE_EMULATED) {
       for (      UserInfo user : users) {
         final File userPath=mSharedVolume.getPathForUser(user.id);
@@ -43,7 +48,7 @@
       finished.sendToTarget();
       return;
     }
-    final StatsObserver observer=new StatsObserver(true,details,currentUser,finished,count);
+    final StatsObserver observer=new StatsObserver(true,details,ActivityManager.getCurrentUser(),currentProfiles,finished,count);
     for (    UserInfo user : users) {
       for (      ApplicationInfo app : volumeApps) {
         packageManager.getPackageSizeInfo(app.packageName,user.id,observer);
