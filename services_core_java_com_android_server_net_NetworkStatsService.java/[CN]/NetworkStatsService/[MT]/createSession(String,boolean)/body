@@ -1,0 +1,88 @@
+{
+  assertBandwidthControlEnabled();
+  if (pollOnCreate) {
+    final long ident=Binder.clearCallingIdentity();
+    try {
+      performPoll(FLAG_PERSIST_ALL);
+    }
+  finally {
+      Binder.restoreCallingIdentity(ident);
+    }
+  }
+  return new INetworkStatsSession.Stub(){
+    private NetworkStatsCollection mUidComplete;
+    private NetworkStatsCollection mUidTagComplete;
+    private String mCallingPackage=callingPackage;
+    private NetworkStatsCollection getUidComplete(){
+synchronized (mStatsLock) {
+        if (mUidComplete == null) {
+          mUidComplete=mUidRecorder.getOrLoadCompleteLocked();
+        }
+        return mUidComplete;
+      }
+    }
+    private NetworkStatsCollection getUidTagComplete(){
+synchronized (mStatsLock) {
+        if (mUidTagComplete == null) {
+          mUidTagComplete=mUidTagRecorder.getOrLoadCompleteLocked();
+        }
+        return mUidTagComplete;
+      }
+    }
+    @Override public int[] getRelevantUids(){
+      enforcePermissionForManagedAdmin(mCallingPackage);
+      return getUidComplete().getRelevantUids();
+    }
+    @Override public NetworkStats getDeviceSummaryForNetwork(    NetworkTemplate template,    long start,    long end){
+      enforcePermission(mCallingPackage);
+      NetworkStats result=new NetworkStats(end - start,1);
+      final long ident=Binder.clearCallingIdentity();
+      try {
+        result.combineAllValues(internalGetSummaryForNetwork(template,start,end));
+      }
+  finally {
+        Binder.restoreCallingIdentity(ident);
+      }
+      return result;
+    }
+    @Override public NetworkStats getSummaryForNetwork(    NetworkTemplate template,    long start,    long end){
+      enforcePermission(mCallingPackage);
+      return internalGetSummaryForNetwork(template,start,end);
+    }
+    @Override public NetworkStatsHistory getHistoryForNetwork(    NetworkTemplate template,    int fields){
+      return internalGetHistoryForNetwork(template,fields);
+    }
+    @Override public NetworkStats getSummaryForAllUid(    NetworkTemplate template,    long start,    long end,    boolean includeTags){
+      enforcePermissionForManagedAdmin(mCallingPackage);
+      final NetworkStats stats=getUidComplete().getSummary(template,start,end);
+      if (includeTags) {
+        final NetworkStats tagStats=getUidTagComplete().getSummary(template,start,end);
+        stats.combineAllValues(tagStats);
+      }
+      return stats;
+    }
+    @Override public NetworkStatsHistory getHistoryForUid(    NetworkTemplate template,    int uid,    int set,    int tag,    int fields){
+      enforcePermissionForManagedAdmin(mCallingPackage);
+      if (tag == TAG_NONE) {
+        return getUidComplete().getHistory(template,uid,set,tag,fields);
+      }
+ else {
+        return getUidTagComplete().getHistory(template,uid,set,tag,fields);
+      }
+    }
+    @Override public NetworkStatsHistory getHistoryIntervalForUid(    NetworkTemplate template,    int uid,    int set,    int tag,    int fields,    long start,    long end){
+      enforcePermissionForManagedAdmin(mCallingPackage);
+      if (tag == TAG_NONE) {
+        return getUidComplete().getHistory(template,uid,set,tag,fields,start,end);
+      }
+ else {
+        return getUidTagComplete().getHistory(template,uid,set,tag,fields,start,end);
+      }
+    }
+    @Override public void close(){
+      mUidComplete=null;
+      mUidTagComplete=null;
+    }
+  }
+;
+}
