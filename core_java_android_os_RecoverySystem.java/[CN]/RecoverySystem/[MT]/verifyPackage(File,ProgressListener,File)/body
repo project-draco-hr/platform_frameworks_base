@@ -1,11 +1,10 @@
 {
-  long fileLen=packageFile.length();
-  RandomAccessFile raf=new RandomAccessFile(packageFile,"r");
+  final long fileLen=packageFile.length();
+  final RandomAccessFile raf=new RandomAccessFile(packageFile,"r");
   try {
-    int lastPercent=0;
-    long lastPublishTime=System.currentTimeMillis();
+    final long startTimeMillis=System.currentTimeMillis();
     if (listener != null) {
-      listener.onProgress(lastPercent);
+      listener.onProgress(0);
     }
     raf.seek(fileLen - 6);
     byte[] footer=new byte[6];
@@ -13,8 +12,8 @@
     if (footer[2] != (byte)0xff || footer[3] != (byte)0xff) {
       throw new SignatureException("no signature in file (no footer)");
     }
-    int commentSize=(footer[4] & 0xff) | ((footer[5] & 0xff) << 8);
-    int signatureStart=(footer[0] & 0xff) | ((footer[1] & 0xff) << 8);
+    final int commentSize=(footer[4] & 0xff) | ((footer[5] & 0xff) << 8);
+    final int signatureStart=(footer[0] & 0xff) | ((footer[1] & 0xff) << 8);
     byte[] eocd=new byte[commentSize + 22];
     raf.seek(fileLen - (commentSize + 22));
     raf.readFully(eocd);
@@ -26,37 +25,20 @@
         throw new SignatureException("EOCD marker found after start of EOCD");
       }
     }
-    BerInputStream bis=new BerInputStream(new ByteArrayInputStream(eocd,commentSize + 22 - signatureStart,signatureStart));
-    ContentInfo info=(ContentInfo)ContentInfo.ASN1.decode(bis);
-    SignedData signedData=info.getSignedData();
-    if (signedData == null) {
-      throw new IOException("signedData is null");
-    }
-    List<Certificate> encCerts=signedData.getCertificates();
-    if (encCerts.isEmpty()) {
-      throw new IOException("encCerts is empty");
-    }
-    Iterator<Certificate> it=encCerts.iterator();
-    X509Certificate cert=null;
-    if (it.hasNext()) {
-      CertificateFactory cf=CertificateFactory.getInstance("X.509");
-      InputStream is=new ByteArrayInputStream(it.next().getEncoded());
-      cert=(X509Certificate)cf.generateCertificate(is);
-    }
- else {
+    PKCS7 block=new PKCS7(new ByteArrayInputStream(eocd,commentSize + 22 - signatureStart,signatureStart));
+    X509Certificate[] certificates=block.getCertificates();
+    if (certificates == null || certificates.length == 0) {
       throw new SignatureException("signature contains no certificates");
     }
-    List<SignerInfo> sigInfos=signedData.getSignerInfos();
-    SignerInfo sigInfo;
-    if (!sigInfos.isEmpty()) {
-      sigInfo=(SignerInfo)sigInfos.get(0);
-    }
- else {
-      throw new IOException("no signer infos!");
-    }
-    HashSet<X509Certificate> trusted=getTrustedCerts(deviceCertsZipFile == null ? DEFAULT_KEYSTORE : deviceCertsZipFile);
+    X509Certificate cert=certificates[0];
     PublicKey signatureKey=cert.getPublicKey();
+    SignerInfo[] signerInfos=block.getSignerInfos();
+    if (signerInfos == null || signerInfos.length == 0) {
+      throw new SignatureException("signature contains no signedData");
+    }
+    SignerInfo signerInfo=signerInfos[0];
     boolean verified=false;
+    HashSet<X509Certificate> trusted=getTrustedCerts(deviceCertsZipFile == null ? DEFAULT_KEYSTORE : deviceCertsZipFile);
     for (    X509Certificate c : trusted) {
       if (c.getPublicKey().equals(signatureKey)) {
         verified=true;
@@ -66,49 +48,50 @@
     if (!verified) {
       throw new SignatureException("signature doesn't match any trusted key");
     }
-    String da=sigInfo.getDigestAlgorithm();
-    String dea=sigInfo.getDigestEncryptionAlgorithm();
-    String alg=null;
-    if (da == null || dea == null) {
-      alg=cert.getSigAlgName();
-    }
- else {
-      alg=da + "with" + dea;
-    }
-    Signature sig=Signature.getInstance(alg);
-    sig.initVerify(cert);
-    long toRead=fileLen - commentSize - 2;
-    long soFar=0;
     raf.seek(0);
-    byte[] buffer=new byte[4096];
-    boolean interrupted=false;
-    while (soFar < toRead) {
-      interrupted=Thread.interrupted();
-      if (interrupted)       break;
-      int size=buffer.length;
-      if (soFar + size > toRead) {
-        size=(int)(toRead - soFar);
+    final ProgressListener listenerForInner=listener;
+    SignerInfo verifyResult=block.verify(signerInfo,new InputStream(){
+      long toRead=fileLen - commentSize - 2;
+      long soFar=0;
+      int lastPercent=0;
+      long lastPublishTime=startTimeMillis;
+      @Override public int read() throws IOException {
+        throw new UnsupportedOperationException();
       }
-      int read=raf.read(buffer,0,size);
-      sig.update(buffer,0,read);
-      soFar+=read;
-      if (listener != null) {
-        long now=System.currentTimeMillis();
-        int p=(int)(soFar * 100 / toRead);
-        if (p > lastPercent && now - lastPublishTime > PUBLISH_PROGRESS_INTERVAL_MS) {
-          lastPercent=p;
-          lastPublishTime=now;
-          listener.onProgress(lastPercent);
+      @Override public int read(      byte[] b,      int off,      int len) throws IOException {
+        if (soFar >= toRead) {
+          return -1;
         }
+        if (Thread.currentThread().isInterrupted()) {
+          return -1;
+        }
+        int size=len;
+        if (soFar + size > toRead) {
+          size=(int)(toRead - soFar);
+        }
+        int read=raf.read(b,off,size);
+        soFar+=read;
+        if (listenerForInner != null) {
+          long now=System.currentTimeMillis();
+          int p=(int)(soFar * 100 / toRead);
+          if (p > lastPercent && now - lastPublishTime > PUBLISH_PROGRESS_INTERVAL_MS) {
+            lastPercent=p;
+            lastPublishTime=now;
+            listenerForInner.onProgress(lastPercent);
+          }
+        }
+        return read;
       }
     }
+);
+    final boolean interrupted=Thread.interrupted();
     if (listener != null) {
       listener.onProgress(100);
     }
     if (interrupted) {
       throw new SignatureException("verification was interrupted");
     }
-    if (!sig.verify(sigInfo.getEncryptedDigest())) {
+    if (verifyResult == null) {
       throw new SignatureException("signature digest verification failed");
     }
   }
