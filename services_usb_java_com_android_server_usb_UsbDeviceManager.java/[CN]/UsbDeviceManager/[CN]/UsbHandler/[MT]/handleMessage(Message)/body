@@ -8,16 +8,15 @@ if (!mConnected) {
 }
 updateUsbNotification();
 updateAdbNotification();
-if (containsFunction(mCurrentFunctions,UsbManager.USB_FUNCTION_ACCESSORY)) {
+if (UsbManager.containsFunction(mCurrentFunctions,UsbManager.USB_FUNCTION_ACCESSORY)) {
 updateCurrentAccessory();
 }
  else if (!mConnected) {
-setEnabledFunctions(getDefaultFunctions());
+setEnabledFunctions(null,false);
 }
 if (mBootCompleted) {
-updateUsbState();
-updateAudioSourceFunction();
-updateMidiFunction();
+updateUsbStateBroadcast();
+updateUsbFunctions();
 }
 break;
 case MSG_ENABLE_ADB:
@@ -25,26 +24,25 @@ setAdbEnabled(msg.arg1 == 1);
 break;
 case MSG_SET_CURRENT_FUNCTIONS:
 String functions=(String)msg.obj;
-setEnabledFunctions(functions);
+setEnabledFunctions(functions,false);
+break;
+case MSG_UPDATE_USER_RESTRICTIONS:
+setEnabledFunctions(mCurrentFunctions,false);
 break;
 case MSG_SET_USB_DATA_UNLOCKED:
 mUsbDataUnlocked=(msg.arg1 == 1);
 updateUsbNotification();
-updateUsbState();
-restartCurrentFunction();
+updateUsbStateBroadcast();
+setEnabledFunctions(mCurrentFunctions,true);
 break;
 case MSG_SYSTEM_READY:
-setUsbConfig(mCurrentFunctions);
-updatePersistentProperty();
 updateUsbNotification();
 updateAdbNotification();
-updateUsbState();
-updateAudioSourceFunction();
-updateMidiFunction();
+updateUsbStateBroadcast();
+updateUsbFunctions();
 break;
 case MSG_BOOT_COMPLETED:
 mBootCompleted=true;
-setUsbConfig(mCurrentFunctions);
 if (mCurrentAccessory != null) {
 getCurrentSettings().accessoryAttached(mCurrentAccessory);
 }
@@ -54,21 +52,14 @@ mDebuggingManager.setAdbEnabled(mAdbEnabled);
 break;
 case MSG_USER_SWITCHED:
 {
-UserManager userManager=(UserManager)mContext.getSystemService(Context.USER_SERVICE);
-UserHandle userHandle=new UserHandle(msg.arg1);
-if (userManager.hasUserRestriction(UserManager.DISALLOW_USB_FILE_TRANSFER,userHandle)) {
-Slog.v(TAG,"Switched to user " + msg.arg1 + " with DISALLOW_USB_FILE_TRANSFER restriction; disabling USB.");
-setUsbConfig("none");
-mCurrentUser=msg.arg1;
-break;
-}
-final boolean mtpActive=containsFunction(mCurrentFunctions,UsbManager.USB_FUNCTION_MTP) || containsFunction(mCurrentFunctions,UsbManager.USB_FUNCTION_PTP);
-if (mtpActive && mCurrentUser != UserHandle.USER_NULL) {
-Slog.v(TAG,"Current user switched; resetting USB host stack for MTP");
-setUsbConfig("none");
-setUsbConfig(mCurrentFunctions);
+if (mCurrentUser != msg.arg1) {
+final boolean active=UsbManager.containsFunction(mCurrentFunctions,UsbManager.USB_FUNCTION_MTP) || UsbManager.containsFunction(mCurrentFunctions,UsbManager.USB_FUNCTION_PTP);
+if (active && mCurrentUser != UserHandle.USER_NULL) {
+Slog.v(TAG,"Current user switched to " + mCurrentUser + "; resetting USB host stack for MTP or PTP");
+setEnabledFunctions(mCurrentFunctions,true);
 }
 mCurrentUser=msg.arg1;
+}
 break;
 }
 }
