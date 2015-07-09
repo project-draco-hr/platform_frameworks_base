@@ -1,0 +1,80 @@
+{
+  if (ps.pkg == null) {
+    return;
+  }
+  final int userSettableFlags=FLAG_PERMISSION_USER_SET | FLAG_PERMISSION_USER_FIXED | FLAG_PERMISSION_REVOKE_ON_UPGRADE;
+  final int policyOrSystemFlags=FLAG_PERMISSION_SYSTEM_FIXED | FLAG_PERMISSION_POLICY_FIXED;
+  boolean writeInstallPermissions=false;
+  boolean writeRuntimePermissions=false;
+  final int permissionCount=ps.pkg.requestedPermissions.size();
+  for (int i=0; i < permissionCount; i++) {
+    String permission=ps.pkg.requestedPermissions.get(i);
+    BasePermission bp=mSettings.mPermissions.get(permission);
+    if (bp == null) {
+      continue;
+    }
+    if (ps.sharedUser != null) {
+      boolean used=false;
+      final int packageCount=ps.sharedUser.packages.size();
+      for (int j=0; j < packageCount; j++) {
+        PackageSetting pkg=ps.sharedUser.packages.valueAt(j);
+        if (pkg.pkg != null && !pkg.pkg.packageName.equals(ps.pkg.packageName) && pkg.pkg.requestedPermissions.contains(permission)) {
+          used=true;
+          break;
+        }
+      }
+      if (used) {
+        continue;
+      }
+    }
+    PermissionsState permissionsState=ps.getPermissionsState();
+    final int oldFlags=permissionsState.getPermissionFlags(bp.name,userId);
+    final boolean hasInstallState=permissionsState.getInstallPermissionState(bp.name) != null;
+    if (permissionsState.updatePermissionFlags(bp,userId,userSettableFlags,0)) {
+      if (hasInstallState) {
+        writeInstallPermissions=true;
+      }
+ else {
+        writeRuntimePermissions=true;
+      }
+    }
+    if (!bp.isRuntime()) {
+      continue;
+    }
+    if ((oldFlags & policyOrSystemFlags) != 0) {
+      continue;
+    }
+    if ((oldFlags & FLAG_PERMISSION_GRANTED_BY_DEFAULT) != 0) {
+      if (permissionsState.grantRuntimePermission(bp,userId) != PERMISSION_OPERATION_FAILURE) {
+        writeRuntimePermissions=true;
+      }
+    }
+ else {
+      final int revokeResult=permissionsState.revokeRuntimePermission(bp,userId);
+switch (revokeResult) {
+case PERMISSION_OPERATION_SUCCESS:
+{
+          writeRuntimePermissions=true;
+        }
+      break;
+case PERMISSION_OPERATION_SUCCESS_GIDS_CHANGED:
+{
+      writeRuntimePermissions=true;
+      mHandler.post(new Runnable(){
+        @Override public void run(){
+          killSettingPackagesForUser(ps,userId,KILL_APP_REASON_GIDS_CHANGED);
+        }
+      }
+);
+    }
+  break;
+}
+}
+}
+if (writeRuntimePermissions) {
+mSettings.writeRuntimePermissionsForUserLPr(userId,true);
+}
+if (writeInstallPermissions) {
+mSettings.writeLPr();
+}
+}
