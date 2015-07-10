@@ -1,0 +1,53 @@
+{
+  NetworkCapabilities filter=new NetworkCapabilities();
+  filter.addCapability(capability);
+  final HandlerThread handlerThread=new HandlerThread("testNetworkFactoryRequests");
+  handlerThread.start();
+  final MockNetworkFactory testFactory=new MockNetworkFactory(handlerThread.getLooper(),mServiceContext,"testFactory",filter);
+  testFactory.setScoreFilter(40);
+  ConditionVariable cv=testFactory.getNetworkStartedCV();
+  testFactory.register();
+  int expectedRequestCount=1;
+  NetworkCallback networkCallback=null;
+  if (capability != NET_CAPABILITY_INTERNET) {
+    testFactory.waitForNetworkRequests(1);
+    assertFalse(testFactory.getMyStartRequested());
+    NetworkRequest request=new NetworkRequest.Builder().addCapability(capability).build();
+    networkCallback=new NetworkCallback();
+    mCm.requestNetwork(request,networkCallback);
+    expectedRequestCount++;
+  }
+  waitFor(cv);
+  assertEquals(expectedRequestCount,testFactory.getMyRequestCount());
+  assertTrue(testFactory.getMyStartRequested());
+  MockNetworkAgent testAgent=new MockNetworkAgent(TRANSPORT_CELLULAR);
+  testAgent.adjustScore(40);
+  cv=testFactory.getNetworkStoppedCV();
+  testAgent.connect(false);
+  testAgent.addCapability(capability);
+  waitFor(cv);
+  assertEquals(expectedRequestCount,testFactory.getMyRequestCount());
+  assertFalse(testFactory.getMyStartRequested());
+  ConnectivityManager.NetworkCallback[] networkCallbacks=new ConnectivityManager.NetworkCallback[10];
+  for (int i=0; i < networkCallbacks.length; i++) {
+    networkCallbacks[i]=new ConnectivityManager.NetworkCallback();
+    NetworkRequest.Builder builder=new NetworkRequest.Builder();
+    builder.addCapability(capability);
+    mCm.requestNetwork(builder.build(),networkCallbacks[i]);
+  }
+  testFactory.waitForNetworkRequests(10 + expectedRequestCount);
+  assertFalse(testFactory.getMyStartRequested());
+  for (int i=0; i < networkCallbacks.length; i++) {
+    mCm.unregisterNetworkCallback(networkCallbacks[i]);
+  }
+  testFactory.waitForNetworkRequests(expectedRequestCount);
+  assertFalse(testFactory.getMyStartRequested());
+  cv=testFactory.getNetworkStartedCV();
+  testAgent.disconnect();
+  waitFor(cv);
+  assertEquals(expectedRequestCount,testFactory.getMyRequestCount());
+  assertTrue(testFactory.getMyStartRequested());
+  testFactory.unregister();
+  if (networkCallback != null)   mCm.unregisterNetworkCallback(networkCallback);
+  handlerThread.quit();
+}
