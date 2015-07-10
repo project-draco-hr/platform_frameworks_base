@@ -1,41 +1,14 @@
 {
   mNetworkRequests.put(nri.request,nri);
-  NetworkAgentInfo bestNetwork=null;
-  for (  NetworkAgentInfo network : mNetworkAgentInfos.values()) {
-    if (DBG)     log("handleRegisterNetworkRequest checking " + network.name());
-    if (network.satisfies(nri.request)) {
-      if (DBG)       log("apparently satisfied.  currentScore=" + network.getCurrentScore());
-      if (!nri.isRequest) {
-        if (!network.addRequest(nri.request)) {
-          Slog.wtf(TAG,"BUG: " + network.name() + " already has "+ nri.request);
-        }
-        notifyNetworkCallback(network,nri);
-      }
- else       if (bestNetwork == null || bestNetwork.getCurrentScore() < network.getCurrentScore()) {
-        bestNetwork=network;
+  rematchAllNetworksAndRequests(null,0);
+  if (!nri.isRequest && nri.request.networkCapabilities.hasSignalStrength()) {
+    for (    NetworkAgentInfo network : mNetworkAgentInfos.values()) {
+      if (network.satisfiesImmutableCapabilitiesOf(nri.request)) {
+        updateSignalStrengthThresholds(network);
       }
     }
-    if (!nri.isRequest && network.satisfiesImmutableCapabilitiesOf(nri.request)) {
-      updateSignalStrengthThresholds(network);
-    }
   }
-  if (bestNetwork != null) {
-    if (DBG)     log("using " + bestNetwork.name());
-    unlinger(bestNetwork);
-    if (!bestNetwork.addRequest(nri.request)) {
-      Slog.wtf(TAG,"BUG: " + bestNetwork.name() + " already has "+ nri.request);
-    }
-    mNetworkForRequestId.put(nri.request.requestId,bestNetwork);
-    notifyNetworkCallback(bestNetwork,nri);
-    if (nri.request.legacyType != TYPE_NONE) {
-      mLegacyTypeTracker.add(nri.request.legacyType,bestNetwork);
-    }
-  }
-  if (nri.isRequest) {
-    if (DBG)     log("sending new NetworkRequest to factories");
-    final int score=bestNetwork == null ? 0 : bestNetwork.getCurrentScore();
-    for (    NetworkFactoryInfo nfi : mNetworkFactoryInfos.values()) {
-      nfi.asyncChannel.sendMessage(android.net.NetworkFactory.CMD_REQUEST_NETWORK,score,0,nri.request);
-    }
+  if (nri.isRequest && mNetworkForRequestId.get(nri.request.requestId) == null) {
+    sendUpdatedScoreToFactories(nri.request,0);
   }
 }
