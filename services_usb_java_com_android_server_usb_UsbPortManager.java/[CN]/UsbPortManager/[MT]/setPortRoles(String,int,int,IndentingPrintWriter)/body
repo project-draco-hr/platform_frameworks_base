@@ -1,0 +1,78 @@
+{
+synchronized (mLock) {
+    final PortInfo portInfo=mPorts.get(portId);
+    if (portInfo == null) {
+      if (pw != null) {
+        pw.println("No such USB port: " + portId);
+      }
+      return;
+    }
+    if (!portInfo.mUsbPortStatus.isRoleCombinationSupported(newPowerRole,newDataRole)) {
+      logAndPrint(Log.ERROR,pw,"Attempted to set USB port into unsupported " + "role combination: portId=" + portId + ", newPowerRole="+ UsbPort.powerRoleToString(newPowerRole)+ ", newDataRole="+ UsbPort.dataRoleToString(newDataRole));
+      return;
+    }
+    final int currentDataRole=portInfo.mUsbPortStatus.getCurrentDataRole();
+    final int currentPowerRole=portInfo.mUsbPortStatus.getCurrentPowerRole();
+    if (currentDataRole == newDataRole && currentPowerRole == newPowerRole) {
+      if (pw != null) {
+        pw.println("No change.");
+      }
+      return;
+    }
+    final boolean canChangeMode=portInfo.mCanChangeMode;
+    final boolean canChangePowerRole=portInfo.mCanChangePowerRole;
+    final boolean canChangeDataRole=portInfo.mCanChangeDataRole;
+    final int currentMode=portInfo.mUsbPortStatus.getCurrentMode();
+    final int newMode;
+    if ((!canChangePowerRole && currentPowerRole != newPowerRole) || (!canChangeDataRole && currentDataRole != newDataRole)) {
+      if (canChangeMode && newPowerRole == UsbPort.POWER_ROLE_SOURCE && newDataRole == UsbPort.DATA_ROLE_HOST) {
+        newMode=UsbPort.MODE_DFP;
+      }
+ else       if (canChangeMode && newPowerRole == UsbPort.POWER_ROLE_SINK && newDataRole == UsbPort.DATA_ROLE_DEVICE) {
+        newMode=UsbPort.MODE_UFP;
+      }
+ else {
+        logAndPrint(Log.ERROR,pw,"Found mismatch in supported USB role combinations " + "while attempting to change role: " + portInfo + ", newPowerRole="+ UsbPort.powerRoleToString(newPowerRole)+ ", newDataRole="+ UsbPort.dataRoleToString(newDataRole));
+        return;
+      }
+    }
+ else {
+      newMode=currentMode;
+    }
+    logAndPrint(Log.INFO,pw,"Setting USB port mode and role: portId=" + portId + ", currentMode="+ UsbPort.modeToString(currentMode)+ ", currentPowerRole="+ UsbPort.powerRoleToString(currentPowerRole)+ ", currentDataRole="+ UsbPort.dataRoleToString(currentDataRole)+ ", newMode="+ UsbPort.modeToString(newMode)+ ", newPowerRole="+ UsbPort.powerRoleToString(newPowerRole)+ ", newDataRole="+ UsbPort.dataRoleToString(newDataRole));
+    SimulatedPortInfo sim=mSimulatedPorts.get(portId);
+    if (sim != null) {
+      sim.mCurrentMode=newMode;
+      sim.mCurrentPowerRole=newPowerRole;
+      sim.mCurrentDataRole=newDataRole;
+    }
+ else     if (mHaveKernelSupport) {
+      final File portDir=new File(SYSFS_CLASS,portId);
+      if (!portDir.exists()) {
+        logAndPrint(Log.ERROR,pw,"USB port not found: portId=" + portId);
+        return;
+      }
+      if (currentMode != newMode) {
+        if (!writeFile(portDir,SYSFS_PORT_MODE,newMode == UsbPort.MODE_DFP ? PORT_MODE_DFP : PORT_MODE_UFP)) {
+          logAndPrint(Log.ERROR,pw,"Failed to set the USB port mode: " + "portId=" + portId + ", newMode="+ UsbPort.modeToString(newMode));
+          return;
+        }
+      }
+ else {
+        if (currentPowerRole != newPowerRole) {
+          if (!writeFile(portDir,SYSFS_PORT_POWER_ROLE,newPowerRole == UsbPort.POWER_ROLE_SOURCE ? PORT_POWER_ROLE_SOURCE : PORT_POWER_ROLE_SINK)) {
+            logAndPrint(Log.ERROR,pw,"Failed to set the USB port power role: " + "portId=" + portId + ", newPowerRole="+ UsbPort.powerRoleToString(newPowerRole));
+            return;
+          }
+        }
+        if (currentDataRole != newDataRole) {
+          if (!writeFile(portDir,SYSFS_PORT_DATA_ROLE,newDataRole == UsbPort.DATA_ROLE_HOST ? PORT_DATA_ROLE_HOST : PORT_DATA_ROLE_DEVICE)) {
+            logAndPrint(Log.ERROR,pw,"Failed to set the USB port data role: " + "portId=" + portId + ", newDataRole="+ UsbPort.dataRoleToString(newDataRole));
+            return;
+          }
+        }
+      }
+    }
+    updatePortsLocked(pw);
+  }
+}
