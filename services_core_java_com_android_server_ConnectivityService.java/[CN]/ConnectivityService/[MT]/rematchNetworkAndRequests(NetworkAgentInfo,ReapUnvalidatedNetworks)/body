@@ -8,8 +8,9 @@
   ArrayList<NetworkRequestInfo> addedRequests=new ArrayList<NetworkRequestInfo>();
   if (VDBG)   log(" network has: " + newNetwork.networkCapabilities);
   for (  NetworkRequestInfo nri : mNetworkRequests.values()) {
-    NetworkAgentInfo currentNetwork=mNetworkForRequestId.get(nri.request.requestId);
-    if (newNetwork == currentNetwork) {
+    final NetworkAgentInfo currentNetwork=mNetworkForRequestId.get(nri.request.requestId);
+    final boolean satisfies=newNetwork.satisfies(nri.request);
+    if (newNetwork == currentNetwork && satisfies) {
       if (VDBG) {
         log("Network " + newNetwork.name() + " was already satisfying"+ " request "+ nri.request.requestId+ ". No change.");
       }
@@ -17,7 +18,7 @@
       continue;
     }
     if (VDBG)     log("  checking if request is satisfied: " + nri.request);
-    if (newNetwork.satisfies(nri.request)) {
+    if (satisfies) {
       if (!nri.isRequest) {
         if (newNetwork.addRequest(nri.request))         addedRequests.add(nri);
         continue;
@@ -49,6 +50,22 @@
         }
       }
     }
+ else     if (newNetwork.networkRequests.get(nri.request.requestId) != null) {
+      if (DBG) {
+        log("Network " + newNetwork.name() + " stopped satisfying"+ " request "+ nri.request.requestId);
+      }
+      newNetwork.networkRequests.remove(nri.request.requestId);
+      if (currentNetwork == newNetwork) {
+        mNetworkForRequestId.remove(nri.request.requestId);
+        sendUpdatedScoreToFactories(nri.request,0);
+      }
+ else {
+        if (nri.isRequest == true) {
+          Slog.wtf(TAG,"BUG: Removing request " + nri.request.requestId + " from "+ newNetwork.name()+ " without updating mNetworkForRequestId or factories!");
+        }
+      }
+      callCallbackForRequest(nri,newNetwork,ConnectivityManager.CALLBACK_LOST);
+    }
   }
   for (  NetworkAgentInfo nai : affectedNetworks) {
     if (nai.lingering) {
@@ -60,24 +77,24 @@
       unlinger(nai);
     }
   }
-  if (keep) {
-    if (isNewDefault) {
-      makeDefault(newNetwork);
+  if (isNewDefault) {
+    makeDefault(newNetwork);
 synchronized (ConnectivityService.this) {
-        if (mNetTransitionWakeLock.isHeld()) {
-          mHandler.sendMessageDelayed(mHandler.obtainMessage(EVENT_CLEAR_NET_TRANSITION_WAKELOCK,mNetTransitionWakeLockSerialNumber,0),1000);
-        }
+      if (mNetTransitionWakeLock.isHeld()) {
+        mHandler.sendMessageDelayed(mHandler.obtainMessage(EVENT_CLEAR_NET_TRANSITION_WAKELOCK,mNetTransitionWakeLockSerialNumber,0),1000);
       }
     }
-    for (    NetworkRequestInfo nri : addedRequests)     notifyNetworkCallback(newNetwork,nri);
-    if (isNewDefault) {
-      if (oldDefaultNetwork != null) {
-        mLegacyTypeTracker.remove(oldDefaultNetwork.networkInfo.getType(),oldDefaultNetwork,true);
-      }
-      mDefaultInetConditionPublished=newNetwork.lastValidated ? 100 : 0;
-      mLegacyTypeTracker.add(newNetwork.networkInfo.getType(),newNetwork);
-      notifyLockdownVpn(newNetwork);
+  }
+  for (  NetworkRequestInfo nri : addedRequests)   notifyNetworkCallback(newNetwork,nri);
+  if (isNewDefault) {
+    if (oldDefaultNetwork != null) {
+      mLegacyTypeTracker.remove(oldDefaultNetwork.networkInfo.getType(),oldDefaultNetwork,true);
     }
+    mDefaultInetConditionPublished=newNetwork.lastValidated ? 100 : 0;
+    mLegacyTypeTracker.add(newNetwork.networkInfo.getType(),newNetwork);
+    notifyLockdownVpn(newNetwork);
+  }
+  if (keep) {
     try {
       final IBatteryStats bs=BatteryStatsService.getService();
       final int type=newNetwork.networkInfo.getType();
