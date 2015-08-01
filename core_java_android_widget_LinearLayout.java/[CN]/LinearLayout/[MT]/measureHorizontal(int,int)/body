@@ -6,7 +6,6 @@
   int weightedMaxHeight=0;
   boolean allFillParent=true;
   float totalWeight=0;
-  int usedExcessSpace=0;
   final int count=getVirtualChildCount();
   final int widthMode=MeasureSpec.getMode(widthMeasureSpec);
   final int heightMode=MeasureSpec.getMode(heightMeasureSpec);
@@ -39,9 +38,7 @@
     }
     final LinearLayout.LayoutParams lp=(LinearLayout.LayoutParams)child.getLayoutParams();
     totalWeight+=lp.weight;
-    final boolean fillExcessSpace=lp.weight > 0;
-    final boolean hasZeroWidth=lp.width == 0;
-    if (widthMode == MeasureSpec.EXACTLY && fillExcessSpace && hasZeroWidth) {
+    if (widthMode == MeasureSpec.EXACTLY && lp.width == 0 && lp.weight > 0) {
       if (isExactly) {
         mTotalLength+=lp.leftMargin + lp.rightMargin;
       }
@@ -59,17 +56,16 @@
       }
     }
  else {
-      if (fillExcessSpace && hasZeroWidth) {
+      int oldWidth=Integer.MIN_VALUE;
+      if (lp.width == 0 && lp.weight > 0) {
+        oldWidth=0;
         lp.width=LayoutParams.WRAP_CONTENT;
       }
       measureChildBeforeLayout(child,i,widthMeasureSpec,totalWeight == 0 ? mTotalLength : 0,heightMeasureSpec,0);
-      final int childWidth=child.getMeasuredWidth();
-      if (fillExcessSpace) {
-        usedExcessSpace+=childWidth;
-        if (hasZeroWidth) {
-          lp.width=0;
-        }
+      if (oldWidth != Integer.MIN_VALUE) {
+        lp.width=oldWidth;
       }
+      final int childWidth=child.getMeasuredWidth();
       if (isExactly) {
         mTotalLength+=childWidth + lp.leftMargin + lp.rightMargin+ getNextLocationOffset(child);
       }
@@ -143,7 +139,7 @@
   widthSize=Math.max(widthSize,getSuggestedMinimumWidth());
   int widthSizeAndState=resolveSizeAndState(widthSize,widthMeasureSpec,0);
   widthSize=widthSizeAndState & MEASURED_SIZE_MASK;
-  final int delta=widthSize - mTotalLength + usedExcessSpace;
+  int delta=widthSize - mTotalLength;
   if (skippedMeasure || delta != 0 && totalWeight > 0.0f) {
     float weightSum=mWeightSum > 0.0f ? mWeightSum : totalWeight;
     maxAscent[0]=maxAscent[1]=maxAscent[2]=maxAscent[3]=-1;
@@ -158,10 +154,20 @@
       final LinearLayout.LayoutParams lp=(LinearLayout.LayoutParams)child.getLayoutParams();
       float childExtra=lp.weight;
       if (childExtra > 0) {
-        final int childWidth=Math.max(0,(int)(childExtra * delta / weightSum));
-        final int childWidthMeasureSpec=MeasureSpec.makeMeasureSpec(childWidth,MeasureSpec.EXACTLY);
+        int share=(int)(childExtra * delta / weightSum);
+        weightSum-=childExtra;
+        delta-=share;
         final int childHeightMeasureSpec=getChildMeasureSpec(heightMeasureSpec,mPaddingTop + mPaddingBottom + lp.topMargin+ lp.bottomMargin,lp.height);
-        child.measure(childWidthMeasureSpec,childHeightMeasureSpec);
+        if ((lp.width != 0) || (widthMode != MeasureSpec.EXACTLY)) {
+          int childWidth=child.getMeasuredWidth() + share;
+          if (childWidth < 0) {
+            childWidth=0;
+          }
+          child.measure(MeasureSpec.makeMeasureSpec(childWidth,MeasureSpec.EXACTLY),childHeightMeasureSpec);
+        }
+ else {
+          child.measure(MeasureSpec.makeMeasureSpec(share > 0 ? share : 0,MeasureSpec.EXACTLY),childHeightMeasureSpec);
+        }
         childState=combineMeasuredStates(childState,child.getMeasuredState() & MEASURED_STATE_MASK);
       }
       if (isExactly) {
