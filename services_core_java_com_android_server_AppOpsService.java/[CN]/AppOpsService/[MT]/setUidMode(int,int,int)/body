@@ -1,0 +1,100 @@
+{
+  if (Binder.getCallingPid() != Process.myPid()) {
+    mContext.enforcePermission(android.Manifest.permission.UPDATE_APP_OPS_STATS,Binder.getCallingPid(),Binder.getCallingUid(),null);
+  }
+  verifyIncomingOp(code);
+  code=AppOpsManager.opToSwitch(code);
+synchronized (this) {
+    final int defaultMode=AppOpsManager.opToDefaultMode(code);
+    UidState uidState=getUidStateLocked(uid,false);
+    if (uidState == null) {
+      if (mode == defaultMode) {
+        return;
+      }
+      uidState=new UidState(uid);
+      uidState.opModes=new SparseIntArray();
+      uidState.opModes.put(code,mode);
+      mUidStates.put(uid,uidState);
+      scheduleWriteLocked();
+    }
+ else     if (uidState.opModes == null) {
+      if (mode != defaultMode) {
+        uidState.opModes=new SparseIntArray();
+        uidState.opModes.put(code,mode);
+        scheduleWriteLocked();
+      }
+    }
+ else {
+      if (uidState.opModes.get(code) == mode) {
+        return;
+      }
+      if (mode == defaultMode) {
+        uidState.opModes.delete(code);
+        if (uidState.opModes.size() <= 0) {
+          uidState.opModes=null;
+        }
+      }
+ else {
+        uidState.opModes.put(code,mode);
+      }
+      scheduleWriteLocked();
+    }
+  }
+  ArrayMap<Callback,ArraySet<String>> callbackSpecs=null;
+  ArrayList<Callback> callbacks=mOpModeWatchers.get(code);
+  if (callbacks != null) {
+    final int callbackCount=callbacks.size();
+    for (int i=0; i < callbackCount; i++) {
+      Callback callback=callbacks.get(i);
+      callbackSpecs=new ArrayMap<>();
+      callbackSpecs.put(callback,null);
+    }
+  }
+  String[] uidPackageNames=getPackagesForUid(uid);
+  for (  String uidPackageName : uidPackageNames) {
+    callbacks=mPackageModeWatchers.get(uidPackageName);
+    if (callbacks != null) {
+      if (callbackSpecs == null) {
+        callbackSpecs=new ArrayMap<>();
+      }
+      final int callbackCount=callbacks.size();
+      for (int i=0; i < callbackCount; i++) {
+        Callback callback=callbacks.get(i);
+        ArraySet<String> changedPackages=callbackSpecs.get(callback);
+        if (changedPackages == null) {
+          changedPackages=new ArraySet<>();
+          callbackSpecs.put(callback,changedPackages);
+        }
+        changedPackages.add(uidPackageName);
+      }
+    }
+  }
+  if (callbackSpecs == null) {
+    return;
+  }
+  final long identity=Binder.clearCallingIdentity();
+  try {
+    for (int i=0; i < callbackSpecs.size(); i++) {
+      Callback callback=callbackSpecs.keyAt(i);
+      ArraySet<String> reportedPackageNames=callbackSpecs.valueAt(i);
+      try {
+        if (reportedPackageNames == null) {
+          callback.mCallback.opChanged(code,null);
+        }
+ else {
+          final int reportedPackageCount=reportedPackageNames.size();
+          for (int j=0; j < reportedPackageCount; j++) {
+            String reportedPackageName=reportedPackageNames.valueAt(j);
+            callback.mCallback.opChanged(code,reportedPackageName);
+          }
+        }
+      }
+ catch (      RemoteException e) {
+        Log.w(TAG,"Error dispatching op op change",e);
+      }
+    }
+  }
+  finally {
+    Binder.restoreCallingIdentity(identity);
+  }
+}
