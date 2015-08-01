@@ -3,14 +3,43 @@
   final int callingUid=Binder.getCallingUid();
   mContext.enforcePermission(android.Manifest.permission.UPDATE_APP_OPS_STATS,callingPid,callingUid,null);
   reqUserId=ActivityManager.handleIncomingUser(callingPid,callingUid,reqUserId,true,true,"resetAllModes",null);
+  int reqUid=-1;
+  if (reqPackageName != null) {
+    try {
+      reqUid=AppGlobals.getPackageManager().getPackageUid(reqPackageName,reqUserId);
+    }
+ catch (    RemoteException e) {
+    }
+  }
   HashMap<Callback,ArrayList<Pair<String,Integer>>> callbacks=null;
 synchronized (this) {
     boolean changed=false;
-    for (int i=mUidOps.size() - 1; i >= 0; i--) {
-      HashMap<String,Ops> packages=mUidOps.valueAt(i);
-      if (reqUserId != UserHandle.USER_ALL && reqUserId != UserHandle.getUserId(mUidOps.keyAt(i))) {
+    for (int i=mUidStates.size() - 1; i >= 0; i--) {
+      UidState uidState=mUidStates.valueAt(i);
+      SparseIntArray opModes=uidState.opModes;
+      if (opModes != null && (uidState.uid == reqUid || reqUid == -1)) {
+        final int uidOpCount=opModes.size();
+        for (int j=uidOpCount - 1; j >= 0; j--) {
+          final int code=opModes.keyAt(j);
+          if (AppOpsManager.opAllowsReset(code)) {
+            opModes.removeAt(j);
+            if (opModes.size() <= 0) {
+              uidState.opModes=null;
+            }
+            for (            String packageName : getPackagesForUid(uidState.uid)) {
+              callbacks=addCallbacks(callbacks,packageName,code,mOpModeWatchers.get(code));
+              callbacks=addCallbacks(callbacks,packageName,code,mPackageModeWatchers.get(packageName));
+            }
+          }
+        }
+      }
+      if (uidState.pkgOps == null) {
         continue;
       }
+      if (reqUserId != UserHandle.USER_ALL && reqUserId != UserHandle.getUserId(uidState.uid)) {
+        continue;
+      }
+      Map<String,Ops> packages=uidState.pkgOps;
       Iterator<Map.Entry<String,Ops>> it=packages.entrySet().iterator();
       while (it.hasNext()) {
         Map.Entry<String,Ops> ent=it.next();
@@ -35,8 +64,8 @@ synchronized (this) {
           it.remove();
         }
       }
-      if (packages.size() == 0) {
-        mUidOps.removeAt(i);
+      if (uidState.isDefault()) {
+        mUidStates.remove(uidState.uid);
       }
     }
     if (changed) {
