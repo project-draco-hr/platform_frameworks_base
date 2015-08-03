@@ -329,11 +329,17 @@ synchronized (mInstallLock) {
       }
     }
     if (pkg.applicationInfo.primaryCpuAbi != null && !VMRuntime.is64BitAbi(pkg.applicationInfo.primaryCpuAbi)) {
-      final String nativeLibPath=pkg.applicationInfo.nativeLibraryDir;
-      for (      int userId : userIds) {
-        if (mInstaller.linkNativeLibraryDirectory(pkg.volumeUuid,pkg.packageName,nativeLibPath,userId) < 0) {
-          throw new PackageManagerException(INSTALL_FAILED_INTERNAL_ERROR,"Failed linking native library dir (user=" + userId + ")");
+      Trace.traceBegin(TRACE_TAG_PACKAGE_MANAGER,"linkNativeLib");
+      try {
+        final String nativeLibPath=pkg.applicationInfo.nativeLibraryDir;
+        for (        int userId : userIds) {
+          if (mInstaller.linkNativeLibraryDirectory(pkg.volumeUuid,pkg.packageName,nativeLibPath,userId) < 0) {
+            throw new PackageManagerException(INSTALL_FAILED_INTERNAL_ERROR,"Failed linking native library dir (user=" + userId + ")");
+          }
         }
+      }
+  finally {
+        Trace.traceEnd(TRACE_TAG_PACKAGE_MANAGER);
       }
     }
   }
@@ -360,7 +366,9 @@ synchronized (mInstallLock) {
     adjustCpuAbisForSharedUserLPw(pkgSetting.sharedUser.packages,pkg,forceDex,(scanFlags & SCAN_DEFER_DEX) != 0);
   }
   if ((scanFlags & SCAN_NO_DEX) == 0) {
+    Trace.traceBegin(TRACE_TAG_PACKAGE_MANAGER,"dexopt");
     int result=mPackageDexOptimizer.performDexOpt(pkg,null,forceDex,(scanFlags & SCAN_DEFER_DEX) != 0,false);
+    Trace.traceEnd(TRACE_TAG_PACKAGE_MANAGER);
     if (result == PackageDexOptimizer.DEX_OPT_FAILED) {
       throw new PackageManagerException(INSTALL_FAILED_DEXOPT,"scanPackageLI");
     }
@@ -420,7 +428,9 @@ synchronized (mPackages) {
     }
   }
   if ((scanFlags & SCAN_REPLACING) != 0) {
+    Trace.traceBegin(TRACE_TAG_PACKAGE_MANAGER,"killApplication");
     killApplication(pkg.applicationInfo.packageName,pkg.applicationInfo.uid,"replace pkg");
+    Trace.traceEnd(TRACE_TAG_PACKAGE_MANAGER);
   }
   if (clientLibPkgs != null) {
     for (int i=0; i < clientLibPkgs.size(); i++) {
@@ -430,6 +440,8 @@ synchronized (mPackages) {
   }
   KeySetManagerService ksms=mSettings.mKeySetManagerService;
   ksms.assertScannedPackageValid(pkg);
+  Trace.traceBegin(TRACE_TAG_PACKAGE_MANAGER,"updateSettings");
+  boolean createIdmapFailed=false;
 synchronized (mPackages) {
     mSettings.insertPackageSettingLPw(pkgSetting,pkg);
     mPackages.put(pkg.applicationInfo.packageName,pkg);
@@ -714,13 +726,17 @@ synchronized (mPackages) {
         map.put(pkg.packageName,pkg);
         PackageParser.Package orig=mPackages.get(pkg.mOverlayTarget);
         if (orig != null && !createIdmapForPackagePairLI(orig,pkg)) {
-          throw new PackageManagerException(INSTALL_FAILED_UPDATE_INCOMPATIBLE,"scanPackageLI failed to createIdmap");
+          createIdmapFailed=true;
         }
       }
     }
  else     if (mOverlays.containsKey(pkg.packageName) && !pkg.packageName.equals("android")) {
       createIdmapsForPackageLI(pkg);
     }
+  }
+  Trace.traceEnd(TRACE_TAG_PACKAGE_MANAGER);
+  if (createIdmapFailed) {
+    throw new PackageManagerException(INSTALL_FAILED_UPDATE_INCOMPATIBLE,"scanPackageLI failed to createIdmap");
   }
   return pkg;
 }
