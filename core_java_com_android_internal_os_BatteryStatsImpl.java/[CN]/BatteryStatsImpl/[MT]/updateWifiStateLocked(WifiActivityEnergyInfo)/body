@@ -50,6 +50,7 @@
     final long idleTimeMs=info.getControllerIdleTimeMillis();
     final long totalTimeMs=txTimeMs + rxTimeMs + idleTimeMs;
     long leftOverRxTimeMs=rxTimeMs;
+    long leftOverTxTimeMs=txTimeMs;
     if (DEBUG_ENERGY) {
       Slog.d(TAG,"------ BEGIN WiFi power blaming ------");
       Slog.d(TAG,"  Tx Time:    " + txTimeMs + " ms");
@@ -68,19 +69,29 @@
     if (DEBUG_ENERGY && totalScanTimeMs > rxTimeMs) {
       Slog.d(TAG,"  !Estimated scan time > Actual rx time (" + totalScanTimeMs + " ms > "+ rxTimeMs+ " ms). Normalizing scan time.");
     }
+    if (DEBUG_ENERGY && totalScanTimeMs > txTimeMs) {
+      Slog.d(TAG,"  !Estimated scan time > Actual tx time (" + totalScanTimeMs + " ms > "+ txTimeMs+ " ms). Normalizing scan time.");
+    }
     for (int i=0; i < uidStatsSize; i++) {
       final Uid uid=mUidStats.valueAt(i);
       long scanTimeSinceMarkMs=uid.mWifiScanTimer.getTimeSinceMarkLocked(elapsedRealtimeMs * 1000) / 1000;
       if (scanTimeSinceMarkMs > 0) {
         uid.mWifiScanTimer.setMark(elapsedRealtimeMs);
+        long scanRxTimeSinceMarkMs=scanTimeSinceMarkMs;
+        long scanTxTimeSinceMarkMs=scanTimeSinceMarkMs;
         if (totalScanTimeMs > rxTimeMs) {
-          scanTimeSinceMarkMs=(rxTimeMs * scanTimeSinceMarkMs) / totalScanTimeMs;
+          scanRxTimeSinceMarkMs=(rxTimeMs * scanRxTimeSinceMarkMs) / totalScanTimeMs;
+        }
+        if (totalScanTimeMs > txTimeMs) {
+          scanTxTimeSinceMarkMs=(txTimeMs * scanTxTimeSinceMarkMs) / totalScanTimeMs;
         }
         if (DEBUG_ENERGY) {
-          Slog.d(TAG,"  ScanTime for UID " + uid.getUid() + ": "+ scanTimeSinceMarkMs+ " ms)");
+          Slog.d(TAG,"  ScanTime for UID " + uid.getUid() + ": Rx:"+ scanRxTimeSinceMarkMs+ " ms  Tx:"+ scanTxTimeSinceMarkMs+ " ms)");
         }
-        uid.noteWifiControllerActivityLocked(CONTROLLER_RX_TIME,scanTimeSinceMarkMs);
-        leftOverRxTimeMs-=scanTimeSinceMarkMs;
+        uid.noteWifiControllerActivityLocked(CONTROLLER_RX_TIME,scanRxTimeSinceMarkMs);
+        uid.noteWifiControllerActivityLocked(CONTROLLER_TX_TIME,scanTxTimeSinceMarkMs);
+        leftOverRxTimeMs-=scanRxTimeSinceMarkMs;
+        leftOverTxTimeMs-=scanTxTimeSinceMarkMs;
       }
       final long wifiLockTimeSinceMarkMs=uid.mFullWifiLockTimer.getTimeSinceMarkLocked(elapsedRealtimeMs * 1000) / 1000;
       if (wifiLockTimeSinceMarkMs > 0) {
@@ -94,10 +105,11 @@
     }
     if (DEBUG_ENERGY) {
       Slog.d(TAG,"  New RxPower: " + leftOverRxTimeMs + " ms");
+      Slog.d(TAG,"  New TxPower: " + leftOverTxTimeMs + " ms");
     }
     for (int i=0; i < txPackets.size(); i++) {
       final Uid uid=getUidStatsLocked(txPackets.keyAt(i));
-      final long myTxTimeMs=(txPackets.valueAt(i) * txTimeMs) / totalTxPackets;
+      final long myTxTimeMs=(txPackets.valueAt(i) * leftOverTxTimeMs) / totalTxPackets;
       if (DEBUG_ENERGY) {
         Slog.d(TAG,"  TxTime for UID " + uid.getUid() + ": "+ myTxTimeMs+ " ms");
       }
