@@ -24,9 +24,39 @@
 synchronized (this) {
           long token=Binder.clearCallingIdentity();
           try {
+            exitForceIdleLocked();
             stepIdleStateLocked();
             pw.print("Stepped to: ");
             pw.println(stateToString(mState));
+          }
+  finally {
+            Binder.restoreCallingIdentity(token);
+          }
+        }
+        return;
+      }
+ else       if ("force-idle".equals(arg)) {
+synchronized (this) {
+          long token=Binder.clearCallingIdentity();
+          try {
+            if (!mEnabled) {
+              pw.println("Unable to go idle; not enabled");
+              return;
+            }
+            mForceIdle=true;
+            becomeInactiveIfAppropriateLocked();
+            int curState=mState;
+            while (curState != STATE_IDLE) {
+              stepIdleStateLocked();
+              if (curState == mState) {
+                pw.print("Unable to go idle; stopped at ");
+                pw.println(stateToString(mState));
+                exitForceIdleLocked();
+                return;
+              }
+              curState=mState;
+            }
+            pw.println("Now forced in to idle mode");
           }
   finally {
             Binder.restoreCallingIdentity(token);
@@ -54,6 +84,7 @@ synchronized (this) {
 synchronized (this) {
           long token=Binder.clearCallingIdentity();
           try {
+            exitForceIdleLocked();
             if (!mEnabled) {
               mEnabled=true;
               becomeInactiveIfAppropriateLocked();
@@ -103,6 +134,12 @@ synchronized (this) {
           }
  else {
 synchronized (this) {
+              for (int j=0; j < mPowerSaveWhitelistAppsExceptIdle.size(); j++) {
+                pw.print("system-excidle,");
+                pw.print(mPowerSaveWhitelistAppsExceptIdle.keyAt(j));
+                pw.print(",");
+                pw.println(mPowerSaveWhitelistAppsExceptIdle.valueAt(j));
+              }
               for (int j=0; j < mPowerSaveWhitelistApps.size(); j++) {
                 pw.print("system,");
                 pw.print(mPowerSaveWhitelistApps.keyAt(j));
@@ -155,7 +192,15 @@ synchronized (this) {
   }
 synchronized (this) {
     mConstants.dump(pw);
-    int size=mPowerSaveWhitelistApps.size();
+    int size=mPowerSaveWhitelistAppsExceptIdle.size();
+    if (size > 0) {
+      pw.println("  Whitelist (except idle) system apps:");
+      for (int i=0; i < size; i++) {
+        pw.print("    ");
+        pw.println(mPowerSaveWhitelistAppsExceptIdle.keyAt(i));
+      }
+    }
+    size=mPowerSaveWhitelistApps.size();
     if (size > 0) {
       pw.println("  Whitelist system apps:");
       for (int i=0; i < size; i++) {
@@ -169,6 +214,15 @@ synchronized (this) {
       for (int i=0; i < size; i++) {
         pw.print("    ");
         pw.println(mPowerSaveWhitelistUserApps.keyAt(i));
+      }
+    }
+    size=mPowerSaveWhitelistExceptIdleAppIds.size();
+    if (size > 0) {
+      pw.println("  Whitelist (except idle) all app ids:");
+      for (int i=0; i < size; i++) {
+        pw.print("    ");
+        pw.print(mPowerSaveWhitelistExceptIdleAppIds.keyAt(i));
+        pw.println();
       }
     }
     size=mPowerSaveWhitelistAllAppIds.size();
@@ -205,6 +259,8 @@ synchronized (this) {
     }
     pw.print("  mEnabled=");
     pw.println(mEnabled);
+    pw.print("  mForceIdle=");
+    pw.println(mForceIdle);
     pw.print("  mSigMotionSensor=");
     pw.println(mSigMotionSensor);
     pw.print("  mCurDisplay=");
