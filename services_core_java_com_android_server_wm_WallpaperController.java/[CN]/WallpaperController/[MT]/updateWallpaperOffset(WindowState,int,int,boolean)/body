@@ -1,0 +1,68 @@
+{
+  boolean rawChanged=false;
+  float wpx=mLastWallpaperX >= 0 ? mLastWallpaperX : 0.5f;
+  float wpxs=mLastWallpaperXStep >= 0 ? mLastWallpaperXStep : -1.0f;
+  int availw=wallpaperWin.mFrame.right - wallpaperWin.mFrame.left - dw;
+  int offset=availw > 0 ? -(int)(availw * wpx + .5f) : 0;
+  if (mLastWallpaperDisplayOffsetX != Integer.MIN_VALUE) {
+    offset+=mLastWallpaperDisplayOffsetX;
+  }
+  boolean changed=wallpaperWin.mXOffset != offset;
+  if (changed) {
+    if (DEBUG_WALLPAPER)     Slog.v(TAG,"Update wallpaper " + wallpaperWin + " x: "+ offset);
+    wallpaperWin.mXOffset=offset;
+  }
+  if (wallpaperWin.mWallpaperX != wpx || wallpaperWin.mWallpaperXStep != wpxs) {
+    wallpaperWin.mWallpaperX=wpx;
+    wallpaperWin.mWallpaperXStep=wpxs;
+    rawChanged=true;
+  }
+  float wpy=mLastWallpaperY >= 0 ? mLastWallpaperY : 0.5f;
+  float wpys=mLastWallpaperYStep >= 0 ? mLastWallpaperYStep : -1.0f;
+  int availh=wallpaperWin.mFrame.bottom - wallpaperWin.mFrame.top - dh;
+  offset=availh > 0 ? -(int)(availh * wpy + .5f) : 0;
+  if (mLastWallpaperDisplayOffsetY != Integer.MIN_VALUE) {
+    offset+=mLastWallpaperDisplayOffsetY;
+  }
+  if (wallpaperWin.mYOffset != offset) {
+    if (DEBUG_WALLPAPER)     Slog.v(TAG,"Update wallpaper " + wallpaperWin + " y: "+ offset);
+    changed=true;
+    wallpaperWin.mYOffset=offset;
+  }
+  if (wallpaperWin.mWallpaperY != wpy || wallpaperWin.mWallpaperYStep != wpys) {
+    wallpaperWin.mWallpaperY=wpy;
+    wallpaperWin.mWallpaperYStep=wpys;
+    rawChanged=true;
+  }
+  if (rawChanged && (wallpaperWin.mAttrs.privateFlags & WindowManager.LayoutParams.PRIVATE_FLAG_WANTS_OFFSET_NOTIFICATIONS) != 0) {
+    try {
+      if (DEBUG_WALLPAPER)       Slog.v(TAG,"Report new wp offset " + wallpaperWin + " x="+ wallpaperWin.mWallpaperX+ " y="+ wallpaperWin.mWallpaperY);
+      if (sync) {
+        mWaitingOnWallpaper=wallpaperWin;
+      }
+      wallpaperWin.mClient.dispatchWallpaperOffsets(wallpaperWin.mWallpaperX,wallpaperWin.mWallpaperY,wallpaperWin.mWallpaperXStep,wallpaperWin.mWallpaperYStep,sync);
+      if (sync) {
+        if (mWaitingOnWallpaper != null) {
+          long start=SystemClock.uptimeMillis();
+          if ((mLastWallpaperTimeoutTime + WALLPAPER_TIMEOUT_RECOVERY) < start) {
+            try {
+              if (DEBUG_WALLPAPER)               Slog.v(TAG,"Waiting for offset complete...");
+              mService.mWindowMap.wait(WALLPAPER_TIMEOUT);
+            }
+ catch (            InterruptedException e) {
+            }
+            if (DEBUG_WALLPAPER)             Slog.v(TAG,"Offset complete!");
+            if ((start + WALLPAPER_TIMEOUT) < SystemClock.uptimeMillis()) {
+              Slog.i(TAG,"Timeout waiting for wallpaper to offset: " + wallpaperWin);
+              mLastWallpaperTimeoutTime=start;
+            }
+          }
+          mWaitingOnWallpaper=null;
+        }
+      }
+    }
+ catch (    RemoteException e) {
+    }
+  }
+  return changed;
+}
