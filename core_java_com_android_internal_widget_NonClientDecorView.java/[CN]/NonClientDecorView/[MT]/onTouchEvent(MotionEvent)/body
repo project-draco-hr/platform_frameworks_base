@@ -10,6 +10,12 @@ case MotionEvent.ACTION_DOWN:
     mLeftMouseButtonReleased=false;
     mStartDragX=e.getRawX();
     mStartDragY=e.getRawY();
+    final int x=(int)(e.getX());
+    final int y=(int)(e.getY());
+    mSizeCorner=(x < 0 ? LEFT : (x >= getWidth() ? RIGHT : NONE)) | (y < 0 ? TOP : (y >= getHeight() ? BOTTOM : NONE));
+    if (mSizeCorner != 0) {
+      ActivityThread.currentActivityThread().suppressConfigurationChanges(true);
+    }
   }
 break;
 case MotionEvent.ACTION_MOVE:
@@ -18,24 +24,64 @@ if (e.getToolType(e.getActionIndex()) == MotionEvent.TOOL_TYPE_MOUSE && (e.getBu
   mLeftMouseButtonReleased=true;
   break;
 }
-mWindowDragBounds.set(mWindowOriginalBounds);
-mWindowDragBounds.offset(Math.round(e.getRawX() - mStartDragX),Math.round(e.getRawY() - mStartDragY));
-setActivityBounds(mWindowDragBounds);
+if (mSizeCorner != NONE) {
+  if (mTaskResizingInProgress) {
+    break;
+  }
+  mTaskResizingInProgress=true;
+  final int deltaX=Math.round(e.getRawX() - mStartDragX);
+  final int deltaY=Math.round(e.getRawY() - mStartDragY);
+  final int minSizeX=(int)(dipToPx(96));
+  final int minSizeY=(int)(dipToPx(64));
+  int left=mWindowOriginalBounds.left;
+  int top=mWindowOriginalBounds.top;
+  int right=mWindowOriginalBounds.right;
+  int bottom=mWindowOriginalBounds.bottom;
+  if ((mSizeCorner & LEFT) != 0) {
+    left=Math.min(left + deltaX,right - minSizeX);
+  }
+  if ((mSizeCorner & TOP) != 0) {
+    top=Math.min(top + deltaY,bottom - minSizeY);
+  }
+  if ((mSizeCorner & RIGHT) != 0) {
+    right=Math.max(left + minSizeX,right + deltaX);
+  }
+  if ((mSizeCorner & BOTTOM) != 0) {
+    bottom=Math.max(top + minSizeY,bottom + deltaY);
+  }
+  mWindowDragBounds.set(left,top,right,bottom);
+  setActivityBounds(mWindowDragBounds);
+  mTaskResizingInProgress=false;
+}
+ else {
+  mWindowDragBounds.set(mWindowOriginalBounds);
+  mWindowDragBounds.offset(Math.round(e.getRawX() - mStartDragX),Math.round(e.getRawY() - mStartDragY));
+  setActivityBounds(mWindowDragBounds);
+}
 }
 break;
 case MotionEvent.ACTION_UP:
-if (mDragging) {
+if (!mDragging) {
+break;
+}
 mDragging=false;
+if (mSizeCorner == NONE) {
 return true;
 }
-break;
+ActivityThread.currentActivityThread().suppressConfigurationChanges(false);
+setActivityBounds(mWindowDragBounds);
+return false;
 case MotionEvent.ACTION_CANCEL:
-if (mDragging) {
+if (!mDragging) {
+break;
+}
 mDragging=false;
 setActivityBounds(mWindowOriginalBounds);
-return true;
+if (mSizeCorner != NONE) {
+ActivityThread.currentActivityThread().suppressConfigurationChanges(false);
+return false;
 }
-break;
+return true;
 }
 return mDragging;
 }
