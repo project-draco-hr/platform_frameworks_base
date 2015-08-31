@@ -1,6 +1,21 @@
 {
   final Intent intent=r.intent;
   final int callingUid=r.launchedFromUid;
+  boolean overrideBounds=false;
+  Rect newBounds=null;
+  if (r.info.resizeable || (inTask != null && inTask.mResizeable)) {
+    if (intent.hasExtra(ActivityOptions.KEY_BOUNDS)) {
+      overrideBounds=true;
+      newBounds=Rect.unflattenFromString(intent.getStringExtra(ActivityOptions.KEY_BOUNDS));
+    }
+ else     if (options != null) {
+      ActivityOptions opts=new ActivityOptions(options);
+      if (opts.hasBounds()) {
+        overrideBounds=true;
+        newBounds=opts.getBounds();
+      }
+    }
+  }
   if (inTask != null && !inTask.inRecents) {
     Slog.w(TAG,"Starting activity in task not in recents: " + inTask);
     inTask=null;
@@ -208,7 +223,7 @@ addingToTask=true;
 sourceRecord=intentActivity;
 TaskRecord task=sourceRecord.task;
 if (task != null && task.stack == null) {
-targetStack=computeStackFocus(sourceRecord,false);
+targetStack=computeStackFocus(sourceRecord,false,null);
 targetStack.addTask(task,!launchTaskBehind,false);
 }
 }
@@ -284,12 +299,15 @@ boolean keepCurTransition=false;
 TaskRecord taskToAffiliate=launchTaskBehind && sourceRecord != null ? sourceRecord.task : null;
 if (r.resultTo == null && inTask == null && !addingToTask && (launchFlags & Intent.FLAG_ACTIVITY_NEW_TASK) != 0) {
 newTask=true;
-targetStack=computeStackFocus(r,newTask);
+targetStack=computeStackFocus(r,newTask,newBounds);
 if (doResume) {
 targetStack.moveToFront("startingNewTask");
 }
 if (reuseTask == null) {
 r.setTask(targetStack.createTaskRecord(getNextTaskId(),newTaskInfo != null ? newTaskInfo : r.info,newTaskIntent != null ? newTaskIntent : intent,voiceSession,voiceInteractor,!launchTaskBehind),taskToAffiliate);
+if (overrideBounds) {
+r.task.updateOverrideConfiguration(newBounds);
+}
 if (DEBUG_TASKS) Slog.v(TAG_TASKS,"Starting new activity " + r + " in new task "+ r.task);
 }
  else {
@@ -356,6 +374,13 @@ if (isLockTaskModeViolation(inTask)) {
 Slog.e(TAG,"Attempted Lock Task Mode violation r=" + r);
 return ActivityManager.START_RETURN_LOCK_TASK_MODE_VIOLATION;
 }
+if (overrideBounds) {
+inTask.updateOverrideConfiguration(newBounds);
+int stackId=inTask.getLaunchStackId();
+if (stackId != inTask.stack.mStackId) {
+moveTaskToStackUncheckedLocked(inTask,stackId,ON_TOP,!FORCE_FOCUS,"inTaskToFront");
+}
+}
 targetStack=inTask.stack;
 targetStack.moveTaskToFrontLocked(inTask,noAnimation,options,r.appTimeTracker,"inTaskToFront");
 ActivityRecord top=inTask.getTopActivity();
@@ -377,7 +402,7 @@ r.setTask(inTask,null);
 if (DEBUG_TASKS) Slog.v(TAG_TASKS,"Starting new activity " + r + " in explicit task "+ r.task);
 }
  else {
-targetStack=computeStackFocus(r,newTask);
+targetStack=computeStackFocus(r,newTask,null);
 if (doResume) {
 targetStack.moveToFront("addingToTopTask");
 }
