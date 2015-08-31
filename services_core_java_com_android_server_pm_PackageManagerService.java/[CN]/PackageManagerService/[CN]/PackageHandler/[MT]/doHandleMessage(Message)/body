@@ -6,19 +6,18 @@ case INIT_COPY:
       int idx=mPendingInstalls.size();
       if (DEBUG_INSTALL)       Slog.i(TAG,"init_copy idx=" + idx + ": "+ params);
       if (!mBound) {
-        try {
-          Trace.asyncTraceBegin(TRACE_TAG_PACKAGE_MANAGER,"bindMCS",System.identityHashCode(params));
-          if (!connectToService()) {
-            Slog.e(TAG,"Failed to bind to media container service");
-            params.serviceError();
-            return;
+        Trace.asyncTraceBegin(TRACE_TAG_PACKAGE_MANAGER,"bindingMCS",System.identityHashCode(mHandler));
+        if (!connectToService()) {
+          Slog.e(TAG,"Failed to bind to media container service");
+          params.serviceError();
+          Trace.asyncTraceEnd(TRACE_TAG_PACKAGE_MANAGER,"bindingMCS",System.identityHashCode(mHandler));
+          if (params.traceMethod != null) {
+            Trace.asyncTraceEnd(TRACE_TAG_PACKAGE_MANAGER,params.traceMethod,params.traceCookie);
           }
- else {
-            mPendingInstalls.add(idx,params);
-          }
+          return;
         }
-  finally {
-          Trace.asyncTraceEnd(TRACE_TAG_PACKAGE_MANAGER,"bindMCS",System.identityHashCode(params));
+ else {
+          mPendingInstalls.add(idx,params);
         }
       }
  else {
@@ -34,6 +33,7 @@ case MCS_BOUND:
     if (DEBUG_INSTALL)     Slog.i(TAG,"mcs_bound");
     if (msg.obj != null) {
       mContainerService=(IMediaContainerService)msg.obj;
+      Trace.asyncTraceEnd(TRACE_TAG_PACKAGE_MANAGER,"bindingMCS",System.identityHashCode(mHandler));
     }
     if (mContainerService == null) {
       if (!mBound) {
@@ -41,6 +41,10 @@ case MCS_BOUND:
         for (        HandlerParams params : mPendingInstalls) {
           params.serviceError();
           Trace.asyncTraceEnd(TRACE_TAG_PACKAGE_MANAGER,"queueInstall",System.identityHashCode(params));
+          if (params.traceMethod != null) {
+            Trace.asyncTraceEnd(TRACE_TAG_PACKAGE_MANAGER,params.traceMethod,params.traceCookie);
+          }
+          return;
         }
         mPendingInstalls.clear();
       }
@@ -51,6 +55,8 @@ case MCS_BOUND:
  else     if (mPendingInstalls.size() > 0) {
       HandlerParams params=mPendingInstalls.get(0);
       if (params != null) {
+        Trace.asyncTraceEnd(TRACE_TAG_PACKAGE_MANAGER,"queueInstall",System.identityHashCode(params));
+        Trace.traceBegin(TRACE_TAG_PACKAGE_MANAGER,"startCopy");
         if (params.startCopy()) {
           if (DEBUG_SD_INSTALL)           Log.i(TAG,"Checking for more work or unbind...");
           if (mPendingInstalls.size() > 0) {
@@ -69,8 +75,8 @@ case MCS_BOUND:
             mHandler.sendEmptyMessage(MCS_BOUND);
           }
         }
+        Trace.traceEnd(TRACE_TAG_PACKAGE_MANAGER);
       }
-      Trace.asyncTraceEnd(TRACE_TAG_PACKAGE_MANAGER,"queueInstall",System.identityHashCode(params));
     }
  else {
       Slog.w(TAG,"Empty queue");
@@ -272,6 +278,10 @@ args.observer.onPackageInstalled(res.name,res.returnCode,res.returnMsg,extras);
 Slog.i(TAG,"Observer no longer exists.");
 }
 }
+if (args.traceMethod != null) {
+Trace.asyncTraceEnd(TRACE_TAG_PACKAGE_MANAGER,args.traceMethod,args.traceCookie);
+}
+return;
 }
  else {
 Slog.e(TAG,"Bogus post-install token " + msg.arg1);
@@ -353,10 +363,10 @@ Slog.e(TAG,"Could not contact the ContainerService");
  else {
 broadcastPackageVerified(verificationId,originUri,PackageManager.VERIFICATION_REJECT,state.getInstallArgs().getUser());
 }
+Trace.asyncTraceEnd(TRACE_TAG_PACKAGE_MANAGER,"verification",verificationId);
 processPendingInstall(args,ret);
 mHandler.sendEmptyMessage(MCS_UNBIND);
 }
-Trace.asyncTraceEnd(TRACE_TAG_PACKAGE_MANAGER,"pendingVerification",verificationId);
 break;
 }
 case PACKAGE_VERIFIED:
@@ -387,6 +397,7 @@ Slog.e(TAG,"Could not contact the ContainerService");
  else {
 ret=PackageManager.INSTALL_FAILED_VERIFICATION_FAILURE;
 }
+Trace.asyncTraceEnd(TRACE_TAG_PACKAGE_MANAGER,"verification",verificationId);
 processPendingInstall(args,ret);
 mHandler.sendEmptyMessage(MCS_UNBIND);
 }
