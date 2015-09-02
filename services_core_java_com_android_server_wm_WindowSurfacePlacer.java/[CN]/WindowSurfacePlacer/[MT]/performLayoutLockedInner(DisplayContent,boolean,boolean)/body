@@ -1,0 +1,88 @@
+{
+  if (!displayContent.layoutNeeded) {
+    return;
+  }
+  displayContent.layoutNeeded=false;
+  WindowList windows=displayContent.getWindowList();
+  boolean isDefaultDisplay=displayContent.isDefaultDisplay;
+  DisplayInfo displayInfo=displayContent.getDisplayInfo();
+  final int dw=displayInfo.logicalWidth;
+  final int dh=displayInfo.logicalHeight;
+  if (mService.mInputConsumer != null) {
+    mService.mInputConsumer.layout(dw,dh);
+  }
+  final int N=windows.size();
+  int i;
+  if (DEBUG_LAYOUT) {
+    Slog.v(TAG,"-------------------------------------");
+    Slog.v(TAG,"performLayout: needed=" + displayContent.layoutNeeded + " dw="+ dw+ " dh="+ dh);
+  }
+  mService.mPolicy.beginLayoutLw(isDefaultDisplay,dw,dh,mService.mRotation);
+  if (isDefaultDisplay) {
+    mService.mSystemDecorLayer=mService.mPolicy.getSystemDecorLayerLw();
+    mService.mScreenRect.set(0,0,dw,dh);
+  }
+  mService.mPolicy.getContentRectLw(mService.mTmpContentRect);
+  displayContent.resize(mService.mTmpContentRect);
+  int seq=mService.mLayoutSeq + 1;
+  if (seq < 0)   seq=0;
+  mService.mLayoutSeq=seq;
+  boolean behindDream=false;
+  int topAttached=-1;
+  for (i=N - 1; i >= 0; i--) {
+    final WindowState win=windows.get(i);
+    final boolean gone=(behindDream && mService.mPolicy.canBeForceHidden(win,win.mAttrs)) || win.isGoneForLayoutLw();
+    if (DEBUG_LAYOUT && !win.mLayoutAttached) {
+      Slog.v(TAG,"1ST PASS " + win + ": gone="+ gone+ " mHaveFrame="+ win.mHaveFrame+ " mLayoutAttached="+ win.mLayoutAttached+ " screen changed="+ win.isConfigChanged());
+      final AppWindowToken atoken=win.mAppToken;
+      if (gone)       Slog.v(TAG,"  GONE: mViewVisibility=" + win.mViewVisibility + " mRelayoutCalled="+ win.mRelayoutCalled+ " hidden="+ win.mRootToken.hidden+ " hiddenRequested="+ (atoken != null && atoken.hiddenRequested)+ " mAttachedHidden="+ win.mAttachedHidden);
+ else       Slog.v(TAG,"  VIS: mViewVisibility=" + win.mViewVisibility + " mRelayoutCalled="+ win.mRelayoutCalled+ " hidden="+ win.mRootToken.hidden+ " hiddenRequested="+ (atoken != null && atoken.hiddenRequested)+ " mAttachedHidden="+ win.mAttachedHidden);
+    }
+    if (!gone || !win.mHaveFrame || win.mLayoutNeeded|| ((win.isConfigChanged() || win.setInsetsChanged()) && ((win.mAttrs.privateFlags & PRIVATE_FLAG_KEYGUARD) != 0 || (win.mHasSurface && win.mAppToken != null && win.mAppToken.layoutConfigChanges)))) {
+      if (!win.mLayoutAttached) {
+        if (initial) {
+          win.mContentChanged=false;
+        }
+        if (win.mAttrs.type == TYPE_DREAM) {
+          behindDream=true;
+        }
+        win.mLayoutNeeded=false;
+        win.prelayout();
+        mService.mPolicy.layoutWindowLw(win,null);
+        win.mLayoutSeq=seq;
+        if (DEBUG_LAYOUT)         Slog.v(TAG,"  LAYOUT: mFrame=" + win.mFrame + " mContainingFrame="+ win.mContainingFrame+ " mDisplayFrame="+ win.mDisplayFrame);
+      }
+ else {
+        if (topAttached < 0)         topAttached=i;
+      }
+    }
+  }
+  boolean attachedBehindDream=false;
+  for (i=topAttached; i >= 0; i--) {
+    final WindowState win=windows.get(i);
+    if (win.mLayoutAttached) {
+      if (DEBUG_LAYOUT)       Slog.v(TAG,"2ND PASS " + win + " mHaveFrame="+ win.mHaveFrame+ " mViewVisibility="+ win.mViewVisibility+ " mRelayoutCalled="+ win.mRelayoutCalled);
+      if (attachedBehindDream && mService.mPolicy.canBeForceHidden(win,win.mAttrs)) {
+        continue;
+      }
+      if ((win.mViewVisibility != View.GONE && win.mRelayoutCalled) || !win.mHaveFrame || win.mLayoutNeeded) {
+        if (initial) {
+          win.mContentChanged=false;
+        }
+        win.mLayoutNeeded=false;
+        win.prelayout();
+        mService.mPolicy.layoutWindowLw(win,win.mAttachedWindow);
+        win.mLayoutSeq=seq;
+        if (DEBUG_LAYOUT)         Slog.v(TAG,"  LAYOUT: mFrame=" + win.mFrame + " mContainingFrame="+ win.mContainingFrame+ " mDisplayFrame="+ win.mDisplayFrame);
+      }
+    }
+ else     if (win.mAttrs.type == TYPE_DREAM) {
+      attachedBehindDream=behindDream;
+    }
+  }
+  mService.mInputMonitor.setUpdateInputWindowsNeededLw();
+  if (updateInputWindows) {
+    mService.mInputMonitor.updateInputWindowsLw(false);
+  }
+  mService.mPolicy.finishLayoutLw();
+}

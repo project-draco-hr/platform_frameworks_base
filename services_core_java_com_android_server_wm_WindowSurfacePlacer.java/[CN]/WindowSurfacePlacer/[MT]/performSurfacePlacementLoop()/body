@@ -1,0 +1,60 @@
+{
+  if (mInLayout) {
+    if (DEBUG) {
+      throw new RuntimeException("Recursive call!");
+    }
+    Slog.w(TAG,"performLayoutAndPlaceSurfacesLocked called while in layout. Callers=" + Debug.getCallers(3));
+    return;
+  }
+  if (mService.mWaitingForConfig) {
+    return;
+  }
+  if (!mService.mDisplayReady) {
+    return;
+  }
+  Trace.traceBegin(Trace.TRACE_TAG_WINDOW_MANAGER,"wmLayout");
+  mInLayout=true;
+  boolean recoveringMemory=false;
+  if (!mService.mForceRemoves.isEmpty()) {
+    recoveringMemory=true;
+    while (!mService.mForceRemoves.isEmpty()) {
+      WindowState ws=mService.mForceRemoves.remove(0);
+      Slog.i(TAG,"Force removing: " + ws);
+      mService.removeWindowInnerLocked(ws);
+    }
+    Slog.w(TAG,"Due to memory failure, waiting a bit for next layout");
+    Object tmp=new Object();
+synchronized (tmp) {
+      try {
+        tmp.wait(250);
+      }
+ catch (      InterruptedException e) {
+      }
+    }
+  }
+  try {
+    performSurfacePlacementInner(recoveringMemory);
+    mInLayout=false;
+    if (mService.needsLayout()) {
+      if (++mLayoutRepeatCount < 6) {
+        mService.requestTraversalLocked();
+      }
+ else {
+        Slog.e(TAG,"Performed 6 layouts in a row. Skipping");
+        mLayoutRepeatCount=0;
+      }
+    }
+ else {
+      mLayoutRepeatCount=0;
+    }
+    if (mService.mWindowsChanged && !mService.mWindowChangeListeners.isEmpty()) {
+      mService.mH.removeMessages(REPORT_WINDOWS_CHANGE);
+      mService.mH.sendEmptyMessage(REPORT_WINDOWS_CHANGE);
+    }
+  }
+ catch (  RuntimeException e) {
+    mInLayout=false;
+    Slog.wtf(TAG,"Unhandled exception while laying out windows",e);
+  }
+  Trace.traceEnd(Trace.TRACE_TAG_WINDOW_MANAGER);
+}
