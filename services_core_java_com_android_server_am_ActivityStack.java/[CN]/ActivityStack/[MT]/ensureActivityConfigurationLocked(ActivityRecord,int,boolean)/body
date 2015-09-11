@@ -1,0 +1,70 @@
+{
+  if (mConfigWillChange) {
+    if (DEBUG_SWITCH || DEBUG_CONFIGURATION)     Slog.v(TAG_CONFIGURATION,"Skipping config check (will change): " + r);
+    return true;
+  }
+  if (DEBUG_SWITCH || DEBUG_CONFIGURATION)   Slog.v(TAG_CONFIGURATION,"Ensuring correct configuration: " + r);
+  final Configuration newConfig=mService.mConfiguration;
+  final Configuration taskConfig=r.task.mOverrideConfig;
+  if (r.configuration == newConfig && r.taskConfigOverride == taskConfig && !r.forceNewConfig) {
+    if (DEBUG_SWITCH || DEBUG_CONFIGURATION)     Slog.v(TAG_CONFIGURATION,"Configuration unchanged in " + r);
+    return true;
+  }
+  if (r.finishing) {
+    if (DEBUG_SWITCH || DEBUG_CONFIGURATION)     Slog.v(TAG_CONFIGURATION,"Configuration doesn't matter in finishing " + r);
+    r.stopFreezingScreenLocked(false);
+    return true;
+  }
+  final Configuration oldConfig=r.configuration;
+  final Configuration oldTaskOverride=r.taskConfigOverride;
+  r.configuration=newConfig;
+  r.taskConfigOverride=taskConfig;
+  int taskChanges=getTaskConfigurationChanges(r,taskConfig,oldTaskOverride);
+  final int changes=oldConfig.diff(newConfig) | taskChanges;
+  if (changes == 0 && !r.forceNewConfig) {
+    if (DEBUG_SWITCH || DEBUG_CONFIGURATION)     Slog.v(TAG_CONFIGURATION,"Configuration no differences in " + r);
+    return true;
+  }
+  if (r.app == null || r.app.thread == null) {
+    if (DEBUG_SWITCH || DEBUG_CONFIGURATION)     Slog.v(TAG_CONFIGURATION,"Configuration doesn't matter not running " + r);
+    r.stopFreezingScreenLocked(false);
+    r.forceNewConfig=false;
+    return true;
+  }
+  if (DEBUG_SWITCH || DEBUG_CONFIGURATION)   Slog.v(TAG_CONFIGURATION,"Checking to restart " + r.info.name + ": changed=0x"+ Integer.toHexString(changes)+ ", handles=0x"+ Integer.toHexString(r.info.getRealConfigChanged())+ ", newConfig="+ newConfig);
+  if ((changes & (~r.info.getRealConfigChanged())) != 0 || r.forceNewConfig) {
+    r.configChangeFlags|=changes;
+    r.startFreezingScreenLocked(r.app,globalChanges);
+    r.forceNewConfig=false;
+    if (r.app == null || r.app.thread == null) {
+      if (DEBUG_SWITCH || DEBUG_CONFIGURATION)       Slog.v(TAG_CONFIGURATION,"Config is destroying non-running " + r);
+      destroyActivityLocked(r,true,"config");
+    }
+ else     if (r.state == ActivityState.PAUSING) {
+      if (DEBUG_SWITCH || DEBUG_CONFIGURATION)       Slog.v(TAG_CONFIGURATION,"Config is skipping already pausing " + r);
+      r.configDestroy=true;
+      return true;
+    }
+ else     if (r.state == ActivityState.RESUMED) {
+      if (DEBUG_SWITCH || DEBUG_CONFIGURATION)       Slog.v(TAG_CONFIGURATION,"Config is relaunching resumed " + r);
+      relaunchActivityLocked(r,r.configChangeFlags,true,preserveWindow && isResizeOnlyChange(changes));
+      r.configChangeFlags=0;
+    }
+ else {
+      if (DEBUG_SWITCH || DEBUG_CONFIGURATION)       Slog.v(TAG_CONFIGURATION,"Config is relaunching non-resumed " + r);
+      relaunchActivityLocked(r,r.configChangeFlags,false,preserveWindow && isResizeOnlyChange(changes));
+      r.configChangeFlags=0;
+    }
+    return false;
+  }
+  if (r.app != null && r.app.thread != null) {
+    try {
+      if (DEBUG_CONFIGURATION)       Slog.v(TAG_CONFIGURATION,"Sending new config to " + r);
+      r.app.thread.scheduleActivityConfigurationChanged(r.appToken,new Configuration(taskConfig));
+    }
+ catch (    RemoteException e) {
+    }
+  }
+  r.stopFreezingScreenLocked(false);
+  return true;
+}
