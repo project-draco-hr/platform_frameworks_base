@@ -1,27 +1,71 @@
 {
-  boolean modesAdded=false;
-  DisplayModeRecord activeRecord=null;
-  ArrayList<DisplayModeRecord> records=new ArrayList<DisplayModeRecord>();
+  mDisplayInfos=Arrays.copyOf(physicalDisplayInfos,physicalDisplayInfos.length);
+  mActivePhysIndex=activeDisplayInfo;
+  ArrayList<Display.ColorTransform> colorTransforms=new ArrayList<>();
+  boolean colorTransformsAdded=false;
+  Display.ColorTransform activeColorTransform=null;
   for (int i=0; i < physicalDisplayInfos.length; i++) {
     SurfaceControl.PhysicalDisplayInfo info=physicalDisplayInfos[i];
-    DisplayModeRecord record=findDisplayModeRecord(info);
-    if (record != null) {
-      record.mPhysIndex=i;
+    boolean existingMode=false;
+    for (int j=0; j < colorTransforms.size(); j++) {
+      if (colorTransforms.get(j).getColorTransform() == info.colorTransform) {
+        existingMode=true;
+        break;
+      }
     }
- else {
-      record=new DisplayModeRecord(info,i);
+    if (existingMode) {
+      continue;
+    }
+    Display.ColorTransform colorTransform=findColorTransform(info);
+    if (colorTransform == null) {
+      colorTransform=createColorTransform(info.colorTransform);
+      colorTransformsAdded=true;
+    }
+    colorTransforms.add(colorTransform);
+    if (i == activeDisplayInfo) {
+      activeColorTransform=colorTransform;
+    }
+  }
+  ArrayList<DisplayModeRecord> records=new ArrayList<DisplayModeRecord>();
+  boolean modesAdded=false;
+  for (int i=0; i < physicalDisplayInfos.length; i++) {
+    SurfaceControl.PhysicalDisplayInfo info=physicalDisplayInfos[i];
+    boolean existingMode=false;
+    for (int j=0; j < records.size(); j++) {
+      if (records.get(j).hasMatchingMode(info)) {
+        existingMode=true;
+        break;
+      }
+    }
+    if (existingMode) {
+      continue;
+    }
+    DisplayModeRecord record=findDisplayModeRecord(info);
+    if (record == null) {
+      record=new DisplayModeRecord(info);
       modesAdded=true;
     }
     records.add(record);
-    if (i == activeDisplayInfo) {
+  }
+  DisplayModeRecord activeRecord=null;
+  for (int i=0; i < records.size(); i++) {
+    DisplayModeRecord record=records.get(i);
+    if (record.hasMatchingMode(physicalDisplayInfos[activeDisplayInfo])) {
       activeRecord=record;
+      break;
     }
   }
   if (mActiveModeId != 0 && mActiveModeId != activeRecord.mMode.getModeId()) {
     mActiveModeInvalid=true;
     sendTraversalRequestLocked();
   }
-  if (records.size() == mSupportedModes.size() && !modesAdded) {
+  if (mActiveColorTransformId != 0 && mActiveColorTransformId != activeColorTransform.getId()) {
+    mActiveColorTransformInvalid=true;
+    sendTraversalRequestLocked();
+  }
+  boolean colorTransformsChanged=colorTransforms.size() != mSupportedColorTransforms.size() || colorTransformsAdded;
+  boolean recordsChanged=records.size() != mSupportedModes.size() || modesAdded;
+  if (!recordsChanged && !colorTransformsChanged) {
     return false;
   }
   mHavePendingChanges=true;
@@ -29,11 +73,19 @@
   for (  DisplayModeRecord record : records) {
     mSupportedModes.put(record.mMode.getModeId(),record);
   }
-  if (mSupportedModes.indexOfKey(mDefaultModeId) < 0) {
+  mSupportedColorTransforms.clear();
+  for (  Display.ColorTransform colorTransform : colorTransforms) {
+    mSupportedColorTransforms.put(colorTransform.getId(),colorTransform);
+  }
+  if (findDisplayInfoIndexLocked(mDefaultColorTransformId,mDefaultModeId) < 0) {
     if (mDefaultModeId != 0) {
-      Slog.w(TAG,"Default display mode no longer available, using currently active" + " mode as default.");
+      Slog.w(TAG,"Default display mode no longer available, using currently" + " active mode as default.");
     }
     mDefaultModeId=activeRecord.mMode.getModeId();
+    if (mDefaultColorTransformId != 0) {
+      Slog.w(TAG,"Default color transform no longer available, using currently" + " active color transform as default");
+    }
+    mDefaultColorTransformId=activeColorTransform.getId();
   }
   if (mSupportedModes.indexOfKey(mActiveModeId) < 0) {
     if (mActiveModeId != 0) {
@@ -41,6 +93,13 @@
     }
     mActiveModeId=mDefaultModeId;
     mActiveModeInvalid=true;
+  }
+  if (mSupportedColorTransforms.indexOfKey(mActiveColorTransformId) < 0) {
+    if (mActiveColorTransformId != 0) {
+      Slog.w(TAG,"Active color transform no longer available, reverting" + " to default transform.");
+    }
+    mActiveColorTransformId=mDefaultColorTransformId;
+    mActiveColorTransformInvalid=true;
   }
   sendTraversalRequestLocked();
   return true;
