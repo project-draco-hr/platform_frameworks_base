@@ -1,50 +1,47 @@
 {
   if (DEBUG)   Log.d(TAG,"executePlan, # tasks: " + opts.numVisibleTasks + ", # thumbnails: "+ opts.numVisibleTaskThumbnails+ ", running task id: "+ opts.runningTaskId);
   Resources res=mContext.getResources();
-  int stackCount=mStacks.size();
-  for (int j=0; j < stackCount; j++) {
-    ArrayList<Task> tasks=mStacks.valueAt(j).getTasks();
-    int taskCount=tasks.size();
-    for (int i=0; i < taskCount; i++) {
-      ActivityManager.RecentTaskInfo t=mRawTasks.get(i);
-      Task task=tasks.get(i);
-      Task.TaskKey taskKey=task.key;
-      Task.ComponentNameKey cnKey=taskKey.getComponentNameKey();
-      ActivityInfoHandle infoHandle;
-      boolean hadCachedActivityInfo=false;
-      if (mActivityInfoCache.containsKey(cnKey)) {
-        infoHandle=mActivityInfoCache.get(cnKey);
-        hadCachedActivityInfo=true;
-      }
+  ArrayList<Task> tasks=mStack.getTasks();
+  int taskCount=tasks.size();
+  for (int i=0; i < taskCount; i++) {
+    ActivityManager.RecentTaskInfo t=mRawTasks.get(i);
+    Task task=tasks.get(i);
+    Task.TaskKey taskKey=task.key;
+    Task.ComponentNameKey cnKey=taskKey.getComponentNameKey();
+    ActivityInfoHandle infoHandle;
+    boolean hadCachedActivityInfo=false;
+    if (mActivityInfoCache.containsKey(cnKey)) {
+      infoHandle=mActivityInfoCache.get(cnKey);
+      hadCachedActivityInfo=true;
+    }
  else {
-        infoHandle=new ActivityInfoHandle();
+      infoHandle=new ActivityInfoHandle();
+    }
+    boolean isRunningTask=(task.key.id == opts.runningTaskId);
+    boolean isVisibleTask=i >= (taskCount - opts.numVisibleTasks);
+    boolean isVisibleThumbnail=i >= (taskCount - opts.numVisibleTaskThumbnails);
+    if (opts.onlyLoadPausedActivities && isRunningTask) {
+      continue;
+    }
+    if (opts.loadIcons && (isRunningTask || isVisibleTask)) {
+      if (task.activityIcon == null) {
+        if (DEBUG)         Log.d(TAG,"\tLoading icon: " + taskKey);
+        task.activityIcon=loader.getAndUpdateActivityIcon(taskKey,t.taskDescription,mSystemServicesProxy,res,infoHandle,true);
       }
-      boolean isRunningTask=(task.key.id == opts.runningTaskId);
-      boolean isVisibleTask=i >= (taskCount - opts.numVisibleTasks);
-      boolean isVisibleThumbnail=i >= (taskCount - opts.numVisibleTaskThumbnails);
-      if (opts.onlyLoadPausedActivities && isRunningTask) {
-        continue;
-      }
-      if (opts.loadIcons && (isRunningTask || isVisibleTask)) {
-        if (task.activityIcon == null) {
-          if (DEBUG)           Log.d(TAG,"\tLoading icon: " + taskKey);
-          task.activityIcon=loader.getAndUpdateActivityIcon(taskKey,t.taskDescription,mSystemServicesProxy,res,infoHandle,true);
+    }
+    if (opts.loadThumbnails && (isRunningTask || isVisibleThumbnail)) {
+      if (task.thumbnail == null || isRunningTask) {
+        if (DEBUG)         Log.d(TAG,"\tLoading thumbnail: " + taskKey);
+        if (mConfig.svelteLevel <= RecentsConfiguration.SVELTE_LIMIT_CACHE) {
+          task.thumbnail=loader.getAndUpdateThumbnail(taskKey,mSystemServicesProxy,true);
+        }
+ else         if (mConfig.svelteLevel == RecentsConfiguration.SVELTE_DISABLE_CACHE) {
+          loadQueue.addTask(task);
         }
       }
-      if (opts.loadThumbnails && (isRunningTask || isVisibleThumbnail)) {
-        if (task.thumbnail == null || isRunningTask) {
-          if (DEBUG)           Log.d(TAG,"\tLoading thumbnail: " + taskKey);
-          if (mConfig.svelteLevel <= RecentsConfiguration.SVELTE_LIMIT_CACHE) {
-            task.thumbnail=loader.getAndUpdateThumbnail(taskKey,mSystemServicesProxy,true);
-          }
- else           if (mConfig.svelteLevel == RecentsConfiguration.SVELTE_DISABLE_CACHE) {
-            loadQueue.addTask(task);
-          }
-        }
-      }
-      if (!hadCachedActivityInfo && infoHandle.info != null) {
-        mActivityInfoCache.put(cnKey,infoHandle);
-      }
+    }
+    if (!hadCachedActivityInfo && infoHandle.info != null) {
+      mActivityInfoCache.put(cnKey,infoHandle);
     }
   }
 }
