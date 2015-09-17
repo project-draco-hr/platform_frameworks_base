@@ -1,17 +1,21 @@
 {
-  final boolean requireCode=((flags & PARSE_ENFORCE_CODE) != 0) && ((pkg.applicationInfo.flags & ApplicationInfo.FLAG_HAS_CODE) != 0);
+  final boolean requireCode=((parseFlags & PARSE_ENFORCE_CODE) != 0) && ((pkg.applicationInfo.flags & ApplicationInfo.FLAG_HAS_CODE) != 0);
   final String apkPath=apkFile.getAbsolutePath();
-  boolean codeFound=false;
+  final boolean skipVerification=Build.IS_DEBUGGABLE && ((parseFlags & PARSE_SKIP_VERIFICATION) != 0);
+  boolean codeFound=skipVerification;
   StrictJarFile jarFile=null;
   try {
+    Trace.traceBegin(TRACE_TAG_PACKAGE_MANAGER,"strictJarFileCtor");
     jarFile=new StrictJarFile(apkPath);
+    Trace.traceEnd(TRACE_TAG_PACKAGE_MANAGER);
     final ZipEntry manifestEntry=jarFile.findEntry(ANDROID_MANIFEST_FILENAME);
     if (manifestEntry == null) {
       throw new PackageParserException(INSTALL_PARSE_FAILED_BAD_MANIFEST,"Package " + apkPath + " has no manifest");
     }
+    Trace.traceBegin(TRACE_TAG_PACKAGE_MANAGER,"buildVerifyList");
     final List<ZipEntry> toVerify=new ArrayList<>();
     toVerify.add(manifestEntry);
-    if ((flags & PARSE_IS_SYSTEM) == 0) {
+    if (!skipVerification && (parseFlags & PARSE_IS_SYSTEM) == 0) {
       final Iterator<ZipEntry> i=jarFile.iterator();
       while (i.hasNext()) {
         final ZipEntry entry=i.next();
@@ -25,9 +29,11 @@
         toVerify.add(entry);
       }
     }
+    Trace.traceEnd(TRACE_TAG_PACKAGE_MANAGER);
     if (!codeFound && requireCode) {
       throw new PackageParserException(INSTALL_PARSE_FAILED_MANIFEST_MALFORMED,"Package " + apkPath + " code is missing");
     }
+    Trace.traceBegin(TRACE_TAG_PACKAGE_MANAGER,"verifyEntries");
     for (    ZipEntry entry : toVerify) {
       final Certificate[][] entryCerts=loadCertificates(jarFile,entry);
       if (ArrayUtils.isEmpty(entryCerts)) {
@@ -41,6 +47,9 @@
         for (int i=0; i < entryCerts.length; i++) {
           pkg.mSigningKeys.add(entryCerts[i][0].getPublicKey());
         }
+        if (skipVerification) {
+          break;
+        }
       }
  else {
         if (!Signature.areExactMatch(pkg.mSignatures,entrySignatures)) {
@@ -48,6 +57,7 @@
         }
       }
     }
+    Trace.traceEnd(TRACE_TAG_PACKAGE_MANAGER);
   }
  catch (  GeneralSecurityException e) {
     throw new PackageParserException(INSTALL_PARSE_FAILED_CERTIFICATE_ENCODING,"Failed to collect certificates from " + apkPath,e);
