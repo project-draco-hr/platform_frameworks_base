@@ -118,10 +118,6 @@
       getWakeupReasonTimerLocked(reasonName).readSummaryFromParcelLocked(in);
     }
   }
-  sNumSpeedSteps=in.readInt();
-  if (sNumSpeedSteps < 0 || sNumSpeedSteps > 100) {
-    throw new ParcelFormatException("Bad speed steps in data: " + sNumSpeedSteps);
-  }
   final int NU=in.readInt();
   if (NU > 10000) {
     throw new ParcelFormatException("File corrupt: too many uids " + NU);
@@ -200,16 +196,30 @@
     u.mUserCpuTime.readSummaryFromParcelLocked(in);
     u.mSystemCpuTime.readSummaryFromParcelLocked(in);
     u.mCpuPower.readSummaryFromParcelLocked(in);
-    int NSB=in.readInt();
-    if (NSB > 100) {
-      throw new ParcelFormatException("File corrupt: too many speed bins " + NSB);
-    }
-    u.mSpeedBins=new LongSamplingCounter[NSB];
-    for (int i=0; i < NSB; i++) {
-      if (in.readInt() != 0) {
-        u.mSpeedBins[i]=new LongSamplingCounter(mOnBatteryTimeBase);
-        u.mSpeedBins[i].readSummaryFromParcelLocked(in);
+    if (in.readInt() != 0) {
+      final int numClusters=in.readInt();
+      if (mPowerProfile != null && mPowerProfile.getNumCpuClusters() != numClusters) {
+        throw new ParcelFormatException("Incompatible cpu cluster arrangement");
       }
+      u.mCpuClusterSpeed=new LongSamplingCounter[numClusters][];
+      for (int cluster=0; cluster < numClusters; cluster++) {
+        int NSB=in.readInt();
+        if (mPowerProfile != null && mPowerProfile.getNumSpeedStepsInCpuCluster(cluster) != NSB) {
+          throw new ParcelFormatException("File corrupt: too many speed bins " + NSB);
+        }
+        if (in.readInt() != 0) {
+          u.mCpuClusterSpeed[cluster]=new LongSamplingCounter[NSB];
+          for (int speed=0; speed < NSB; speed++) {
+            if (in.readInt() != 0) {
+              u.mCpuClusterSpeed[cluster][speed]=new LongSamplingCounter(mOnBatteryTimeBase);
+              u.mCpuClusterSpeed[cluster][speed].readSummaryFromParcelLocked(in);
+            }
+          }
+        }
+      }
+    }
+ else {
+      u.mCpuClusterSpeed=null;
     }
     int NW=in.readInt();
     if (NW > 100) {
