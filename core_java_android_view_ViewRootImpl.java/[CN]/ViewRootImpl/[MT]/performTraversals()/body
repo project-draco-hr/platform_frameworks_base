@@ -182,8 +182,9 @@
   final boolean computesInternalInsets=mAttachInfo.mTreeObserver.hasComputeInternalInsetsListeners() || mAttachInfo.mHasNonEmptyGivenInternalInsets;
   boolean insetsPending=false;
   int relayoutResult=0;
+  boolean isViewVisible=viewVisibility == View.VISIBLE;
   if (mFirst || windowShouldResize || insetsChanged|| viewVisibilityChanged|| params != null) {
-    if (viewVisibility == View.VISIBLE) {
+    if (isViewVisible) {
       insetsPending=computesInternalInsets && (mFirst || viewVisibilityChanged);
     }
     if (mSurfaceHolder != null) {
@@ -483,17 +484,30 @@
     }
     mRemainingFrameCount--;
   }
+  final boolean changedVisibility=(viewVisibilityChanged || mFirst) && isViewVisible;
+  final boolean hasWindowFocus=mAttachInfo.mHasWindowFocus && isViewVisible;
+  final boolean regainedFocus=hasWindowFocus && mLostWindowFocus;
+  if (regainedFocus) {
+    mLostWindowFocus=false;
+  }
+ else   if (!hasWindowFocus && mHadWindowFocus) {
+    mLostWindowFocus=true;
+  }
+  if (changedVisibility || regainedFocus) {
+    host.sendAccessibilityEvent(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED);
+  }
   mFirst=false;
   mWillDrawSoon=false;
   mNewSurfaceNeeded=false;
   mViewVisibility=viewVisibility;
-  if (mAttachInfo.mHasWindowFocus && !isInLocalFocusMode()) {
+  mHadWindowFocus=hasWindowFocus;
+  if (hasWindowFocus && !isInLocalFocusMode()) {
     final boolean imTarget=WindowManager.LayoutParams.mayUseInputMethod(mWindowAttributes.flags);
     if (imTarget != mLastWasImTarget) {
       mLastWasImTarget=imTarget;
       InputMethodManager imm=InputMethodManager.peekInstance();
       if (imm != null && imTarget) {
-        imm.onPreWindowFocus(mView,true);
+        imm.onPreWindowFocus(mView,hasWindowFocus);
         imm.onPostWindowFocus(mView,mView.findFocus(),mWindowAttributes.softInputMode,!mHasHadWindowFocus,mWindowAttributes.flags);
       }
     }
@@ -501,7 +515,7 @@
   if ((relayoutResult & WindowManagerGlobal.RELAYOUT_RES_FIRST_TIME) != 0) {
     mReportNextDraw=true;
   }
-  boolean cancelDraw=mAttachInfo.mTreeObserver.dispatchOnPreDraw() || viewVisibility != View.VISIBLE;
+  boolean cancelDraw=mAttachInfo.mTreeObserver.dispatchOnPreDraw() || !isViewVisible;
   if (!cancelDraw && !newSurface) {
     if (!skipDraw || mReportNextDraw) {
       if (mPendingTransitions != null && mPendingTransitions.size() > 0) {
@@ -514,7 +528,7 @@
     }
   }
  else {
-    if (viewVisibility == View.VISIBLE) {
+    if (isViewVisible) {
       scheduleTraversals();
     }
  else     if (mPendingTransitions != null && mPendingTransitions.size() > 0) {
