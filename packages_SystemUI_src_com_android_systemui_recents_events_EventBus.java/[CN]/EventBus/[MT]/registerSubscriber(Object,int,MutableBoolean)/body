@@ -1,0 +1,74 @@
+{
+  long callingThreadId=Thread.currentThread().getId();
+  if (callingThreadId != mHandler.getLooper().getThread().getId()) {
+    throw new RuntimeException("Can not register() a subscriber from a non-main thread.");
+  }
+  if (findRegisteredSubscriber(subscriber,false)) {
+    return;
+  }
+  long t1=0;
+  if (DEBUG_TRACE_ALL) {
+    t1=SystemClock.currentTimeMicro();
+    logWithPid("registerSubscriber(" + subscriber.getClass().getSimpleName() + ")");
+  }
+  Subscriber sub=new Subscriber(subscriber,SystemClock.uptimeMillis());
+  Class<?> subscriberType=subscriber.getClass();
+  ArrayList<EventHandlerMethod> subscriberMethods=mSubscriberTypeMap.get(subscriberType);
+  if (subscriberMethods != null) {
+    if (DEBUG_TRACE_ALL) {
+      logWithPid("Subscriber class type already registered");
+    }
+    for (    EventHandlerMethod method : subscriberMethods) {
+      ArrayList<EventHandler> eventTypeHandlers=mEventTypeMap.get(method.eventType);
+      eventTypeHandlers.add(new EventHandler(sub,method,priority));
+      sortEventHandlersByPriority(eventTypeHandlers);
+    }
+    mSubscribers.add(sub);
+    return;
+  }
+ else {
+    if (DEBUG_TRACE_ALL) {
+      logWithPid("Subscriber class type requires registration");
+    }
+    subscriberMethods=new ArrayList<>();
+    mSubscriberTypeMap.put(subscriberType,subscriberMethods);
+    mSubscribers.add(sub);
+  }
+  MutableBoolean isInterprocessEvent=new MutableBoolean(false);
+  Method[] methods=subscriberType.getMethods();
+  for (  Method m : methods) {
+    Class<?>[] parameterTypes=m.getParameterTypes();
+    isInterprocessEvent.value=false;
+    if (isValidEventBusHandlerMethod(m,parameterTypes,isInterprocessEvent)) {
+      Class<? extends Event> eventType=(Class<? extends Event>)parameterTypes[0];
+      ArrayList<EventHandler> eventTypeHandlers=mEventTypeMap.get(eventType);
+      if (eventTypeHandlers == null) {
+        eventTypeHandlers=new ArrayList<>();
+        mEventTypeMap.put(eventType,eventTypeHandlers);
+      }
+      if (isInterprocessEvent.value) {
+        try {
+          eventType.getConstructor(Bundle.class);
+          mInterprocessEventNameMap.put(eventType.getName(),(Class<? extends InterprocessEvent>)eventType);
+          if (hasInterprocessEventsChangedOut != null) {
+            hasInterprocessEventsChangedOut.value=true;
+          }
+        }
+ catch (        NoSuchMethodException e) {
+          throw new RuntimeException("Expected InterprocessEvent to have a Bundle constructor");
+        }
+      }
+      EventHandlerMethod method=new EventHandlerMethod(m,eventType);
+      EventHandler handler=new EventHandler(sub,method,priority);
+      eventTypeHandlers.add(handler);
+      subscriberMethods.add(method);
+      sortEventHandlersByPriority(eventTypeHandlers);
+      if (DEBUG_TRACE_ALL) {
+        logWithPid("  * Method: " + m.getName() + " event: "+ parameterTypes[0].getSimpleName()+ " interprocess? "+ isInterprocessEvent.value);
+      }
+    }
+  }
+  if (DEBUG_TRACE_ALL) {
+    logWithPid("Registered " + subscriber.getClass().getSimpleName() + " in "+ (SystemClock.currentTimeMicro() - t1)+ " microseconds");
+  }
+}
