@@ -3,7 +3,9 @@
   Preconditions.checkNotNull(packageName);
   Preconditions.checkNotNull(observer);
   final int uid=Binder.getCallingUid();
-  if (UserHandle.getUserId(uid) != userId) {
+  final boolean deleteAllUsers=(flags & PackageManager.DELETE_ALL_USERS) != 0;
+  final int[] users=deleteAllUsers ? sUserManager.getUserIds() : new int[]{userId};
+  if (UserHandle.getUserId(uid) != userId || (deleteAllUsers && users.length > 1)) {
     mContext.enforceCallingPermission(android.Manifest.permission.INTERACT_ACROSS_USERS_FULL,"deletePackage for user " + userId);
   }
   if (isUserRestricted(userId,UserManager.DISALLOW_UNINSTALL_APPS)) {
@@ -14,26 +16,15 @@
     }
     return;
   }
-  boolean uninstallBlocked=false;
-  if ((flags & PackageManager.DELETE_ALL_USERS) != 0) {
-    int[] users=sUserManager.getUserIds();
-    for (int i=0; i < users.length; ++i) {
-      if (getBlockUninstallForUser(packageName,users[i])) {
-        uninstallBlocked=true;
-        break;
+  for (  int currentUserId : users) {
+    if (getBlockUninstallForUser(packageName,currentUserId)) {
+      try {
+        observer.onPackageDeleted(packageName,PackageManager.DELETE_FAILED_OWNER_BLOCKED,null);
       }
+ catch (      RemoteException re) {
+      }
+      return;
     }
-  }
- else {
-    uninstallBlocked=getBlockUninstallForUser(packageName,userId);
-  }
-  if (uninstallBlocked) {
-    try {
-      observer.onPackageDeleted(packageName,PackageManager.DELETE_FAILED_OWNER_BLOCKED,null);
-    }
- catch (    RemoteException re) {
-    }
-    return;
   }
   if (DEBUG_REMOVE) {
     Slog.d(TAG,"deletePackageAsUser: pkg=" + packageName + " user="+ userId);
@@ -42,13 +33,11 @@
     public void run(){
       mHandler.removeCallbacks(this);
       final int returnCode=deletePackageX(packageName,userId,flags);
-      if (observer != null) {
-        try {
-          observer.onPackageDeleted(packageName,returnCode,null);
-        }
- catch (        RemoteException e) {
-          Log.i(TAG,"Observer no longer exists.");
-        }
+      try {
+        observer.onPackageDeleted(packageName,returnCode,null);
+      }
+ catch (      RemoteException e) {
+        Log.i(TAG,"Observer no longer exists.");
       }
     }
   }
