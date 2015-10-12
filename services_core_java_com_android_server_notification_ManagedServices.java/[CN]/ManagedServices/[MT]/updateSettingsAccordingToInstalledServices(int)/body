@@ -1,0 +1,45 @@
+{
+  boolean restoredChanged=false;
+  boolean currentChanged=false;
+  Set<ComponentName> restored=loadComponentNamesFromSetting(restoredSettingName(mConfig),userId);
+  Set<ComponentName> current=loadComponentNamesFromSetting(mConfig.secureSettingName,userId);
+  Set<ComponentName> installed=new ArraySet<>();
+  final PackageManager pm=mContext.getPackageManager();
+  List<ResolveInfo> installedServices=pm.queryIntentServicesAsUser(new Intent(mConfig.serviceInterface),PackageManager.GET_SERVICES | PackageManager.GET_META_DATA,userId);
+  if (DEBUG)   Slog.v(TAG,mConfig.serviceInterface + " services: " + installedServices);
+  for (int i=0, count=installedServices.size(); i < count; i++) {
+    ResolveInfo resolveInfo=installedServices.get(i);
+    ServiceInfo info=resolveInfo.serviceInfo;
+    ComponentName component=new ComponentName(info.packageName,info.name);
+    if (!mConfig.bindPermission.equals(info.permission)) {
+      Slog.w(TAG,"Skipping " + getCaption() + " service "+ info.packageName+ "/"+ info.name+ ": it does not require the permission "+ mConfig.bindPermission);
+      continue;
+    }
+    installed.add(component);
+  }
+  ArraySet<ComponentName> retained=new ArraySet<>();
+  for (  ComponentName component : installed) {
+    if (null != restored) {
+      boolean wasRestored=restored.remove(component);
+      if (wasRestored) {
+        if (DEBUG)         Slog.v(TAG,"Restoring " + component + " for user "+ userId);
+        restoredChanged=true;
+        currentChanged=true;
+        retained.add(component);
+        continue;
+      }
+    }
+    if (null != current) {
+      if (current.contains(component))       retained.add(component);
+    }
+  }
+  currentChanged|=((current == null ? 0 : current.size()) != retained.size());
+  if (currentChanged) {
+    if (DEBUG)     Slog.v(TAG,"List of  " + getCaption() + " services was updated "+ current);
+    storeComponentsToSetting(retained,mConfig.secureSettingName,userId);
+  }
+  if (restoredChanged) {
+    if (DEBUG)     Slog.v(TAG,"List of  " + getCaption() + " restored services was updated "+ restored);
+    storeComponentsToSetting(restored,restoredSettingName(mConfig),userId);
+  }
+}

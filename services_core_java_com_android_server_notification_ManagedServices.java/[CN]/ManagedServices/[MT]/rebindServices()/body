@@ -2,34 +2,32 @@
   if (DEBUG)   Slog.d(TAG,"rebindServices");
   final int[] userIds=mUserProfiles.getCurrentProfileIds();
   final int nUserIds=userIds.length;
-  final SparseArray<String> flat=new SparseArray<String>();
+  final SparseArray<ArraySet<ComponentName>> componentsByUser=new SparseArray<>();
   for (int i=0; i < nUserIds; ++i) {
-    flat.put(userIds[i],Settings.Secure.getStringForUser(mContext.getContentResolver(),mConfig.secureSettingName,userIds[i]));
+    componentsByUser.put(userIds[i],loadComponentNamesFromSetting(mConfig.secureSettingName,userIds[i]));
   }
-  ArrayList<ManagedServiceInfo> toRemove=new ArrayList<ManagedServiceInfo>();
-  final SparseArray<ArrayList<ComponentName>> toAdd=new SparseArray<ArrayList<ComponentName>>();
+  final ArrayList<ManagedServiceInfo> toRemove=new ArrayList<>();
+  final SparseArray<ArrayList<ComponentName>> toAdd=new SparseArray<>();
 synchronized (mMutex) {
     for (    ManagedServiceInfo service : mServices) {
       if (!service.isSystem) {
         toRemove.add(service);
       }
     }
-    final ArraySet<ComponentName> newEnabled=new ArraySet<ComponentName>();
-    final ArraySet<String> newPackages=new ArraySet<String>();
+    final ArraySet<ComponentName> newEnabled=new ArraySet<>();
+    final ArraySet<String> newPackages=new ArraySet<>();
     for (int i=0; i < nUserIds; ++i) {
-      final ArrayList<ComponentName> add=new ArrayList<ComponentName>();
+      final ArraySet<ComponentName> userComponents=componentsByUser.get(userIds[i]);
+      if (null == userComponents) {
+        toAdd.put(userIds[i],new ArrayList<ComponentName>());
+        continue;
+      }
+      final ArrayList<ComponentName> add=new ArrayList<>(userComponents);
       toAdd.put(userIds[i],add);
-      String toDecode=flat.get(userIds[i]);
-      if (toDecode != null) {
-        String[] components=toDecode.split(ENABLED_SERVICES_SEPARATOR);
-        for (int j=0; j < components.length; j++) {
-          final ComponentName component=ComponentName.unflattenFromString(components[j]);
-          if (component != null) {
-            newEnabled.add(component);
-            add.add(component);
-            newPackages.add(component.getPackageName());
-          }
-        }
+      newEnabled.addAll(userComponents);
+      for (int j=0; j < userComponents.size(); j++) {
+        final ComponentName component=userComponents.valueAt(i);
+        newPackages.add(component.getPackageName());
       }
     }
     mEnabledServicesForCurrentProfiles=newEnabled;
@@ -50,5 +48,5 @@ synchronized (mMutex) {
       registerService(component,userIds[i]);
     }
   }
-  mLastSeenProfileIds=mUserProfiles.getCurrentProfileIds();
+  mLastSeenProfileIds=userIds;
 }
