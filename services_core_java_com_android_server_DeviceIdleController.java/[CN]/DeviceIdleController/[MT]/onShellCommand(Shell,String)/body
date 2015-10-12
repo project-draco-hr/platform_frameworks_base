@@ -1,0 +1,171 @@
+{
+  PrintWriter pw=shell.getOutPrintWriter();
+  if ("step".equals(cmd)) {
+    getContext().enforceCallingOrSelfPermission(android.Manifest.permission.DEVICE_POWER,null);
+synchronized (this) {
+      long token=Binder.clearCallingIdentity();
+      try {
+        exitForceIdleLocked();
+        stepIdleStateLocked();
+        pw.print("Stepped to: ");
+        pw.println(stateToString(mState));
+      }
+  finally {
+        Binder.restoreCallingIdentity(token);
+      }
+    }
+  }
+ else   if ("force-idle".equals(cmd)) {
+    getContext().enforceCallingOrSelfPermission(android.Manifest.permission.DEVICE_POWER,null);
+synchronized (this) {
+      long token=Binder.clearCallingIdentity();
+      try {
+        if (!mEnabled) {
+          pw.println("Unable to go idle; not enabled");
+          return -1;
+        }
+        mForceIdle=true;
+        becomeInactiveIfAppropriateLocked();
+        int curState=mState;
+        while (curState != STATE_IDLE) {
+          stepIdleStateLocked();
+          if (curState == mState) {
+            pw.print("Unable to go idle; stopped at ");
+            pw.println(stateToString(mState));
+            exitForceIdleLocked();
+            return -1;
+          }
+          curState=mState;
+        }
+        pw.println("Now forced in to idle mode");
+      }
+  finally {
+        Binder.restoreCallingIdentity(token);
+      }
+    }
+  }
+ else   if ("disable".equals(cmd)) {
+    getContext().enforceCallingOrSelfPermission(android.Manifest.permission.DEVICE_POWER,null);
+synchronized (this) {
+      long token=Binder.clearCallingIdentity();
+      try {
+        if (mEnabled) {
+          mEnabled=false;
+          becomeActiveLocked("disabled",Process.myUid());
+          pw.println("Idle mode disabled");
+        }
+      }
+  finally {
+        Binder.restoreCallingIdentity(token);
+      }
+    }
+  }
+ else   if ("enable".equals(cmd)) {
+    getContext().enforceCallingOrSelfPermission(android.Manifest.permission.DEVICE_POWER,null);
+synchronized (this) {
+      long token=Binder.clearCallingIdentity();
+      try {
+        exitForceIdleLocked();
+        if (!mEnabled) {
+          mEnabled=true;
+          becomeInactiveIfAppropriateLocked();
+          pw.println("Idle mode enabled");
+        }
+      }
+  finally {
+        Binder.restoreCallingIdentity(token);
+      }
+    }
+  }
+ else   if ("enabled".equals(cmd)) {
+synchronized (this) {
+      pw.println(mEnabled ? "1" : " 0");
+    }
+  }
+ else   if ("whitelist".equals(cmd)) {
+    long token=Binder.clearCallingIdentity();
+    try {
+      String arg=shell.getNextArg();
+      if (arg != null) {
+        getContext().enforceCallingOrSelfPermission(android.Manifest.permission.DEVICE_POWER,null);
+        do {
+          if (arg.length() < 1 || (arg.charAt(0) != '-' && arg.charAt(0) != '+')) {
+            pw.println("Package must be prefixed with + or -: " + arg);
+            return -1;
+          }
+          char op=arg.charAt(0);
+          String pkg=arg.substring(1);
+          if (op == '+') {
+            if (addPowerSaveWhitelistAppInternal(pkg)) {
+              pw.println("Added: " + pkg);
+            }
+ else {
+              pw.println("Unknown package: " + pkg);
+            }
+          }
+ else {
+            if (removePowerSaveWhitelistAppInternal(pkg)) {
+              pw.println("Removed: " + pkg);
+            }
+          }
+        }
+ while ((arg=shell.getNextArg()) != null);
+      }
+ else {
+synchronized (this) {
+          for (int j=0; j < mPowerSaveWhitelistAppsExceptIdle.size(); j++) {
+            pw.print("system-excidle,");
+            pw.print(mPowerSaveWhitelistAppsExceptIdle.keyAt(j));
+            pw.print(",");
+            pw.println(mPowerSaveWhitelistAppsExceptIdle.valueAt(j));
+          }
+          for (int j=0; j < mPowerSaveWhitelistApps.size(); j++) {
+            pw.print("system,");
+            pw.print(mPowerSaveWhitelistApps.keyAt(j));
+            pw.print(",");
+            pw.println(mPowerSaveWhitelistApps.valueAt(j));
+          }
+          for (int j=0; j < mPowerSaveWhitelistUserApps.size(); j++) {
+            pw.print("user,");
+            pw.print(mPowerSaveWhitelistUserApps.keyAt(j));
+            pw.print(",");
+            pw.println(mPowerSaveWhitelistUserApps.valueAt(j));
+          }
+        }
+      }
+    }
+  finally {
+      Binder.restoreCallingIdentity(token);
+    }
+  }
+ else   if ("tempwhitelist".equals(cmd)) {
+    String opt;
+    while ((opt=shell.getNextOption()) != null) {
+      if ("-u".equals(opt)) {
+        opt=shell.getNextArg();
+        if (opt == null) {
+          pw.println("-u requires a user number");
+          return -1;
+        }
+        shell.userId=Integer.parseInt(opt);
+      }
+    }
+    String arg=shell.getNextArg();
+    if (arg != null) {
+      try {
+        addPowerSaveTempWhitelistAppChecked(arg,10000L,shell.userId,"shell");
+      }
+ catch (      RemoteException re) {
+        pw.println("Failed: " + re);
+      }
+    }
+ else {
+      pw.println("At least one package name must be specified");
+      return -1;
+    }
+  }
+ else {
+    return shell.handleDefaultCommands(cmd);
+  }
+  return 0;
+}
