@@ -33,9 +33,9 @@
   if (eventType != XmlPullParser.START_TAG) {
     return null;
   }
-  Pair<Long,Long> runtimes;
+  Pair<Long,Long> elapsedRuntimes;
   try {
-    runtimes=buildExecutionTimesFromXml(parser);
+    elapsedRuntimes=buildExecutionTimesFromXml(parser);
   }
  catch (  NumberFormatException e) {
     if (DEBUG) {
@@ -43,10 +43,18 @@
     }
     return null;
   }
+  final long elapsedNow=SystemClock.elapsedRealtime();
   if (XML_TAG_PERIODIC.equals(parser.getName())) {
     try {
       String val=parser.getAttributeValue(null,"period");
-      jobBuilder.setPeriodic(Long.valueOf(val));
+      final long periodMillis=Long.valueOf(val);
+      jobBuilder.setPeriodic(periodMillis);
+      if (elapsedRuntimes.second > elapsedNow + 2 * periodMillis) {
+        final long clampedEarlyRuntimeElapsed=elapsedNow + periodMillis;
+        final long clampedLateRuntimeElapsed=elapsedNow + 2 * periodMillis;
+        Slog.w(TAG,String.format("Periodic job for uid='%d' persisted run-time is" + " too big [%s, %s]. Clamping to [%s,%s]",uid,DateUtils.formatElapsedTime(elapsedRuntimes.first / 1000),DateUtils.formatElapsedTime(elapsedRuntimes.second / 1000),DateUtils.formatElapsedTime(clampedEarlyRuntimeElapsed / 1000),DateUtils.formatElapsedTime(clampedLateRuntimeElapsed / 1000)));
+        elapsedRuntimes=Pair.create(clampedEarlyRuntimeElapsed,clampedLateRuntimeElapsed);
+      }
     }
  catch (    NumberFormatException e) {
       Slog.d(TAG,"Error reading periodic execution criteria, skipping.");
@@ -55,11 +63,11 @@
   }
  else   if (XML_TAG_ONEOFF.equals(parser.getName())) {
     try {
-      if (runtimes.first != JobStatus.NO_EARLIEST_RUNTIME) {
-        jobBuilder.setMinimumLatency(runtimes.first - SystemClock.elapsedRealtime());
+      if (elapsedRuntimes.first != JobStatus.NO_EARLIEST_RUNTIME) {
+        jobBuilder.setMinimumLatency(elapsedRuntimes.first - elapsedNow);
       }
-      if (runtimes.second != JobStatus.NO_LATEST_RUNTIME) {
-        jobBuilder.setOverrideDeadline(runtimes.second - SystemClock.elapsedRealtime());
+      if (elapsedRuntimes.second != JobStatus.NO_LATEST_RUNTIME) {
+        jobBuilder.setOverrideDeadline(elapsedRuntimes.second - elapsedNow);
       }
     }
  catch (    NumberFormatException e) {
@@ -88,5 +96,5 @@
   PersistableBundle extras=PersistableBundle.restoreFromXml(parser);
   jobBuilder.setExtras(extras);
   parser.nextTag();
-  return new JobStatus(jobBuilder.build(),uid,runtimes.first,runtimes.second);
+  return new JobStatus(jobBuilder.build(),uid,elapsedRuntimes.first,elapsedRuntimes.second);
 }
