@@ -1,0 +1,58 @@
+{
+  final Doc doc=mDocs.get(documentId);
+  if (doc == null) {
+    throw new FileNotFoundException();
+  }
+  final ParcelFileDescriptor[] pipe;
+  try {
+    pipe=ParcelFileDescriptor.createPipe();
+  }
+ catch (  IOException e) {
+    throw new IllegalStateException(e);
+  }
+  if (mode.contains("w")) {
+    new AsyncTask<Void,Void,Void>(){
+      @Override protected Void doInBackground(      Void... params){
+synchronized (doc) {
+          try {
+            final InputStream is=new ParcelFileDescriptor.AutoCloseInputStream(pipe[0]);
+            doc.contents=readFullyNoClose(is);
+            is.close();
+            doc.notifyAll();
+          }
+ catch (          IOException e) {
+            Log.w(TAG,"Failed to stream",e);
+          }
+        }
+        return null;
+      }
+    }
+.executeOnExecutor(AsyncTask.SERIAL_EXECUTOR);
+    return pipe[1];
+  }
+ else {
+    new AsyncTask<Void,Void,Void>(){
+      @Override protected Void doInBackground(      Void... params){
+synchronized (doc) {
+          try {
+            final OutputStream os=new ParcelFileDescriptor.AutoCloseOutputStream(pipe[1]);
+            while (doc.contents == null) {
+              doc.wait();
+            }
+            os.write(doc.contents);
+            os.close();
+          }
+ catch (          IOException e) {
+            Log.w(TAG,"Failed to stream",e);
+          }
+catch (          InterruptedException e) {
+            Log.w(TAG,"Interuppted",e);
+          }
+        }
+        return null;
+      }
+    }
+.executeOnExecutor(AsyncTask.SERIAL_EXECUTOR);
+    return pipe[0];
+  }
+}
