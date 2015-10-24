@@ -1,0 +1,119 @@
+{
+  if (mService.checkCallingPermission(INTERACT_ACROSS_USERS_FULL) != PackageManager.PERMISSION_GRANTED) {
+    String msg="Permission Denial: switchUser() from pid=" + Binder.getCallingPid() + ", uid="+ Binder.getCallingUid()+ " requires "+ INTERACT_ACROSS_USERS_FULL;
+    Slog.w(TAG,msg);
+    throw new SecurityException(msg);
+  }
+  if (DEBUG_MU)   Slog.i(TAG,"starting userid:" + userId + " fore:"+ foreground);
+  final long ident=Binder.clearCallingIdentity();
+  try {
+synchronized (mService) {
+      final int oldUserId=mCurrentUserId;
+      if (oldUserId == userId) {
+        return true;
+      }
+      mService.mStackSupervisor.setLockTaskModeLocked(null,ActivityManager.LOCK_TASK_MODE_NONE,"startUser",false);
+      final UserInfo userInfo=getUserManagerLocked().getUserInfo(userId);
+      if (userInfo == null) {
+        Slog.w(TAG,"No user info for user #" + userId);
+        return false;
+      }
+      if (foreground && userInfo.isManagedProfile()) {
+        Slog.w(TAG,"Cannot switch to User #" + userId + ": not a full user");
+        return false;
+      }
+      if (foreground) {
+        mService.mWindowManager.startFreezingScreen(R.anim.screen_user_exit,R.anim.screen_user_enter);
+      }
+      boolean needStart=false;
+      if (mStartedUsers.get(userId) == null) {
+        mStartedUsers.put(userId,new UserState(new UserHandle(userId),false));
+        updateStartedUserArrayLocked();
+        needStart=true;
+      }
+      final Integer userIdInt=userId;
+      mUserLru.remove(userIdInt);
+      mUserLru.add(userIdInt);
+      if (foreground) {
+        mCurrentUserId=userId;
+        mService.updateUserConfigurationLocked();
+        mTargetUserId=UserHandle.USER_NULL;
+        updateCurrentProfileIdsLocked();
+        mService.mWindowManager.setCurrentUser(userId,mCurrentProfileIds);
+        mService.mWindowManager.lockNow(null);
+      }
+ else {
+        final Integer currentUserIdInt=mCurrentUserId;
+        updateCurrentProfileIdsLocked();
+        mService.mWindowManager.setCurrentProfileIds(mCurrentProfileIds);
+        mUserLru.remove(currentUserIdInt);
+        mUserLru.add(currentUserIdInt);
+      }
+      final UserState uss=mStartedUsers.get(userId);
+      if (uss.mState == UserState.STATE_STOPPING) {
+        uss.mState=UserState.STATE_RUNNING;
+        updateStartedUserArrayLocked();
+        needStart=true;
+      }
+ else       if (uss.mState == UserState.STATE_SHUTDOWN) {
+        uss.mState=UserState.STATE_BOOTING;
+        updateStartedUserArrayLocked();
+        needStart=true;
+      }
+      if (uss.mState == UserState.STATE_BOOTING) {
+        mHandler.sendMessage(mHandler.obtainMessage(SYSTEM_USER_START_MSG,userId,0));
+      }
+      if (foreground) {
+        mHandler.sendMessage(mHandler.obtainMessage(SYSTEM_USER_CURRENT_MSG,userId,oldUserId));
+        mHandler.removeMessages(REPORT_USER_SWITCH_MSG);
+        mHandler.removeMessages(USER_SWITCH_TIMEOUT_MSG);
+        mHandler.sendMessage(mHandler.obtainMessage(REPORT_USER_SWITCH_MSG,oldUserId,userId,uss));
+        mHandler.sendMessageDelayed(mHandler.obtainMessage(USER_SWITCH_TIMEOUT_MSG,oldUserId,userId,uss),USER_SWITCH_TIMEOUT);
+      }
+      if (needStart) {
+        Intent intent=new Intent(Intent.ACTION_USER_STARTED);
+        intent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY | Intent.FLAG_RECEIVER_FOREGROUND);
+        intent.putExtra(Intent.EXTRA_USER_HANDLE,userId);
+        mService.broadcastIntentLocked(null,null,intent,null,null,0,null,null,null,AppOpsManager.OP_NONE,null,false,false,ActivityManagerService.MY_PID,Process.SYSTEM_UID,userId);
+      }
+      if ((userInfo.flags & UserInfo.FLAG_INITIALIZED) == 0) {
+        if (userId != UserHandle.USER_SYSTEM) {
+          Intent intent=new Intent(Intent.ACTION_USER_INITIALIZE);
+          intent.addFlags(Intent.FLAG_RECEIVER_FOREGROUND);
+          mService.broadcastIntentLocked(null,null,intent,null,new IIntentReceiver.Stub(){
+            public void performReceive(            Intent intent,            int resultCode,            String data,            Bundle extras,            boolean ordered,            boolean sticky,            int sendingUser){
+              onUserInitialized(uss,foreground,oldUserId,userId);
+            }
+          }
+,0,null,null,null,AppOpsManager.OP_NONE,null,true,false,ActivityManagerService.MY_PID,Process.SYSTEM_UID,userId);
+          uss.initializing=true;
+        }
+ else {
+          getUserManagerLocked().makeInitialized(userInfo.id);
+        }
+      }
+      if (foreground) {
+        if (!uss.initializing) {
+          moveUserToForegroundLocked(uss,oldUserId,userId);
+        }
+      }
+ else {
+        mService.mStackSupervisor.startBackgroundUserLocked(userId,uss);
+      }
+      if (needStart) {
+        Intent intent=new Intent(Intent.ACTION_USER_STARTING);
+        intent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY);
+        intent.putExtra(Intent.EXTRA_USER_HANDLE,userId);
+        mService.broadcastIntentLocked(null,null,intent,null,new IIntentReceiver.Stub(){
+          @Override public void performReceive(          Intent intent,          int resultCode,          String data,          Bundle extras,          boolean ordered,          boolean sticky,          int sendingUser) throws RemoteException {
+          }
+        }
+,0,null,null,new String[]{INTERACT_ACROSS_USERS},AppOpsManager.OP_NONE,null,true,false,ActivityManagerService.MY_PID,Process.SYSTEM_UID,UserHandle.USER_ALL);
+      }
+    }
+  }
+  finally {
+    Binder.restoreCallingIdentity(ident);
+  }
+  return true;
+}
