@@ -1,0 +1,31 @@
+{
+  database.beginTransaction();
+  try {
+    final String unmappedIdQuery=createStateFilter(ROW_STATE_UNMAPPED,DocumentsContract.Document.COLUMN_DOCUMENT_ID);
+    final String mappingIdQuery=createStateFilter(ROW_STATE_MAPPING,DocumentsContract.Document.COLUMN_DOCUMENT_ID);
+    final Cursor mergingCursor=database.query(TABLE_DOCUMENTS,new String[]{"group_concat(" + unmappedIdQuery + ")","group_concat(" + mappingIdQuery + ")"},SELECTION_ROOT_DOCUMENTS,strings(deviceId),DocumentsContract.Document.COLUMN_DISPLAY_NAME,"count(" + unmappedIdQuery + ") = 1 AND count("+ mappingIdQuery+ ") = 1",null);
+    final ContentValues values=new ContentValues();
+    while (mergingCursor.moveToNext()) {
+      final String unmappedId=mergingCursor.getString(0);
+      final String mappingId=mergingCursor.getString(1);
+      final Cursor mappingCursor=database.query(TABLE_DOCUMENTS,null,SELECTION_DOCUMENT_ID,new String[]{mappingId},null,null,null);
+      mappingCursor.moveToNext();
+      values.clear();
+      DatabaseUtils.cursorRowToContentValues(mappingCursor,values);
+      mappingCursor.close();
+      values.remove(DocumentsContract.Document.COLUMN_DOCUMENT_ID);
+      values.put(COLUMN_ROW_STATE,ROW_STATE_MAPPED);
+      database.update(TABLE_DOCUMENTS,values,SELECTION_DOCUMENT_ID,new String[]{unmappedId});
+      database.delete(TABLE_DOCUMENTS,SELECTION_DOCUMENT_ID,new String[]{mappingId});
+    }
+    mergingCursor.close();
+    database.delete(TABLE_DOCUMENTS,SELECTION_ROOT_DOCUMENTS_WITH_STATE,strings(deviceId,ROW_STATE_UNMAPPED));
+    values.clear();
+    values.put(COLUMN_ROW_STATE,ROW_STATE_MAPPED);
+    database.update(TABLE_DOCUMENTS,values,SELECTION_ROOT_DOCUMENTS_WITH_STATE,strings(deviceId,ROW_STATE_MAPPING));
+    database.setTransactionSuccessful();
+  }
+  finally {
+    database.endTransaction();
+  }
+}
