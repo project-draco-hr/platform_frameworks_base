@@ -2,15 +2,41 @@
   mWebViewUpdatedReceiver=new BroadcastReceiver(){
     @Override public void onReceive(    Context context,    Intent intent){
       if (intent.getAction().equals(Intent.ACTION_PACKAGE_REMOVED) && intent.getExtras().getBoolean(Intent.EXTRA_REPLACING)) {
+synchronized (this) {
+          if (mCurrentWebViewPackage == null)           return;
+          String webViewPackage="package:" + mCurrentWebViewPackage.packageName;
+          if (webViewPackage.equals(intent.getDataString()))           mCurrentProviderBeingReplaced=true;
+        }
         return;
       }
-      for (      String packageName : WebViewFactory.getWebViewPackageNames()) {
-        String webviewPackage="package:" + packageName;
+      for (      WebViewProviderInfo provider : WebViewFactory.getWebViewPackages()) {
+        String webviewPackage="package:" + provider.packageName;
         if (webviewPackage.equals(intent.getDataString())) {
-          String usedPackageName=WebViewFactory.findPreferredWebViewPackage().packageName;
-          if (packageName.equals(usedPackageName) || packageName.equals(oldWebViewPackageName)) {
-            onWebViewUpdateInstalled();
-            oldWebViewPackageName=usedPackageName;
+          boolean updateWebView=false;
+          boolean removedOldPackage=false;
+          String oldProviderName=null;
+          PackageInfo newPackage=null;
+synchronized (WebViewUpdateService.this) {
+            try {
+              updateValidWebViewPackages();
+              newPackage=findPreferredWebViewPackage();
+              if (mCurrentWebViewPackage != null)               oldProviderName=mCurrentWebViewPackage.packageName;
+              updateWebView=provider.packageName.equals(newPackage.packageName) || provider.packageName.equals(oldProviderName) || mCurrentWebViewPackage == null;
+              removedOldPackage=provider.packageName.equals(oldProviderName);
+              if (updateWebView) {
+                onWebViewProviderChanged(newPackage);
+              }
+            }
+ catch (            WebViewFactory.MissingWebViewPackageException e) {
+              Slog.e(TAG,"Could not find valid WebView package to create " + "relro with " + e);
+            }
+          }
+          if (updateWebView && !removedOldPackage && oldProviderName != null) {
+            try {
+              ActivityManagerNative.getDefault().killPackageDependents(oldProviderName,getContext().getUserId());
+            }
+ catch (            RemoteException e) {
+            }
           }
           return;
         }
