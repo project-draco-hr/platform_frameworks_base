@@ -2,7 +2,7 @@
   if (mSv.getTaskViews().size() == 0) {
     return false;
   }
-  TaskStackViewLayoutAlgorithm layoutAlgorithm=mSv.mLayoutAlgorithm;
+  final TaskStackLayoutAlgorithm layoutAlgorithm=mSv.mLayoutAlgorithm;
   int action=ev.getAction();
 switch (action & MotionEvent.ACTION_MASK) {
 case MotionEvent.ACTION_DOWN:
@@ -14,6 +14,7 @@ case MotionEvent.ACTION_DOWN:
       mActiveTaskView=findViewAtPoint(mDownX,mDownY);
       mScroller.stopScroller();
       mScroller.stopBoundScrollAnimation();
+      Utilities.cancelAnimationWithoutCallbacks(mScrollFlingAnimator);
       initOrResetVelocityTracker();
       mVelocityTracker.addMovement(ev);
       break;
@@ -45,6 +46,9 @@ case MotionEvent.ACTION_MOVE:
     float deltaP=layoutAlgorithm.getDeltaPForY(mDownY,y);
     float curScrollP=mDownScrollP + deltaP;
     mScroller.setStackScroll(curScrollP);
+    if (DEBUG) {
+      Log.d(TAG,"scroll: " + curScrollP);
+    }
   }
   mVelocityTracker.addMovement(ev);
   break;
@@ -67,17 +71,44 @@ mVelocityTracker.computeCurrentVelocity(1000,mMaximumVelocity);
 int activePointerIndex=ev.findPointerIndex(mActivePointerId);
 int y=(int)ev.getY(activePointerIndex);
 int velocity=(int)mVelocityTracker.getYVelocity(mActivePointerId);
+float curScrollP=mScroller.getStackScroll();
 if (mIsScrolling) {
-if (mScroller.isScrollOutOfBounds()) {
+boolean hasFreeformTasks=mSv.mStack.hasFreeformTasks();
+if (hasFreeformTasks && velocity > 0 && curScrollP > layoutAlgorithm.mStackEndScrollP) {
+  float finalY=mDownY + layoutAlgorithm.getYForDeltaP(mDownScrollP,layoutAlgorithm.mPreferredStackEndScrollP);
+  mScrollFlingAnimator=ValueAnimator.ofInt(y,(int)finalY);
+  mScrollFlingAnimator.addUpdateListener(new ValueAnimator.AnimatorUpdateListener(){
+    @Override public void onAnimationUpdate(    ValueAnimator animation){
+      float deltaP=layoutAlgorithm.getDeltaPForY(mDownY,(Integer)animation.getAnimatedValue());
+      float scroll=mDownScrollP + deltaP;
+      mScroller.setStackScroll(scroll);
+    }
+  }
+);
+  mFlingAnimUtils.apply(mScrollFlingAnimator,y,finalY,velocity);
+  mScrollFlingAnimator.start();
+}
+ else if (hasFreeformTasks && velocity < 0 && curScrollP > (layoutAlgorithm.mStackEndScrollP - layoutAlgorithm.mTaskHalfHeightPOffset)) {
+  float finalY=mDownY + layoutAlgorithm.getYForDeltaP(mDownScrollP,layoutAlgorithm.mMaxScrollP);
+  mScrollFlingAnimator=ValueAnimator.ofInt(y,(int)finalY);
+  mScrollFlingAnimator.addUpdateListener(new ValueAnimator.AnimatorUpdateListener(){
+    @Override public void onAnimationUpdate(    ValueAnimator animation){
+      float deltaP=layoutAlgorithm.getDeltaPForY(mDownY,(Integer)animation.getAnimatedValue());
+      float scroll=mDownScrollP + deltaP;
+      mScroller.setStackScroll(scroll);
+    }
+  }
+);
+  mFlingAnimUtils.apply(mScrollFlingAnimator,y,finalY,velocity);
+  mScrollFlingAnimator.start();
+}
+ else if (mScroller.isScrollOutOfBounds()) {
   mScroller.animateBoundScroll();
 }
  else if (Math.abs(velocity) > mMinimumVelocity) {
-  float deltaP=layoutAlgorithm.getDeltaPForY(mDownY,y);
-  float curScrollP=mDownScrollP + deltaP;
-  float downToCurY=mDownY + layoutAlgorithm.getYForDeltaP(mDownScrollP,curScrollP);
-  float downToMinY=mDownY + layoutAlgorithm.getYForDeltaP(mDownScrollP,layoutAlgorithm.mMaxScrollP);
-  float downToMaxY=mDownY + layoutAlgorithm.getYForDeltaP(mDownScrollP,layoutAlgorithm.mMinScrollP);
-  mScroller.fling(mDownScrollP,mDownY,(int)downToCurY,velocity,(int)downToMinY,(int)downToMaxY,mOverscrollSize);
+  float minY=mDownY + layoutAlgorithm.getYForDeltaP(mDownScrollP,layoutAlgorithm.mPreferredStackEndScrollP);
+  float maxY=mDownY + layoutAlgorithm.getYForDeltaP(mDownScrollP,layoutAlgorithm.mMinScrollP);
+  mScroller.fling(mDownScrollP,mDownY,y,velocity,(int)minY,(int)maxY,mOverscrollSize);
   mSv.invalidate();
 }
 }
@@ -91,9 +122,6 @@ break;
 }
 case MotionEvent.ACTION_CANCEL:
 {
-if (mScroller.isScrollOutOfBounds()) {
-mScroller.animateBoundScroll();
-}
 mActivePointerId=INACTIVE_POINTER_ID;
 mIsScrolling=false;
 recycleVelocityTracker();
