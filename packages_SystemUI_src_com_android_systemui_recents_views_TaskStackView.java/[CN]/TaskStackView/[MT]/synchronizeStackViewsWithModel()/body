@@ -2,12 +2,12 @@
   if (mStackViewsDirty) {
     ArrayList<Task> tasks=mStack.getTasks();
     float stackScroll=mStackScroller.getStackScroll();
-    int[] visibleRange=mTmpVisibleRange;
-    boolean isValidVisibleRange=updateStackTransforms(mCurrentTaskTransforms,tasks,stackScroll,visibleRange,false);
+    int[] visibleStackRange=mTmpVisibleRange;
+    boolean isValidVisibleStackRange=updateStackTransforms(mCurrentTaskTransforms,tasks,stackScroll,visibleStackRange,false);
     boolean hasStackBackTransform=false;
     boolean hasStackFrontTransform=false;
     if (DEBUG) {
-      Log.d(TAG,"visibleRange: " + visibleRange[0] + " to "+ visibleRange[1]);
+      Log.d(TAG,"visibleRange: " + visibleStackRange[0] + " to "+ visibleStackRange[1]);
     }
     mTmpTaskViewMap.clear();
     List<TaskView> taskViews=getTaskViews();
@@ -18,7 +18,7 @@
       TaskView tv=taskViews.get(i);
       Task task=tv.getTask();
       int taskIndex=mStack.indexOfTask(task);
-      if (visibleRange[1] <= taskIndex && taskIndex <= visibleRange[0]) {
+      if (task.isFreeformTask() || visibleStackRange[1] <= taskIndex && taskIndex <= visibleStackRange[0]) {
         mTmpTaskViewMap.put(task,tv);
       }
  else {
@@ -27,14 +27,35 @@
           lastFocusedTaskIndex=taskIndex;
           resetFocusedTask();
         }
+        if (DEBUG) {
+          Log.d(TAG,"returning to pool: " + task.key);
+        }
         mViewPool.returnViewToPool(tv);
       }
     }
-    for (int i=visibleRange[0]; isValidVisibleRange && i >= visibleRange[1]; i--) {
+    int firstVisStackIndex=isValidVisibleStackRange ? visibleStackRange[0] : 0;
+    for (int i=mStack.getTaskCount() - 1; i > firstVisStackIndex; i--) {
+      Task task=tasks.get(i);
+      if (!task.isFreeformTask()) {
+        continue;
+      }
+      TaskViewTransform transform=mLayoutAlgorithm.getStackTransform(task,stackScroll,mCurrentTaskTransforms.get(i),null);
+      TaskView tv=mTmpTaskViewMap.get(task);
+      if (tv == null) {
+        if (DEBUG) {
+          Log.d(TAG,"picking up from pool: " + task.key);
+        }
+        tv=mViewPool.pickUpViewFromPool(task,task);
+        if (mLayersDisabled) {
+          tv.disableLayersForOneFrame();
+        }
+      }
+      tv.updateViewPropertiesToTaskTransform(transform,mStackViewsAnimationDuration,mRequestUpdateClippingListener);
+    }
+    for (int i=visibleStackRange[0]; isValidVisibleStackRange && i >= visibleStackRange[1]; i--) {
       Task task=tasks.get(i);
       TaskViewTransform transform=mCurrentTaskTransforms.get(i);
       TaskView tv=mTmpTaskViewMap.get(task);
-      int taskIndex=mStack.indexOfTask(task);
       if (tv == null) {
         tv=mViewPool.pickUpViewFromPool(task,task);
         if (mLayersDisabled) {
@@ -57,24 +78,15 @@
           }
         }
       }
-      tv.updateViewPropertiesToTaskTransform(mCurrentTaskTransforms.get(taskIndex),mStackViewsAnimationDuration,mRequestUpdateClippingListener);
+      tv.updateViewPropertiesToTaskTransform(transform,mStackViewsAnimationDuration,mRequestUpdateClippingListener);
     }
     if (lastFocusedTaskIndex != -1) {
-      if (lastFocusedTaskIndex < visibleRange[1]) {
-        setFocusedTask(visibleRange[1],false,wasLastFocusedTaskAnimated);
+      if (lastFocusedTaskIndex < visibleStackRange[1]) {
+        setFocusedTask(visibleStackRange[1],false,wasLastFocusedTaskAnimated);
       }
  else {
-        setFocusedTask(visibleRange[0],false,wasLastFocusedTaskAnimated);
+        setFocusedTask(visibleStackRange[0],false,wasLastFocusedTaskAnimated);
       }
-    }
-    mLayoutAlgorithm.getFreeformWorkspaceBounds(stackScroll,mTmpTransform);
-    if (mTmpTransform.visible) {
-      mTmpTransform.rect.roundOut(mTmpRect);
-      mFreeformWorkspaceBackground.setAlpha(255);
-      mFreeformWorkspaceBackground.setBounds(mTmpRect);
-    }
- else {
-      mFreeformWorkspaceBackground.setAlpha(0);
     }
     mStackViewsAnimationDuration=0;
     mStackViewsDirty=false;
