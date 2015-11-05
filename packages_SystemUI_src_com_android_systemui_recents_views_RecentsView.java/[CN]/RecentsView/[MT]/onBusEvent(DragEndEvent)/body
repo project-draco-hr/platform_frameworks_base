@@ -1,26 +1,38 @@
 {
-  event.postAnimationTrigger.increment();
-  event.postAnimationTrigger.addLastDecrementRunnable(new Runnable(){
+  final Runnable cleanUpRunnable=new Runnable(){
     @Override public void run(){
       removeView(mDragView);
       mDragView=null;
-      updateVisibleDockRegions(null,-1);
-      if (event.dockState != TaskStack.DockState.NONE) {
-        SystemServicesProxy ssp=Recents.getSystemServices();
-        ssp.startTaskInDockedMode(event.task.key.id,event.dockState.createMode);
-        launchTask(event.task,null,INVALID_STACK_ID);
-      }
     }
   }
+;
+  updateVisibleDockRegions(null,-1);
+  if (event.dropTarget == null) {
+    event.postAnimationTrigger.increment();
+    event.postAnimationTrigger.addLastDecrementRunnable(new Runnable(){
+      @Override public void run(){
+        cleanUpRunnable.run();
+      }
+    }
 );
-  if (event.dockState == TaskStack.DockState.NONE) {
-    Rect taskBounds=mTaskStackView.getStackAlgorithm().getUntransformedTaskViewBounds();
-    int left=taskBounds.left + (int)((1f - event.taskView.getScaleX()) * taskBounds.width()) / 2;
-    int top=taskBounds.top + (int)((1f - event.taskView.getScaleY()) * taskBounds.height()) / 2;
-    event.dragView.animate().scaleX(1f).scaleY(1f).translationX(left + event.taskView.getTranslationX()).translationY(top + event.taskView.getTranslationY()).setDuration(175).setInterpolator(mFastOutSlowInInterpolator).withEndAction(event.postAnimationTrigger.decrementAsRunnable()).start();
-    updateVisibleDockRegions(null,-1);
+    TaskViewTransform taskTransform=new TaskViewTransform();
+    TaskStackLayoutAlgorithm layoutAlgorithm=mTaskStackView.getStackAlgorithm();
+    layoutAlgorithm.getStackTransform(event.task,mTaskStackView.getScroller().getStackScroll(),taskTransform,null);
+    event.dragView.animate().scaleX(taskTransform.scale).scaleY(taskTransform.scale).translationX((layoutAlgorithm.mTaskRect.left - event.dragView.getLeft()) + taskTransform.translationX).translationY((layoutAlgorithm.mTaskRect.top - event.dragView.getTop()) + taskTransform.translationY).setDuration(175).setInterpolator(mFastOutSlowInInterpolator).withEndAction(event.postAnimationTrigger.decrementAsRunnable()).start();
+  }
+ else   if (event.dropTarget instanceof TaskStack.DockState) {
+    final TaskStack.DockState dockState=(TaskStack.DockState)event.dropTarget;
+    cleanUpRunnable.run();
+    SystemServicesProxy ssp=Recents.getSystemServices();
+    ssp.startTaskInDockedMode(event.task.key.id,dockState.createMode);
+    launchTask(event.task,null,INVALID_STACK_ID);
   }
  else {
-    event.postAnimationTrigger.decrement();
+    event.postAnimationTrigger.addLastDecrementRunnable(new Runnable(){
+      @Override public void run(){
+        cleanUpRunnable.run();
+      }
+    }
+);
   }
 }
