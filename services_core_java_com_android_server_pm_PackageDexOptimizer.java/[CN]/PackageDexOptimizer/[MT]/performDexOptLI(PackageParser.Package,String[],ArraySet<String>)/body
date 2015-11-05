@@ -1,0 +1,61 @@
+{
+  final String[] instructionSets=targetInstructionSets != null ? targetInstructionSets : getAppDexInstructionSets(pkg.applicationInfo);
+  if (done != null) {
+    done.add(pkg.packageName);
+    if (pkg.usesLibraries != null) {
+      performDexOptLibsLI(pkg.usesLibraries,instructionSets,done);
+    }
+    if (pkg.usesOptionalLibraries != null) {
+      performDexOptLibsLI(pkg.usesOptionalLibraries,instructionSets,done);
+    }
+  }
+  if ((pkg.applicationInfo.flags & ApplicationInfo.FLAG_HAS_CODE) == 0) {
+    return DEX_OPT_SKIPPED;
+  }
+  final boolean vmSafeMode=(pkg.applicationInfo.flags & ApplicationInfo.FLAG_VM_SAFE_MODE) != 0;
+  final boolean debuggable=(pkg.applicationInfo.flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0;
+  final List<String> paths=pkg.getAllCodePathsExcludingResourceOnly();
+  boolean performedDexOpt=false;
+  final String[] dexCodeInstructionSets=getDexCodeInstructionSets(instructionSets);
+  for (  String dexCodeInstructionSet : dexCodeInstructionSets) {
+    if (pkg.mDexOptPerformed.contains(dexCodeInstructionSet)) {
+      continue;
+    }
+    for (    String path : paths) {
+      final int dexoptNeeded;
+      try {
+        dexoptNeeded=DexFile.getDexOptNeeded(path,pkg.packageName,dexCodeInstructionSet,false);
+      }
+ catch (      IOException ioe) {
+        Slog.w(TAG,"IOException reading apk: " + path,ioe);
+        return DEX_OPT_FAILED;
+      }
+      if (dexoptNeeded != DexFile.NO_DEXOPT_NEEDED) {
+        final String dexoptType;
+        String oatDir=null;
+        if (dexoptNeeded == DexFile.DEX2OAT_NEEDED) {
+          dexoptType="dex2oat";
+          oatDir=createOatDirIfSupported(pkg,dexCodeInstructionSet);
+        }
+ else         if (dexoptNeeded == DexFile.PATCHOAT_NEEDED) {
+          dexoptType="patchoat";
+        }
+ else         if (dexoptNeeded == DexFile.SELF_PATCHOAT_NEEDED) {
+          dexoptType="self patchoat";
+        }
+ else {
+          throw new IllegalStateException("Invalid dexopt needed: " + dexoptNeeded);
+        }
+        Log.i(TAG,"Running dexopt (" + dexoptType + ") on: "+ path+ " pkg="+ pkg.applicationInfo.packageName+ " isa="+ dexCodeInstructionSet+ " vmSafeMode="+ vmSafeMode+ " debuggable="+ debuggable+ " oatDir = "+ oatDir);
+        final int sharedGid=UserHandle.getSharedAppGid(pkg.applicationInfo.uid);
+        final int dexFlags=(!pkg.isForwardLocked() ? DEXOPT_PUBLIC : 0) | (vmSafeMode ? DEXOPT_SAFEMODE : 0) | (debuggable ? DEXOPT_DEBUGGABLE : 0)| DEXOPT_BOOTCOMPLETE;
+        final int ret=mPackageManagerService.mInstaller.dexopt(path,sharedGid,pkg.packageName,dexCodeInstructionSet,dexoptNeeded,oatDir,dexFlags);
+        if (ret == 0) {
+          performedDexOpt=true;
+        }
+      }
+    }
+    pkg.mDexOptPerformed.add(dexCodeInstructionSet);
+  }
+  return performedDexOpt ? DEX_OPT_PERFORMED : DEX_OPT_SKIPPED;
+}
