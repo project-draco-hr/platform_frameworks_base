@@ -1,5 +1,5 @@
 {
-  if (getUserRestrictions(UserHandle.getCallingUserId()).getBoolean(UserManager.DISALLOW_ADD_USER,false)) {
+  if (hasUserRestriction(UserManager.DISALLOW_ADD_USER,UserHandle.getCallingUserId())) {
     Log.w(LOG_TAG,"Cannot add user. DISALLOW_ADD_USER is enabled.");
     return null;
   }
@@ -10,106 +10,103 @@
   final boolean isManagedProfile=(flags & UserInfo.FLAG_MANAGED_PROFILE) != 0;
   final boolean isRestricted=(flags & UserInfo.FLAG_RESTRICTED) != 0;
   final long ident=Binder.clearCallingIdentity();
-  UserInfo userInfo=null;
+  UserInfo userInfo;
   final int userId;
   try {
-synchronized (mInstallLock) {
 synchronized (mPackagesLock) {
-        UserInfo parent=null;
-        if (parentId != UserHandle.USER_NULL) {
+      UserInfo parent=null;
+      if (parentId != UserHandle.USER_NULL) {
 synchronized (mUsersLock) {
-            parent=getUserInfoLU(parentId);
-          }
-          if (parent == null)           return null;
+          parent=getUserInfoLU(parentId);
         }
-        if (isManagedProfile && !canAddMoreManagedProfiles(parentId,false)) {
-          Log.e(LOG_TAG,"Cannot add more managed profiles for user " + parentId);
+        if (parent == null)         return null;
+      }
+      if (isManagedProfile && !canAddMoreManagedProfiles(parentId,false)) {
+        Log.e(LOG_TAG,"Cannot add more managed profiles for user " + parentId);
+        return null;
+      }
+      if (!isGuest && !isManagedProfile && isUserLimitReached()) {
+        return null;
+      }
+      if (isGuest && findCurrentGuestUser() != null) {
+        return null;
+      }
+      if (isRestricted && !UserManager.isSplitSystemUser() && (parentId != UserHandle.USER_SYSTEM)) {
+        Log.w(LOG_TAG,"Cannot add restricted profile - parent user must be owner");
+        return null;
+      }
+      if (isRestricted && UserManager.isSplitSystemUser()) {
+        if (parent == null) {
+          Log.w(LOG_TAG,"Cannot add restricted profile - parent user must be " + "specified");
           return null;
         }
-        if (!isGuest && !isManagedProfile && isUserLimitReached()) {
+        if (!parent.canHaveProfile()) {
+          Log.w(LOG_TAG,"Cannot add restricted profile - profiles cannot be " + "created for the specified parent user id " + parentId);
           return null;
         }
-        if (isGuest && findCurrentGuestUser() != null) {
-          return null;
+      }
+      if (UserManager.isSplitSystemUser() && !isGuest && !isManagedProfile&& getPrimaryUser() == null) {
+        flags|=UserInfo.FLAG_PRIMARY;
+        DevicePolicyManager devicePolicyManager=(DevicePolicyManager)mContext.getSystemService(Context.DEVICE_POLICY_SERVICE);
+        if (devicePolicyManager == null || devicePolicyManager.getDeviceOwner() == null) {
+          flags|=UserInfo.FLAG_ADMIN;
         }
-        if (isRestricted && !UserManager.isSplitSystemUser() && (parentId != UserHandle.USER_SYSTEM)) {
-          Log.w(LOG_TAG,"Cannot add restricted profile - parent user must be owner");
-          return null;
-        }
-        if (isRestricted && UserManager.isSplitSystemUser()) {
-          if (parent == null) {
-            Log.w(LOG_TAG,"Cannot add restricted profile - parent user must be " + "specified");
-            return null;
-          }
-          if (!parent.canHaveProfile()) {
-            Log.w(LOG_TAG,"Cannot add restricted profile - profiles cannot be " + "created for the specified parent user id " + parentId);
-            return null;
-          }
-        }
-        if (UserManager.isSplitSystemUser() && !isGuest && !isManagedProfile&& getPrimaryUser() == null) {
-          flags|=UserInfo.FLAG_PRIMARY;
-          DevicePolicyManager devicePolicyManager=(DevicePolicyManager)mContext.getSystemService(Context.DEVICE_POLICY_SERVICE);
-          if (devicePolicyManager == null || devicePolicyManager.getDeviceOwner() == null) {
-            flags|=UserInfo.FLAG_ADMIN;
-          }
-        }
-        userId=getNextAvailableId();
-        userInfo=new UserInfo(userId,name,null,flags);
-        userInfo.serialNumber=mNextSerialNumber++;
-        long now=System.currentTimeMillis();
-        userInfo.creationTime=(now > EPOCH_PLUS_30_YEARS) ? now : 0;
-        userInfo.partial=true;
-        Environment.getUserSystemDirectory(userInfo.id).mkdirs();
+      }
+      userId=getNextAvailableId();
+      userInfo=new UserInfo(userId,name,null,flags);
+      userInfo.serialNumber=mNextSerialNumber++;
+      long now=System.currentTimeMillis();
+      userInfo.creationTime=(now > EPOCH_PLUS_30_YEARS) ? now : 0;
+      userInfo.partial=true;
+      Environment.getUserSystemDirectory(userInfo.id).mkdirs();
+synchronized (mUsersLock) {
         mUsers.put(userId,userInfo);
-        writeUserListLILP();
-        if (parent != null) {
-          if (isManagedProfile) {
-            if (parent.profileGroupId == UserInfo.NO_PROFILE_GROUP_ID) {
-              parent.profileGroupId=parent.id;
-              scheduleWriteUser(parent);
-            }
-            userInfo.profileGroupId=parent.profileGroupId;
+      }
+      writeUserListLP();
+      if (parent != null) {
+        if (isManagedProfile) {
+          if (parent.profileGroupId == UserInfo.NO_PROFILE_GROUP_ID) {
+            parent.profileGroupId=parent.id;
+            writeUserLP(parent);
           }
- else           if (isRestricted) {
-            if (!parent.canHaveProfile()) {
-              Log.w(LOG_TAG,"Cannot add restricted profile - parent user must be owner");
-            }
-            if (parent.restrictedProfileParentId == UserInfo.NO_PROFILE_GROUP_ID) {
-              parent.restrictedProfileParentId=parent.id;
-              scheduleWriteUser(parent);
-            }
-            userInfo.restrictedProfileParentId=parent.restrictedProfileParentId;
-          }
+          userInfo.profileGroupId=parent.profileGroupId;
         }
-        final StorageManager storage=mContext.getSystemService(StorageManager.class);
-        storage.createUserKey(userId,userInfo.serialNumber);
-        for (        VolumeInfo vol : storage.getWritablePrivateVolumes()) {
-          final String volumeUuid=vol.getFsUuid();
-          try {
-            final File userDir=Environment.getDataUserDirectory(volumeUuid,userId);
-            storage.prepareUserStorage(volumeUuid,userId,userInfo.serialNumber);
-            enforceSerialNumber(userDir,userInfo.serialNumber);
+ else         if (isRestricted) {
+          if (parent.restrictedProfileParentId == UserInfo.NO_PROFILE_GROUP_ID) {
+            parent.restrictedProfileParentId=parent.id;
+            writeUserLP(parent);
           }
- catch (          IOException e) {
-            Log.wtf(LOG_TAG,"Failed to create user directory on " + volumeUuid,e);
-          }
-        }
-        mPm.createNewUserLILPw(userId);
-        userInfo.partial=false;
-        scheduleWriteUser(userInfo);
-        updateUserIds();
-        Bundle restrictions=new Bundle();
-synchronized (mRestrictionsLock) {
-          mBaseUserRestrictions.append(userId,restrictions);
+          userInfo.restrictedProfileParentId=parent.restrictedProfileParentId;
         }
       }
     }
-    mPm.newUserCreated(userId);
-    if (userInfo != null) {
-      Intent addedIntent=new Intent(Intent.ACTION_USER_ADDED);
-      addedIntent.putExtra(Intent.EXTRA_USER_HANDLE,userInfo.id);
-      mContext.sendBroadcastAsUser(addedIntent,UserHandle.ALL,android.Manifest.permission.MANAGE_USERS);
+    final StorageManager storage=mContext.getSystemService(StorageManager.class);
+    storage.createUserKey(userId,userInfo.serialNumber);
+    for (    VolumeInfo vol : storage.getWritablePrivateVolumes()) {
+      final String volumeUuid=vol.getFsUuid();
+      try {
+        final File userDir=Environment.getDataUserDirectory(volumeUuid,userId);
+        storage.prepareUserStorage(volumeUuid,userId,userInfo.serialNumber);
+        enforceSerialNumber(userDir,userInfo.serialNumber);
+      }
+ catch (      IOException e) {
+        Log.wtf(LOG_TAG,"Failed to create user directory on " + volumeUuid,e);
+      }
     }
+    mPm.createNewUser(userId);
+    userInfo.partial=false;
+synchronized (mPackagesLock) {
+      writeUserLP(userInfo);
+    }
+    updateUserIds();
+    Bundle restrictions=new Bundle();
+synchronized (mRestrictionsLock) {
+      mBaseUserRestrictions.append(userId,restrictions);
+    }
+    mPm.newUserCreated(userId);
+    Intent addedIntent=new Intent(Intent.ACTION_USER_ADDED);
+    addedIntent.putExtra(Intent.EXTRA_USER_HANDLE,userId);
+    mContext.sendBroadcastAsUser(addedIntent,UserHandle.ALL,android.Manifest.permission.MANAGE_USERS);
   }
   finally {
     Binder.restoreCallingIdentity(ident);
