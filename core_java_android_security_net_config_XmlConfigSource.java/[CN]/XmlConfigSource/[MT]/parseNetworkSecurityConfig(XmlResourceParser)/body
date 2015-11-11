@@ -2,6 +2,7 @@
   Set<String> seenDomains=new ArraySet<>();
   List<Pair<NetworkSecurityConfig.Builder,Set<Domain>>> builders=new ArrayList<>();
   NetworkSecurityConfig.Builder baseConfigBuilder=null;
+  NetworkSecurityConfig.Builder debugConfigBuilder=null;
   boolean seenDebugOverrides=false;
   boolean seenBaseConfig=false;
   XmlUtils.beginDocument(parser,"network-security-config");
@@ -12,18 +13,32 @@
         throw new ParserException(parser,"Only one base-config allowed");
       }
       seenBaseConfig=true;
-      baseConfigBuilder=parseConfigEntry(parser,seenDomains,null,true).get(0).first;
+      baseConfigBuilder=parseConfigEntry(parser,seenDomains,null,CONFIG_BASE).get(0).first;
     }
  else     if ("domain-config".equals(parser.getName())) {
-      builders.addAll(parseConfigEntry(parser,seenDomains,baseConfigBuilder,false));
+      builders.addAll(parseConfigEntry(parser,seenDomains,baseConfigBuilder,CONFIG_DOMAIN));
+    }
+ else     if ("debug-overrides".equals(parser.getName())) {
+      if (seenDebugOverrides) {
+        throw new ParserException(parser,"Only one debug-overrides allowed");
+      }
+      if (mDebugBuild) {
+        debugConfigBuilder=parseConfigEntry(parser,seenDomains,null,CONFIG_DEBUG).get(0).first;
+      }
+ else {
+        XmlUtils.skipCurrentTag(parser);
+      }
+      seenDebugOverrides=true;
     }
  else {
       XmlUtils.skipCurrentTag(parser);
     }
   }
   NetworkSecurityConfig.Builder platformDefaultBuilder=NetworkSecurityConfig.getDefaultBuilder();
+  addDebugAnchorsIfNeeded(debugConfigBuilder,platformDefaultBuilder);
   if (baseConfigBuilder != null) {
     baseConfigBuilder.setParent(platformDefaultBuilder);
+    addDebugAnchorsIfNeeded(debugConfigBuilder,baseConfigBuilder);
   }
  else {
     baseConfigBuilder=platformDefaultBuilder;
@@ -35,6 +50,7 @@
     if (builder.getParent() == null) {
       builder.setParent(baseConfigBuilder);
     }
+    addDebugAnchorsIfNeeded(debugConfigBuilder,builder);
     NetworkSecurityConfig config=builder.build();
     for (    Domain domain : domains) {
       configs.add(new Pair<>(domain,config));
