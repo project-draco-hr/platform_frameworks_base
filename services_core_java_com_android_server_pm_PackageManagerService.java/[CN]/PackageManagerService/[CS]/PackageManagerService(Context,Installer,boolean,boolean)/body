@@ -6,7 +6,6 @@
   mContext=context;
   mFactoryTest=factoryTest;
   mOnlyCore=onlyCore;
-  mLazyDexOpt="eng".equals(SystemProperties.get("ro.build.type"));
   mMetrics=new DisplayMetrics();
   mSettings=new Settings(mPackages);
   mSettings.addSharedUserLPw("android.uid.system",Process.SYSTEM_UID,ApplicationInfo.FLAG_SYSTEM,ApplicationInfo.PRIVATE_FLAG_PRIVILEGED);
@@ -15,14 +14,6 @@
   mSettings.addSharedUserLPw("android.uid.nfc",NFC_UID,ApplicationInfo.FLAG_SYSTEM,ApplicationInfo.PRIVATE_FLAG_PRIVILEGED);
   mSettings.addSharedUserLPw("android.uid.bluetooth",BLUETOOTH_UID,ApplicationInfo.FLAG_SYSTEM,ApplicationInfo.PRIVATE_FLAG_PRIVILEGED);
   mSettings.addSharedUserLPw("android.uid.shell",SHELL_UID,ApplicationInfo.FLAG_SYSTEM,ApplicationInfo.PRIVATE_FLAG_PRIVILEGED);
-  long dexOptLRUThresholdInMinutes;
-  if (mLazyDexOpt) {
-    dexOptLRUThresholdInMinutes=30;
-  }
- else {
-    dexOptLRUThresholdInMinutes=7 * 24 * 60;
-  }
-  mDexOptLRUThresholdInMills=dexOptLRUThresholdInMinutes * 60 * 1000;
   String separateProcesses=SystemProperties.get("debug.separate_processes");
   if (separateProcesses != null && separateProcesses.length() > 0) {
     if ("*".equals(separateProcesses)) {
@@ -91,25 +82,12 @@ synchronized (mPackages) {
       long startTime=SystemClock.uptimeMillis();
       EventLog.writeEvent(EventLogTags.BOOT_PROGRESS_PMS_SYSTEM_SCAN_START,startTime);
       final int scanFlags=SCAN_NO_PATHS | SCAN_DEFER_DEX | SCAN_BOOTING| SCAN_INITIAL;
-      final ArraySet<String> alreadyDexOpted=new ArraySet<String>();
       final String bootClassPath=System.getenv("BOOTCLASSPATH");
       final String systemServerClassPath=System.getenv("SYSTEMSERVERCLASSPATH");
-      if (bootClassPath != null) {
-        String[] bootClassPathElements=splitString(bootClassPath,':');
-        for (        String element : bootClassPathElements) {
-          alreadyDexOpted.add(element);
-        }
-      }
- else {
+      if (bootClassPath == null) {
         Slog.w(TAG,"No BOOTCLASSPATH found!");
       }
-      if (systemServerClassPath != null) {
-        String[] systemServerClassPathElements=splitString(systemServerClassPath,':');
-        for (        String element : systemServerClassPathElements) {
-          alreadyDexOpted.add(element);
-        }
-      }
- else {
+      if (systemServerClassPath == null) {
         Slog.w(TAG,"No SYSTEMSERVERCLASSPATH found!");
       }
       final List<String> allInstructionSets=InstructionSets.getAllInstructionSets();
@@ -124,7 +102,6 @@ synchronized (mPackages) {
             try {
               int dexoptNeeded=DexFile.getDexOptNeeded(lib,null,dexCodeInstructionSet,false);
               if (dexoptNeeded != DexFile.NO_DEXOPT_NEEDED) {
-                alreadyDexOpted.add(lib);
                 mInstaller.dexopt(lib,Process.SYSTEM_UID,dexCodeInstructionSet,dexoptNeeded,DEXOPT_PUBLIC);
               }
             }
@@ -138,35 +115,6 @@ catch (            IOException e) {
         }
       }
       File frameworkDir=new File(Environment.getRootDirectory(),"framework");
-      alreadyDexOpted.add(frameworkDir.getPath() + "/framework-res.apk");
-      alreadyDexOpted.add(frameworkDir.getPath() + "/core-libart.jar");
-      String[] frameworkFiles=frameworkDir.list();
-      if (frameworkFiles != null) {
-        for (        String dexCodeInstructionSet : dexCodeInstructionSets) {
-          for (int i=0; i < frameworkFiles.length; i++) {
-            File libPath=new File(frameworkDir,frameworkFiles[i]);
-            String path=libPath.getPath();
-            if (alreadyDexOpted.contains(path)) {
-              continue;
-            }
-            if (!path.endsWith(".apk") && !path.endsWith(".jar")) {
-              continue;
-            }
-            try {
-              int dexoptNeeded=DexFile.getDexOptNeeded(path,null,dexCodeInstructionSet,false);
-              if (dexoptNeeded != DexFile.NO_DEXOPT_NEEDED) {
-                mInstaller.dexopt(path,Process.SYSTEM_UID,dexCodeInstructionSet,dexoptNeeded,DEXOPT_PUBLIC);
-              }
-            }
- catch (            FileNotFoundException e) {
-              Slog.w(TAG,"Jar not found: " + path);
-            }
-catch (            IOException e) {
-              Slog.w(TAG,"Exception reading jar: " + path,e);
-            }
-          }
-        }
-      }
       final VersionInfo ver=mSettings.getInternalVersion();
       mIsUpgrade=!Build.FINGERPRINT.equals(ver.fingerprint);
       mPromoteSystemApps=mIsUpgrade && ver.sdkVersion <= Build.VERSION_CODES.LOLLIPOP_MR1;
@@ -288,7 +236,7 @@ catch (            IOException e) {
       mExpectingBetter.clear();
       updateAllSharedLibrariesLPw();
       for (      SharedUserSetting setting : mSettings.getAllSharedUsersLPw()) {
-        adjustCpuAbisForSharedUserLPw(setting.packages,null,false,false,false);
+        adjustCpuAbisForSharedUserLPw(setting.packages,null,false);
       }
       mPackageUsage.readLP();
       EventLog.writeEvent(EventLogTags.BOOT_PROGRESS_PMS_SCAN_END,SystemClock.uptimeMillis());
