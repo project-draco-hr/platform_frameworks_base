@@ -3,11 +3,41 @@
     return false;
   }
   final int userHandle=UserHandle.getCallingUserId();
-  enforceNotManagedProfile(userHandle,"reset the password");
+  long ident=mInjector.binderClearCallingIdentity();
+  try {
+    if (mUserManager.getCredentialOwnerProfile(userHandle) != userHandle) {
+      throw new SecurityException("You can not change password for this profile because" + " it shares the password with the owner profile");
+    }
+  }
+  finally {
+    mInjector.binderRestoreCallingIdentity(ident);
+  }
   String password=passwordOrNull != null ? passwordOrNull : "";
   int quality;
 synchronized (this) {
-    getActiveAdminForCallerLocked(null,DeviceAdminInfo.USES_POLICY_RESET_PASSWORD);
+    final ActiveAdmin admin=getActiveAdminForCallerLocked(null,DeviceAdminInfo.USES_POLICY_RESET_PASSWORD);
+    final ComponentName adminComponent=admin.info.getComponent();
+    if (!(isProfileOwner(adminComponent,userHandle) || isDeviceOwner(adminComponent,userHandle))) {
+      final boolean preN=getTargetSdk(admin.info.getPackageName(),userHandle) < android.os.Build.VERSION_CODES.N;
+      if (TextUtils.isEmpty(password)) {
+        if (!preN) {
+          throw new SecurityException("Cannot call with null password");
+        }
+ else {
+          Slog.e(LOG_TAG,"Cannot call with null password");
+          return false;
+        }
+      }
+      if (isLockScreenSecureUnchecked(userHandle)) {
+        if (!preN) {
+          throw new SecurityException("Admin cannot change current password");
+        }
+ else {
+          Slog.e(LOG_TAG,"Admin cannot change current password");
+          return false;
+        }
+      }
+    }
     quality=getPasswordQuality(null,userHandle);
     if (quality != DevicePolicyManager.PASSWORD_QUALITY_UNSPECIFIED) {
       int realQuality=LockPatternUtils.computePasswordQuality(password);
@@ -91,9 +121,9 @@ synchronized (this) {
   if (callerIsDeviceOwnerAdmin && doNotAskCredentialsOnBoot) {
     setDoNotAskCredentialsOnBoot();
   }
-  long ident=mInjector.binderClearCallingIdentity();
+  ident=mInjector.binderClearCallingIdentity();
   try {
-    LockPatternUtils utils=new LockPatternUtils(mContext);
+    LockPatternUtils utils=mInjector.newLockPatternUtils();
     if (!TextUtils.isEmpty(password)) {
       utils.saveLockPassword(password,null,quality,userHandle);
     }
