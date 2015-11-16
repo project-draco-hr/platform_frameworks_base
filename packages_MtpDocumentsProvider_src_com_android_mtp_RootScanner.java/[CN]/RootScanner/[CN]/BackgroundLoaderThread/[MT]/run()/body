@@ -1,16 +1,25 @@
 {
   Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND);
 synchronized (RootScanner.this) {
-    while (true) {
+    while (!mClosed) {
       final int[] deviceIds=mManager.getOpenedDeviceIds();
-      final MtpRoot[] newRoots=createRoots(deviceIds);
-      if (!Arrays.equals(mLastRoots,newRoots)) {
-        final Uri uri=DocumentsContract.buildRootsUri(MtpDocumentsProvider.AUTHORITY);
-        mResolver.notifyChange(uri,null,false);
-        mLastRoots=newRoots;
-      }
       if (deviceIds.length == 0) {
         break;
+      }
+      boolean changed=false;
+      for (      int deviceId : deviceIds) {
+        try {
+          mDatabase.startAddingRootDocuments(deviceId);
+          changed=mDatabase.putRootDocuments(deviceId,mResources,mManager.getRoots(deviceId)) || changed;
+          changed=mDatabase.stopAddingRootDocuments(deviceId) || changed;
+        }
+ catch (        IOException exp) {
+          Log.e(MtpDocumentsProvider.TAG,exp.getMessage());
+          continue;
+        }
+      }
+      if (changed) {
+        notifyChange();
       }
       mPollingCount++;
       try {
@@ -20,6 +29,6 @@ synchronized (RootScanner.this) {
         break;
       }
     }
-    mHasBackgroundTask=false;
+    mBackgroundThread=null;
   }
 }
