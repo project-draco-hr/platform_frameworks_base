@@ -1,14 +1,31 @@
 {
-  if (DBG) {
-    Log.d(LOG_TAG,"updateUserRestrictionsInternalLocked userId=" + userId + " bundle="+ newRestrictions);
-  }
+  final Bundle prevAppliedRestrictions=UserRestrictionsUtils.nonNull(mAppliedUserRestrictions.get(userId));
   if (newRestrictions != null) {
-    Preconditions.checkState(mBaseUserRestrictions.get(userId) != newRestrictions);
+    final Bundle prevBaseRestrictions=mBaseUserRestrictions.get(userId);
+    Preconditions.checkState(prevBaseRestrictions != newRestrictions);
     Preconditions.checkState(mCachedEffectiveUserRestrictions.get(userId) != newRestrictions);
-    mBaseUserRestrictions.put(userId,newRestrictions);
-    scheduleWriteUser(getUserInfoNoChecks(userId));
+    if (!UserRestrictionsUtils.areEqual(prevBaseRestrictions,newRestrictions)) {
+      mBaseUserRestrictions.put(userId,newRestrictions);
+      scheduleWriteUser(getUserInfoNoChecks(userId));
+    }
   }
   final Bundle effective=computeEffectiveUserRestrictionsLR(userId);
   mCachedEffectiveUserRestrictions.put(userId,effective);
-  applyUserRestrictionsLR(userId,effective);
+  if (DBG) {
+    debug("Applying user restrictions: userId=" + userId + " new="+ effective+ " prev="+ prevAppliedRestrictions);
+  }
+  if (mAppOpsService != null) {
+    final long token=Binder.clearCallingIdentity();
+    try {
+      mAppOpsService.setUserRestrictions(effective,userId);
+    }
+ catch (    RemoteException e) {
+      Log.w(LOG_TAG,"Unable to notify AppOpsService of UserRestrictions");
+    }
+ finally {
+      Binder.restoreCallingIdentity(token);
+    }
+  }
+  propagateUserRestrictionsLR(userId,effective,prevAppliedRestrictions);
+  mAppliedUserRestrictions.put(userId,new Bundle(effective));
 }
