@@ -1,5 +1,6 @@
 {
   if (DEBUG)   Log.d(TAG,"preloadPlan");
+  RecentsDebugFlags debugFlags=Recents.getDebugFlags();
   RecentsConfiguration config=Recents.getConfiguration();
   SystemServicesProxy ssp=Recents.getSystemServices();
   Resources res=mContext.getResources();
@@ -8,17 +9,27 @@
   if (mRawTasks == null) {
     preloadRawTasks(isTopTaskHome);
   }
+  long lastStackActiveTime=Prefs.getLong(mContext,Prefs.Key.OVERVIEW_LAST_STACK_TASK_ACTIVE_TIME,0);
+  long newLastStackActiveTime=-1;
   int taskCount=mRawTasks.size();
   for (int i=0; i < taskCount; i++) {
     ActivityManager.RecentTaskInfo t=mRawTasks.get(i);
     Task.TaskKey taskKey=new Task.TaskKey(t.persistentId,t.stackId,t.baseIntent,t.userId,t.firstActiveTime,t.lastActiveTime);
+    boolean isStackTask=true;
+    if (debugFlags.isHistoryEnabled()) {
+      boolean isFreeformTask=SystemServicesProxy.isFreeformStack(t.stackId);
+      isStackTask=!isFreeformTask && (!isHistoricalTask(t) || (t.lastActiveTime >= lastStackActiveTime && i >= (taskCount - MIN_NUM_TASKS)));
+      if (isStackTask && newLastStackActiveTime < 0) {
+        newLastStackActiveTime=t.lastActiveTime;
+      }
+    }
     String activityLabel=loader.getAndUpdateActivityLabel(taskKey,t.taskDescription,ssp);
     String contentDescription=loader.getAndUpdateContentDescription(taskKey,activityLabel,ssp,res);
-    Drawable activityIcon=loader.getAndUpdateActivityIcon(taskKey,t.taskDescription,ssp,res,false);
+    Drawable activityIcon=isStackTask ? loader.getAndUpdateActivityIcon(taskKey,t.taskDescription,ssp,res,false) : null;
     int activityColor=loader.getActivityPrimaryColor(t.taskDescription);
     Bitmap icon=t.taskDescription != null ? t.taskDescription.getInMemoryIcon() : null;
     String iconFilename=t.taskDescription != null ? t.taskDescription.getIconFilename() : null;
-    Task task=new Task(taskKey,t.affiliatedTaskId,t.affiliatedTaskColor,activityLabel,contentDescription,activityIcon,activityColor,(i == (taskCount - 1)),config.lockToAppEnabled,icon,iconFilename,t.bounds);
+    Task task=new Task(taskKey,t.affiliatedTaskId,t.affiliatedTaskColor,activityLabel,contentDescription,activityIcon,activityColor,(i == (taskCount - 1)),config.lockToAppEnabled,!isStackTask,icon,iconFilename,t.bounds);
     task.thumbnail=loader.getAndUpdateThumbnail(taskKey,ssp,false);
     if (DEBUG) {
       Log.d(TAG,activityLabel + " bounds: " + t.bounds);
@@ -29,6 +40,9 @@
  else {
       stackTasks.add(task);
     }
+  }
+  if (debugFlags.isHistoryEnabled() && newLastStackActiveTime != -1) {
+    Prefs.putLong(mContext,Prefs.Key.OVERVIEW_LAST_STACK_TASK_ACTIVE_TIME,newLastStackActiveTime);
   }
   ArrayList<Task> allTasks=new ArrayList<>();
   allTasks.addAll(stackTasks);
