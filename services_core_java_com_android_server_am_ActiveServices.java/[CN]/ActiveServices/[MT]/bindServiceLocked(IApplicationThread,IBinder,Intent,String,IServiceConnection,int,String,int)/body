@@ -39,6 +39,57 @@
     return -1;
   }
   ServiceRecord s=res.record;
+  boolean permissionsReviewRequired=false;
+  if (Build.PERMISSIONS_REVIEW_REQUIRED) {
+    if (mAm.getPackageManagerInternalLocked().isPermissionsReviewRequired(s.packageName,s.userId)) {
+      permissionsReviewRequired=true;
+      if (!callerFg) {
+        Slog.w(TAG,"u" + s.userId + " Binding to a service in package"+ s.packageName+ " requires a permissions review");
+        return 0;
+      }
+      final ServiceRecord serviceRecord=s;
+      final Intent serviceIntent=service;
+      RemoteCallback callback=new RemoteCallback(new RemoteCallback.OnResultListener(){
+        @Override public void onResult(        Bundle result){
+synchronized (mAm) {
+            final long identity=Binder.clearCallingIdentity();
+            try {
+              if (!mPendingServices.contains(serviceRecord)) {
+                return;
+              }
+              if (!mAm.getPackageManagerInternalLocked().isPermissionsReviewRequired(serviceRecord.packageName,serviceRecord.userId)) {
+                try {
+                  bringUpServiceLocked(serviceRecord,serviceIntent.getFlags(),callerFg,false,false);
+                }
+ catch (                RemoteException e) {
+                }
+              }
+ else {
+                unbindServiceLocked(connection);
+              }
+            }
+  finally {
+              Binder.restoreCallingIdentity(identity);
+            }
+          }
+        }
+      }
+);
+      final Intent intent=new Intent(Intent.ACTION_REVIEW_PERMISSIONS);
+      intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS);
+      intent.putExtra(Intent.EXTRA_PACKAGE_NAME,s.packageName);
+      intent.putExtra(Intent.EXTRA_REMOTE_CALLBACK,callback);
+      if (DEBUG_PERMISSIONS_REVIEW) {
+        Slog.i(TAG,"u" + s.userId + " Launching permission review for package "+ s.packageName);
+      }
+      mAm.mHandler.post(new Runnable(){
+        @Override public void run(){
+          mAm.mContext.startActivityAsUser(intent,new UserHandle(userId));
+        }
+      }
+);
+    }
+  }
   final long origId=Binder.clearCallingIdentity();
   try {
     if (unscheduleServiceRestartLocked(s,callerApp.info.uid,false)) {
@@ -85,7 +136,7 @@
     clist.add(c);
     if ((flags & Context.BIND_AUTO_CREATE) != 0) {
       s.lastActivity=SystemClock.uptimeMillis();
-      if (bringUpServiceLocked(s,service.getFlags(),callerFg,false) != null) {
+      if (bringUpServiceLocked(s,service.getFlags(),callerFg,false,permissionsReviewRequired) != null) {
         return 0;
       }
     }
