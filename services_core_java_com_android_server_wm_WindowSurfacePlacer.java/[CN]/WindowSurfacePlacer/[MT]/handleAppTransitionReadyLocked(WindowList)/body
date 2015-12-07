@@ -13,7 +13,7 @@
   mService.mH.removeMessages(APP_TRANSITION_TIMEOUT);
   mService.rebuildAppWindowListLocked();
   mWallpaperMayChange=false;
-  WindowManager.LayoutParams animLp=null;
+  LayoutParams animLp=null;
   int bestAnimLayer=-1;
   boolean fullscreenAnim=false;
   boolean voiceInteraction=false;
@@ -72,91 +72,12 @@
     animLp=null;
   }
   processApplicationsAnimatingInPlace(transit);
-  AppWindowToken topClosingApp=null;
-  int topClosingLayer=0;
-  appsCount=mService.mClosingApps.size();
-  for (i=0; i < appsCount; i++) {
-    AppWindowToken wtoken=mService.mClosingApps.valueAt(i);
-    final AppWindowAnimator appAnimator=wtoken.mAppAnimator;
-    if (DEBUG_APP_TRANSITIONS)     Slog.v(TAG_WM,"Now closing app " + wtoken);
-    appAnimator.clearThumbnail();
-    appAnimator.animation=null;
-    wtoken.inPendingTransaction=false;
-    mService.setTokenVisibilityLocked(wtoken,animLp,false,transit,false,voiceInteraction);
-    wtoken.updateReportedVisibilityLocked();
-    wtoken.allDrawn=true;
-    wtoken.deferClearAllDrawn=false;
-    if (wtoken.startingWindow != null && !wtoken.startingWindow.mExiting) {
-      mService.scheduleRemoveStartingWindowLocked(wtoken);
-    }
-    mService.mAnimator.mAppWindowAnimating|=appAnimator.isAnimating();
-    if (animLp != null) {
-      int layer=-1;
-      for (int j=0; j < wtoken.windows.size(); j++) {
-        WindowState win=wtoken.windows.get(j);
-        if (win.mWinAnimator.mAnimLayer > layer) {
-          layer=win.mWinAnimator.mAnimLayer;
-        }
-      }
-      if (topClosingApp == null || layer > topClosingLayer) {
-        topClosingApp=wtoken;
-        topClosingLayer=layer;
-      }
-    }
-  }
-  AppWindowToken topOpeningApp=null;
-  appsCount=mService.mOpeningApps.size();
-  for (i=0; i < appsCount; i++) {
-    AppWindowToken wtoken=mService.mOpeningApps.valueAt(i);
-    final AppWindowAnimator appAnimator=wtoken.mAppAnimator;
-    if (DEBUG_APP_TRANSITIONS)     Slog.v(TAG_WM,"Now opening app" + wtoken);
-    if (!appAnimator.usingTransferredAnimation) {
-      appAnimator.clearThumbnail();
-      appAnimator.animation=null;
-    }
-    wtoken.inPendingTransaction=false;
-    if (!mService.setTokenVisibilityLocked(wtoken,animLp,true,transit,false,voiceInteraction)) {
-      mService.mNoAnimationNotifyOnTransitionFinished.add(wtoken.token);
-    }
-    wtoken.updateReportedVisibilityLocked();
-    wtoken.waitingToShow=false;
-    appAnimator.mAllAppWinAnimators.clear();
-    final int windowsCount=wtoken.allAppWindows.size();
-    for (int j=0; j < windowsCount; j++) {
-      appAnimator.mAllAppWinAnimators.add(wtoken.allAppWindows.get(j).mWinAnimator);
-    }
-    if (SHOW_LIGHT_TRANSACTIONS)     Slog.i(TAG_WM,">>> OPEN TRANSACTION handleAppTransitionReadyLocked()");
-    SurfaceControl.openTransaction();
-    try {
-      mService.mAnimator.orAnimating(appAnimator.showAllWindowsLocked());
-    }
-  finally {
-      SurfaceControl.closeTransaction();
-      if (SHOW_LIGHT_TRANSACTIONS)       Slog.i(TAG_WM,"<<< CLOSE TRANSACTION handleAppTransitionReadyLocked()");
-    }
-    mService.mAnimator.mAppWindowAnimating|=appAnimator.isAnimating();
-    int topOpeningLayer=0;
-    if (animLp != null) {
-      int layer=-1;
-      for (int j=0; j < wtoken.windows.size(); j++) {
-        final WindowState win=wtoken.windows.get(j);
-        if (win.mAppToken == null || !win.mAppToken.mWillReplaceWindow) {
-          win.mExiting=false;
-        }
-        if (win.mWinAnimator.mAnimLayer > layer) {
-          layer=win.mWinAnimator.mAnimLayer;
-        }
-      }
-      if (topOpeningApp == null || layer > topOpeningLayer) {
-        topOpeningApp=wtoken;
-        topOpeningLayer=layer;
-      }
-    }
-    createThumbnailAppAnimator(transit,wtoken,topOpeningLayer,topClosingLayer);
-    wtoken.restoreSavedSurfaces();
-  }
-  AppWindowAnimator openingAppAnimator=(topOpeningApp == null) ? null : topOpeningApp.mAppAnimator;
-  AppWindowAnimator closingAppAnimator=(topClosingApp == null) ? null : topClosingApp.mAppAnimator;
+  handleClosingApps(transit,animLp,voiceInteraction,mTmpLayerAndToken);
+  final AppWindowToken topClosingApp=mTmpLayerAndToken.token;
+  final int topClosingLayer=mTmpLayerAndToken.layer;
+  final AppWindowToken topOpeningApp=handleOpeningApps(transit,animLp,voiceInteraction,topClosingLayer);
+  final AppWindowAnimator openingAppAnimator=(topOpeningApp == null) ? null : topOpeningApp.mAppAnimator;
+  final AppWindowAnimator closingAppAnimator=(topClosingApp == null) ? null : topClosingApp.mAppAnimator;
   mService.mAppTransition.goodToGo(openingAppAnimator,closingAppAnimator);
   mService.mAppTransition.postAnimationCallback();
   mService.mAppTransition.clear();
