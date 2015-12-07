@@ -6,6 +6,7 @@
   final boolean forwardLocked=((installFlags & PackageManager.INSTALL_FORWARD_LOCK) != 0);
   final boolean onExternal=(((installFlags & PackageManager.INSTALL_EXTERNAL) != 0) || (args.volumeUuid != null));
   final boolean quickInstall=((installFlags & PackageManager.INSTALL_QUICK) != 0);
+  final boolean ephemeral=((installFlags & PackageManager.INSTALL_EPHEMERAL) != 0);
   boolean replace=false;
   int scanFlags=SCAN_NEW_INSTALL | SCAN_UPDATE_SIGNATURE;
   if (args.move != null) {
@@ -13,7 +14,12 @@
   }
   res.returnCode=PackageManager.INSTALL_SUCCEEDED;
   if (DEBUG_INSTALL)   Slog.d(TAG,"installPackageLI: path=" + tmpPackageFile);
-  final int parseFlags=mDefParseFlags | PackageParser.PARSE_CHATTY | PackageParser.PARSE_ENFORCE_CODE| (forwardLocked ? PackageParser.PARSE_FORWARD_LOCK : 0)| (onExternal ? PackageParser.PARSE_EXTERNAL_STORAGE : 0)| (quickInstall ? PackageParser.PARSE_SKIP_VERIFICATION : 0);
+  if (ephemeral && (forwardLocked || onExternal)) {
+    Slog.i(TAG,"Incompatible ephemeral install; fwdLocked=" + forwardLocked + " external="+ onExternal);
+    res.returnCode=PackageManager.INSTALL_FAILED_EPHEMERAL_INVALID;
+    return;
+  }
+  final int parseFlags=mDefParseFlags | PackageParser.PARSE_CHATTY | PackageParser.PARSE_ENFORCE_CODE| (forwardLocked ? PackageParser.PARSE_FORWARD_LOCK : 0)| (onExternal ? PackageParser.PARSE_EXTERNAL_STORAGE : 0)| (quickInstall ? PackageParser.PARSE_SKIP_VERIFICATION : 0)| (ephemeral ? PackageParser.PARSE_IS_EPHEMERAL : 0);
   PackageParser pp=new PackageParser();
   pp.setSeparateProcesses(mSeparateProcesses);
   pp.setDisplayMetrics(mMetrics);
@@ -150,9 +156,15 @@ synchronized (mPackages) {
       }
     }
   }
-  if (systemApp && onExternal) {
-    res.setError(INSTALL_FAILED_INVALID_INSTALL_LOCATION,"Cannot install updates to system apps on sdcard");
-    return;
+  if (systemApp) {
+    if (onExternal) {
+      res.setError(INSTALL_FAILED_INVALID_INSTALL_LOCATION,"Cannot install updates to system apps on sdcard");
+      return;
+    }
+ else     if (ephemeral) {
+      res.setError(INSTALL_FAILED_EPHEMERAL_INVALID,"Cannot update a system app with an ephemeral app");
+      return;
+    }
   }
   if (args.move != null) {
     scanFlags|=SCAN_NO_DEX;
