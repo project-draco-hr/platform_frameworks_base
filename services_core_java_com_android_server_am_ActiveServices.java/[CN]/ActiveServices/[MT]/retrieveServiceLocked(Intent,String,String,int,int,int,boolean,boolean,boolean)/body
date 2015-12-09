@@ -7,9 +7,12 @@
   if (comp != null) {
     r=smap.mServicesByName.get(comp);
   }
-  if (r == null) {
+  if (r == null && !isBindExternal) {
     Intent.FilterComparison filter=new Intent.FilterComparison(service);
     r=smap.mServicesByIntent.get(filter);
+  }
+  if (r != null && (r.serviceInfo.flags & ServiceInfo.FLAG_EXTERNAL_SERVICE) != 0 && !callingPackage.equals(r.packageName)) {
+    r=null;
   }
   if (r == null) {
     try {
@@ -20,6 +23,32 @@
         return null;
       }
       ComponentName name=new ComponentName(sInfo.applicationInfo.packageName,sInfo.name);
+      if ((sInfo.flags & ServiceInfo.FLAG_EXTERNAL_SERVICE) != 0) {
+        if (isBindExternal) {
+          if (!sInfo.exported) {
+            throw new SecurityException("BIND_EXTERNAL_SERVICE failed, " + name + " is not exported");
+          }
+          if ((sInfo.flags & ServiceInfo.FLAG_ISOLATED_PROCESS) == 0) {
+            throw new SecurityException("BIND_EXTERNAL_SERVICE failed, " + name + " is not an isolatedProcess");
+          }
+          ApplicationInfo aInfo=AppGlobals.getPackageManager().getApplicationInfo(callingPackage,ActivityManagerService.STOCK_PM_FLAGS,userId);
+          if (aInfo == null) {
+            throw new SecurityException("BIND_EXTERNAL_SERVICE failed, " + "could not resolve client package " + callingPackage);
+          }
+          sInfo=new ServiceInfo(sInfo);
+          sInfo.applicationInfo=new ApplicationInfo(sInfo.applicationInfo);
+          sInfo.applicationInfo.packageName=aInfo.packageName;
+          sInfo.applicationInfo.uid=aInfo.uid;
+          name=new ComponentName(aInfo.packageName,name.getClassName());
+          service.setComponent(name);
+        }
+ else {
+          throw new SecurityException("BIND_EXTERNAL_SERVICE required for " + name);
+        }
+      }
+ else       if (isBindExternal) {
+        throw new SecurityException("BIND_EXTERNAL_SERVICE failed, " + name + " is not an externalService");
+      }
       if (userId > 0) {
         if (mAm.isSingleton(sInfo.processName,sInfo.applicationInfo,sInfo.name,sInfo.flags) && mAm.isValidSingletonCall(callingUid,sInfo.applicationInfo.uid)) {
           userId=0;
