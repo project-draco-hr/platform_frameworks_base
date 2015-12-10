@@ -1,6 +1,7 @@
 {
   final float eventX=event.getX();
   final float eventY=event.getY();
+  final boolean isMouse=event.isFromSource(InputDevice.SOURCE_MOUSE);
 switch (event.getActionMasked()) {
 case MotionEvent.ACTION_DOWN:
     if (extractedTextModeWillBeStarted()) {
@@ -16,7 +17,7 @@ case MotionEvent.ACTION_DOWN:
           ViewConfiguration viewConfiguration=ViewConfiguration.get(mTextView.getContext());
           int doubleTapSlop=viewConfiguration.getScaledDoubleTapSlop();
           boolean stayedInArea=distanceSquared < doubleTapSlop * doubleTapSlop;
-          if (stayedInArea && isPositionOnText(eventX,eventY)) {
+          if (stayedInArea && (isMouse || isPositionOnText(eventX,eventY))) {
             selectCurrentWordAndStartDrag();
             mDiscardNextActionUp=true;
           }
@@ -49,40 +50,28 @@ if (mHaventMovedEnoughToStartDrag) {
 mHaventMovedEnoughToStartDrag=distanceSquared <= touchSlop * touchSlop;
 }
 }
+if (isMouse && !isDragAcceleratorActive()) {
+final int offset=mTextView.getOffsetForPosition(eventX,eventY);
+if (mStartOffset != offset) {
+if (mTextActionMode != null) {
+mTextActionMode.finish();
+}
+enterDrag(DRAG_ACCELERATOR_MODE_CHARACTER);
+mDiscardNextActionUp=true;
+mHaventMovedEnoughToStartDrag=false;
+}
+}
 if (mStartHandle != null && mStartHandle.isShowing()) {
 break;
 }
-if (mStartOffset != -1 && mTextView.getLayout() != null) {
-if (!mHaventMovedEnoughToStartDrag) {
-float y=eventY;
-if (mSwitchedLines) {
-final float fingerOffset=(mStartHandle != null) ? mStartHandle.getIdealVerticalOffset() : touchSlop;
-y=eventY - fingerOffset;
-}
-final int currLine=getCurrentLineAdjustedForSlop(mTextView.getLayout(),mLineSelectionIsOn,y);
-if (!mSwitchedLines && currLine != mLineSelectionIsOn) {
-mSwitchedLines=true;
-break;
-}
-int startOffset;
-int offset=mTextView.getOffsetAtCoordinate(currLine,eventX);
-if (mStartOffset < offset) {
-offset=getWordEnd(offset);
-startOffset=getWordStart(mStartOffset);
-}
- else {
-offset=getWordStart(offset);
-startOffset=getWordEnd(mStartOffset);
-}
-mLineSelectionIsOn=currLine;
-Selection.setSelection((Spannable)mTextView.getText(),startOffset,offset);
-}
-}
+updateSelection(event);
 break;
 case MotionEvent.ACTION_UP:
-if (mDragAcceleratorActive) {
+if (!isDragAcceleratorActive()) {
+break;
+}
+updateSelection(event);
 mTextView.getParent().requestDisallowInterceptTouchEvent(false);
-show();
 int startOffset=mTextView.getSelectionStart();
 int endOffset=mTextView.getSelectionEnd();
 if (endOffset < startOffset) {
@@ -91,13 +80,12 @@ endOffset=startOffset;
 startOffset=tmp;
 Selection.setSelection((Spannable)mTextView.getText(),startOffset,endOffset);
 }
+if (startOffset != endOffset) {
 mStartHandle.showAtLocation(startOffset);
 mEndHandle.showAtLocation(endOffset);
 startSelectionActionMode();
-mDragAcceleratorActive=false;
-mStartOffset=-1;
-mSwitchedLines=false;
 }
+resetDragAcceleratorState();
 break;
 }
 }
