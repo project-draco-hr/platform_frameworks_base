@@ -15,7 +15,7 @@ synchronized (mService) {
       for (int i=0; i < N; i++) {
         Object target=r.receivers.get(i);
         if (DEBUG_BROADCAST)         Slog.v(TAG_BROADCAST,"Delivering non-ordered on [" + mQueueName + "] to registered "+ target+ ": "+ r);
-        deliverToRegisteredReceiverLocked(r,(BroadcastFilter)target,false);
+        deliverToRegisteredReceiverLocked(r,(BroadcastFilter)target,false,i);
       }
       addBroadcastToHistoryLocked(r);
       if (DEBUG_BROADCAST_LIGHT)       Slog.v(TAG_BROADCAST,"Done with parallel broadcast [" + mQueueName + "] "+ r);
@@ -102,7 +102,7 @@ synchronized (mService.mPidsSelfLocked) {
     if (nextReceiver instanceof BroadcastFilter) {
       BroadcastFilter filter=(BroadcastFilter)nextReceiver;
       if (DEBUG_BROADCAST)       Slog.v(TAG_BROADCAST,"Delivering ordered [" + mQueueName + "] to registered "+ filter+ ": "+ r);
-      deliverToRegisteredReceiverLocked(r,filter,r.ordered);
+      deliverToRegisteredReceiverLocked(r,filter,r.ordered,recIdx);
       if (r.receiver == null || !r.ordered) {
         if (DEBUG_BROADCAST)         Slog.v(TAG_BROADCAST,"Quick finishing [" + mQueueName + "]: ordered="+ r.ordered+ " receiver="+ r.receiver);
         r.state=BroadcastRecord.IDLE;
@@ -118,8 +118,11 @@ synchronized (mService.mPidsSelfLocked) {
     ResolveInfo info=(ResolveInfo)nextReceiver;
     ComponentName component=new ComponentName(info.activityInfo.applicationInfo.packageName,info.activityInfo.name);
     boolean skip=false;
+    if (brOptions != null && (info.activityInfo.applicationInfo.targetSdkVersion < brOptions.getMinManifestReceiverApiLevel() || info.activityInfo.applicationInfo.targetSdkVersion > brOptions.getMaxManifestReceiverApiLevel())) {
+      skip=true;
+    }
     int perm=mService.checkComponentPermission(info.activityInfo.permission,r.callingPid,r.callingUid,info.activityInfo.applicationInfo.uid,info.activityInfo.exported);
-    if (perm != PackageManager.PERMISSION_GRANTED) {
+    if (!skip && perm != PackageManager.PERMISSION_GRANTED) {
       if (!info.activityInfo.exported) {
         Slog.w(TAG,"Permission Denial: broadcasting " + r.intent.toString() + " from "+ r.callerPackage+ " (pid="+ r.callingPid+ ", uid="+ r.callingUid+ ")"+ " is not exported from uid "+ info.activityInfo.applicationInfo.uid+ " due to receiver "+ component.flattenToShortString());
       }
@@ -128,7 +131,7 @@ synchronized (mService.mPidsSelfLocked) {
       }
       skip=true;
     }
- else     if (info.activityInfo.permission != null) {
+ else     if (!skip && info.activityInfo.permission != null) {
       final int opCode=AppOpsManager.permissionToOpCode(info.activityInfo.permission);
       if (opCode != AppOpsManager.OP_NONE && mService.mAppOpsService.noteOperation(opCode,r.callingUid,r.callerPackage) != AppOpsManager.MODE_ALLOWED) {
         Slog.w(TAG,"Appop Denial: broadcasting " + r.intent.toString() + " from "+ r.callerPackage+ " (pid="+ r.callingPid+ ", uid="+ r.callingUid+ ")"+ " requires appop "+ AppOpsManager.permissionToOp(info.activityInfo.permission)+ " due to registered receiver "+ component.flattenToShortString());
@@ -221,12 +224,14 @@ synchronized (mService.mPidsSelfLocked) {
     }
     if (skip) {
       if (DEBUG_BROADCAST)       Slog.v(TAG_BROADCAST,"Skipping delivery of ordered [" + mQueueName + "] "+ r+ " for whatever reason");
+      r.delivery[recIdx]=BroadcastRecord.DELIVERY_SKIPPED;
       r.receiver=null;
       r.curFilter=null;
       r.state=BroadcastRecord.IDLE;
       scheduleBroadcastsLocked();
       return;
     }
+    r.delivery[recIdx]=BroadcastRecord.DELIVERY_DELIVERED;
     r.state=BroadcastRecord.APP_RECEIVE;
     r.curComponent=component;
     r.curReceiver=info.activityInfo;
