@@ -50,45 +50,49 @@
     }
   }
   if (!mService.mIntentFirewall.checkBroadcast(r.intent,r.callingUid,r.callingPid,r.resolvedType,filter.receiverList.uid)) {
-    return;
+    skip=true;
   }
-  if (filter.receiverList.app == null || filter.receiverList.app.crashing) {
+  if (!skip && (filter.receiverList.app == null || filter.receiverList.app.crashing)) {
     Slog.w(TAG,"Skipping deliver [" + mQueueName + "] "+ r+ " to "+ filter.receiverList+ ": process crashing");
     skip=true;
   }
-  if (!skip) {
-    if (Build.PERMISSIONS_REVIEW_REQUIRED) {
-      if (!requestStartTargetPermissionsReviewIfNeededLocked(r,filter.packageName,filter.owningUserId)) {
-        return;
-      }
+  if (skip) {
+    r.delivery[index]=BroadcastRecord.DELIVERY_SKIPPED;
+    return;
+  }
+  if (Build.PERMISSIONS_REVIEW_REQUIRED) {
+    if (!requestStartTargetPermissionsReviewIfNeededLocked(r,filter.packageName,filter.owningUserId)) {
+      r.delivery[index]=BroadcastRecord.DELIVERY_SKIPPED;
+      return;
     }
+  }
+  r.delivery[index]=BroadcastRecord.DELIVERY_DELIVERED;
+  if (ordered) {
+    r.receiver=filter.receiverList.receiver.asBinder();
+    r.curFilter=filter;
+    filter.receiverList.curBroadcast=r;
+    r.state=BroadcastRecord.CALL_IN_RECEIVE;
+    if (filter.receiverList.app != null) {
+      r.curApp=filter.receiverList.app;
+      filter.receiverList.app.curReceiver=r;
+      mService.updateOomAdjLocked(r.curApp);
+    }
+  }
+  try {
+    if (DEBUG_BROADCAST_LIGHT)     Slog.i(TAG_BROADCAST,"Delivering to " + filter + " : "+ r);
+    performReceiveLocked(filter.receiverList.app,filter.receiverList.receiver,new Intent(r.intent),r.resultCode,r.resultData,r.resultExtras,r.ordered,r.initialSticky,r.userId);
     if (ordered) {
-      r.receiver=filter.receiverList.receiver.asBinder();
-      r.curFilter=filter;
-      filter.receiverList.curBroadcast=r;
-      r.state=BroadcastRecord.CALL_IN_RECEIVE;
+      r.state=BroadcastRecord.CALL_DONE_RECEIVE;
+    }
+  }
+ catch (  RemoteException e) {
+    Slog.w(TAG,"Failure sending broadcast " + r.intent,e);
+    if (ordered) {
+      r.receiver=null;
+      r.curFilter=null;
+      filter.receiverList.curBroadcast=null;
       if (filter.receiverList.app != null) {
-        r.curApp=filter.receiverList.app;
-        filter.receiverList.app.curReceiver=r;
-        mService.updateOomAdjLocked(r.curApp);
-      }
-    }
-    try {
-      if (DEBUG_BROADCAST_LIGHT)       Slog.i(TAG_BROADCAST,"Delivering to " + filter + " : "+ r);
-      performReceiveLocked(filter.receiverList.app,filter.receiverList.receiver,new Intent(r.intent),r.resultCode,r.resultData,r.resultExtras,r.ordered,r.initialSticky,r.userId);
-      if (ordered) {
-        r.state=BroadcastRecord.CALL_DONE_RECEIVE;
-      }
-    }
- catch (    RemoteException e) {
-      Slog.w(TAG,"Failure sending broadcast " + r.intent,e);
-      if (ordered) {
-        r.receiver=null;
-        r.curFilter=null;
-        filter.receiverList.curBroadcast=null;
-        if (filter.receiverList.app != null) {
-          filter.receiverList.app.curReceiver=null;
-        }
+        filter.receiverList.app.curReceiver=null;
       }
     }
   }
