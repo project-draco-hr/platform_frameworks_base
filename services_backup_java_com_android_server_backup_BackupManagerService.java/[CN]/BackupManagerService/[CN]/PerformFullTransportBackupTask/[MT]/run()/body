@@ -9,14 +9,17 @@
         Slog.i(TAG,"full backup requested but e=" + mEnabled + " p="+ mProvisioned+ "; ignoring");
       }
       mUpdateSchedule=false;
+      sendBackupFinished(mBackupObserver,BackupManager.ERROR_BACKUP_NOT_ALLOWED);
       return;
     }
     IBackupTransport transport=getTransport(mCurrentTransport);
     if (transport == null) {
       Slog.w(TAG,"Transport not present; full data backup not performed");
+      sendBackupFinished(mBackupObserver,BackupManager.ERROR_TRANSPORT_ABORTED);
       return;
     }
     final int N=mPackages.size();
+    final byte[] buffer=new byte[8192];
     for (int i=0; i < N; i++) {
       currentPackage=mPackages.get(i);
       if (DEBUG) {
@@ -24,7 +27,8 @@
       }
       EventLog.writeEvent(EventLogTags.FULL_BACKUP_PACKAGE,currentPackage.packageName);
       transportPipes=ParcelFileDescriptor.createPipe();
-      int result=transport.performFullBackup(currentPackage,transportPipes[0]);
+      int flags=mUserInitiated ? BackupTransport.FLAG_USER_INITIATED : 0;
+      int result=transport.performFullBackup(currentPackage,transportPipes[0],flags);
       if (result == BackupTransport.TRANSPORT_OK) {
         transportPipes[0].close();
         transportPipes[0]=null;
@@ -36,7 +40,12 @@
         (new Thread(backupRunner,"package-backup-bridge")).start();
         FileInputStream in=new FileInputStream(enginePipes[0].getFileDescriptor());
         FileOutputStream out=new FileOutputStream(transportPipes[1].getFileDescriptor());
-        byte[] buffer=new byte[8192];
+        long totalRead=0;
+        final long expectedSize=backupRunner.expectedSize();
+        if (expectedSize < 0) {
+          result=BackupTransport.AGENT_ERROR;
+          sendBackupOnResult(mBackupObserver,currentPackage.packageName,BackupManager.ERROR_AGENT_FAILURE);
+        }
         int nRead=0;
         do {
           if (!mKeepRunning.get()) {
@@ -52,6 +61,10 @@
           if (nRead > 0) {
             out.write(buffer,0,nRead);
             result=transport.sendBackupData(nRead);
+            totalRead+=nRead;
+            if (mBackupObserver != null && expectedSize > 0) {
+              sendBackupOnUpdate(mBackupObserver,currentPackage.packageName,new BackupProgress(expectedSize,totalRead));
+            }
           }
         }
  while (nRead > 0 && result == BackupTransport.TRANSPORT_OK);
@@ -84,15 +97,18 @@
           Slog.i(TAG,"Transport rejected backup of " + currentPackage.packageName + ", skipping");
         }
         EventLog.writeEvent(EventLogTags.FULL_BACKUP_AGENT_FAILURE,currentPackage.packageName,"transport rejected");
+        sendBackupOnResult(mBackupObserver,currentPackage.packageName,BackupManager.ERROR_TRANSPORT_PACKAGE_REJECTED);
       }
  else       if (result != BackupTransport.TRANSPORT_OK) {
         Slog.w(TAG,"Transport failed; aborting backup: " + result);
         EventLog.writeEvent(EventLogTags.FULL_BACKUP_TRANSPORT_FAILURE);
+        sendBackupOnResult(mBackupObserver,currentPackage.packageName,BackupManager.ERROR_TRANSPORT_ABORTED);
         return;
       }
  else {
         EventLog.writeEvent(EventLogTags.FULL_BACKUP_SUCCESS,currentPackage.packageName);
         logBackupComplete(currentPackage.packageName);
+        sendBackupOnResult(mBackupObserver,currentPackage.packageName,BackupManager.SUCCESS);
       }
       cleanUpPipes(transportPipes);
       cleanUpPipes(enginePipes);
@@ -101,9 +117,11 @@
     if (DEBUG) {
       Slog.i(TAG,"Full backup completed.");
     }
+    sendBackupFinished(mBackupObserver,BackupManager.SUCCESS);
   }
  catch (  Exception e) {
     Slog.w(TAG,"Exception trying full transport backup",e);
+    sendBackupFinished(mBackupObserver,BackupManager.ERROR_TRANSPORT_ABORTED);
   }
  finally {
     cleanUpPipes(transportPipes);
@@ -118,5 +136,7 @@ synchronized (mQueueLock) {
     if (mUpdateSchedule) {
       scheduleNextFullBackupJob(backoff);
     }
+    Slog.i(BackupManagerService.TAG,"Full data backup pass finished.");
+    mWakelock.release();
   }
 }
