@@ -1,6 +1,57 @@
 {
-  final SQLiteQueryBuilder builder=new SQLiteQueryBuilder();
-  builder.setTables(JOIN_ROOTS);
-  builder.setProjectionMap(COLUMN_MAP_ROOTS);
-  return builder.query(mDatabase,columnNames,COLUMN_ROW_STATE + " IN (?, ?) AND " + COLUMN_DOCUMENT_TYPE+ " = ?",strings(ROW_STATE_VALID,ROW_STATE_INVALIDATED,DOCUMENT_TYPE_STORAGE),null,null,null);
+  final String selection=COLUMN_ROW_STATE + " IN (?, ?) AND " + COLUMN_DOCUMENT_TYPE+ " = ?";
+  final Cursor deviceCursor=mDatabase.query(TABLE_DOCUMENTS,strings(COLUMN_DEVICE_ID),selection,strings(ROW_STATE_VALID,ROW_STATE_INVALIDATED,DOCUMENT_TYPE_DEVICE),COLUMN_DEVICE_ID,null,null,null);
+  try {
+    final SQLiteQueryBuilder builder=new SQLiteQueryBuilder();
+    builder.setTables(JOIN_ROOTS);
+    builder.setProjectionMap(COLUMN_MAP_ROOTS);
+    final MatrixCursor result=new MatrixCursor(columnNames);
+    final ContentValues values=new ContentValues();
+    while (deviceCursor.moveToNext()) {
+      final int deviceId=deviceCursor.getInt(0);
+      final Cursor storageCursor=builder.query(mDatabase,columnNames,selection + " AND " + COLUMN_DEVICE_ID+ " = ?",strings(ROW_STATE_VALID,ROW_STATE_INVALIDATED,DOCUMENT_TYPE_STORAGE,deviceId),null,null,null);
+      try {
+        values.clear();
+        if (storageCursor.getCount() == 1) {
+          storageCursor.moveToNext();
+          DatabaseUtils.cursorRowToContentValues(storageCursor,values);
+        }
+ else {
+          final Cursor cursor=builder.query(mDatabase,columnNames,selection + " AND " + COLUMN_DEVICE_ID+ " = ?",strings(ROW_STATE_VALID,ROW_STATE_INVALIDATED,DOCUMENT_TYPE_DEVICE,deviceId),null,null,null);
+          try {
+            cursor.moveToNext();
+            DatabaseUtils.cursorRowToContentValues(cursor,values);
+          }
+  finally {
+            cursor.close();
+          }
+          long capacityBytes=0;
+          long availableBytes=0;
+          int capacityIndex=cursor.getColumnIndex(Root.COLUMN_CAPACITY_BYTES);
+          int availableIndex=cursor.getColumnIndex(Root.COLUMN_AVAILABLE_BYTES);
+          while (storageCursor.moveToNext()) {
+            if (capacityIndex != -1) {
+              capacityBytes+=cursor.getLong(capacityIndex);
+            }
+            if (availableIndex != -1) {
+              availableBytes+=cursor.getLong(availableIndex);
+            }
+          }
+          values.put(Root.COLUMN_CAPACITY_BYTES,capacityBytes);
+          values.put(Root.COLUMN_AVAILABLE_BYTES,availableBytes);
+        }
+      }
+  finally {
+        storageCursor.close();
+      }
+      final RowBuilder row=result.newRow();
+      for (      final String key : values.keySet()) {
+        row.add(key,values.get(key));
+      }
+    }
+    return result;
+  }
+  finally {
+    deviceCursor.close();
+  }
 }
