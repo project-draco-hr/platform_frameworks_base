@@ -4,7 +4,7 @@
   ParcelFileDescriptor dstFile=null;
   InputStream src=null;
   OutputStream dst=null;
-  IOException copyError=null;
+  boolean success=true;
   try {
     if (srcInfo.isVirtualDocument() && srcInfo.isTypedDocument()) {
       final String[] streamTypes=mSrcClient.getStreamTypes(srcInfo.derivedUri,"*/*");
@@ -25,18 +25,22 @@
     dst=new ParcelFileDescriptor.AutoCloseOutputStream(dstFile);
     byte[] buffer=new byte[8192];
     int len;
-    while (!mIsCancelled && ((len=src.read(buffer)) != -1)) {
+    while ((len=src.read(buffer)) != -1) {
+      if (mIsCancelled) {
+        success=false;
+        break;
+      }
       dst.write(buffer,0,len);
       makeProgress(len);
     }
     srcFile.checkError();
   }
  catch (  IOException e) {
-    copyError=e;
+    success=false;
     mFailedFiles.add(srcInfo);
     if (dstFile != null) {
       try {
-        dstFile.closeWithError(copyError.getMessage());
+        dstFile.closeWithError(e.getMessage());
       }
  catch (      IOException closeError) {
         Log.e(TAG,"Error closing destination",closeError);
@@ -47,14 +51,15 @@
     IoUtils.closeQuietly(src);
     IoUtils.closeQuietly(dst);
   }
-  if (copyError != null || mIsCancelled) {
+  if (!success) {
     canceller.cancel();
     try {
       DocumentsContract.deleteDocument(mDstClient,dstInfo.derivedUri);
     }
  catch (    RemoteException e) {
-      Log.w(TAG,"Failed to clean up after copy error: " + dstInfo.derivedUri,e);
+      Log.w(TAG,"Failed to cleanup after copy error: " + srcInfo.derivedUri,e);
       throw e;
     }
   }
+  return success;
 }
