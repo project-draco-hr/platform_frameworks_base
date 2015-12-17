@@ -5,10 +5,10 @@
   boolean componentSpecified=intent.getComponent() != null;
   final Intent ephemeralIntent=new Intent(intent);
   intent=new Intent(intent);
-  ResolveInfo rInfo=resolveIntent(intent,resolvedType,userId);
-  ActivityInfo aInfo=resolveActivity(intent,rInfo,startFlags,profilerInfo);
+  ResolveInfo rInfo=mSupervisor.resolveIntent(intent,resolvedType,userId);
+  ActivityInfo aInfo=mSupervisor.resolveActivity(intent,rInfo,startFlags,profilerInfo);
   ActivityOptions options=ActivityOptions.fromBundle(bOptions);
-  ActivityContainer container=(ActivityContainer)iContainer;
+  ActivityStackSupervisor.ActivityContainer container=(ActivityStackSupervisor.ActivityContainer)iContainer;
 synchronized (mService) {
     if (container != null && container.mParentActivity != null && container.mParentActivity.state != RESUMED) {
       return ActivityManager.START_CANCELED;
@@ -28,7 +28,7 @@ synchronized (mService) {
     }
     final ActivityStack stack;
     if (container == null || container.mStack.isOnHomeDisplay()) {
-      stack=mFocusedStack;
+      stack=mSupervisor.mFocusedStack;
     }
  else {
       stack=container.mStack;
@@ -38,7 +38,8 @@ synchronized (mService) {
     final long origId=Binder.clearCallingIdentity();
     if (aInfo != null && (aInfo.applicationInfo.privateFlags & ApplicationInfo.PRIVATE_FLAG_CANT_SAVE_STATE) != 0) {
       if (aInfo.processName.equals(aInfo.applicationInfo.packageName)) {
-        if (mService.mHeavyWeightProcess != null && (mService.mHeavyWeightProcess.info.uid != aInfo.applicationInfo.uid || !mService.mHeavyWeightProcess.processName.equals(aInfo.processName))) {
+        final ProcessRecord heavy=mService.mHeavyWeightProcess;
+        if (heavy != null && (heavy.info.uid != aInfo.applicationInfo.uid || !heavy.processName.equals(aInfo.processName))) {
           int appCallingUid=callingUid;
           if (caller != null) {
             ProcessRecord callerApp=mService.getRecordForAppLocked(caller);
@@ -57,8 +58,8 @@ synchronized (mService) {
             newIntent.putExtra(HeavyWeightSwitcherActivity.KEY_HAS_RESULT,true);
           }
           newIntent.putExtra(HeavyWeightSwitcherActivity.KEY_INTENT,new IntentSender(target));
-          if (mService.mHeavyWeightProcess.activities.size() > 0) {
-            ActivityRecord hist=mService.mHeavyWeightProcess.activities.get(0);
+          if (heavy.activities.size() > 0) {
+            ActivityRecord hist=heavy.activities.get(0);
             newIntent.putExtra(HeavyWeightSwitcherActivity.KEY_CUR_APP,hist.packageName);
             newIntent.putExtra(HeavyWeightSwitcherActivity.KEY_CUR_TASK,hist.task.taskId);
           }
@@ -71,7 +72,7 @@ synchronized (mService) {
           callingUid=Binder.getCallingUid();
           callingPid=Binder.getCallingPid();
           componentSpecified=true;
-          rInfo=resolveIntent(intent,null,userId);
+          rInfo=mSupervisor.resolveIntent(intent,null,userId);
           aInfo=rInfo != null ? rInfo.activityInfo : null;
           if (aInfo != null) {
             aInfo=mService.getActivityInfoForUser(aInfo,userId);
@@ -90,7 +91,7 @@ synchronized (mService) {
     if (outResult != null) {
       outResult.result=res;
       if (res == ActivityManager.START_SUCCESS) {
-        mWaitingActivityLaunched.add(outResult);
+        mSupervisor.mWaitingActivityLaunched.add(outResult);
         do {
           try {
             mService.wait();
@@ -110,7 +111,7 @@ synchronized (mService) {
         }
  else {
           outResult.thisTime=SystemClock.uptimeMillis();
-          mWaitingActivityVisible.add(outResult);
+          mSupervisor.mWaitingActivityVisible.add(outResult);
           do {
             try {
               mService.wait();
