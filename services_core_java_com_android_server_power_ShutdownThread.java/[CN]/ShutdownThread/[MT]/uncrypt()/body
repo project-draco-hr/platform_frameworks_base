@@ -1,53 +1,34 @@
 {
   Log.i(TAG,"Calling uncrypt and monitoring the progress...");
+  final RecoverySystem.ProgressListener progressListener=new RecoverySystem.ProgressListener(){
+    @Override public void onProgress(    int status){
+      if (status >= 0 && status < 100) {
+        status=(int)(status * (100.0 - MOUNT_SERVICE_STOP_PERCENT) / 100);
+        status+=MOUNT_SERVICE_STOP_PERCENT;
+        CharSequence msg=mContext.getText(com.android.internal.R.string.reboot_to_update_package);
+        sInstance.setRebootProgress(status,msg);
+      }
+ else       if (status == 100) {
+        CharSequence msg=mContext.getText(com.android.internal.R.string.reboot_to_update_reboot);
+        sInstance.setRebootProgress(status,msg);
+      }
+ else {
+      }
+    }
+  }
+;
   final boolean[] done=new boolean[1];
   done[0]=false;
   Thread t=new Thread(){
     @Override public void run(){
-      new File(UNCRYPT_STATUS_FILE).delete();
+      RecoverySystem rs=(RecoverySystem)mContext.getSystemService(Context.RECOVERY_SERVICE);
+      String filename=null;
       try {
-        Os.mkfifo(UNCRYPT_STATUS_FILE,0600);
+        filename=FileUtils.readTextFile(RecoverySystem.UNCRYPT_PACKAGE_FILE,0,null);
+        rs.processPackage(mContext,new File(filename),progressListener);
       }
- catch (      ErrnoException e) {
-        Log.w(TAG,"ErrnoException when creating named pipe \"" + UNCRYPT_STATUS_FILE + "\": "+ e.getMessage());
-      }
-      SystemProperties.set("ctl.start","uncrypt");
-      try (BufferedReader reader=new BufferedReader(new FileReader(UNCRYPT_STATUS_FILE))){
-        int lastStatus=Integer.MIN_VALUE;
-        while (true) {
-          String str=reader.readLine();
-          try {
-            int status=Integer.parseInt(str);
-            if (status == lastStatus && lastStatus != Integer.MIN_VALUE) {
-              continue;
-            }
-            lastStatus=status;
-            if (status >= 0 && status < 100) {
-              Log.d(TAG,"uncrypt read status: " + status);
-              status=(int)(status * (100.0 - MOUNT_SERVICE_STOP_PERCENT) / 100);
-              status+=MOUNT_SERVICE_STOP_PERCENT;
-              CharSequence msg=mContext.getText(com.android.internal.R.string.reboot_to_update_package);
-              sInstance.setRebootProgress(status,msg);
-            }
- else             if (status == 100) {
-              Log.d(TAG,"uncrypt successfully finished.");
-              CharSequence msg=mContext.getText(com.android.internal.R.string.reboot_to_update_reboot);
-              sInstance.setRebootProgress(status,msg);
-              break;
-            }
- else {
-              Log.d(TAG,"uncrypt failed with status: " + status);
-              break;
-            }
-          }
- catch (          NumberFormatException unused) {
-            Log.d(TAG,"uncrypt invalid status received: " + str);
-            break;
-          }
-        }
-      }
- catch (      IOException unused) {
-        Log.w(TAG,"IOException when reading \"" + UNCRYPT_STATUS_FILE + "\".");
+ catch (      IOException e) {
+        Log.e(TAG,"Error uncrypting file",e);
       }
       done[0]=true;
     }
