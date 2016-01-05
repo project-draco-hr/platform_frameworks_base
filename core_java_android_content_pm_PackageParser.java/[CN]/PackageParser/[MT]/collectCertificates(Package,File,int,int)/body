@@ -2,15 +2,53 @@
   final boolean hasCode=(apkFlags & ApplicationInfo.FLAG_HAS_CODE) != 0;
   final boolean requireCode=((parseFlags & PARSE_ENFORCE_CODE) != 0) && hasCode;
   final String apkPath=apkFile.getAbsolutePath();
+  boolean verified=false;
+{
+    Certificate[][] allSignersCerts=null;
+    Signature[] signatures=null;
+    try {
+      allSignersCerts=ApkSignatureSchemeV2Verifier.verify(apkPath);
+      signatures=convertToSignatures(allSignersCerts);
+      verified=true;
+    }
+ catch (    ApkSignatureSchemeV2Verifier.SignatureNotFoundException e) {
+    }
+catch (    Exception e) {
+      throw new PackageParserException(INSTALL_PARSE_FAILED_NO_CERTIFICATES,"Failed to collect certificates from " + apkPath + " using APK Signature Scheme v2",e);
+    }
+    if (verified) {
+      if (pkg.mCertificates == null) {
+        pkg.mCertificates=allSignersCerts;
+        pkg.mSignatures=signatures;
+        pkg.mSigningKeys=new ArraySet<>(allSignersCerts.length);
+        for (int i=0; i < allSignersCerts.length; i++) {
+          Certificate[] signerCerts=allSignersCerts[i];
+          Certificate signerCert=signerCerts[0];
+          pkg.mSigningKeys.add(signerCert.getPublicKey());
+        }
+      }
+ else {
+        if (!Signature.areExactMatch(pkg.mSignatures,signatures)) {
+          throw new PackageParserException(INSTALL_PARSE_FAILED_INCONSISTENT_CERTIFICATES,apkPath + " has mismatched certificates");
+        }
+      }
+    }
+  }
   boolean codeFound=false;
   StrictJarFile jarFile=null;
   try {
     Trace.traceBegin(TRACE_TAG_PACKAGE_MANAGER,"strictJarFileCtor");
-    jarFile=new StrictJarFile(apkPath);
+    jarFile=new StrictJarFile(apkPath,!verified);
     Trace.traceEnd(TRACE_TAG_PACKAGE_MANAGER);
     final ZipEntry manifestEntry=jarFile.findEntry(ANDROID_MANIFEST_FILENAME);
     if (manifestEntry == null) {
       throw new PackageParserException(INSTALL_PARSE_FAILED_BAD_MANIFEST,"Package " + apkPath + " has no manifest");
+    }
+    if (verified) {
+      if ((requireCode) && (jarFile.findEntry(BYTECODE_FILENAME) == null)) {
+        throw new PackageParserException(INSTALL_PARSE_FAILED_MANIFEST_MALFORMED,"Package " + apkPath + " code is missing");
+      }
+      return;
     }
     Trace.traceBegin(TRACE_TAG_PACKAGE_MANAGER,"buildVerifyList");
     final List<ZipEntry> toVerify=new ArrayList<>();
