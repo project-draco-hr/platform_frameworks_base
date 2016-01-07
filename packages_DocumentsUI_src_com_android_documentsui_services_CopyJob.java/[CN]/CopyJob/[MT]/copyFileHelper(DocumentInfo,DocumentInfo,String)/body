@@ -1,0 +1,60 @@
+{
+  CancellationSignal canceller=new CancellationSignal();
+  ParcelFileDescriptor srcFile=null;
+  ParcelFileDescriptor dstFile=null;
+  InputStream src=null;
+  OutputStream dst=null;
+  boolean success=true;
+  try {
+    if (srcInfo.isVirtualDocument()) {
+      final AssetFileDescriptor srcFileAsAsset=srcClient.openTypedAssetFileDescriptor(srcInfo.derivedUri,mimeType,null,canceller);
+      srcFile=srcFileAsAsset.getParcelFileDescriptor();
+      src=new AssetFileDescriptor.AutoCloseInputStream(srcFileAsAsset);
+    }
+ else {
+      srcFile=srcClient.openFile(srcInfo.derivedUri,"r",canceller);
+      src=new ParcelFileDescriptor.AutoCloseInputStream(srcFile);
+    }
+    dstFile=dstClient.openFile(dstInfo.derivedUri,"w",canceller);
+    dst=new ParcelFileDescriptor.AutoCloseOutputStream(dstFile);
+    byte[] buffer=new byte[8192];
+    int len;
+    while ((len=src.read(buffer)) != -1) {
+      if (isCanceled()) {
+        if (DEBUG)         Log.d(TAG,"Canceled copy mid-copy. Id:" + id);
+        success=false;
+        break;
+      }
+      dst.write(buffer,0,len);
+      makeCopyProgress(len);
+    }
+    srcFile.checkError();
+  }
+ catch (  IOException e) {
+    success=false;
+    onFileFailed(srcInfo);
+    if (dstFile != null) {
+      try {
+        dstFile.closeWithError(e.getMessage());
+      }
+ catch (      IOException closeError) {
+        Log.e(TAG,"Error closing destination",closeError);
+      }
+    }
+  }
+ finally {
+    IoUtils.closeQuietly(src);
+    IoUtils.closeQuietly(dst);
+  }
+  if (!success) {
+    canceller.cancel();
+    try {
+      DocumentsContract.deleteDocument(dstClient,dstInfo.derivedUri);
+    }
+ catch (    RemoteException e) {
+      Log.w(TAG,"Failed to cleanup after copy error: " + srcInfo.derivedUri,e);
+      throw e;
+    }
+  }
+  return success;
+}
