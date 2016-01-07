@@ -1,0 +1,75 @@
+{
+  if (DEBUG) {
+    Slog.d(TAG,printPendingQueue());
+  }
+  JobStatus[] contextIdToJobMap=new JobStatus[MAX_JOB_CONTEXTS_COUNT];
+  boolean[] act=new boolean[MAX_JOB_CONTEXTS_COUNT];
+  int[] preferredUidForContext=new int[MAX_JOB_CONTEXTS_COUNT];
+  for (int i=0; i < mActiveServices.size(); i++) {
+    contextIdToJobMap[i]=mActiveServices.get(i).getRunningJob();
+    preferredUidForContext[i]=mActiveServices.get(i).getPreferredUid();
+  }
+  if (DEBUG) {
+    Slog.d(TAG,printContextIdToJobMap(contextIdToJobMap,"running jobs initial"));
+  }
+  Iterator<JobStatus> it=mPendingJobs.iterator();
+  while (it.hasNext()) {
+    JobStatus nextPending=it.next();
+    int jobRunningContext=findJobContextIdFromMap(nextPending,contextIdToJobMap);
+    if (jobRunningContext != -1) {
+      continue;
+    }
+    int minPriority=Integer.MAX_VALUE;
+    int minPriorityContextId=-1;
+    for (int i=0; i < mActiveServices.size(); i++) {
+      JobStatus job=contextIdToJobMap[i];
+      int preferredUid=preferredUidForContext[i];
+      if (job == null && (preferredUid == nextPending.getUid() || preferredUid == JobServiceContext.NO_PREFERRED_UID)) {
+        minPriorityContextId=i;
+        break;
+      }
+      if (job.getUid() != nextPending.getUid()) {
+        continue;
+      }
+      if (job.getPriority() >= nextPending.getPriority()) {
+        continue;
+      }
+      if (minPriority > nextPending.getPriority()) {
+        minPriority=nextPending.getPriority();
+        minPriorityContextId=i;
+      }
+    }
+    if (minPriorityContextId != -1) {
+      contextIdToJobMap[minPriorityContextId]=nextPending;
+      act[minPriorityContextId]=true;
+    }
+  }
+  if (DEBUG) {
+    Slog.d(TAG,printContextIdToJobMap(contextIdToJobMap,"running jobs final"));
+  }
+  for (int i=0; i < mActiveServices.size(); i++) {
+    boolean preservePreferredUid=false;
+    if (act[i]) {
+      JobStatus js=mActiveServices.get(i).getRunningJob();
+      if (js != null) {
+        if (DEBUG) {
+          Slog.d(TAG,"preempting job: " + mActiveServices.get(i).getRunningJob());
+        }
+        mActiveServices.get(i).preemptExecutingJob();
+        preservePreferredUid=true;
+      }
+ else {
+        if (DEBUG) {
+          Slog.d(TAG,"About to run job on context " + String.valueOf(i) + ", job: "+ contextIdToJobMap[i]);
+        }
+        if (!mActiveServices.get(i).executeRunnableJob(contextIdToJobMap[i])) {
+          Slog.d(TAG,"Error executing " + contextIdToJobMap[i]);
+        }
+        mPendingJobs.remove(contextIdToJobMap[i]);
+      }
+    }
+    if (!preservePreferredUid) {
+      mActiveServices.get(i).clearPreferredUid();
+    }
+  }
+}
