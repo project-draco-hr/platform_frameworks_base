@@ -1,0 +1,38 @@
+{
+  if (DEBUG)   Log.d(TAG,"onHandleIntent: " + intent);
+  String jobId=intent.getStringExtra(EXTRA_JOB_ID);
+  @OpType int operationType=intent.getIntExtra(EXTRA_OPERATION,OPERATION_UNKNOWN);
+  checkArgument(jobId != null);
+  if (intent.hasExtra(EXTRA_CANCEL)) {
+    handleCancel(intent);
+    return;
+  }
+  checkArgument(operationType != OPERATION_UNKNOWN);
+  PowerManager.WakeLock wakeLock=mPowerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,TAG);
+  ArrayList<DocumentInfo> srcs=intent.getParcelableArrayListExtra(EXTRA_SRC_LIST);
+  DocumentStack stack=intent.getParcelableExtra(Shared.EXTRA_STACK);
+  Job job=createJob(operationType,jobId,srcs,stack);
+  try {
+    wakeLock.acquire();
+    mNotificationManager.notify(job.id,0,job.getSetupNotification());
+    job.run(this);
+  }
+ catch (  Exception e) {
+    Log.e(TAG,"Exceptions occurred during copying",e);
+  }
+ finally {
+    if (DEBUG)     Log.d(TAG,"Cleaning up after copy");
+    job.cleanup();
+    wakeLock.release();
+    mNotificationManager.cancel(job.id,0);
+    if (job.failed()) {
+      Log.e(TAG,job.failedFiles.size() + " files failed to copy");
+      mNotificationManager.notify(job.id,0,job.getFailureNotification());
+    }
+    if (mJobFinishedListener != null) {
+      mJobFinishedListener.onFinished(job.failedFiles);
+    }
+    deleteJob(job);
+    if (DEBUG)     Log.d(TAG,"Done cleaning up");
+  }
+}
