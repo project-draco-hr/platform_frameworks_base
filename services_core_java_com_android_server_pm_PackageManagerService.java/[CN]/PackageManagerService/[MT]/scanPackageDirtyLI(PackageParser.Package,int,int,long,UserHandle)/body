@@ -229,17 +229,9 @@ synchronized (mPackages) {
       }
       if (currentUid != pkg.applicationInfo.uid) {
         boolean recovered=false;
-        if (currentUid == 0) {
-          int ret=mInstaller.fixUid(pkg.volumeUuid,pkgName,pkg.applicationInfo.uid,pkg.applicationInfo.uid);
-          if (ret >= 0) {
-            recovered=true;
-            String msg="Package " + pkg.packageName + " unexpectedly changed to uid 0; recovered to "+ +pkg.applicationInfo.uid;
-            reportSettingsProblem(Log.WARN,msg);
-          }
-        }
-        if (!recovered && ((parseFlags & PackageParser.PARSE_IS_SYSTEM) != 0 || (scanFlags & SCAN_BOOTING) != 0)) {
-          int ret=removeDataDirsLI(pkg.volumeUuid,pkgName);
-          if (ret >= 0) {
+        if (((parseFlags & PackageParser.PARSE_IS_SYSTEM) != 0 || (scanFlags & SCAN_BOOTING) != 0)) {
+          boolean res=removeDataDirsLI(pkg.volumeUuid,pkgName);
+          if (res) {
             String prefix=(parseFlags & PackageParser.PARSE_IS_SYSTEM) != 0 ? "System package " : "Third party package ";
             String msg=prefix + pkg.packageName + " has changed from uid: "+ currentUid+ " to "+ pkg.applicationInfo.uid+ "; old data erased";
             reportSettingsProblem(Log.WARN,msg);
@@ -249,8 +241,8 @@ synchronized (mPackages) {
             mHasSystemUidErrors=true;
           }
         }
- else         if (!recovered) {
-          throw new PackageManagerException(INSTALL_FAILED_UID_CHANGED,"scanPackageLI");
+ else {
+          throw new PackageManagerException(INSTALL_FAILED_UID_CHANGED,"Expected data to be owned by UID " + pkg.applicationInfo.uid + " but found "+ currentUid);
         }
         if (!recovered) {
           pkg.applicationInfo.dataDir="/mismatched_uid/settings_" + pkg.applicationInfo.uid + "/fs_"+ currentUid;
@@ -270,7 +262,14 @@ synchronized (mPackages) {
       createDataDirsLI(pkg.volumeUuid,pkgName,pkg.applicationInfo.uid,pkg.applicationInfo.seinfo);
       if (mShouldRestoreconData) {
         Slog.i(TAG,"SELinux relabeling of " + pkg.packageName + " issued.");
-        mInstaller.restoreconData(pkg.volumeUuid,pkg.packageName,pkg.applicationInfo.seinfo,pkg.applicationInfo.uid);
+        final int appId=UserHandle.getAppId(pkg.applicationInfo.uid);
+        final int flags=Installer.FLAG_CE_STORAGE | Installer.FLAG_DE_STORAGE;
+        try {
+          mInstaller.restoreconAppData(pkg.volumeUuid,pkg.packageName,UserHandle.USER_SYSTEM,flags,appId,pkg.applicationInfo.seinfo);
+        }
+ catch (        InstallerException e) {
+          Slog.w(TAG,"Failed to restorecon " + pkg.packageName,e);
+        }
       }
     }
  else {
@@ -304,7 +303,14 @@ synchronized (mInstallLock) {
     if (!TextUtils.isEmpty(pkg.volumeUuid)) {
       for (      int userId : userIds) {
         if (userId != UserHandle.USER_SYSTEM) {
-          mInstaller.createUserData(pkg.volumeUuid,pkg.packageName,UserHandle.getUid(userId,pkg.applicationInfo.uid),userId,pkg.applicationInfo.seinfo);
+          final int flags=Installer.FLAG_CE_STORAGE | Installer.FLAG_DE_STORAGE;
+          final int appId=UserHandle.getAppId(pkg.applicationInfo.uid);
+          try {
+            mInstaller.createAppData(pkg.volumeUuid,pkg.packageName,userId,flags,appId,pkg.applicationInfo.seinfo);
+          }
+ catch (          InstallerException e) {
+            throw PackageManagerException.from(e);
+          }
         }
       }
     }
@@ -313,8 +319,11 @@ synchronized (mInstallLock) {
       try {
         final String nativeLibPath=pkg.applicationInfo.nativeLibraryDir;
         for (        int userId : userIds) {
-          if (mInstaller.linkNativeLibraryDirectory(pkg.volumeUuid,pkg.packageName,nativeLibPath,userId) < 0) {
-            throw new PackageManagerException(INSTALL_FAILED_INTERNAL_ERROR,"Failed linking native library dir (user=" + userId + ")");
+          try {
+            mInstaller.linkNativeLibraryDirectory(pkg.volumeUuid,pkg.packageName,nativeLibPath,userId);
+          }
+ catch (          InstallerException e) {
+            throw PackageManagerException.from(e);
           }
         }
       }
