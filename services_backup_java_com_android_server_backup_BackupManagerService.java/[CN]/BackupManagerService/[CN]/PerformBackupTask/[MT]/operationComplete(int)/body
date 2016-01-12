@@ -52,8 +52,9 @@
   addBackupTrace("operation complete");
   ParcelFileDescriptor backupData=null;
   mStatus=BackupTransport.TRANSPORT_OK;
+  long size=0;
   try {
-    int size=(int)mBackupDataName.length();
+    size=mBackupDataName.length();
     if (size > 0) {
       if (mStatus == BackupTransport.TRANSPORT_OK) {
         backupData=ParcelFileDescriptor.open(mBackupDataName,ParcelFileDescriptor.MODE_READ_ONLY);
@@ -88,6 +89,10 @@
       sendBackupOnResult(mObserver,pkgName,BackupManager.ERROR_TRANSPORT_PACKAGE_REJECTED);
       EventLogTags.writeBackupAgentFailure(pkgName,"Transport rejected");
     }
+ else     if (mStatus == BackupTransport.TRANSPORT_QUOTA_EXCEEDED) {
+      sendBackupOnResult(mObserver,pkgName,BackupManager.ERROR_TRANSPORT_QUOTA_EXCEEDED);
+      EventLog.writeEvent(EventLogTags.BACKUP_QUOTA_EXCEEDED,pkgName);
+    }
  else {
       sendBackupOnResult(mObserver,pkgName,BackupManager.ERROR_TRANSPORT_ABORTED);
       EventLog.writeEvent(EventLogTags.BACKUP_TRANSPORT_FAILURE,pkgName);
@@ -108,6 +113,21 @@
   }
   final BackupState nextState;
   if (mStatus == BackupTransport.TRANSPORT_OK || mStatus == BackupTransport.TRANSPORT_PACKAGE_REJECTED) {
+    nextState=(mQueue.isEmpty()) ? BackupState.FINAL : BackupState.RUNNING_QUEUE;
+  }
+ else   if (mStatus == BackupTransport.TRANSPORT_QUOTA_EXCEEDED) {
+    if (MORE_DEBUG) {
+      Slog.d(TAG,"Package " + mCurrentPackage.packageName + " hit quota limit on k/v backup");
+    }
+    if (mAgentBinder != null) {
+      try {
+        long quota=mTransport.getBackupQuota(mCurrentPackage.packageName,false);
+        mAgentBinder.doQuotaExceeded(size,quota);
+      }
+ catch (      RemoteException e) {
+        Slog.e(TAG,"Unable to contact backup agent for quota exceeded");
+      }
+    }
     nextState=(mQueue.isEmpty()) ? BackupState.FINAL : BackupState.RUNNING_QUEUE;
   }
  else {

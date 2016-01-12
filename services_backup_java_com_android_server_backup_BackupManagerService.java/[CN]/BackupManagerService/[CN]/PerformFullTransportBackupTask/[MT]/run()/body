@@ -68,6 +68,13 @@
           }
         }
  while (nRead > 0 && result == BackupTransport.TRANSPORT_OK);
+        if (result == BackupTransport.TRANSPORT_QUOTA_EXCEEDED) {
+          long quota=transport.getBackupQuota(currentPackage.packageName,true);
+          if (MORE_DEBUG) {
+            Slog.d(TAG,"Package hit quota limit " + currentPackage.packageName + ": "+ totalRead+ " of "+ quota);
+          }
+          backupRunner.sendQuotaExceeded(totalRead,quota);
+        }
         if (!mKeepRunning.get()) {
           result=BackupTransport.TRANSPORT_ERROR;
           transport.cancelFullBackup();
@@ -93,35 +100,41 @@
         enqueueFullBackup(currentPackage.packageName,System.currentTimeMillis());
       }
       if (result == BackupTransport.TRANSPORT_PACKAGE_REJECTED) {
+        sendBackupOnResult(mBackupObserver,currentPackage.packageName,BackupManager.ERROR_TRANSPORT_PACKAGE_REJECTED);
         if (DEBUG) {
           Slog.i(TAG,"Transport rejected backup of " + currentPackage.packageName + ", skipping");
         }
         EventLog.writeEvent(EventLogTags.FULL_BACKUP_AGENT_FAILURE,currentPackage.packageName,"transport rejected");
-        sendBackupOnResult(mBackupObserver,currentPackage.packageName,BackupManager.ERROR_TRANSPORT_PACKAGE_REJECTED);
+      }
+ else       if (result == BackupTransport.TRANSPORT_QUOTA_EXCEEDED) {
+        sendBackupOnResult(mBackupObserver,currentPackage.packageName,BackupManager.ERROR_TRANSPORT_QUOTA_EXCEEDED);
+        Slog.w(TAG,"Transport quota exceeded; aborting backup: " + result);
+        EventLog.writeEvent(EventLogTags.FULL_BACKUP_QUOTA_EXCEEDED,currentPackage.packageName);
+        return;
       }
  else       if (result != BackupTransport.TRANSPORT_OK) {
+        sendBackupOnResult(mBackupObserver,currentPackage.packageName,BackupManager.ERROR_TRANSPORT_ABORTED);
         Slog.w(TAG,"Transport failed; aborting backup: " + result);
         EventLog.writeEvent(EventLogTags.FULL_BACKUP_TRANSPORT_FAILURE);
-        sendBackupOnResult(mBackupObserver,currentPackage.packageName,BackupManager.ERROR_TRANSPORT_ABORTED);
         return;
       }
  else {
+        sendBackupOnResult(mBackupObserver,currentPackage.packageName,BackupManager.SUCCESS);
         EventLog.writeEvent(EventLogTags.FULL_BACKUP_SUCCESS,currentPackage.packageName);
         logBackupComplete(currentPackage.packageName);
-        sendBackupOnResult(mBackupObserver,currentPackage.packageName,BackupManager.SUCCESS);
       }
       cleanUpPipes(transportPipes);
       cleanUpPipes(enginePipes);
       currentPackage=null;
     }
+    sendBackupFinished(mBackupObserver,BackupManager.SUCCESS);
     if (DEBUG) {
       Slog.i(TAG,"Full backup completed.");
     }
-    sendBackupFinished(mBackupObserver,BackupManager.SUCCESS);
   }
  catch (  Exception e) {
-    Slog.w(TAG,"Exception trying full transport backup",e);
     sendBackupFinished(mBackupObserver,BackupManager.ERROR_TRANSPORT_ABORTED);
+    Slog.w(TAG,"Exception trying full transport backup",e);
   }
  finally {
     cleanUpPipes(transportPipes);
