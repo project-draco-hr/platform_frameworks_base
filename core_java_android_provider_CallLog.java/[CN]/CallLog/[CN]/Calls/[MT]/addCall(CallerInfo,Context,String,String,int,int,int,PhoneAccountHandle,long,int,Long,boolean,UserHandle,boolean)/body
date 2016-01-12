@@ -1,4 +1,7 @@
 {
+  if (VERBOSE_LOG) {
+    Log.v(LOG_TAG,String.format("Add call: number=%s, user=%s, for all=%s",number,userToBeInsertedTo,addForAllUsers));
+  }
   final ContentResolver resolver=context.getContentResolver();
   int numberPresentation=PRESENTATION_ALLOWED;
   TelecomManager tm=null;
@@ -83,28 +86,39 @@
     }
   }
   Uri result=null;
+  final UserManager userManager=context.getSystemService(UserManager.class);
+  final int currentUserId=userManager.getUserHandle();
   if (addForAllUsers) {
-    final UserManager userManager=(UserManager)context.getSystemService(Context.USER_SERVICE);
-    List<UserInfo> users=userManager.getUsers(true);
-    final int currentUserId=userManager.getUserHandle();
+    final Uri uriForSystem=addEntryAndRemoveExpiredEntries(context,userManager,UserHandle.SYSTEM,values);
+    if (uriForSystem == null || SHADOW_AUTHORITY.equals(uriForSystem.getAuthority())) {
+      return null;
+    }
+    if (UserHandle.USER_SYSTEM == currentUserId) {
+      result=uriForSystem;
+    }
+    final List<UserInfo> users=userManager.getUsers(true);
     final int count=users.size();
     for (int i=0; i < count; i++) {
-      final UserInfo user=users.get(i);
-      final UserHandle userHandle=user.getUserHandle();
-      if (userManager.isUserRunning(userHandle) && !userManager.hasUserRestriction(UserManager.DISALLOW_OUTGOING_CALLS,userHandle) && !user.isManagedProfile()) {
-        Uri uri=addEntryAndRemoveExpiredEntries(context,ContentProvider.maybeAddUserId(CONTENT_URI,user.id),values);
-        if (user.id == currentUserId) {
+      final UserInfo userInfo=users.get(i);
+      final UserHandle userHandle=userInfo.getUserHandle();
+      final int userId=userHandle.getIdentifier();
+      if (userHandle.isSystem()) {
+        continue;
+      }
+      if (!shouldHaveSharedCallLogEntries(context,userManager,userId)) {
+        continue;
+      }
+      if (userManager.isUserRunning(userHandle) && userManager.isUserUnlocked(userHandle)) {
+        final Uri uri=addEntryAndRemoveExpiredEntries(context,userManager,userHandle,values);
+        if (userId == currentUserId) {
           result=uri;
         }
       }
     }
   }
  else {
-    Uri uri=CONTENT_URI;
-    if (userToBeInsertedTo != null) {
-      uri=ContentProvider.maybeAddUserId(CONTENT_URI,userToBeInsertedTo.getIdentifier());
-    }
-    result=addEntryAndRemoveExpiredEntries(context,uri,values);
+    final UserHandle targetUserHandle=userToBeInsertedTo != null ? userToBeInsertedTo : UserHandle.of(currentUserId);
+    result=addEntryAndRemoveExpiredEntries(context,userManager,targetUserHandle,values);
   }
   return result;
 }
