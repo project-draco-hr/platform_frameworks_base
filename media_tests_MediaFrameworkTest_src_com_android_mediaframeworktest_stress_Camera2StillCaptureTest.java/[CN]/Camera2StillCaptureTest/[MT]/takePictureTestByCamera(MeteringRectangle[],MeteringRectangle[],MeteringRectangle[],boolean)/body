@@ -1,0 +1,96 @@
+{
+  boolean hasFocuser=mStaticInfo.hasFocuser();
+  Size maxStillSz=mOrderedStillSizes.get(0);
+  Size maxPreviewSz=mOrderedPreviewSizes.get(0);
+  CaptureResult result;
+  SimpleCaptureCallback resultListener=new SimpleCaptureCallback();
+  SimpleImageReaderListener imageListener=new SimpleImageReaderListener();
+  CaptureRequest.Builder previewRequest=mCamera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
+  CaptureRequest.Builder stillRequest=mCamera.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
+  prepareStillCaptureAndStartPreview(previewRequest,stillRequest,maxPreviewSz,maxStillSz,resultListener,imageListener);
+  if (mStaticInfo.hasFlash()) {
+    previewRequest.set(CaptureRequest.CONTROL_AE_MODE,CaptureRequest.CONTROL_AE_MODE_ON_AUTO_FLASH);
+    stillRequest.set(CaptureRequest.CONTROL_AE_MODE,CaptureRequest.CONTROL_AE_MODE_ON_AUTO_FLASH);
+  }
+  Camera2Focuser focuser=null;
+  boolean canSetAfRegion=hasFocuser && (afRegions != null) && isRegionsSupportedFor3A(MAX_REGIONS_AF_INDEX);
+  if (hasFocuser) {
+    SimpleAutoFocusListener afListener=new SimpleAutoFocusListener();
+    focuser=new Camera2Focuser(mCamera,mSession,mPreviewSurface,afListener,mStaticInfo.getCharacteristics(),mHandler);
+    if (canSetAfRegion) {
+      stillRequest.set(CaptureRequest.CONTROL_AF_REGIONS,afRegions);
+    }
+    focuser.startAutoFocus(afRegions);
+    afListener.waitForAutoFocusDone(WAIT_FOR_FOCUS_DONE_TIMEOUT_MS);
+  }
+  int currentAfMode=CaptureRequest.CONTROL_AF_MODE_OFF;
+  if (hasFocuser) {
+    currentAfMode=focuser.getCurrentAfMode();
+  }
+  previewRequest.set(CaptureRequest.CONTROL_AF_MODE,currentAfMode);
+  stillRequest.set(CaptureRequest.CONTROL_AF_MODE,currentAfMode);
+  resultListener=new SimpleCaptureCallback();
+  boolean canSetAwbRegion=(awbRegions != null) && isRegionsSupportedFor3A(MAX_REGIONS_AWB_INDEX);
+  if (canSetAwbRegion) {
+    previewRequest.set(CaptureRequest.CONTROL_AWB_REGIONS,awbRegions);
+    stillRequest.set(CaptureRequest.CONTROL_AWB_REGIONS,awbRegions);
+  }
+  mSession.setRepeatingRequest(previewRequest.build(),resultListener,mHandler);
+  if (mStaticInfo.isHardwareLevelLimitedOrBetter()) {
+    waitForResultValue(resultListener,CaptureResult.CONTROL_AWB_STATE,CaptureResult.CONTROL_AWB_STATE_CONVERGED,NUM_RESULTS_WAIT_TIMEOUT);
+  }
+ else {
+    waitForSettingsApplied(resultListener,NUM_FRAMES_WAITED_FOR_UNKNOWN_LATENCY);
+  }
+  boolean canSetAwbLock=mStaticInfo.isAwbLockSupported();
+  if (canSetAwbLock) {
+    previewRequest.set(CaptureRequest.CONTROL_AWB_LOCK,true);
+  }
+  mSession.setRepeatingRequest(previewRequest.build(),resultListener,mHandler);
+  result=resultListener.getCaptureResult(WAIT_FOR_RESULT_TIMEOUT_MS);
+  mCollector.expectEquals("AWB mode in result and request should be same",previewRequest.get(CaptureRequest.CONTROL_AWB_MODE),result.get(CaptureResult.CONTROL_AWB_MODE));
+  if (canSetAwbRegion) {
+    MeteringRectangle[] resultAwbRegions=getValueNotNull(result,CaptureResult.CONTROL_AWB_REGIONS);
+    mCollector.expectEquals("AWB regions in result and request should be same",awbRegions,resultAwbRegions);
+  }
+  resultListener=new SimpleCaptureCallback();
+  boolean canSetAeRegion=(aeRegions != null) && isRegionsSupportedFor3A(MAX_REGIONS_AE_INDEX);
+  if (canSetAeRegion) {
+    previewRequest.set(CaptureRequest.CONTROL_AE_REGIONS,aeRegions);
+    stillRequest.set(CaptureRequest.CONTROL_AE_REGIONS,aeRegions);
+  }
+  mSession.setRepeatingRequest(previewRequest.build(),resultListener,mHandler);
+  previewRequest.set(CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER,CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER_START);
+  mSession.capture(previewRequest.build(),resultListener,mHandler);
+  if (addAeTriggerCancel) {
+    waitForNumResults(resultListener,1);
+    previewRequest.set(CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER,CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER_CANCEL);
+    mSession.capture(previewRequest.build(),resultListener,mHandler);
+    waitForResultValue(resultListener,CaptureResult.CONTROL_AE_PRECAPTURE_TRIGGER,CaptureResult.CONTROL_AE_PRECAPTURE_TRIGGER_CANCEL,NUM_FRAMES_WAITED_FOR_UNKNOWN_LATENCY);
+    previewRequest.set(CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER,CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER_START);
+    mSession.capture(previewRequest.build(),resultListener,mHandler);
+  }
+  waitForAeStable(resultListener,NUM_FRAMES_WAITED_FOR_UNKNOWN_LATENCY);
+  result=resultListener.getCaptureResult(WAIT_FOR_RESULT_TIMEOUT_MS);
+  mCollector.expectEquals("AE mode in result and request should be same",previewRequest.get(CaptureRequest.CONTROL_AE_MODE),result.get(CaptureResult.CONTROL_AE_MODE));
+  if (canSetAeRegion) {
+    MeteringRectangle[] resultAeRegions=getValueNotNull(result,CaptureResult.CONTROL_AE_REGIONS);
+    mCollector.expectMeteringRegionsAreSimilar("AE regions in result and request should be similar",aeRegions,resultAeRegions,METERING_REGION_ERROR_PERCENT_DELTA);
+  }
+  resultListener=new SimpleCaptureCallback();
+  CaptureRequest request=stillRequest.build();
+  mSession.capture(request,resultListener,mHandler);
+  result=resultListener.getCaptureResultForRequest(request,WAIT_FOR_RESULT_TIMEOUT_MS);
+  mCollector.expectEquals("AF mode in result and request should be same",stillRequest.get(CaptureRequest.CONTROL_AF_MODE),result.get(CaptureResult.CONTROL_AF_MODE));
+  if (canSetAfRegion) {
+    MeteringRectangle[] resultAfRegions=getValueNotNull(result,CaptureResult.CONTROL_AF_REGIONS);
+    mCollector.expectMeteringRegionsAreSimilar("AF regions in result and request should be similar",afRegions,resultAfRegions,METERING_REGION_ERROR_PERCENT_DELTA);
+  }
+  if (hasFocuser) {
+    focuser.cancelAutoFocus();
+  }
+  Image image=imageListener.getImage(CAPTURE_IMAGE_TIMEOUT_MS);
+  validateJpegCapture(image,maxStillSz);
+  image.close();
+  stopPreview();
+}

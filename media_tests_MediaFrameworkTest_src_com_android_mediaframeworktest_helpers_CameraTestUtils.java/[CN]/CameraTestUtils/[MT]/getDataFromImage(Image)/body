@@ -1,0 +1,68 @@
+{
+  assertNotNull("Invalid image:",image);
+  int format=image.getFormat();
+  int width=image.getWidth();
+  int height=image.getHeight();
+  int rowStride, pixelStride;
+  byte[] data=null;
+  Plane[] planes=image.getPlanes();
+  assertTrue("Fail to get image planes",planes != null && planes.length > 0);
+  checkAndroidImageFormat(image);
+  ByteBuffer buffer=null;
+  if (format == ImageFormat.JPEG || format == ImageFormat.DEPTH_POINT_CLOUD || format == ImageFormat.RAW_PRIVATE) {
+    buffer=planes[0].getBuffer();
+    assertNotNull("Fail to get jpeg or depth ByteBuffer",buffer);
+    data=new byte[buffer.remaining()];
+    buffer.get(data);
+    buffer.rewind();
+    return data;
+  }
+  int offset=0;
+  data=new byte[width * height * ImageFormat.getBitsPerPixel(format) / 8];
+  int maxRowSize=planes[0].getRowStride();
+  for (int i=0; i < planes.length; i++) {
+    if (maxRowSize < planes[i].getRowStride()) {
+      maxRowSize=planes[i].getRowStride();
+    }
+  }
+  byte[] rowData=new byte[maxRowSize];
+  if (VERBOSE)   Log.v(TAG,"get data from " + planes.length + " planes");
+  for (int i=0; i < planes.length; i++) {
+    buffer=planes[i].getBuffer();
+    assertNotNull("Fail to get bytebuffer from plane",buffer);
+    rowStride=planes[i].getRowStride();
+    pixelStride=planes[i].getPixelStride();
+    assertTrue("pixel stride " + pixelStride + " is invalid",pixelStride > 0);
+    if (VERBOSE) {
+      Log.v(TAG,"pixelStride " + pixelStride);
+      Log.v(TAG,"rowStride " + rowStride);
+      Log.v(TAG,"width " + width);
+      Log.v(TAG,"height " + height);
+    }
+    int w=(i == 0) ? width : width / 2;
+    int h=(i == 0) ? height : height / 2;
+    assertTrue("rowStride " + rowStride + " should be >= width "+ w,rowStride >= w);
+    for (int row=0; row < h; row++) {
+      int bytesPerPixel=ImageFormat.getBitsPerPixel(format) / 8;
+      int length;
+      if (pixelStride == bytesPerPixel) {
+        length=w * bytesPerPixel;
+        buffer.get(data,offset,length);
+        offset+=length;
+      }
+ else {
+        length=(w - 1) * pixelStride + bytesPerPixel;
+        buffer.get(rowData,0,length);
+        for (int col=0; col < w; col++) {
+          data[offset++]=rowData[col * pixelStride];
+        }
+      }
+      if (row < h - 1) {
+        buffer.position(buffer.position() + rowStride - length);
+      }
+    }
+    if (VERBOSE)     Log.v(TAG,"Finished reading data from plane " + i);
+    buffer.rewind();
+  }
+  return data;
+}
