@@ -5,9 +5,13 @@
     checkTranslucentActivityWaiting(top);
   }
   boolean aboveTop=top != null;
-  final boolean stackInvisible=!isStackVisibleLocked();
+  final int stackVisibility=getStackVisibilityLocked();
+  final boolean stackInvisible=stackVisibility != STACK_VISIBLE;
+  final boolean stackVisibleBehind=stackVisibility == STACK_VISIBLE_ACTIVITY_BEHIND;
   boolean behindFullscreenActivity=stackInvisible;
   boolean resumeNextActivity=isFocusable() && (isInStackLocked(starting) == null);
+  boolean behindTranslucentActivity=false;
+  final ActivityRecord visibleBehind=getVisibleBehindActivity();
   for (int taskNdx=mTaskHistory.size() - 1; taskNdx >= 0; --taskNdx) {
     final TaskRecord task=mTaskHistory.get(taskNdx);
     final ArrayList<ActivityRecord> activities=task.mActivities;
@@ -21,7 +25,9 @@
         continue;
       }
       aboveTop=false;
-      if ((!behindFullscreenActivity || r.mLaunchTaskBehind) && okToShowLocked(r)) {
+      final boolean activityVisibleBehind=(behindTranslucentActivity || stackVisibleBehind) && visibleBehind == r;
+      final boolean isVisible=(!behindFullscreenActivity || r.mLaunchTaskBehind || activityVisibleBehind) && okToShowLocked(r);
+      if (isVisible) {
         if (DEBUG_VISIBILITY)         Slog.v(TAG_VISIBILITY,"Make visible? " + r + " finishing="+ r.finishing+ " state="+ r.state);
         if (r != starting) {
           ensureActivityConfigurationLocked(r,0,preserveWindows);
@@ -46,13 +52,17 @@
         }
         configChanges|=r.configChangeFlags;
         behindFullscreenActivity=updateBehindFullscreen(stackInvisible,behindFullscreenActivity,task,r);
+        if (behindFullscreenActivity && !r.fullscreen) {
+          behindTranslucentActivity=true;
+        }
       }
  else {
-        makeInvisible(stackInvisible,behindFullscreenActivity,r);
+        if (DEBUG_VISIBILITY || true)         Slog.v(TAG_VISIBILITY,"Make invisible? " + r + " finishing="+ r.finishing+ " state="+ r.state+ " stackInvisible="+ stackInvisible+ " behindFullscreenActivity="+ behindFullscreenActivity+ " mLaunchTaskBehind="+ r.mLaunchTaskBehind);
+        makeInvisible(r,visibleBehind);
       }
     }
     if (mStackId == FREEFORM_WORKSPACE_STACK_ID) {
-      behindFullscreenActivity=stackInvisible;
+      behindFullscreenActivity=stackVisibility == STACK_INVISIBLE;
     }
   }
   if (mTranslucentActivityWaiting != null && mUndrawnActivitiesBelowTopTranslucent.isEmpty()) {
