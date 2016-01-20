@@ -1,6 +1,7 @@
 {
+  int callingUid=Binder.getCallingUid();
   if (Log.isLoggable(TAG,Log.VERBOSE)) {
-    Log.v(TAG,"finishSession: response " + response + ", expectActivityLaunch "+ expectActivityLaunch+ ", caller's uid "+ Binder.getCallingUid()+ ", pid "+ Binder.getCallingPid());
+    Log.v(TAG,"finishSession: response " + response + ", expectActivityLaunch "+ expectActivityLaunch+ ", caller's uid "+ callingUid+ ", caller's user id "+ UserHandle.getCallingUserId()+ ", pid "+ Binder.getCallingPid()+ ", for user id "+ userId);
   }
   if (response == null) {
     throw new IllegalArgumentException("response is null");
@@ -8,13 +9,14 @@
   if (sessionBundle == null || sessionBundle.size() == 0) {
     throw new IllegalArgumentException("sessionBundle is empty");
   }
-  final int uid=Binder.getCallingUid();
-  if (!isSystemUid(uid)) {
-    String msg=String.format("uid %s cannot finish session.",uid);
+  if (isCrossUser(callingUid,userId)) {
+    throw new SecurityException(String.format("User %s trying to finish session for %s without cross user permission",UserHandle.getCallingUserId(),userId));
+  }
+  if (!isSystemUid(callingUid)) {
+    String msg=String.format("uid %s cannot finish session because it's not system uid.",callingUid);
     throw new SecurityException(msg);
   }
-  final int userId=UserHandle.getUserId(uid);
-  if (!canUserModifyAccounts(userId,uid)) {
+  if (!canUserModifyAccounts(userId,callingUid)) {
     sendErrorResponse(response,AccountManager.ERROR_CODE_USER_RESTRICTED,"User is not allowed to add an account!");
     showCantAddAccount(AccountManager.ERROR_CODE_USER_RESTRICTED,userId);
     return;
@@ -37,7 +39,7 @@
     if (appInfo != null) {
       decryptedBundle.putAll(appInfo);
     }
-    decryptedBundle.putInt(AccountManager.KEY_CALLER_UID,uid);
+    decryptedBundle.putInt(AccountManager.KEY_CALLER_UID,callingUid);
     decryptedBundle.putInt(AccountManager.KEY_CALLER_PID,pid);
   }
  catch (  GeneralSecurityException e) {
@@ -47,7 +49,7 @@
     sendErrorResponse(response,AccountManager.ERROR_CODE_BAD_REQUEST,"failed to decrypt session bundle");
     return;
   }
-  if (!canUserModifyAccountsForType(userId,accountType,uid)) {
+  if (!canUserModifyAccountsForType(userId,accountType,callingUid)) {
     sendErrorResponse(response,AccountManager.ERROR_CODE_MANAGEMENT_DISABLED_FOR_ACCOUNT_TYPE,"User cannot modify accounts of this type (policy).");
     showCantAddAccount(AccountManager.ERROR_CODE_MANAGEMENT_DISABLED_FOR_ACCOUNT_TYPE,userId);
     return;
@@ -55,7 +57,7 @@
   long identityToken=clearCallingIdentity();
   try {
     UserAccounts accounts=getUserAccounts(userId);
-    logRecordWithUid(accounts,DebugDbHelper.ACTION_CALLED_ACCOUNT_SESSION_FINISH,TABLE_ACCOUNTS,uid);
+    logRecordWithUid(accounts,DebugDbHelper.ACTION_CALLED_ACCOUNT_SESSION_FINISH,TABLE_ACCOUNTS,callingUid);
     new Session(accounts,response,accountType,expectActivityLaunch,true,null,false,true){
       @Override public void run() throws RemoteException {
         mAuthenticator.finishSession(this,mAccountType,decryptedBundle);
