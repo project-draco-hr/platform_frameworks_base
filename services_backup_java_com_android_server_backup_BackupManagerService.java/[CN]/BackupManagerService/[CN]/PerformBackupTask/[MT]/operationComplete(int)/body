@@ -22,6 +22,7 @@
             addBackupTrace("illegal key " + key + " from "+ pkgName);
             EventLog.writeEvent(EventLogTags.BACKUP_AGENT_FAILURE,pkgName,"bad key");
             mBackupHandler.removeMessages(MSG_TIMEOUT);
+            sendBackupOnResult(mObserver,pkgName,BackupManager.ERROR_AGENT_FAILURE);
             agentErrorCleanup();
             return;
           }
@@ -57,7 +58,8 @@
       if (mStatus == BackupTransport.TRANSPORT_OK) {
         backupData=ParcelFileDescriptor.open(mBackupDataName,ParcelFileDescriptor.MODE_READ_ONLY);
         addBackupTrace("sending data to transport");
-        mStatus=mTransport.performBackup(mCurrentPackage,backupData);
+        int flags=mUserInitiated ? BackupTransport.FLAG_USER_INITIATED : 0;
+        mStatus=mTransport.performBackup(mCurrentPackage,backupData,flags);
       }
       addBackupTrace("data delivered: " + mStatus);
       if (mStatus == BackupTransport.TRANSPORT_OK) {
@@ -76,19 +78,23 @@
     if (mStatus == BackupTransport.TRANSPORT_OK) {
       mBackupDataName.delete();
       mNewStateName.renameTo(mSavedStateName);
+      sendBackupOnResult(mObserver,pkgName,BackupManager.SUCCESS);
       EventLog.writeEvent(EventLogTags.BACKUP_PACKAGE,pkgName,size);
       logBackupComplete(pkgName);
     }
  else     if (mStatus == BackupTransport.TRANSPORT_PACKAGE_REJECTED) {
       mBackupDataName.delete();
       mNewStateName.delete();
+      sendBackupOnResult(mObserver,pkgName,BackupManager.ERROR_TRANSPORT_PACKAGE_REJECTED);
       EventLogTags.writeBackupAgentFailure(pkgName,"Transport rejected");
     }
  else {
+      sendBackupOnResult(mObserver,pkgName,BackupManager.ERROR_TRANSPORT_ABORTED);
       EventLog.writeEvent(EventLogTags.BACKUP_TRANSPORT_FAILURE,pkgName);
     }
   }
  catch (  Exception e) {
+    sendBackupOnResult(mObserver,pkgName,BackupManager.ERROR_TRANSPORT_ABORTED);
     Slog.e(TAG,"Transport error backing up " + pkgName,e);
     EventLog.writeEvent(EventLogTags.BACKUP_TRANSPORT_FAILURE,pkgName);
     mStatus=BackupTransport.TRANSPORT_ERROR;
