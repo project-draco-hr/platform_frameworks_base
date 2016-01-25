@@ -1,0 +1,59 @@
+{
+  boolean success=false;
+  boolean needCrop=false;
+  BitmapFactory.Options options=new BitmapFactory.Options();
+  options.inJustDecodeBounds=true;
+  BitmapFactory.decodeFile(wallpaper.wallpaperFile.getAbsolutePath(),options);
+  if (!wallpaper.cropHint.isEmpty()) {
+    wallpaper.cropHint.right=Math.min(wallpaper.cropHint.right,options.outWidth);
+    wallpaper.cropHint.bottom=Math.min(wallpaper.cropHint.bottom,options.outHeight);
+    needCrop=(options.outHeight >= wallpaper.cropHint.height() && options.outWidth >= wallpaper.cropHint.width());
+  }
+  if (!needCrop) {
+    if (DEBUG) {
+      Slog.v(TAG,"Null crop of new wallpaper; copying");
+    }
+    success=FileUtils.copyFile(wallpaper.wallpaperFile,wallpaper.cropFile);
+    if (!success) {
+      wallpaper.cropFile.delete();
+    }
+  }
+ else {
+    FileOutputStream f=null;
+    BufferedOutputStream bos=null;
+    try {
+      BitmapRegionDecoder decoder=BitmapRegionDecoder.newInstance(wallpaper.wallpaperFile.getAbsolutePath(),false);
+      Bitmap cropped=decoder.decodeRegion(wallpaper.cropHint,null);
+      decoder.recycle();
+      if (cropped == null) {
+        Slog.e(TAG,"Could not decode new wallpaper");
+      }
+ else {
+        f=new FileOutputStream(wallpaper.cropFile);
+        bos=new BufferedOutputStream(f,32 * 1024);
+        cropped.compress(Bitmap.CompressFormat.PNG,90,bos);
+        bos.flush();
+        success=true;
+      }
+    }
+ catch (    IOException e) {
+      if (DEBUG) {
+        Slog.e(TAG,"I/O error decoding crop: " + e.getMessage());
+      }
+    }
+ finally {
+      IoUtils.closeQuietly(bos);
+      IoUtils.closeQuietly(f);
+    }
+  }
+  if (!success) {
+    Slog.e(TAG,"Unable to apply new wallpaper");
+    wallpaper.cropFile.delete();
+  }
+  if (wallpaper.cropFile.exists()) {
+    boolean didRestorecon=SELinux.restorecon(wallpaper.cropFile.getAbsoluteFile());
+    if (DEBUG) {
+      Slog.v(TAG,"restorecon() of crop file returned " + didRestorecon);
+    }
+  }
+}
