@@ -21,15 +21,16 @@ synchronized (mQueueLock) {
       Slog.e(TAG,"Backup triggered but one already/still running!");
       return false;
     }
-    if (mFullBackupQueue.size() == 0) {
-      if (DEBUG) {
-        Slog.i(TAG,"Backup queue empty; doing nothing");
-      }
-      return false;
-    }
     boolean runBackup=true;
     boolean headBusy;
     do {
+      if (mFullBackupQueue.size() == 0) {
+        if (DEBUG) {
+          Slog.i(TAG,"Backup queue empty; doing nothing");
+        }
+        runBackup=false;
+        break;
+      }
       headBusy=false;
       if (!fullBackupAllowable(getTransport(mCurrentTransport))) {
         if (MORE_DEBUG) {
@@ -51,6 +52,14 @@ synchronized (mQueueLock) {
         }
         try {
           PackageInfo appInfo=mPackageManager.getPackageInfo(entry.packageName,0);
+          if (!appGetsFullBackup(appInfo)) {
+            if (MORE_DEBUG) {
+              Slog.i(TAG,"Culling package " + entry.packageName + " in full-backup queue but not eligible");
+            }
+            mFullBackupQueue.remove(0);
+            headBusy=true;
+            continue;
+          }
           headBusy=mActivityManager.isAppForeground(appInfo.applicationInfo.uid);
           if (headBusy) {
             final long nextEligible=System.currentTimeMillis() + BUSY_BACKOFF_MIN_MILLIS + mTokenGenerator.nextInt(BUSY_BACKOFF_FUZZ);
