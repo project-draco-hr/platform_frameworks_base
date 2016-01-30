@@ -1,0 +1,62 @@
+{
+  Size maxPreviewSz=mOrderedPreviewSizes.get(0);
+  Size maxStillSz=mOrderedStillSizes.get(0);
+  SimpleCaptureCallback resultListener=new SimpleCaptureCallback();
+  SimpleImageReaderListener jpegListener=new SimpleImageReaderListener();
+  SimpleImageReaderListener rawListener=new SimpleImageReaderListener();
+  Size size=mStaticInfo.getRawDimensChecked();
+  if (VERBOSE) {
+    Log.v(TAG,"Testing multi capture with size " + size.toString() + ", preview size "+ maxPreviewSz);
+  }
+  CaptureRequest.Builder previewBuilder=mCamera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
+  CaptureRequest.Builder multiBuilder=mCamera.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
+  ImageReader rawReader=null;
+  ImageReader jpegReader=null;
+  try {
+    rawReader=makeImageReader(size,ImageFormat.RAW_SENSOR,MAX_READER_IMAGES,rawListener,mHandler);
+    jpegReader=makeImageReader(maxStillSz,ImageFormat.JPEG,MAX_READER_IMAGES,jpegListener,mHandler);
+    updatePreviewSurface(maxPreviewSz);
+    List<Surface> outputSurfaces=new ArrayList<Surface>();
+    outputSurfaces.add(rawReader.getSurface());
+    outputSurfaces.add(jpegReader.getSurface());
+    outputSurfaces.add(mPreviewSurface);
+    mSessionListener=new BlockingSessionCallback();
+    mSession=configureCameraSession(mCamera,outputSurfaces,mSessionListener,mHandler);
+    previewBuilder.addTarget(mPreviewSurface);
+    multiBuilder.addTarget(mPreviewSurface);
+    multiBuilder.addTarget(rawReader.getSurface());
+    multiBuilder.addTarget(jpegReader.getSurface());
+    mSession.setRepeatingRequest(previewBuilder.build(),null,mHandler);
+    Thread.sleep(3000);
+    multiBuilder.set(CaptureRequest.STATISTICS_LENS_SHADING_MAP_MODE,CaptureRequest.STATISTICS_LENS_SHADING_MAP_MODE_ON);
+    CaptureRequest multiRequest=multiBuilder.build();
+    mSession.capture(multiRequest,resultListener,mHandler);
+    CaptureResult result=resultListener.getCaptureResultForRequest(multiRequest,NUM_RESULTS_WAIT_TIMEOUT);
+    Image jpegImage=jpegListener.getImage(CAPTURE_IMAGE_TIMEOUT_MS);
+    basicValidateJpegImage(jpegImage,maxStillSz);
+    Image rawImage=rawListener.getImage(CAPTURE_IMAGE_TIMEOUT_MS);
+    validateRaw16Image(rawImage,size);
+    verifyRawCaptureResult(multiRequest,result);
+    ByteArrayOutputStream outputStream=new ByteArrayOutputStream();
+    try (DngCreator dngCreator=new DngCreator(mStaticInfo.getCharacteristics(),result)){
+      dngCreator.writeImage(outputStream,rawImage);
+    }
+     if (DEBUG) {
+      byte[] rawBuffer=outputStream.toByteArray();
+      String rawFileName=DEBUG_FILE_NAME_BASE + "/raw16_" + TAG+ size.toString()+ "_cam_"+ mCamera.getId()+ ".dng";
+      Log.d(TAG,"Dump raw file into " + rawFileName);
+      dumpFile(rawFileName,rawBuffer);
+      byte[] jpegBuffer=getDataFromImage(jpegImage);
+      String jpegFileName=DEBUG_FILE_NAME_BASE + "/jpeg_" + TAG+ size.toString()+ "_cam_"+ mCamera.getId()+ ".jpg";
+      Log.d(TAG,"Dump jpeg file into " + rawFileName);
+      dumpFile(jpegFileName,jpegBuffer);
+    }
+    stopPreview();
+  }
+  finally {
+    CameraTestUtils.closeImageReader(rawReader);
+    CameraTestUtils.closeImageReader(jpegReader);
+    rawReader=null;
+    jpegReader=null;
+  }
+}

@@ -1,0 +1,44 @@
+{
+  if (numCapturesDuringLock < 1) {
+    throw new IllegalArgumentException("numCapturesBeforeLock must be no less than 1");
+  }
+  if (VERBOSE) {
+    Log.v(TAG,"Camera " + mCamera.getId() + ": Testing auto AE mode and lock for mode "+ aeMode+ " with "+ numCapturesDuringLock+ " captures before lock");
+  }
+  final int NUM_CAPTURES_BEFORE_LOCK=2;
+  SimpleCaptureCallback listener=new SimpleCaptureCallback();
+  CaptureResult[] resultsDuringLock=new CaptureResult[numCapturesDuringLock];
+  boolean canSetAeLock=mStaticInfo.isAeLockSupported();
+  if (canSetAeLock) {
+    requestBuilder.set(CaptureRequest.CONTROL_AE_LOCK,false);
+  }
+  CaptureRequest request=requestBuilder.build();
+  for (int i=0; i < NUM_CAPTURES_BEFORE_LOCK; i++) {
+    mSession.capture(request,listener,mHandler);
+  }
+  waitForNumResults(listener,NUM_CAPTURES_BEFORE_LOCK);
+  if (!canSetAeLock) {
+    return;
+  }
+  requestBuilder.set(CaptureRequest.CONTROL_AE_LOCK,true);
+  int requestCount=captureRequestsSynchronized(requestBuilder.build(),numCapturesDuringLock,listener,mHandler);
+  int[] sensitivities=new int[numCapturesDuringLock];
+  long[] expTimes=new long[numCapturesDuringLock];
+  Arrays.fill(sensitivities,-1);
+  Arrays.fill(expTimes,-1L);
+  waitForNumResults(listener,requestCount - numCapturesDuringLock);
+  for (int i=0; i < resultsDuringLock.length; i++) {
+    resultsDuringLock[i]=listener.getCaptureResult(WAIT_FOR_RESULT_TIMEOUT_MS);
+  }
+  for (int i=0; i < numCapturesDuringLock; i++) {
+    mCollector.expectKeyValueEquals(resultsDuringLock[i],CaptureResult.CONTROL_AE_LOCK,true);
+  }
+  if (mStaticInfo.isCapabilitySupported(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_READ_SENSOR_SETTINGS)) {
+    int sensitivityLocked=getValueNotNull(resultsDuringLock[0],CaptureResult.SENSOR_SENSITIVITY);
+    long expTimeLocked=getValueNotNull(resultsDuringLock[0],CaptureResult.SENSOR_EXPOSURE_TIME);
+    for (int i=1; i < resultsDuringLock.length; i++) {
+      mCollector.expectKeyValueEquals(resultsDuringLock[i],CaptureResult.SENSOR_EXPOSURE_TIME,expTimeLocked);
+      mCollector.expectKeyValueEquals(resultsDuringLock[i],CaptureResult.SENSOR_SENSITIVITY,sensitivityLocked);
+    }
+  }
+}

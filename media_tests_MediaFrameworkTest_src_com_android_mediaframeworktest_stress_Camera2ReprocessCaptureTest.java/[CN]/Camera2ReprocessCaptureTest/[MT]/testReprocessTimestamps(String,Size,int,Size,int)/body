@@ -1,0 +1,41 @@
+{
+  if (VERBOSE) {
+    Log.v(TAG,"testReprocessTimestamps: cameraId: " + cameraId + " inputSize: "+ inputSize+ " inputFormat: "+ inputFormat+ " reprocessOutputSize: "+ reprocessOutputSize+ " reprocessOutputFormat: "+ reprocessOutputFormat);
+  }
+  try {
+    setupImageReaders(inputSize,inputFormat,reprocessOutputSize,reprocessOutputFormat,NUM_REPROCESS_CAPTURES);
+    setupReprocessableSession(null,NUM_REPROCESS_CAPTURES);
+    ArrayList<CaptureRequest> reprocessRequests=new ArrayList<>(NUM_REPROCESS_CAPTURES);
+    ArrayList<Long> expectedTimestamps=new ArrayList<>(NUM_REPROCESS_CAPTURES);
+    for (int i=0; i < NUM_REPROCESS_CAPTURES; i++) {
+      TotalCaptureResult result=submitCaptureRequest(mFirstImageReader.getSurface(),null);
+      mImageWriter.queueInputImage(mFirstImageReaderListener.getImage(CAPTURE_TIMEOUT_MS));
+      CaptureRequest.Builder builder=mCamera.createReprocessCaptureRequest(result);
+      builder.addTarget(getReprocessOutputImageReader().getSurface());
+      reprocessRequests.add(builder.build());
+      expectedTimestamps.add(result.get(CaptureResult.SENSOR_TIMESTAMP));
+    }
+    SimpleCaptureCallback captureCallback=new SimpleCaptureCallback();
+    mSession.captureBurst(reprocessRequests,captureCallback,mHandler);
+    for (int i=0; i < reprocessRequests.size(); i++) {
+      captureCallback.waitForCaptureStart(reprocessRequests.get(i),expectedTimestamps.get(i),CAPTURE_TIMEOUT_FRAMES);
+    }
+    TotalCaptureResult[] reprocessResults=captureCallback.getTotalCaptureResultsForRequests(reprocessRequests,CAPTURE_TIMEOUT_FRAMES);
+    for (int i=0; i < expectedTimestamps.size(); i++) {
+      long expected=expectedTimestamps.get(i);
+      long timestamp=reprocessResults[i].get(CaptureResult.SENSOR_TIMESTAMP);
+      assertEquals("Reprocess result timestamp (" + timestamp + ") doesn't match input "+ "image's timestamp ("+ expected+ ")",expected,timestamp);
+      Image image=getReprocessOutputImageReaderListener().getImage(CAPTURE_TIMEOUT_MS);
+      timestamp=image.getTimestamp();
+      image.close();
+      assertEquals("Reprocess output timestamp (" + timestamp + ") doesn't match input "+ "image's timestamp ("+ expected+ ")",expected,timestamp);
+    }
+    for (int i=0; i < NUM_REPROCESS_CAPTURES; i++) {
+      mImageWriterListener.waitForImageReleased(CAPTURE_TIMEOUT_MS);
+    }
+  }
+  finally {
+    closeReprossibleSession();
+    closeImageReaders();
+  }
+}
