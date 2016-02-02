@@ -1,4 +1,5 @@
 {
+  mVelocityTracker.addMovement(event);
   final float x=event.getX();
   final float y=event.getY();
   mPolicyFlags=policyFlags;
@@ -7,13 +8,36 @@ case MotionEvent.ACTION_DOWN:
     mDoubleTapDetected=false;
   mSecondFingerDoubleTap=false;
 mRecognizingGesture=true;
+mGestureConfirmed=false;
+mBaseX=x;
+mBaseY=y;
 mPreviousX=x;
 mPreviousY=y;
 mStrokeBuffer.clear();
 mStrokeBuffer.add(new GesturePoint(x,y,event.getEventTime()));
+mVelocityTracker.clear();
+mVelocityTracker.addMovement(event);
 break;
 case MotionEvent.ACTION_MOVE:
 if (mRecognizingGesture) {
+if (!mGestureConfirmed) {
+mVelocityTracker.addMovement(event);
+final float deltaX=mBaseX - event.getX(0);
+final float deltaY=mBaseY - event.getY(0);
+final double moveDelta=Math.hypot(deltaX,deltaY);
+if (moveDelta > mDoubleTapSlop) {
+mVelocityTracker.computeCurrentVelocity(VELOCITY_UNITS_SECONDS);
+final float maxAbsVelocity=Math.max(Math.abs(mVelocityTracker.getXVelocity(0)),Math.abs(mVelocityTracker.getYVelocity(0)));
+if (maxAbsVelocity > mScaledGestureDetectionVelocity) {
+mGestureConfirmed=true;
+mListener.onGestureStarted();
+}
+ else {
+cancelGesture();
+mListener.onGestureCancelled(event,policyFlags);
+}
+}
+}
 final float dX=Math.abs(x - mPreviousX);
 final float dY=Math.abs(y - mPreviousY);
 if (dX >= TOUCH_TOLERANCE || dY >= TOUCH_TOLERANCE) {
@@ -27,11 +51,12 @@ case MotionEvent.ACTION_UP:
 if (maybeFinishDoubleTap(event,policyFlags)) {
 return true;
 }
-if (mRecognizingGesture) {
+if (mGestureConfirmed) {
 mStrokeBuffer.add(new GesturePoint(x,y,event.getEventTime()));
-if (recognizeGesture()) {
-return true;
+if (!recognizeGesture()) {
+mListener.onGestureCancelled(event,policyFlags);
 }
+return true;
 }
 break;
 case MotionEvent.ACTION_POINTER_DOWN:
@@ -48,6 +73,9 @@ case MotionEvent.ACTION_POINTER_UP:
 if (mSecondFingerDoubleTap && maybeFinishDoubleTap(event,policyFlags)) {
 return true;
 }
+break;
+case MotionEvent.ACTION_CANCEL:
+clear();
 break;
 }
 if (mSecondFingerDoubleTap) {
