@@ -1,0 +1,52 @@
+{
+  if (mDexoptPackages != null) {
+    throw new IllegalStateException("already called prepare()");
+  }
+  mDexoptPackages=new LinkedList<>();
+  ArrayList<PackageParser.Package> pkgs;
+synchronized (mPackageManagerService.mPackages) {
+    pkgs=new ArrayList<PackageParser.Package>(mPackageManagerService.mPackages.values());
+  }
+  for (  PackageParser.Package pkg : pkgs) {
+    if (pkg.coreApp) {
+      if (DEBUG_DEXOPT) {
+        Log.i(TAG,"Adding core app " + mDexoptPackages.size() + ": "+ pkg.packageName);
+      }
+      mDexoptPackages.add(pkg);
+    }
+  }
+  pkgs.removeAll(mDexoptPackages);
+  Intent intent=new Intent(Intent.ACTION_PRE_BOOT_COMPLETED);
+  ArraySet<String> pkgNames=getPackageNamesForIntent(intent,UserHandle.USER_SYSTEM);
+  for (  PackageParser.Package pkg : pkgs) {
+    if (pkgNames.contains(pkg.packageName)) {
+      if (DEBUG_DEXOPT) {
+        Log.i(TAG,"Adding pre boot system app " + mDexoptPackages.size() + ": "+ pkg.packageName);
+      }
+      mDexoptPackages.add(pkg);
+    }
+  }
+  pkgs.removeAll(mDexoptPackages);
+  if (mPackageManagerService.isHistoricalPackageUsageAvailable()) {
+    filterRecentlyUsedApps(pkgs,DEXOPT_LRU_THRESHOLD_IN_MINUTES * 60 * 1000);
+  }
+  mDexoptPackages.addAll(pkgs);
+  Set<PackageParser.Package> dependencies=new HashSet<>();
+  for (  PackageParser.Package p : mDexoptPackages) {
+    dependencies.addAll(mPackageManagerService.findSharedNonSystemLibraries(p));
+  }
+  if (!dependencies.isEmpty()) {
+    dependencies.removeAll(mDexoptPackages);
+  }
+  mDexoptPackages.addAll(dependencies);
+  if (DEBUG_DEXOPT) {
+    StringBuilder sb=new StringBuilder();
+    for (    PackageParser.Package pkg : mDexoptPackages) {
+      if (sb.length() > 0) {
+        sb.append(", ");
+      }
+      sb.append(pkg.packageName);
+    }
+    Log.i(TAG,"Packages to be optimized: " + sb.toString());
+  }
+}
