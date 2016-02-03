@@ -1,49 +1,51 @@
 {
-  mVelocityTracker.addMovement(event);
   final float x=event.getX();
   final float y=event.getY();
+  final long time=event.getEventTime();
   mPolicyFlags=policyFlags;
 switch (event.getActionMasked()) {
 case MotionEvent.ACTION_DOWN:
     mDoubleTapDetected=false;
   mSecondFingerDoubleTap=false;
 mRecognizingGesture=true;
-mGestureConfirmed=false;
+mGestureStarted=false;
+mPreviousGestureX=x;
+mPreviousGestureY=y;
+mStrokeBuffer.clear();
+mStrokeBuffer.add(new GesturePoint(x,y,time));
 mBaseX=x;
 mBaseY=y;
-mPreviousX=x;
-mPreviousY=y;
-mStrokeBuffer.clear();
-mStrokeBuffer.add(new GesturePoint(x,y,event.getEventTime()));
-mVelocityTracker.clear();
-mVelocityTracker.addMovement(event);
+mBaseTime=time;
 break;
 case MotionEvent.ACTION_MOVE:
 if (mRecognizingGesture) {
-if (!mGestureConfirmed) {
-mVelocityTracker.addMovement(event);
-final float deltaX=mBaseX - event.getX(0);
-final float deltaY=mBaseY - event.getY(0);
+final float deltaX=mBaseX - x;
+final float deltaY=mBaseY - y;
 final double moveDelta=Math.hypot(deltaX,deltaY);
-if (moveDelta > mDoubleTapSlop) {
-mVelocityTracker.computeCurrentVelocity(VELOCITY_UNITS_SECONDS);
-final float maxAbsVelocity=Math.max(Math.abs(mVelocityTracker.getXVelocity(0)),Math.abs(mVelocityTracker.getYVelocity(0)));
-if (maxAbsVelocity > mScaledGestureDetectionVelocity) {
-mGestureConfirmed=true;
+if (moveDelta > mGestureDetectionThreshold) {
+mBaseX=x;
+mBaseY=y;
+mBaseTime=time;
+if (!mGestureStarted) {
+mGestureStarted=true;
 mListener.onGestureStarted();
 }
+}
  else {
+final long timeDelta=time - mBaseTime;
+final long threshold=mGestureStarted ? CANCEL_ON_PAUSE_THRESHOLD_STARTED_MS : CANCEL_ON_PAUSE_THRESHOLD_NOT_STARTED_MS;
+if (timeDelta > threshold) {
 cancelGesture();
 mListener.onGestureCancelled(event,policyFlags);
+return false;
 }
 }
-}
-final float dX=Math.abs(x - mPreviousX);
-final float dY=Math.abs(y - mPreviousY);
+final float dX=Math.abs(x - mPreviousGestureX);
+final float dY=Math.abs(y - mPreviousGestureY);
 if (dX >= TOUCH_TOLERANCE || dY >= TOUCH_TOLERANCE) {
-mPreviousX=x;
-mPreviousY=y;
-mStrokeBuffer.add(new GesturePoint(x,y,event.getEventTime()));
+mPreviousGestureX=x;
+mPreviousGestureY=y;
+mStrokeBuffer.add(new GesturePoint(x,y,time));
 }
 }
 break;
@@ -51,8 +53,8 @@ case MotionEvent.ACTION_UP:
 if (maybeFinishDoubleTap(event,policyFlags)) {
 return true;
 }
-if (mGestureConfirmed) {
-mStrokeBuffer.add(new GesturePoint(x,y,event.getEventTime()));
+if (mGestureStarted) {
+mStrokeBuffer.add(new GesturePoint(x,y,time));
 if (!recognizeGesture()) {
 mListener.onGestureCancelled(event,policyFlags);
 }
@@ -63,7 +65,7 @@ case MotionEvent.ACTION_POINTER_DOWN:
 cancelGesture();
 if (event.getPointerCount() == 2) {
 mSecondFingerDoubleTap=true;
-mSecondPointerDownTime=event.getEventTime();
+mSecondPointerDownTime=time;
 }
  else {
 mSecondFingerDoubleTap=false;
