@@ -188,111 +188,20 @@ case POST_INSTALL:
 if (DEBUG_INSTALL) Log.v(TAG,"Handling post-install for " + msg.arg1);
 PostInstallData data=mRunningInstalls.get(msg.arg1);
 mRunningInstalls.delete(msg.arg1);
-boolean deleteOld=false;
 if (data != null) {
 InstallArgs args=data.args;
-PackageInstalledInfo res=data.res;
-if (res.returnCode == PackageManager.INSTALL_SUCCEEDED) {
-final String packageName=res.pkg.applicationInfo.packageName;
-res.removedInfo.sendBroadcast(false,true,false);
-Bundle extras=new Bundle(1);
-extras.putInt(Intent.EXTRA_UID,res.uid);
-if ((args.installFlags & PackageManager.INSTALL_GRANT_RUNTIME_PERMISSIONS) != 0 && res.pkg.applicationInfo.targetSdkVersion >= Build.VERSION_CODES.M) {
-grantRequestedRuntimePermissions(res.pkg,args.user.getIdentifier(),args.installGrantPermissions);
-}
-synchronized (mPackages) {
-mEphemeralApplicationRegistry.onPackageInstalledLPw(res.pkg);
-}
-int[] firstUsers;
-int[] updateUsers=new int[0];
-if (res.origUsers == null || res.origUsers.length == 0) {
-firstUsers=res.newUsers;
-}
- else {
-firstUsers=new int[0];
-for (int i=0; i < res.newUsers.length; i++) {
-int user=res.newUsers[i];
-boolean isNew=true;
-for (int j=0; j < res.origUsers.length; j++) {
-if (res.origUsers[j] == user) {
-  isNew=false;
-  break;
-}
-}
-if (isNew) {
-int[] newFirst=new int[firstUsers.length + 1];
-System.arraycopy(firstUsers,0,newFirst,0,firstUsers.length);
-newFirst[firstUsers.length]=user;
-firstUsers=newFirst;
-}
- else {
-int[] newUpdate=new int[updateUsers.length + 1];
-System.arraycopy(updateUsers,0,newUpdate,0,updateUsers.length);
-newUpdate[updateUsers.length]=user;
-updateUsers=newUpdate;
-}
-}
-}
-final boolean isEphemeral=isEphemeral(res.pkg);
-if (!isEphemeral) {
-sendPackageBroadcast(Intent.ACTION_PACKAGE_ADDED,packageName,extras,0,null,null,firstUsers);
-}
-final boolean update=res.removedInfo.removedPackage != null;
-if (update) {
-extras.putBoolean(Intent.EXTRA_REPLACING,true);
-}
-if (!isEphemeral) {
-sendPackageBroadcast(Intent.ACTION_PACKAGE_ADDED,packageName,extras,0,null,null,updateUsers);
-}
-if (update) {
-if (!isEphemeral) {
-sendPackageBroadcast(Intent.ACTION_PACKAGE_REPLACED,packageName,extras,0,null,null,updateUsers);
-sendPackageBroadcast(Intent.ACTION_MY_PACKAGE_REPLACED,null,null,0,packageName,null,updateUsers);
-}
-if (res.pkg.isForwardLocked() || isExternal(res.pkg)) {
-if (DEBUG_INSTALL) {
-Slog.i(TAG,"upgrading pkg " + res.pkg + " is ASEC-hosted -> AVAILABLE");
-}
-int[] uidArray=new int[]{res.pkg.applicationInfo.uid};
-ArrayList<String> pkgList=new ArrayList<String>(1);
-pkgList.add(packageName);
-sendResourcesChangedBroadcast(true,true,pkgList,uidArray,null);
-}
-}
-if (res.removedInfo.args != null) {
-deleteOld=true;
-}
-if (firstUsers.length > 0) {
-for (int userId : firstUsers) {
-synchronized (mPackages) {
-if (packageIsBrowser(packageName,firstUsers[0])) {
-  mSettings.setDefaultBrowserPackageNameLPw(null,userId);
-}
-mSettings.applyPendingPermissionGrantsLPw(packageName,userId);
-}
-}
-}
-EventLog.writeEvent(EventLogTags.UNKNOWN_SOURCES_ENABLED,getUnknownSourcesSettings());
-}
-Runtime.getRuntime().gc();
-if (deleteOld) {
-synchronized (mInstallLock) {
-res.removedInfo.args.doPostDeleteLI(true);
-}
-}
-if (args.observer != null) {
-try {
-Bundle extras=extrasForInstallResult(res);
-args.observer.onPackageInstalled(res.name,res.returnCode,res.returnMsg,extras);
-}
- catch (RemoteException e) {
-Slog.i(TAG,"Observer no longer exists.");
-}
+PackageInstalledInfo parentRes=data.res;
+final boolean grantPermissions=(args.installFlags & PackageManager.INSTALL_GRANT_RUNTIME_PERMISSIONS) != 0;
+final String[] grantedPermissions=args.installGrantPermissions;
+handlePackagePostInstall(parentRes,grantPermissions,grantedPermissions,args.observer);
+final int childCount=(parentRes.addedChildPackages != null) ? parentRes.addedChildPackages.size() : 0;
+for (int i=0; i < childCount; i++) {
+PackageInstalledInfo childRes=parentRes.addedChildPackages.valueAt(i);
+handlePackagePostInstall(childRes,grantPermissions,grantedPermissions,args.observer);
 }
 if (args.traceMethod != null) {
 Trace.asyncTraceEnd(TRACE_TAG_PACKAGE_MANAGER,args.traceMethod,args.traceCookie);
 }
-return;
 }
  else {
 Slog.e(TAG,"Bogus post-install token " + msg.arg1);
