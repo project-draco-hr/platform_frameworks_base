@@ -1,0 +1,148 @@
+{
+  Log.d(TAG,"/csrattrs:");
+  Collection<Asn1Object> csrs=Asn1Decoder.decode(octetBuffer);
+  for (  Asn1Object asn1Object : csrs) {
+    Log.d(TAG,asn1Object.toString());
+  }
+  if (csrs.size() != 1) {
+    throw new IOException("Unexpected object count in CSR attributes response: " + csrs.size());
+  }
+  Asn1Object sequence=csrs.iterator().next();
+  if (sequence.getClass() != Asn1Constructed.class) {
+    throw new IOException("Unexpected CSR attribute container: " + sequence);
+  }
+  String keyAlgo=null;
+  Asn1Oid keyAlgoOID=null;
+  String sigAlgo=null;
+  String curveName=null;
+  Asn1Oid pubCrypto=null;
+  int keySize=-1;
+  Map<Asn1Oid,ASN1Encodable> idAttributes=new HashMap<>();
+  for (  Asn1Object child : sequence.getChildren()) {
+    if (child.getTag() == Asn1Decoder.TAG_OID) {
+      Asn1Oid oid=(Asn1Oid)child;
+      OidMappings.SigEntry sigEntry=OidMappings.getSigEntry(oid);
+      if (sigEntry != null) {
+        sigAlgo=sigEntry.getSigAlgo();
+        keyAlgoOID=sigEntry.getKeyAlgo();
+        keyAlgo=OidMappings.getJCEName(keyAlgoOID);
+      }
+ else       if (oid.equals(OidMappings.sPkcs9AtChallengePassword)) {
+        byte[] tlsUnique=httpHandler.getTLSUnique();
+        if (tlsUnique != null) {
+          idAttributes.put(oid,new DERPrintableString(Base64.encodeToString(tlsUnique,Base64.DEFAULT)));
+        }
+ else {
+          Log.w(TAG,"Cannot retrieve TLS unique channel binding");
+        }
+      }
+    }
+ else     if (child.getTag() == Asn1Decoder.TAG_SEQ) {
+      Asn1Oid oid=null;
+      Set<Asn1Oid> oidValues=new HashSet<>();
+      List<Asn1Object> values=new ArrayList<>();
+      for (      Asn1Object attributeSeq : child.getChildren()) {
+        if (attributeSeq.getTag() == Asn1Decoder.TAG_OID) {
+          oid=(Asn1Oid)attributeSeq;
+        }
+ else         if (attributeSeq.getTag() == Asn1Decoder.TAG_SET) {
+          for (          Asn1Object value : attributeSeq.getChildren()) {
+            if (value.getTag() == Asn1Decoder.TAG_OID) {
+              oidValues.add((Asn1Oid)value);
+            }
+ else {
+              values.add(value);
+            }
+          }
+        }
+      }
+      if (oid == null) {
+        throw new IOException("Invalid attribute, no OID");
+      }
+      if (oid.equals(OidMappings.sExtensionRequest)) {
+        for (        Asn1Oid subOid : oidValues) {
+          if (OidMappings.isIDAttribute(subOid)) {
+            if (subOid.equals(OidMappings.sMAC)) {
+              idAttributes.put(subOid,new DERIA5String(omadmAdapter.getMAC()));
+            }
+ else             if (subOid.equals(OidMappings.sIMEI)) {
+              idAttributes.put(subOid,new DERIA5String(omadmAdapter.getImei()));
+            }
+ else             if (subOid.equals(OidMappings.sMEID)) {
+              idAttributes.put(subOid,new DERBitString(omadmAdapter.getMeid()));
+            }
+ else             if (subOid.equals(OidMappings.sDevID)) {
+              idAttributes.put(subOid,new DERPrintableString(omadmAdapter.getDevID()));
+            }
+          }
+        }
+      }
+ else       if (OidMappings.getCryptoID(oid) != null) {
+        pubCrypto=oid;
+        if (!values.isEmpty()) {
+          for (          Asn1Object value : values) {
+            if (value.getTag() == Asn1Decoder.TAG_INTEGER) {
+              keySize=(int)((Asn1Integer)value).getValue();
+            }
+          }
+        }
+        if (oid.equals(OidMappings.sAlgo_EC)) {
+          if (oidValues.isEmpty()) {
+            throw new IOException("No ECC curve name provided");
+          }
+          for (          Asn1Oid value : oidValues) {
+            curveName=OidMappings.getJCEName(value);
+            if (curveName != null) {
+              break;
+            }
+          }
+          if (curveName == null) {
+            throw new IOException("Found no ECC curve for " + oidValues);
+          }
+        }
+      }
+    }
+  }
+  if (keyAlgoOID == null) {
+    throw new IOException("No public key algorithm specified");
+  }
+  if (pubCrypto != null && !pubCrypto.equals(keyAlgoOID)) {
+    throw new IOException("Mismatching key algorithms");
+  }
+  if (keyAlgoOID.equals(OidMappings.sAlgo_RSA)) {
+    if (keySize < MinRSAKeySize) {
+      if (keySize >= 0) {
+        Log.i(TAG,"Upgrading suggested RSA key size from " + keySize + " to "+ MinRSAKeySize);
+      }
+      keySize=MinRSAKeySize;
+    }
+  }
+  Log.d(TAG,String.format("pub key '%s', signature '%s', ECC curve '%s', id-atts %s",keyAlgo,sigAlgo,curveName,idAttributes));
+  KeyPairGenerator kpg=KeyPairGenerator.getInstance(keyAlgo);
+  if (curveName != null) {
+    AlgorithmParameters algorithmParameters=AlgorithmParameters.getInstance(keyAlgo);
+    algorithmParameters.init(new ECNamedCurveGenParameterSpec(curveName));
+    kpg.initialize(algorithmParameters.getParameterSpec(ECNamedCurveGenParameterSpec.class));
+  }
+ else {
+    kpg.initialize(keySize);
+  }
+  KeyPair kp=kpg.generateKeyPair();
+  X500Principal subject=new X500Principal("CN=Android, O=Google, C=US");
+  mClientKey=kp.getPrivate();
+  ASN1Set attributes;
+  if (!idAttributes.isEmpty()) {
+    ASN1EncodableVector payload=new DEREncodableVector();
+    for (    Map.Entry<Asn1Oid,ASN1Encodable> entry : idAttributes.entrySet()) {
+      DERObjectIdentifier type=new DERObjectIdentifier(entry.getKey().toOIDString());
+      ASN1Set values=new DERSet(entry.getValue());
+      Attribute attribute=new Attribute(type,values);
+      payload.add(attribute);
+    }
+    attributes=new DERSet(payload);
+  }
+ else {
+    attributes=null;
+  }
+  return new PKCS10CertificationRequest(sigAlgo,subject,kp.getPublic(),attributes,mClientKey).getEncoded();
+}
