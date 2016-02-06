@@ -1,0 +1,54 @@
+{
+  Log.d("ZXZ",String.format("Icon '%s':%d received from %012x",fileName,iconData != null ? iconData.length : -1,bssid));
+  IconKey key;
+  HSIconFileElement iconFileElement=null;
+  List<OSUInfo> updates=new ArrayList<>();
+  LinkedList<QuerySet> querySets=mBssQueues.get(bssid);
+  if (querySets == null || querySets.isEmpty()) {
+    Log.d(OSUManager.TAG,String.format("Spurious icon response from %012x for '%s' (%d) bytes",bssid,fileName,iconData != null ? iconData.length : -1));
+    Log.d("ZXZ","query set: " + querySets + ", BSS queues: "+ Utils.bssidsToString(mBssQueues.keySet()));
+    return;
+  }
+ else {
+    QuerySet querySet=querySets.removeFirst();
+    if (iconData != null) {
+      try {
+        iconFileElement=new HSIconFileElement(HSIconFile,ByteBuffer.wrap(iconData).order(ByteOrder.LITTLE_ENDIAN));
+      }
+ catch (      ProtocolException|BufferUnderflowException e) {
+        Log.e(OSUManager.TAG,"Failed to parse ANQP icon file: " + e);
+      }
+    }
+    key=querySet.updateIcon(fileName,iconFileElement);
+    if (key == null) {
+      Log.d(OSUManager.TAG,String.format("Spurious icon response from %012x for '%s' (%d) bytes",bssid,fileName,iconData != null ? iconData.length : -1));
+      Log.d("ZXZ","query set: " + querySets + ", BSS queues: "+ Utils.bssidsToString(mBssQueues.keySet()));
+      querySets.addFirst(querySet);
+      return;
+    }
+    if (iconFileElement != null) {
+      mCache.put(key,iconFileElement);
+    }
+    if (querySet.isEmpty()) {
+      mBssQueues.remove(bssid);
+    }
+    updates.add(querySet.getOsuInfo());
+  }
+  Iterator<Map.Entry<Long,LinkedList<QuerySet>>> bssIterator=mBssQueues.entrySet().iterator();
+  while (bssIterator.hasNext()) {
+    Map.Entry<Long,LinkedList<QuerySet>> bssEntries=bssIterator.next();
+    Iterator<QuerySet> querySetIterator=bssEntries.getValue().iterator();
+    while (querySetIterator.hasNext()) {
+      QuerySet querySet=querySetIterator.next();
+      if (querySet.updateIcon(key,iconFileElement)) {
+        querySetIterator.remove();
+        updates.add(querySet.getOsuInfo());
+      }
+    }
+    if (bssEntries.getValue().isEmpty()) {
+      bssIterator.remove();
+    }
+  }
+  initiateQuery(bssid);
+  mOSUManager.iconResults(updates);
+}

@@ -1,0 +1,98 @@
+{
+  try (HTTPHandler httpHandler=new HTTPHandler(StandardCharsets.UTF_8,OSUSocketFactory.getSocketFactory(mKeyStore,null,OSUManager.FLOW_PROVISIONING,network,mURL,km,true))){
+    SPVerifier spVerifier=new SPVerifier(mOSUInfo);
+    spVerifier.verify(httpHandler.getOSUCertificate(mURL));
+    URL redirectURL=osuManager.prepareUserInput(mOSUInfo.getName(Locale.getDefault()));
+    OMADMAdapter omadmAdapter=osuManager.getOMADMAdapter();
+    String regRequest=SOAPBuilder.buildPostDevDataResponse(RequestReason.SubRegistration,null,redirectURL.toString(),omadmAdapter.getMO(OMAConstants.DevInfoURN),omadmAdapter.getMO(OMAConstants.DevDetailURN));
+    Log.d(TAG,"Registration request: " + regRequest);
+    OSUResponse osuResponse=httpHandler.exchangeSOAP(mURL,regRequest);
+    Log.d(TAG,"Response: " + osuResponse);
+    if (osuResponse.getMessageType() != OSUMessageType.PostDevData) {
+      throw new IOException("Expected a PostDevDataResponse");
+    }
+    PostDevDataResponse regResponse=(PostDevDataResponse)osuResponse;
+    String sessionID=regResponse.getSessionID();
+    if (regResponse.getExecCommand() == ExecCommand.UseClientCertTLS) {
+      ClientCertInfo ccInfo=(ClientCertInfo)regResponse.getCommandData();
+      if (ccInfo.doesAcceptMfgCerts()) {
+        throw new IOException("Mfg certs are not supported in Android");
+      }
+ else       if (ccInfo.doesAcceptProviderCerts()) {
+        ((WiFiKeyManager)km).enableClientAuth(ccInfo.getIssuerNames());
+        httpHandler.renegotiate(null,null);
+      }
+ else {
+        throw new IOException("Neither manufacturer nor provider cert specified");
+      }
+      regRequest=SOAPBuilder.buildPostDevDataResponse(RequestReason.SubRegistration,sessionID,redirectURL.toString(),omadmAdapter.getMO(OMAConstants.DevInfoURN),omadmAdapter.getMO(OMAConstants.DevDetailURN));
+      osuResponse=httpHandler.exchangeSOAP(mURL,regRequest);
+      if (osuResponse.getMessageType() != OSUMessageType.PostDevData) {
+        throw new IOException("Expected a PostDevDataResponse");
+      }
+      regResponse=(PostDevDataResponse)osuResponse;
+    }
+    if (regResponse.getExecCommand() != ExecCommand.Browser) {
+      throw new IOException("Expected a launchBrowser command");
+    }
+    Log.d(TAG,"Exec: " + regResponse.getExecCommand() + ", for '"+ regResponse.getCommandData()+ "'");
+    if (!osuResponse.getSessionID().equals(sessionID)) {
+      throw new IOException("Mismatching session IDs");
+    }
+    String webURL=((BrowserURI)regResponse.getCommandData()).getURI();
+    if (webURL == null) {
+      throw new IOException("No web-url");
+    }
+ else     if (!webURL.contains(sessionID)) {
+      throw new IOException("Bad or missing session ID in webURL");
+    }
+    if (!osuManager.startUserInput(new URL(webURL),network)) {
+      throw new IOException("User session failed");
+    }
+    Log.d(TAG," -- Sending user input complete:");
+    String userComplete=SOAPBuilder.buildPostDevDataResponse(RequestReason.InputComplete,sessionID,null,omadmAdapter.getMO(OMAConstants.DevInfoURN),omadmAdapter.getMO(OMAConstants.DevDetailURN));
+    OSUResponse moResponse1=httpHandler.exchangeSOAP(mURL,userComplete);
+    if (moResponse1.getMessageType() != OSUMessageType.PostDevData) {
+      throw new IOException("Bad user input complete response: " + moResponse1);
+    }
+    PostDevDataResponse provResponse=(PostDevDataResponse)moResponse1;
+    GetCertData estData=checkResponse(provResponse);
+    Map<OSUCertType,List<X509Certificate>> certs=new HashMap<>();
+    PrivateKey clientKey=null;
+    MOData moData;
+    if (estData == null) {
+      moData=(MOData)provResponse.getCommandData();
+    }
+ else {
+      try (ESTHandler estHandler=new ESTHandler((GetCertData)provResponse.getCommandData(),network,osuManager.getOMADMAdapter(),km,mKeyStore,null,OSUManager.FLOW_PROVISIONING)){
+        estHandler.execute(false);
+        certs.put(OSUCertType.CA,estHandler.getCACerts());
+        certs.put(OSUCertType.Client,estHandler.getClientCerts());
+        clientKey=estHandler.getClientKey();
+      }
+       Log.d(TAG," -- Sending provisioning cert enrollment complete:");
+      String certComplete=SOAPBuilder.buildPostDevDataResponse(RequestReason.CertEnrollmentComplete,sessionID,null,omadmAdapter.getMO(OMAConstants.DevInfoURN),omadmAdapter.getMO(OMAConstants.DevDetailURN));
+      OSUResponse moResponse2=httpHandler.exchangeSOAP(mURL,certComplete);
+      if (moResponse2.getMessageType() != OSUMessageType.PostDevData) {
+        throw new IOException("Bad cert enrollment complete response: " + moResponse2);
+      }
+      PostDevDataResponse provComplete=(PostDevDataResponse)moResponse2;
+      if (provComplete.getStatus() != OSUStatus.ProvComplete || provComplete.getOSUCommand() != OSUCommandID.AddMO) {
+        throw new IOException("Expected addMO: " + provComplete);
+      }
+      moData=(MOData)provComplete.getCommandData();
+    }
+    String updateResponse=SOAPBuilder.buildUpdateResponse(sessionID,null);
+    Log.d(TAG," -- Sending updateResponse:");
+    OSUResponse exComplete=httpHandler.exchangeSOAP(mURL,updateResponse);
+    Log.d(TAG,"exComplete response: " + exComplete);
+    if (exComplete.getMessageType() != OSUMessageType.ExchangeComplete) {
+      throw new IOException("Expected ExchangeComplete: " + exComplete);
+    }
+ else     if (exComplete.getStatus() != OSUStatus.ExchangeComplete) {
+      throw new IOException("Bad ExchangeComplete status: " + exComplete);
+    }
+    retrieveCerts(moData.getMOTree().getRoot(),certs,network,km,mKeyStore);
+    osuManager.provisioningComplete(mOSUInfo,moData,certs,clientKey,network);
+  }
+ }

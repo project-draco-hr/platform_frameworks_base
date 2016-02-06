@@ -1,0 +1,102 @@
+{
+  try (HTTPHandler httpHandler=createHandler(network,homeSP,km,flowType)){
+    URL redirectURL=osuManager.prepareUserInput(homeSP.getFriendlyName());
+    OMADMAdapter omadmAdapter=osuManager.getOMADMAdapter();
+    String regRequest=SOAPBuilder.buildPostDevDataResponse(RequestReason.SubRemediation,null,redirectURL.toString(),omadmAdapter.getMO(OMAConstants.DevInfoURN),omadmAdapter.getMO(OMAConstants.DevDetailURN));
+    OSUResponse serverResponse=httpHandler.exchangeSOAP(mURL,regRequest);
+    if (serverResponse.getMessageType() != OSUMessageType.PostDevData) {
+      throw new IOException("Expected a PostDevDataResponse");
+    }
+    String sessionID=serverResponse.getSessionID();
+    PostDevDataResponse pddResponse=(PostDevDataResponse)serverResponse;
+    Log.d(TAG,"Remediation response: " + pddResponse);
+    Map<OSUCertType,List<X509Certificate>> certs=null;
+    PrivateKey clientKey=null;
+    if (pddResponse.getStatus() != OSUStatus.RemediationComplete) {
+      if (pddResponse.getExecCommand() == ExecCommand.UploadMO) {
+        String ulMessage=SOAPBuilder.buildPostDevDataResponse(RequestReason.MOUpload,null,redirectURL.toString(),omadmAdapter.getMO(OMAConstants.DevInfoURN),omadmAdapter.getMO(OMAConstants.DevDetailURN),osuManager.getMOTree(homeSP));
+        Log.d(TAG,"Upload MO: " + ulMessage);
+        OSUResponse ulResponse=httpHandler.exchangeSOAP(mURL,ulMessage);
+        if (ulResponse.getMessageType() != OSUMessageType.PostDevData) {
+          throw new IOException("Expected a PostDevDataResponse to MOUpload");
+        }
+        pddResponse=(PostDevDataResponse)ulResponse;
+      }
+      if (pddResponse.getExecCommand() == ExecCommand.Browser) {
+        if (flowType == OSUManager.FLOW_POLICY) {
+          throw new IOException("Browser launch requested in policy flow");
+        }
+        String webURL=((BrowserURI)pddResponse.getCommandData()).getURI();
+        if (webURL == null) {
+          throw new IOException("No web-url");
+        }
+ else         if (!webURL.contains(sessionID)) {
+          throw new IOException("Bad or missing session ID in webURL");
+        }
+        if (!osuManager.startUserInput(new URL(webURL),network)) {
+          throw new IOException("User session failed");
+        }
+        Log.d(TAG," -- Sending user input complete:");
+        String userComplete=SOAPBuilder.buildPostDevDataResponse(RequestReason.InputComplete,sessionID,null,omadmAdapter.getMO(OMAConstants.DevInfoURN),omadmAdapter.getMO(OMAConstants.DevDetailURN));
+        OSUResponse udResponse=httpHandler.exchangeSOAP(mURL,userComplete);
+        if (udResponse.getMessageType() != OSUMessageType.PostDevData) {
+          throw new IOException("Bad user input complete response: " + udResponse);
+        }
+        pddResponse=(PostDevDataResponse)udResponse;
+      }
+ else       if (pddResponse.getExecCommand() == ExecCommand.GetCert) {
+        certs=new HashMap<>();
+        try (ESTHandler estHandler=new ESTHandler((GetCertData)pddResponse.getCommandData(),network,osuManager.getOMADMAdapter(),km,mKeyStore,homeSP,flowType)){
+          estHandler.execute(true);
+          certs.put(OSUCertType.CA,estHandler.getCACerts());
+          certs.put(OSUCertType.Client,estHandler.getClientCerts());
+          clientKey=estHandler.getClientKey();
+        }
+         if (httpHandler.isHTTPAuthPerformed()) {
+          httpHandler.renegotiate(certs,clientKey);
+        }
+        Log.d(TAG," -- Sending remediation cert enrollment complete:");
+        String certComplete=SOAPBuilder.buildPostDevDataResponse(RequestReason.CertEnrollmentComplete,sessionID,null,omadmAdapter.getMO(OMAConstants.DevInfoURN),omadmAdapter.getMO(OMAConstants.DevDetailURN));
+        OSUResponse ceResponse=httpHandler.exchangeSOAP(mURL,certComplete);
+        if (ceResponse.getMessageType() != OSUMessageType.PostDevData) {
+          throw new IOException("Bad cert enrollment complete response: " + ceResponse);
+        }
+        pddResponse=(PostDevDataResponse)ceResponse;
+      }
+ else {
+        throw new IOException("Unexpected command: " + pddResponse.getExecCommand());
+      }
+    }
+    if (pddResponse.getStatus() != OSUStatus.RemediationComplete) {
+      throw new IOException("Expected a PostDevDataResponse to MOUpload");
+    }
+    Log.d(TAG,"Remediation response: " + pddResponse);
+    List<MOData> mods=new ArrayList<>();
+    for (    OSUCommand command : pddResponse.getCommands()) {
+      if (command.getOSUCommand() == OSUCommandID.UpdateNode) {
+        mods.add((MOData)command.getCommandData());
+      }
+ else       if (command.getOSUCommand() != OSUCommandID.NoMOUpdate) {
+        throw new IOException("Unexpected OSU response: " + command);
+      }
+    }
+    OSUError error=null;
+    String updateResponse=SOAPBuilder.buildUpdateResponse(sessionID,error);
+    Log.d(TAG," -- Sending updateResponse:");
+    OSUResponse exComplete=httpHandler.exchangeSOAP(mURL,updateResponse);
+    Log.d(TAG,"exComplete response: " + exComplete);
+    if (exComplete.getMessageType() != OSUMessageType.ExchangeComplete) {
+      throw new IOException("Expected ExchangeComplete: " + exComplete);
+    }
+ else     if (exComplete.getStatus() != OSUStatus.ExchangeComplete) {
+      throw new IOException("Bad ExchangeComplete status: " + exComplete);
+    }
+    try {
+      osuManager.remediationComplete(homeSP,mods,certs,clientKey);
+    }
+ catch (    IOException|GeneralSecurityException e) {
+      osuManager.provisioningFailed(homeSP.getFriendlyName(),e.getMessage(),homeSP,OSUManager.FLOW_REMEDIATION);
+      error=OSUError.CommandFailed;
+    }
+  }
+ }

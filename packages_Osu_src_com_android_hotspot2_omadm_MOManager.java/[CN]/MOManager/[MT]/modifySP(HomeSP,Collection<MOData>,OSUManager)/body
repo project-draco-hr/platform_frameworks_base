@@ -1,0 +1,58 @@
+{
+  Log.d(OSUManager.TAG,"modifying SP: " + mods);
+  MOTree moTree;
+  int ppsMods=0;
+  int updateIdentifier=0;
+  try (BufferedInputStream in=new BufferedInputStream(new FileInputStream(mPpsFile))){
+    moTree=MOTree.unmarshal(in);
+    OMAConstructed targetTree=findTargetTree(moTree,homeSP.getFQDN());
+    if (targetTree == null) {
+      throw new IOException("Failed to find PPS tree for " + homeSP.getFQDN());
+    }
+    OMAConstructed instance=getInstanceNode(targetTree);
+    for (    MOData mod : mods) {
+      LinkedList<String> tailPath=getTailPath(mod.getBaseURI(),TAG_PerProviderSubscription);
+      OMAConstructed modRoot=mod.getMOTree().getRoot();
+      if (tailPath.getFirst().equals(TAG_UpdateIdentifier)) {
+        updateIdentifier=getInteger(modRoot.getChildren().iterator().next());
+        OMANode oldUdi=targetTree.getChild(TAG_UpdateIdentifier);
+        if (getInteger(oldUdi) != updateIdentifier) {
+          ppsMods++;
+        }
+        if (oldUdi != null) {
+          targetTree.replaceNode(oldUdi,modRoot.getChild(TAG_UpdateIdentifier));
+        }
+ else {
+          targetTree.addChild(modRoot.getChild(TAG_UpdateIdentifier));
+        }
+      }
+ else {
+        tailPath.removeFirst();
+        OMANode current=instance.getListValue(tailPath.iterator());
+        if (current == null) {
+          throw new IOException("No previous node for " + tailPath + " in "+ homeSP.getFQDN());
+        }
+        for (        OMANode newNode : modRoot.getChildren()) {
+          OMANode old=current.getParent().replaceNode(current,newNode);
+          ppsMods++;
+        }
+      }
+    }
+  }
+   writeMO(moTree,mPpsFile,osuManager);
+  if (ppsMods == 0) {
+    return null;
+  }
+  List<HomeSP> sps=buildSPs(moTree);
+  if (sps != null) {
+    for (    HomeSP sp : sps) {
+      if (sp.getFQDN().equals(homeSP.getFQDN())) {
+        return sp;
+      }
+    }
+  }
+ else {
+    throw new OMAException("Failed to build HomeSP");
+  }
+  return null;
+}

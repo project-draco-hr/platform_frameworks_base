@@ -1,0 +1,77 @@
+{
+  OMANode providerSubNode=root.addChild(getInstanceString(instanceID),null,null,null);
+  OMANode homeSpNode=providerSubNode.addChild(TAG_HomeSP,null,null,null);
+  if (!homeSP.getSSIDs().isEmpty()) {
+    OMAConstructed nwkIDNode=(OMAConstructed)homeSpNode.addChild(TAG_NetworkID,null,null,null);
+    int instance=0;
+    for (    Map.Entry<String,Long> entry : homeSP.getSSIDs().entrySet()) {
+      OMAConstructed inode=(OMAConstructed)nwkIDNode.addChild(getInstanceString(instance++),null,null,null);
+      inode.addChild(TAG_SSID,null,entry.getKey(),null);
+      if (entry.getValue() != null) {
+        inode.addChild(TAG_HESSID,null,String.format("%012x",entry.getValue()),null);
+      }
+    }
+  }
+  homeSpNode.addChild(TAG_FriendlyName,null,homeSP.getFriendlyName(),null);
+  if (homeSP.getIconURL() != null) {
+    homeSpNode.addChild(TAG_IconURL,null,homeSP.getIconURL(),null);
+  }
+  homeSpNode.addChild(TAG_FQDN,null,homeSP.getFQDN(),null);
+  if (!homeSP.getMatchAllOIs().isEmpty() || !homeSP.getMatchAnyOIs().isEmpty()) {
+    OMAConstructed homeOIList=(OMAConstructed)homeSpNode.addChild(TAG_HomeOIList,null,null,null);
+    int instance=0;
+    for (    Long oi : homeSP.getMatchAllOIs()) {
+      OMAConstructed inode=(OMAConstructed)homeOIList.addChild(getInstanceString(instance++),null,null,null);
+      inode.addChild(TAG_HomeOI,null,String.format("%x",oi),null);
+      inode.addChild(TAG_HomeOIRequired,null,"TRUE",null);
+    }
+    for (    Long oi : homeSP.getMatchAnyOIs()) {
+      OMAConstructed inode=(OMAConstructed)homeOIList.addChild(getInstanceString(instance++),null,null,null);
+      inode.addChild(TAG_HomeOI,null,String.format("%x",oi),null);
+      inode.addChild(TAG_HomeOIRequired,null,"FALSE",null);
+    }
+  }
+  if (!homeSP.getOtherHomePartners().isEmpty()) {
+    OMAConstructed otherPartners=(OMAConstructed)homeSpNode.addChild(TAG_OtherHomePartners,null,null,null);
+    int instance=0;
+    for (    String fqdn : homeSP.getOtherHomePartners()) {
+      OMAConstructed inode=(OMAConstructed)otherPartners.addChild(getInstanceString(instance++),null,null,null);
+      inode.addChild(TAG_FQDN,null,fqdn,null);
+    }
+  }
+  if (!homeSP.getRoamingConsortiums().isEmpty()) {
+    homeSpNode.addChild(TAG_RoamingConsortiumOI,null,getRCList(homeSP.getRoamingConsortiums()),null);
+  }
+  OMANode credentialNode=providerSubNode.addChild(TAG_Credential,null,null,null);
+  Credential cred=homeSP.getCredential();
+  EAPMethod method=cred.getEAPMethod();
+  if (cred.getCtime() > 0) {
+    credentialNode.addChild(TAG_CreationDate,null,DTFormat.format(new Date(cred.getCtime())),null);
+  }
+  if (cred.getExpTime() > 0) {
+    credentialNode.addChild(TAG_ExpirationDate,null,DTFormat.format(new Date(cred.getExpTime())),null);
+  }
+  if (method.getEAPMethodID() == EAP.EAPMethodID.EAP_SIM || method.getEAPMethodID() == EAP.EAPMethodID.EAP_AKA || method.getEAPMethodID() == EAP.EAPMethodID.EAP_AKAPrim) {
+    OMANode simNode=credentialNode.addChild(TAG_SIM,null,null,null);
+    simNode.addChild(TAG_IMSI,null,cred.getImsi().toString(),null);
+    simNode.addChild(TAG_EAPType,null,Integer.toString(EAP.mapEAPMethod(method.getEAPMethodID())),null);
+  }
+ else   if (method.getEAPMethodID() == EAP.EAPMethodID.EAP_TTLS) {
+    OMANode unpNode=credentialNode.addChild(TAG_UsernamePassword,null,null,null);
+    unpNode.addChild(TAG_Username,null,cred.getUserName(),null);
+    unpNode.addChild(TAG_Password,null,Base64.encodeToString(cred.getPassword().getBytes(StandardCharsets.UTF_8),Base64.DEFAULT),null);
+    OMANode eapNode=unpNode.addChild(TAG_EAPMethod,null,null,null);
+    eapNode.addChild(TAG_EAPType,null,Integer.toString(EAP.mapEAPMethod(method.getEAPMethodID())),null);
+    eapNode.addChild(TAG_InnerMethod,null,((NonEAPInnerAuth)method.getAuthParam()).getOMAtype(),null);
+  }
+ else   if (method.getEAPMethodID() == EAP.EAPMethodID.EAP_TLS) {
+    OMANode certNode=credentialNode.addChild(TAG_DigitalCertificate,null,null,null);
+    certNode.addChild(TAG_CertificateType,null,Credential.CertTypeX509,null);
+    certNode.addChild(TAG_CertSHA256Fingerprint,null,Utils.toHex(cred.getFingerPrint()),null);
+  }
+ else {
+    throw new OMAException("Invalid credential on " + homeSP.getFQDN());
+  }
+  credentialNode.addChild(TAG_Realm,null,cred.getRealm(),null);
+  return providerSubNode;
+}

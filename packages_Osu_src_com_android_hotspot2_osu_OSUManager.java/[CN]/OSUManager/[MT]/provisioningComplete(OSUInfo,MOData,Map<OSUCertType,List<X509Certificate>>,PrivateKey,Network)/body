@@ -1,0 +1,56 @@
+{
+synchronized (mWifiNetworkAdapter) {
+    mProvisioningThread=null;
+  }
+  try {
+    Log.d("ZXZ","MOTree.toXML: " + moData.getMOTree().toXml());
+    HomeSP homeSP=mWifiNetworkAdapter.addSP(moData.getMOTree());
+    Integer spNwk=mWifiNetworkAdapter.addNetwork(homeSP,certs,privateKey,osuNetwork);
+    if (spNwk == null) {
+      notifyUser(OSUOperationStatus.ProvisioningFailure,"Failed to save network configuration",osuInfo.getName(LOCALE));
+      mWifiNetworkAdapter.removeSP(homeSP.getFQDN());
+    }
+ else {
+      Set<X509Certificate> rootCerts=OSUSocketFactory.getRootCerts(mKeyStore);
+      X509Certificate remCert=getCert(certs,OSUCertType.Remediation);
+      X509Certificate polCert=getCert(certs,OSUCertType.Policy);
+      if (privateKey != null) {
+        X509Certificate cltCert=getCert(certs,OSUCertType.Client);
+        mKeyStore.setKeyEntry(CERT_CLT_KEY_ALIAS + homeSP,privateKey.getEncoded(),new X509Certificate[]{cltCert});
+        mKeyStore.setCertificateEntry(CERT_CLT_CERT_ALIAS,cltCert);
+      }
+      boolean usingShared=false;
+      int newCerts=0;
+      if (remCert != null) {
+        if (!rootCerts.contains(remCert)) {
+          if (remCert.equals(polCert)) {
+            mKeyStore.setCertificateEntry(CERT_SHARED_ALIAS + homeSP.getFQDN(),remCert);
+            usingShared=true;
+            newCerts++;
+          }
+ else {
+            mKeyStore.setCertificateEntry(CERT_REM_ALIAS + homeSP.getFQDN(),remCert);
+            newCerts++;
+          }
+        }
+      }
+      if (!usingShared && polCert != null) {
+        if (!rootCerts.contains(polCert)) {
+          mKeyStore.setCertificateEntry(CERT_POLICY_ALIAS + homeSP.getFQDN(),remCert);
+          newCerts++;
+        }
+      }
+      if (newCerts > 0) {
+        try (FileOutputStream out=new FileOutputStream(KEYSTORE_FILE)){
+          mKeyStore.store(out,null);
+        }
+       }
+      notifyUser(OSUOperationStatus.ProvisioningSuccess,null,osuInfo.getName(LOCALE));
+      Log.d(TAG,"Provisioning complete.");
+    }
+  }
+ catch (  IOException|GeneralSecurityException|SAXException e) {
+    Log.e(TAG,"Failed to provision: " + e,e);
+    notifyUser(OSUOperationStatus.ProvisioningFailure,e.toString(),osuInfo.getName(LOCALE));
+  }
+}
