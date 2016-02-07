@@ -253,14 +253,32 @@ catch (            IOException|InstallerException e) {
           primeDomainVerificationsLPw(user.id);
         }
       }
-      final int flags;
+      final int storageFlags;
       if (StorageManager.isFileBasedEncryptionEnabled()) {
-        flags=StorageManager.FLAG_STORAGE_DE;
+        storageFlags=StorageManager.FLAG_STORAGE_DE;
       }
  else {
-        flags=StorageManager.FLAG_STORAGE_DE | StorageManager.FLAG_STORAGE_CE;
+        storageFlags=StorageManager.FLAG_STORAGE_DE | StorageManager.FLAG_STORAGE_CE;
       }
-      reconcileAppsData(StorageManager.UUID_PRIVATE_INTERNAL,UserHandle.USER_SYSTEM,flags);
+      reconcileAppsData(StorageManager.UUID_PRIVATE_INTERNAL,UserHandle.USER_SYSTEM,storageFlags);
+      if (!StorageManager.isFileBasedEncryptionEnabled() && PackageManager.APPLY_FORCE_DEVICE_ENCRYPTED) {
+        final List<UserInfo> users=sUserManager.getUsers(true);
+        for (        PackageSetting ps : mSettings.mPackages.values()) {
+          if (ps.pkg == null || !ps.isSystem())           continue;
+          final int storageTarget=ps.pkg.applicationInfo.isForceDeviceEncrypted() ? StorageManager.FLAG_STORAGE_DE : StorageManager.FLAG_STORAGE_CE;
+          for (          UserInfo user : users) {
+            if (ps.getInstalled(user.id)) {
+              try {
+                mInstaller.migrateAppData(StorageManager.UUID_PRIVATE_INTERNAL,ps.name,user.id,storageTarget);
+              }
+ catch (              InstallerException e) {
+                logCriticalInfo(Log.WARN,"Failed to migrate " + ps.name + ": "+ e.getMessage());
+              }
+              prepareAppData(StorageManager.UUID_PRIVATE_INTERNAL,user.id,storageFlags,ps.pkg,false);
+            }
+          }
+        }
+      }
       if (mIsUpgrade && !onlyCore) {
         Slog.i(TAG,"Build fingerprint changed; clearing code caches");
         for (int i=0; i < mSettings.mPackages.size(); i++) {
