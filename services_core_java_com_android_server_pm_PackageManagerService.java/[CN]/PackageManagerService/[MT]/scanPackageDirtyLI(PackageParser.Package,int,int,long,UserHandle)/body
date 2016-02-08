@@ -24,46 +24,50 @@ synchronized (mPackages) {
         Slog.w(TAG,"*************************************************");
         throw new PackageManagerException(INSTALL_FAILED_DUPLICATE_PACKAGE,"Core android package being redefined.  Skipping.");
       }
-      mPlatformPackage=pkg;
-      pkg.mVersionCode=mSdkVersion;
-      mAndroidApplication=pkg.applicationInfo;
-      if (!mResolverReplaced) {
-        mResolveActivity.applicationInfo=mAndroidApplication;
-        mResolveActivity.name=ResolverActivity.class.getName();
-        mResolveActivity.packageName=mAndroidApplication.packageName;
-        mResolveActivity.processName="system:ui";
-        mResolveActivity.launchMode=ActivityInfo.LAUNCH_MULTIPLE;
-        mResolveActivity.documentLaunchMode=ActivityInfo.DOCUMENT_LAUNCH_NEVER;
-        mResolveActivity.flags=ActivityInfo.FLAG_EXCLUDE_FROM_RECENTS;
-        mResolveActivity.theme=R.style.Theme_Holo_Dialog_Alert;
-        mResolveActivity.exported=true;
-        mResolveActivity.enabled=true;
-        mResolveInfo.activityInfo=mResolveActivity;
-        mResolveInfo.priority=0;
-        mResolveInfo.preferredOrder=0;
-        mResolveInfo.match=0;
-        mResolveComponentName=new ComponentName(mAndroidApplication.packageName,mResolveActivity.name);
+      if ((scanFlags & SCAN_CHECK_ONLY) == 0) {
+        mPlatformPackage=pkg;
+        pkg.mVersionCode=mSdkVersion;
+        mAndroidApplication=pkg.applicationInfo;
+        if (!mResolverReplaced) {
+          mResolveActivity.applicationInfo=mAndroidApplication;
+          mResolveActivity.name=ResolverActivity.class.getName();
+          mResolveActivity.packageName=mAndroidApplication.packageName;
+          mResolveActivity.processName="system:ui";
+          mResolveActivity.launchMode=ActivityInfo.LAUNCH_MULTIPLE;
+          mResolveActivity.documentLaunchMode=ActivityInfo.DOCUMENT_LAUNCH_NEVER;
+          mResolveActivity.flags=ActivityInfo.FLAG_EXCLUDE_FROM_RECENTS;
+          mResolveActivity.theme=R.style.Theme_Holo_Dialog_Alert;
+          mResolveActivity.exported=true;
+          mResolveActivity.enabled=true;
+          mResolveInfo.activityInfo=mResolveActivity;
+          mResolveInfo.priority=0;
+          mResolveInfo.preferredOrder=0;
+          mResolveInfo.match=0;
+          mResolveComponentName=new ComponentName(mAndroidApplication.packageName,mResolveActivity.name);
+        }
       }
     }
   }
   if (DEBUG_PACKAGE_SCANNING) {
     if ((parseFlags & PackageParser.PARSE_CHATTY) != 0)     Log.d(TAG,"Scanning package " + pkg.packageName);
   }
-  if (mPackages.containsKey(pkg.packageName) || mSharedLibraries.containsKey(pkg.packageName)) {
-    throw new PackageManagerException(INSTALL_FAILED_DUPLICATE_PACKAGE,"Application package " + pkg.packageName + " already installed.  Skipping duplicate.");
-  }
-  if ((scanFlags & SCAN_REQUIRE_KNOWN) != 0) {
-    if (mExpectingBetter.containsKey(pkg.packageName)) {
-      logCriticalInfo(Log.WARN,"Relax SCAN_REQUIRE_KNOWN requirement for package " + pkg.packageName);
+synchronized (mPackages) {
+    if (mPackages.containsKey(pkg.packageName) || mSharedLibraries.containsKey(pkg.packageName)) {
+      throw new PackageManagerException(INSTALL_FAILED_DUPLICATE_PACKAGE,"Application package " + pkg.packageName + " already installed.  Skipping duplicate.");
     }
+    if ((scanFlags & SCAN_REQUIRE_KNOWN) != 0) {
+      if (mExpectingBetter.containsKey(pkg.packageName)) {
+        logCriticalInfo(Log.WARN,"Relax SCAN_REQUIRE_KNOWN requirement for package " + pkg.packageName);
+      }
  else {
-      PackageSetting known=mSettings.peekPackageLPr(pkg.packageName);
-      if (known != null) {
-        if (DEBUG_PACKAGE_SCANNING) {
-          Log.d(TAG,"Examining " + pkg.codePath + " and requiring known paths "+ known.codePathString+ " & "+ known.resourcePathString);
-        }
-        if (!pkg.applicationInfo.getCodePath().equals(known.codePathString) || !pkg.applicationInfo.getResourcePath().equals(known.resourcePathString)) {
-          throw new PackageManagerException(INSTALL_FAILED_PACKAGE_CHANGED,"Application package " + pkg.packageName + " found at "+ pkg.applicationInfo.getCodePath()+ " but expected at "+ known.codePathString+ "; ignoring.");
+        PackageSetting known=mSettings.peekPackageLPr(pkg.packageName);
+        if (known != null) {
+          if (DEBUG_PACKAGE_SCANNING) {
+            Log.d(TAG,"Examining " + pkg.codePath + " and requiring known paths "+ known.codePathString+ " & "+ known.resourcePathString);
+          }
+          if (!pkg.applicationInfo.getCodePath().equals(known.codePathString) || !pkg.applicationInfo.getResourcePath().equals(known.resourcePathString)) {
+            throw new PackageManagerException(INSTALL_FAILED_PACKAGE_CHANGED,"Application package " + pkg.packageName + " found at "+ pkg.applicationInfo.getCodePath()+ " but expected at "+ known.codePathString+ "; ignoring.");
+          }
         }
       }
     }
@@ -77,6 +81,7 @@ synchronized (mPackages) {
     pkg.mRealPackage=null;
     pkg.mAdoptPermissions=null;
   }
+  PackageSetting nonMutatedPs=null;
 synchronized (mPackages) {
     if (pkg.mSharedUserId != null) {
       suid=mSettings.getSharedUserLPw(pkg.mSharedUserId,0,0,true);
@@ -122,6 +127,12 @@ synchronized (mPackages) {
     if (mTransferedPackages.contains(pkg.packageName)) {
       Slog.w(TAG,"Package " + pkg.packageName + " was transferred to another, but its .apk remains");
     }
+    if ((scanFlags & SCAN_CHECK_ONLY) != 0) {
+      PackageSetting foundPs=mSettings.peekPackageLPr(pkg.packageName);
+      if (foundPs != null) {
+        nonMutatedPs=new PackageSetting(foundPs);
+      }
+    }
     pkgSetting=mSettings.getPackageLPw(pkg,origPackage,realName,suid,destCodeFile,destResourceFile,pkg.applicationInfo.nativeLibraryRootDir,pkg.applicationInfo.primaryCpuAbi,pkg.applicationInfo.secondaryCpuAbi,pkg.applicationInfo.flags,pkg.applicationInfo.privateFlags,user,false);
     if (pkgSetting == null) {
       throw new PackageManagerException(INSTALL_FAILED_INSUFFICIENT_STORAGE,"Creating application package " + pkg.packageName + " failed");
@@ -130,10 +141,12 @@ synchronized (mPackages) {
       pkg.setPackageName(origPackage.name);
       String msg="New package " + pkgSetting.realName + " renamed to replace old package "+ pkgSetting.name;
       reportSettingsProblem(Log.WARN,msg);
-      mTransferedPackages.add(origPackage.name);
+      if ((scanFlags & SCAN_CHECK_ONLY) == 0) {
+        mTransferedPackages.add(origPackage.name);
+      }
       pkgSetting.origPackage=null;
     }
-    if (realName != null) {
+    if ((scanFlags & SCAN_CHECK_ONLY) == 0 && realName != null) {
       mTransferedPackages.add(pkg.packageName);
     }
     if (mSettings.isDisabledSystemPackageLPr(pkg.packageName)) {
@@ -198,7 +211,7 @@ synchronized (mPackages) {
         }
       }
     }
-    if (pkg.mAdoptPermissions != null) {
+    if ((scanFlags & SCAN_CHECK_ONLY) == 0 && pkg.mAdoptPermissions != null) {
       for (int i=pkg.mAdoptPermissions.size() - 1; i >= 0; i--) {
         final String origName=pkg.mAdoptPermissions.get(i);
         final PackageSetting orig=mSettings.peekPackageLPr(origName);
@@ -260,6 +273,26 @@ synchronized (mPackages) {
     pkg.applicationInfo.flags|=ApplicationInfo.FLAG_FACTORY_TEST;
   }
   ArrayList<PackageParser.Package> clientLibPkgs=null;
+  if ((scanFlags & SCAN_CHECK_ONLY) != 0) {
+    if (nonMutatedPs != null) {
+synchronized (mPackages) {
+        mSettings.mPackages.put(nonMutatedPs.name,nonMutatedPs);
+      }
+    }
+    return pkg;
+  }
+  if (pkg.childPackages != null && !pkg.childPackages.isEmpty()) {
+    if ((parseFlags & PARSE_IS_PRIVILEGED) == 0) {
+      throw new PackageManagerException("Only privileged apps and updated " + "privileged apps can add child packages. Ignoring package " + pkg.packageName);
+    }
+    final int childCount=pkg.childPackages.size();
+    for (int i=0; i < childCount; i++) {
+      PackageParser.Package childPkg=pkg.childPackages.get(i);
+      if (mSettings.hasOtherDisabledSystemPkgWithChildLPr(pkg.packageName,childPkg.packageName)) {
+        throw new PackageManagerException("Cannot override a child package of " + "another disabled system app. Ignoring package " + pkg.packageName);
+      }
+    }
+  }
 synchronized (mPackages) {
     if ((pkg.applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) != 0) {
       if (pkg.libraryNames != null) {
