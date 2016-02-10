@@ -1,0 +1,36 @@
+{
+  enforceCanManageDeviceAdmin();
+  Preconditions.checkArgument(!TextUtils.isEmpty(packageName));
+  final int userId=mInjector.userHandleGetCallingUserId();
+  final ComponentName profileOwner=getProfileOwner(userId);
+  if (profileOwner != null && packageName.equals(profileOwner.getPackageName())) {
+    throw new IllegalArgumentException("Cannot uninstall a package with a profile owner");
+  }
+  final ComponentName deviceOwner=getDeviceOwnerComponent(false);
+  if (getDeviceOwnerUserId() == userId && deviceOwner != null && packageName.equals(deviceOwner.getPackageName())) {
+    throw new IllegalArgumentException("Cannot uninstall a package with a device owner");
+  }
+  final Pair<String,Integer> packageUserPair=new Pair<>(packageName,userId);
+synchronized (this) {
+    mPackagesToRemove.add(packageUserPair);
+  }
+  final List<ComponentName> activeAdminsList=getActiveAdmins(userId);
+  if (activeAdminsList == null || activeAdminsList.size() == 0) {
+    startUninstallIntent(packageName,userId);
+    return;
+  }
+  for (  ComponentName activeAdmin : activeAdminsList) {
+    if (packageName.equals(activeAdmin.getPackageName())) {
+      removeActiveAdmin(activeAdmin,userId);
+    }
+  }
+  mHandler.postDelayed(new Runnable(){
+    @Override public void run(){
+      for (      ComponentName activeAdmin : activeAdminsList) {
+        removeAdminArtifacts(activeAdmin,userId);
+      }
+      startUninstallIntent(packageName,userId);
+    }
+  }
+,DEVICE_ADMIN_DEACTIVATE_TIMEOUT);
+}
