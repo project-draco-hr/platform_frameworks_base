@@ -6,44 +6,31 @@
     Slog.w(TAG,"Not removing package " + packageName + ": has active device admin");
     return PackageManager.DELETE_FAILED_DEVICE_POLICY_MANAGER;
   }
-  boolean removedForAllUsers=false;
-  boolean systemUpdate=false;
   PackageParser.Package uninstalledPkg;
   int[] allUsers;
-  boolean[] perUserInstalled;
 synchronized (mPackages) {
     uninstalledPkg=mPackages.get(packageName);
     PackageSetting ps=mSettings.mPackages.get(packageName);
-    allUsers=sUserManager.getUserIds();
-    perUserInstalled=new boolean[allUsers.length];
-    for (int i=0; i < allUsers.length; i++) {
-      perUserInstalled[i]=ps != null ? ps.getInstalled(allUsers[i]) : false;
+    if (ps == null || uninstalledPkg == null) {
+      Slog.w(TAG,"Not removing non-existent package " + packageName);
+      return PackageManager.DELETE_FAILED_INTERNAL_ERROR;
     }
+    allUsers=sUserManager.getUserIds();
+    info.origUsers=ps.queryInstalledUsers(allUsers,true);
   }
 synchronized (mInstallLock) {
     if (DEBUG_REMOVE)     Slog.d(TAG,"deletePackageX: pkg=" + packageName + " user="+ userId);
-    res=deletePackageLI(packageName,removeForUser,true,allUsers,perUserInstalled,flags | REMOVE_CHATTY,info,true,null);
-    systemUpdate=info.isRemovedPackageSystemUpdate;
+    res=deletePackageLI(packageName,removeForUser,true,allUsers,flags | REMOVE_CHATTY,info,true,null);
 synchronized (mPackages) {
       if (res) {
-        if (!systemUpdate && mPackages.get(packageName) == null) {
-          removedForAllUsers=true;
-        }
         mEphemeralApplicationRegistry.onPackageUninstalledLPw(uninstalledPkg);
       }
     }
-    if (DEBUG_REMOVE)     Slog.d(TAG,"delete res: systemUpdate=" + systemUpdate + " removedForAllUsers="+ removedForAllUsers);
   }
   if (res) {
-    info.sendBroadcast(true,systemUpdate,removedForAllUsers);
-    if (systemUpdate) {
-      Bundle extras=new Bundle(1);
-      extras.putInt(Intent.EXTRA_UID,info.removedAppId >= 0 ? info.removedAppId : info.uid);
-      extras.putBoolean(Intent.EXTRA_REPLACING,true);
-      sendPackageBroadcast(Intent.ACTION_PACKAGE_ADDED,packageName,extras,0,null,null,null);
-      sendPackageBroadcast(Intent.ACTION_PACKAGE_REPLACED,packageName,extras,0,null,null,null);
-      sendPackageBroadcast(Intent.ACTION_MY_PACKAGE_REPLACED,null,null,0,packageName,null,null);
-    }
+    info.sendPackageRemovedBroadcasts();
+    info.sendSystemPackageUpdatedBroadcasts();
+    info.sendSystemPackageAppearedBroadcasts();
   }
   Runtime.getRuntime().gc();
   if (info.args != null) {
