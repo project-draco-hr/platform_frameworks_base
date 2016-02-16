@@ -1,0 +1,94 @@
+{
+  long startWalltime=0;
+  long endDateWalltime=0;
+  long endWalltime=0;
+  long historyStart=0;
+  long historyEnd=0;
+  byte lastLevel=-1;
+  long curWalltime=startWalltime;
+  long lastWallTime=0;
+  long lastRealtime=0;
+  int lastInteresting=0;
+  int pos=0;
+  boolean first=true;
+  if (mStats.startIteratingHistoryLocked()) {
+    final HistoryItem rec=new HistoryItem();
+    while (mStats.getNextHistoryLocked(rec)) {
+      pos++;
+      if (first) {
+        first=false;
+        historyStart=rec.time;
+      }
+      if (rec.cmd == HistoryItem.CMD_CURRENT_TIME || rec.cmd == HistoryItem.CMD_RESET) {
+        if (rec.currentTime > (lastWallTime + (180 * 24 * 60* 60* 1000L)) || rec.time < (historyStart + (5 * 60 * 1000L))) {
+          startWalltime=0;
+        }
+        lastWallTime=rec.currentTime;
+        lastRealtime=rec.time;
+        if (startWalltime == 0) {
+          startWalltime=lastWallTime - (lastRealtime - historyStart);
+        }
+      }
+      if (rec.isDeltaData()) {
+        if (rec.batteryLevel != lastLevel || pos == 1) {
+          lastLevel=rec.batteryLevel;
+        }
+        lastInteresting=pos;
+        historyEnd=rec.time;
+      }
+    }
+  }
+  mStats.finishIteratingHistoryLocked();
+  endDateWalltime=lastWallTime + historyEnd - lastRealtime;
+  endWalltime=endDateWalltime + (remainingTimeUs / 1000);
+  int i=0;
+  final int N=lastInteresting;
+  SparseIntArray points=new SparseIntArray();
+  view.clearPaths();
+  view.configureGraph((int)(endWalltime - startWalltime),100,remainingTimeUs != 0,mCharging);
+  if (endDateWalltime > startWalltime && mStats.startIteratingHistoryLocked()) {
+    final HistoryItem rec=new HistoryItem();
+    while (mStats.getNextHistoryLocked(rec) && i < N) {
+      if (rec.isDeltaData()) {
+        curWalltime+=rec.time - lastRealtime;
+        lastRealtime=rec.time;
+        long x=(curWalltime - startWalltime);
+        if (x < 0) {
+          x=0;
+        }
+        points.put((int)x,rec.batteryLevel);
+      }
+ else {
+        long lastWalltime=curWalltime;
+        if (rec.cmd == HistoryItem.CMD_CURRENT_TIME || rec.cmd == HistoryItem.CMD_RESET) {
+          if (rec.currentTime >= startWalltime) {
+            curWalltime=rec.currentTime;
+          }
+ else {
+            curWalltime=startWalltime + (rec.time - historyStart);
+          }
+          lastRealtime=rec.time;
+        }
+        if (rec.cmd != HistoryItem.CMD_OVERFLOW && (rec.cmd != HistoryItem.CMD_CURRENT_TIME || Math.abs(lastWalltime - curWalltime) > (60 * 60 * 1000))) {
+          if (points.size() > 1) {
+            view.addPath(points);
+          }
+          points.clear();
+        }
+      }
+      i++;
+    }
+  }
+  if (points.size() > 1) {
+    view.addPath(points);
+  }
+  long timePast=endDateWalltime - startWalltime;
+  final Context context=view.getContext();
+  String timeString=context.getString(R.string.charge_length_format,Formatter.formatShortElapsedTime(context,timePast));
+  String remaining="";
+  if (remainingTimeUs != 0) {
+    remaining=context.getString(R.string.remaining_length_format,Formatter.formatShortElapsedTime(context,remainingTimeUs));
+  }
+  view.setBottomLabels(new CharSequence[]{timeString,remaining});
+  mStats.finishIteratingHistoryLocked();
+}
