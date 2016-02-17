@@ -1,0 +1,104 @@
+{
+  if (DEBUG) {
+    Log.d(TAG,"getJpegAttributes starting with: " + inputStream);
+  }
+  DataInputStream dataInputStream=new DataInputStream(inputStream);
+  byte marker;
+  int bytesRead=0;
+  ++bytesRead;
+  if ((marker=dataInputStream.readByte()) != MARKER) {
+    throw new IOException("Invalid marker: " + Integer.toHexString(marker & 0xff));
+  }
+  ++bytesRead;
+  if (dataInputStream.readByte() != MARKER_SOI) {
+    throw new IOException("Invalid marker: " + Integer.toHexString(marker & 0xff));
+  }
+  while (true) {
+    ++bytesRead;
+    marker=dataInputStream.readByte();
+    if (marker != MARKER) {
+      throw new IOException("Invalid marker:" + Integer.toHexString(marker & 0xff));
+    }
+    ++bytesRead;
+    marker=dataInputStream.readByte();
+    if (DEBUG) {
+      Log.d(TAG,"Found JPEG segment indicator: " + Integer.toHexString(marker & 0xff));
+    }
+    if (marker == MARKER_EOI || marker == MARKER_SOS) {
+      break;
+    }
+    bytesRead+=2;
+    int length=dataInputStream.readUnsignedShort() - 2;
+    if (length < 0)     throw new IOException("Invalid length");
+    bytesRead+=length;
+switch (marker) {
+case MARKER_APP1:
+{
+        if (DEBUG) {
+          Log.d(TAG,"MARKER_APP1");
+        }
+        bytesRead-=length;
+        if (length < 6) {
+          throw new IOException("Invalid exif");
+        }
+        byte[] identifier=new byte[6];
+        if (inputStream.read(identifier) != 6) {
+          throw new IOException("Invalid exif");
+        }
+        if (!Arrays.equals(identifier,IDENTIFIER_APP1)) {
+          throw new IOException("Invalid app1 identifier");
+        }
+        bytesRead+=6;
+        length-=6;
+        if (length <= 0) {
+          throw new IOException("Invalid exif");
+        }
+        byte[] bytes=new byte[length];
+        if (dataInputStream.read(bytes) != length) {
+          throw new IOException("Invalid exif");
+        }
+        readExifSegment(bytes,bytesRead);
+        bytesRead+=length;
+        length=0;
+        break;
+      }
+case MARKER_COM:
+{
+      byte[] bytes=new byte[length];
+      if (dataInputStream.read(bytes) != length) {
+        throw new IOException("Invalid exif");
+      }
+      mAttributes.put("UserComment",new String(bytes,Charset.forName("US-ASCII")));
+      break;
+    }
+case MARKER_SOF0:
+case MARKER_SOF1:
+case MARKER_SOF2:
+case MARKER_SOF3:
+case MARKER_SOF5:
+case MARKER_SOF6:
+case MARKER_SOF7:
+case MARKER_SOF9:
+case MARKER_SOF10:
+case MARKER_SOF11:
+case MARKER_SOF13:
+case MARKER_SOF14:
+case MARKER_SOF15:
+{
+    dataInputStream.skipBytes(1);
+    mAttributes.put("ImageLength",String.valueOf(dataInputStream.readUnsignedShort()));
+    mAttributes.put("ImageWidth",String.valueOf(dataInputStream.readUnsignedShort()));
+    length-=5;
+    break;
+  }
+default :
+{
+  break;
+}
+}
+if (length < 0) {
+throw new IOException("Invalid length");
+}
+dataInputStream.skipBytes(length);
+}
+}
