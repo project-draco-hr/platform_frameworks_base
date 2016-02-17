@@ -22,10 +22,11 @@
     final byte[] buffer=new byte[8192];
     for (int i=0; i < N; i++) {
       PackageInfo currentPackage=mPackages.get(i);
+      String packageName=currentPackage.packageName;
       if (DEBUG) {
-        Slog.i(TAG,"Initiating full-data transport backup of " + currentPackage.packageName);
+        Slog.i(TAG,"Initiating full-data transport backup of " + packageName);
       }
-      EventLog.writeEvent(EventLogTags.FULL_BACKUP_PACKAGE,currentPackage.packageName);
+      EventLog.writeEvent(EventLogTags.FULL_BACKUP_PACKAGE,packageName);
       transportPipes=ParcelFileDescriptor.createPipe();
       int flags=mUserInitiated ? BackupTransport.FLAG_USER_INITIATED : 0;
       int backupPackageStatus=transport.performFullBackup(currentPackage,transportPipes[0],flags);
@@ -33,47 +34,48 @@
         transportPipes[0].close();
         transportPipes[0]=null;
         enginePipes=ParcelFileDescriptor.createPipe();
-        CountDownLatch runnerLatch=new CountDownLatch(1);
-        SinglePackageBackupRunner backupRunner=new SinglePackageBackupRunner(enginePipes[1],currentPackage,transport,runnerLatch);
+        SinglePackageBackupRunner backupRunner=new SinglePackageBackupRunner(enginePipes[1],currentPackage,transport);
         enginePipes[1].close();
         enginePipes[1]=null;
         (new Thread(backupRunner,"package-backup-bridge")).start();
         FileInputStream in=new FileInputStream(enginePipes[0].getFileDescriptor());
         FileOutputStream out=new FileOutputStream(transportPipes[1].getFileDescriptor());
         long totalRead=0;
-        final long expectedSize=backupRunner.expectedSize();
-        if (expectedSize < 0) {
-          backupPackageStatus=BackupTransport.AGENT_ERROR;
-          sendBackupOnPackageResult(mBackupObserver,currentPackage.packageName,BackupManager.ERROR_AGENT_FAILURE);
-        }
-        int nRead=0;
-        do {
-          if (!mKeepRunning.get()) {
-            if (DEBUG_SCHEDULING) {
-              Slog.i(TAG,"Full backup task told to stop");
-            }
-            break;
-          }
-          nRead=in.read(buffer);
+        final long preflightResult=backupRunner.getPreflightResultBlocking();
+        if (preflightResult < 0) {
           if (MORE_DEBUG) {
-            Slog.v(TAG,"in.read(buffer) from app: " + nRead);
+            Slog.d(TAG,"Backup error after preflight of package " + packageName + ": "+ preflightResult+ ", not running backup.");
           }
-          if (nRead > 0) {
-            out.write(buffer,0,nRead);
-            backupPackageStatus=transport.sendBackupData(nRead);
-            totalRead+=nRead;
-            if (mBackupObserver != null && expectedSize > 0) {
-              sendBackupOnUpdate(mBackupObserver,currentPackage.packageName,new BackupProgress(expectedSize,totalRead));
+          backupPackageStatus=(int)preflightResult;
+        }
+ else {
+          int nRead=0;
+          do {
+            if (!mKeepRunning.get()) {
+              if (DEBUG_SCHEDULING) {
+                Slog.i(TAG,"Full backup task told to stop");
+              }
+              break;
+            }
+            nRead=in.read(buffer);
+            if (MORE_DEBUG) {
+              Slog.v(TAG,"in.read(buffer) from app: " + nRead);
+            }
+            if (nRead > 0) {
+              out.write(buffer,0,nRead);
+              backupPackageStatus=transport.sendBackupData(nRead);
+              totalRead+=nRead;
+              if (mBackupObserver != null && preflightResult > 0) {
+                sendBackupOnUpdate(mBackupObserver,packageName,new BackupProgress(preflightResult,totalRead));
+              }
             }
           }
-        }
  while (nRead > 0 && backupPackageStatus == BackupTransport.TRANSPORT_OK);
-        if (backupPackageStatus == BackupTransport.TRANSPORT_QUOTA_EXCEEDED) {
-          long quota=transport.getBackupQuota(currentPackage.packageName,true);
-          if (MORE_DEBUG) {
-            Slog.d(TAG,"Package hit quota limit " + currentPackage.packageName + ": "+ totalRead+ " of "+ quota);
+          if (backupPackageStatus == BackupTransport.TRANSPORT_QUOTA_EXCEEDED) {
+            long quota=transport.getBackupQuota(packageName,true);
+            Slog.w(TAG,"Package hit quota limit in-flight " + packageName + ": "+ totalRead+ " of "+ quota);
+            backupRunner.sendQuotaExceeded(totalRead,quota);
           }
-          backupRunner.sendQuotaExceeded(totalRead,quota);
         }
         if (!mKeepRunning.get()) {
           backupPackageStatus=BackupTransport.TRANSPORT_ERROR;
@@ -85,11 +87,15 @@
             backupPackageStatus=finishResult;
           }
         }
+        int backupRunnerResult=backupRunner.getBackupResultBlocking();
+        if (backupPackageStatus != BackupTransport.TRANSPORT_ERROR && backupRunnerResult != BackupTransport.TRANSPORT_OK) {
+          backupPackageStatus=backupRunnerResult;
+        }
         if (MORE_DEBUG) {
           Slog.i(TAG,"Done trying to send backup data: result=" + backupPackageStatus);
         }
         if (backupPackageStatus != BackupTransport.TRANSPORT_OK) {
-          Slog.e(TAG,"Error " + backupPackageStatus + " backing up "+ currentPackage.packageName);
+          Slog.e(TAG,"Error " + backupPackageStatus + " backing up "+ packageName);
         }
         backoff=transport.requestFullBackupTime();
         if (DEBUG_SCHEDULING) {
@@ -97,33 +103,38 @@
         }
       }
       if (mUpdateSchedule) {
-        enqueueFullBackup(currentPackage.packageName,System.currentTimeMillis());
+        enqueueFullBackup(packageName,System.currentTimeMillis());
       }
       if (backupPackageStatus == BackupTransport.TRANSPORT_PACKAGE_REJECTED) {
-        sendBackupOnPackageResult(mBackupObserver,currentPackage.packageName,BackupManager.ERROR_TRANSPORT_PACKAGE_REJECTED);
+        sendBackupOnPackageResult(mBackupObserver,packageName,BackupManager.ERROR_TRANSPORT_PACKAGE_REJECTED);
         if (DEBUG) {
-          Slog.i(TAG,"Transport rejected backup of " + currentPackage.packageName + ", skipping");
+          Slog.i(TAG,"Transport rejected backup of " + packageName + ", skipping");
         }
-        EventLog.writeEvent(EventLogTags.FULL_BACKUP_AGENT_FAILURE,currentPackage.packageName,"transport rejected");
+        EventLog.writeEvent(EventLogTags.FULL_BACKUP_AGENT_FAILURE,packageName,"transport rejected");
       }
  else       if (backupPackageStatus == BackupTransport.TRANSPORT_QUOTA_EXCEEDED) {
-        sendBackupOnPackageResult(mBackupObserver,currentPackage.packageName,BackupManager.ERROR_TRANSPORT_QUOTA_EXCEEDED);
+        sendBackupOnPackageResult(mBackupObserver,packageName,BackupManager.ERROR_TRANSPORT_QUOTA_EXCEEDED);
         if (DEBUG) {
-          Slog.i(TAG,"Transport quota exceeded for package: " + currentPackage.packageName);
+          Slog.i(TAG,"Transport quota exceeded for package: " + packageName);
+          EventLog.writeEvent(EventLogTags.FULL_BACKUP_QUOTA_EXCEEDED,packageName);
         }
-        EventLog.writeEvent(EventLogTags.FULL_BACKUP_QUOTA_EXCEEDED,currentPackage.packageName);
+      }
+ else       if (backupPackageStatus == BackupTransport.AGENT_ERROR) {
+        sendBackupOnPackageResult(mBackupObserver,packageName,BackupManager.ERROR_AGENT_FAILURE);
+        Slog.w(TAG,"Application failure for package: " + packageName);
+        EventLog.writeEvent(EventLogTags.BACKUP_AGENT_FAILURE,packageName);
       }
  else       if (backupPackageStatus != BackupTransport.TRANSPORT_OK) {
-        sendBackupOnPackageResult(mBackupObserver,currentPackage.packageName,BackupManager.ERROR_TRANSPORT_ABORTED);
+        sendBackupOnPackageResult(mBackupObserver,packageName,BackupManager.ERROR_TRANSPORT_ABORTED);
         Slog.w(TAG,"Transport failed; aborting backup: " + backupPackageStatus);
         EventLog.writeEvent(EventLogTags.FULL_BACKUP_TRANSPORT_FAILURE);
         backupRunStatus=BackupManager.ERROR_TRANSPORT_ABORTED;
         return;
       }
  else {
-        sendBackupOnPackageResult(mBackupObserver,currentPackage.packageName,BackupManager.SUCCESS);
-        EventLog.writeEvent(EventLogTags.FULL_BACKUP_SUCCESS,currentPackage.packageName);
-        logBackupComplete(currentPackage.packageName);
+        sendBackupOnPackageResult(mBackupObserver,packageName,BackupManager.SUCCESS);
+        EventLog.writeEvent(EventLogTags.FULL_BACKUP_SUCCESS,packageName);
+        logBackupComplete(packageName);
       }
       cleanUpPipes(transportPipes);
       cleanUpPipes(enginePipes);
