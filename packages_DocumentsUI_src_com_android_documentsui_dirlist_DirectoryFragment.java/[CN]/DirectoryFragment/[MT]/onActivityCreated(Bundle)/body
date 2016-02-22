@@ -2,9 +2,14 @@
   super.onActivityCreated(savedInstanceState);
   final Context context=getActivity();
   final State state=getDisplayState();
-  final RootInfo root=getArguments().getParcelable(EXTRA_ROOT);
-  final DocumentInfo doc=getArguments().getParcelable(EXTRA_DOC);
-  mStateKey=buildStateKey(root,doc);
+  Bundle args=savedInstanceState == null ? getArguments() : savedInstanceState;
+  mRoot=args.getParcelable(Shared.EXTRA_ROOT);
+  mDocument=args.getParcelable(Shared.EXTRA_DOC);
+  mStateKey=buildStateKey(mRoot,mDocument);
+  mQuery=args.getString(Shared.EXTRA_QUERY);
+  mType=args.getInt(Shared.EXTRA_TYPE);
+  mSelection=args.getParcelable(Shared.EXTRA_SELECTION);
+  mSearchMode=args.getBoolean(Shared.EXTRA_SEARCH_MODE);
   mIconHelper=new IconHelper(context,MODE_GRID);
   mAdapter=new SectionBreakDocumentsAdapterWrapper(this,new ModelBackedDocumentsAdapter(this,mIconHelper));
   mRecView.setAdapter(mAdapter);
@@ -16,15 +21,12 @@
   mRecView.setLayoutManager(mLayout);
   mGestureDetector=new ListeningGestureDetector(this.getContext(),new GestureListener());
   mRecView.addOnItemTouchListener(mGestureDetector);
-  final SelectionModeListener selectionListener=new SelectionModeListener();
-  final Selection initialSelection=state.selectedDocuments.hasDirectoryKey(mStateKey) ? state.selectedDocuments : null;
-  mSelectionManager=new MultiSelectManager(mRecView,mAdapter,state.allowMultiple ? MultiSelectManager.MODE_MULTIPLE : MultiSelectManager.MODE_SINGLE,initialSelection);
-  mSelectionManager.addCallback(selectionListener);
+  mSelectionManager=new MultiSelectManager(mRecView,mAdapter,state.allowMultiple ? MultiSelectManager.MODE_MULTIPLE : MultiSelectManager.MODE_SINGLE,null);
+  mSelectionManager.addCallback(new SelectionModeListener());
   mModel=new Model();
   mModel.addUpdateListener(mAdapter);
   mModel.addUpdateListener(mModelUpdateListener);
   mFocusManager=new FocusManager(context,mRecView,mModel);
-  mType=getArguments().getInt(EXTRA_TYPE);
   mTuner=FragmentTuner.pick(getContext(),state);
   mClipper=new DocumentClipper(context);
   boolean hideGridTitles;
@@ -32,58 +34,11 @@
     hideGridTitles=MimePredicate.mimeMatches(MimePredicate.VISUAL_MIMES,state.acceptMimes);
   }
  else {
-    hideGridTitles=(doc != null) && doc.isGridTitlesHidden();
+    hideGridTitles=(mDocument != null) && mDocument.isGridTitlesHidden();
   }
   GridDocumentHolder.setHideTitles(hideGridTitles);
   final ActivityManager am=(ActivityManager)context.getSystemService(Context.ACTIVITY_SERVICE);
   boolean svelte=am.isLowRamDevice() && (mType == TYPE_RECENT_OPEN);
   mIconHelper.setThumbnailsEnabled(!svelte);
-  mCallbacks=new LoaderCallbacks<DirectoryResult>(){
-    @Override public Loader<DirectoryResult> onCreateLoader(    int id,    Bundle args){
-      final String query=getArguments().getString(EXTRA_QUERY);
-      Uri contentsUri;
-switch (mType) {
-case TYPE_NORMAL:
-        contentsUri=DocumentsContract.buildChildDocumentsUri(doc.authority,doc.documentId);
-      if (state.action == ACTION_MANAGE) {
-        contentsUri=DocumentsContract.setManageMode(contentsUri);
-      }
-    return new DirectoryLoader(context,mType,root,doc,contentsUri,state.userSortOrder);
-case TYPE_SEARCH:
-  contentsUri=DocumentsContract.buildSearchDocumentsUri(root.authority,root.rootId,query);
-if (state.action == ACTION_MANAGE) {
-  contentsUri=DocumentsContract.setManageMode(contentsUri);
-}
-return new DirectoryLoader(context,mType,root,doc,contentsUri,state.userSortOrder);
-case TYPE_RECENT_OPEN:
-final RootsCache roots=DocumentsApplication.getRootsCache(context);
-return new RecentsLoader(context,roots,state);
-default :
-throw new IllegalStateException("Unknown type " + mType);
-}
-}
-@Override public void onLoadFinished(Loader<DirectoryResult> loader,DirectoryResult result){
-if (!isAdded()) return;
-mModel.update(result);
-state.derivedSortOrder=result.sortOrder;
-updateDisplayState();
-if (initialSelection != null) {
-selectionListener.onSelectionChanged();
-}
-final SparseArray<Parcelable> container=state.dirState.remove(mStateKey);
-if (container != null && !getArguments().getBoolean(EXTRA_IGNORE_STATE,false)) {
-getView().restoreHierarchyState(container);
-}
- else if (mLastSortOrder != state.derivedSortOrder) {
-mRecView.smoothScrollToPosition(0);
-}
-mLastSortOrder=state.derivedSortOrder;
-mTuner.onModelLoaded(mModel,mType);
-}
-@Override public void onLoaderReset(Loader<DirectoryResult> loader){
-mModel.update(null);
-}
-}
-;
-getLoaderManager().restartLoader(LOADER_ID,null,mCallbacks);
+  getLoaderManager().restartLoader(LOADER_ID,null,this);
 }
