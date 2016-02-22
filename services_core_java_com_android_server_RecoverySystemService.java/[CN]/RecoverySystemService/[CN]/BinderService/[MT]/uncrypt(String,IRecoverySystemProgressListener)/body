@@ -1,0 +1,62 @@
+{
+  if (DEBUG)   Slog.d(TAG,"uncrypt: " + filename);
+  mContext.enforceCallingOrSelfPermission(android.Manifest.permission.RECOVERY,null);
+  RecoverySystem.UNCRYPT_PACKAGE_FILE.delete();
+  try (FileWriter uncryptFile=new FileWriter(RecoverySystem.UNCRYPT_PACKAGE_FILE)){
+    uncryptFile.write(filename + "\n");
+  }
+ catch (  IOException e) {
+    Slog.e(TAG,"IOException when writing \"" + RecoverySystem.UNCRYPT_PACKAGE_FILE + "\": "+ e.getMessage());
+    return false;
+  }
+  new File(UNCRYPT_STATUS_FILE).delete();
+  try {
+    Os.mkfifo(UNCRYPT_STATUS_FILE,0600);
+  }
+ catch (  ErrnoException e) {
+    Slog.e(TAG,"ErrnoException when creating named pipe \"" + UNCRYPT_STATUS_FILE + "\": "+ e.getMessage());
+    return false;
+  }
+  SystemProperties.set("ctl.start","uncrypt");
+  try (BufferedReader reader=new BufferedReader(new FileReader(UNCRYPT_STATUS_FILE))){
+    int lastStatus=Integer.MIN_VALUE;
+    while (true) {
+      String str=reader.readLine();
+      try {
+        int status=Integer.parseInt(str);
+        if (status == lastStatus && lastStatus != Integer.MIN_VALUE) {
+          continue;
+        }
+        lastStatus=status;
+        if (status >= 0 && status <= 100) {
+          Slog.i(TAG,"uncrypt read status: " + status);
+          if (listener != null) {
+            try {
+              listener.onProgress(status);
+            }
+ catch (            RemoteException unused) {
+              Slog.w(TAG,"RemoteException when posting progress");
+            }
+          }
+          if (status == 100) {
+            Slog.i(TAG,"uncrypt successfully finished.");
+            break;
+          }
+        }
+ else {
+          Slog.e(TAG,"uncrypt failed with status: " + status);
+          return false;
+        }
+      }
+ catch (      NumberFormatException unused) {
+        Slog.e(TAG,"uncrypt invalid status received: " + str);
+        return false;
+      }
+    }
+  }
+ catch (  IOException unused) {
+    Slog.e(TAG,"IOException when reading \"" + UNCRYPT_STATUS_FILE + "\".");
+    return false;
+  }
+  return true;
+}
