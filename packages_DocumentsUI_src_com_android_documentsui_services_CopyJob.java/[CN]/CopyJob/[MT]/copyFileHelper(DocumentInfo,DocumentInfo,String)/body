@@ -1,64 +1,83 @@
 {
   CancellationSignal canceller=new CancellationSignal();
+  AssetFileDescriptor srcFileAsAsset=null;
   ParcelFileDescriptor srcFile=null;
   ParcelFileDescriptor dstFile=null;
   InputStream in=null;
   OutputStream out=null;
-  boolean success=true;
+  boolean success=false;
   try {
     if (src.isVirtualDocument()) {
-      final AssetFileDescriptor srcFileAsAsset=getClient(src).openTypedAssetFileDescriptor(src.derivedUri,mimeType,null,canceller);
+      try {
+        srcFileAsAsset=getClient(src).openTypedAssetFileDescriptor(src.derivedUri,mimeType,null,canceller);
+      }
+ catch (      FileNotFoundException|RemoteException|RuntimeException e) {
+        throw new ResourceException("Failed to open a file as asset for %s due to an " + "exception.",src.derivedUri,e);
+      }
       srcFile=srcFileAsAsset.getParcelFileDescriptor();
-      in=new AssetFileDescriptor.AutoCloseInputStream(srcFileAsAsset);
+      try {
+        in=new AssetFileDescriptor.AutoCloseInputStream(srcFileAsAsset);
+      }
+ catch (      IOException e) {
+        throw new ResourceException("Failed to open a file input stream for %s due " + "an exception.",src.derivedUri,e);
+      }
     }
  else {
-      srcFile=getClient(src).openFile(src.derivedUri,"r",canceller);
+      try {
+        srcFile=getClient(src).openFile(src.derivedUri,"r",canceller);
+      }
+ catch (      FileNotFoundException|RemoteException|RuntimeException e) {
+        throw new ResourceException("Failed to open a file for %s due to an exception.",src.derivedUri,e);
+      }
       in=new ParcelFileDescriptor.AutoCloseInputStream(srcFile);
     }
-    dstFile=getClient(dest).openFile(dest.derivedUri,"w",canceller);
+    try {
+      dstFile=getClient(dest).openFile(dest.derivedUri,"w",canceller);
+    }
+ catch (    FileNotFoundException|RemoteException|RuntimeException e) {
+      throw new ResourceException("Failed to open the destination file %s for writing " + "due to an exception.",dest.derivedUri,e);
+    }
     out=new ParcelFileDescriptor.AutoCloseOutputStream(dstFile);
     byte[] buffer=new byte[32 * 1024];
     int len;
-    while ((len=in.read(buffer)) != -1) {
-      if (isCanceled()) {
-        if (DEBUG)         Log.d(TAG,"Canceled copy mid-copy. Id:" + id);
-        success=false;
-        break;
+    try {
+      while ((len=in.read(buffer)) != -1) {
+        if (isCanceled()) {
+          throw new ResourceException("Canceled copy mid-copy of %s",src.derivedUri);
+        }
+        out.write(buffer,0,len);
+        makeCopyProgress(len);
       }
-      out.write(buffer,0,len);
-      makeCopyProgress(len);
+      srcFile.checkError();
     }
-    srcFile.checkError();
+ catch (    IOException e) {
+      throw new ResourceException("Failed to copy bytes from %s to %s due to an IO exception.",src.derivedUri,dest.derivedUri,e);
+    }
+    if (src.isVirtualDocument()) {
+      convertedFiles.add(src);
+    }
+    success=true;
   }
- catch (  IOException e) {
-    success=false;
-    onFileFailed(src,"Exception thrown while copying from " + src.derivedUri + " to "+ dest.derivedUri+ ".");
-    if (dstFile != null) {
+  finally {
+    if (!success) {
+      if (dstFile != null) {
+        try {
+          dstFile.closeWithError("Error copying bytes.");
+        }
+ catch (        IOException closeError) {
+          Log.w(TAG,"Error closing destination.",closeError);
+        }
+      }
+      if (DEBUG)       Log.d(TAG,"Cleaning up failed operation leftovers.");
+      canceller.cancel();
       try {
-        dstFile.closeWithError(e.getMessage());
+        DocumentsContract.deleteDocument(getClient(dest),dest.derivedUri);
       }
- catch (      IOException closeError) {
-        Log.e(TAG,"Error closing destination",closeError);
+ catch (      RemoteException|RuntimeException e) {
+        Log.w(TAG,"Failed to cleanup after copy error: " + src.derivedUri,e);
       }
     }
-  }
- finally {
     IoUtils.closeQuietly(in);
     IoUtils.closeQuietly(out);
   }
-  if (!success) {
-    if (DEBUG)     Log.d(TAG,"Cleaning up failed operation leftovers.");
-    canceller.cancel();
-    try {
-      DocumentsContract.deleteDocument(getClient(dest),dest.derivedUri);
-    }
- catch (    RemoteException e) {
-      Log.w(TAG,"Failed to cleanup after copy error: " + src.derivedUri,e);
-      throw e;
-    }
-  }
-  if (src.isVirtualDocument() && success) {
-    convertedFiles.add(src);
-  }
-  return success;
 }
