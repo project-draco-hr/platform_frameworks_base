@@ -3,40 +3,47 @@
   final String dstDisplayName;
   if (DEBUG)   Log.d(TAG,"Doing byte copy of document: " + src);
   if (src.isVirtualDocument()) {
-    final String[] streamTypes=getContentResolver().getStreamTypes(src.derivedUri,"*/*");
+    String[] streamTypes=null;
+    try {
+      streamTypes=getContentResolver().getStreamTypes(src.derivedUri,"*/*");
+    }
+ catch (    RuntimeException e) {
+      throw new ResourceException("Failed to obtain streamable types for %s due to an exception.",src.derivedUri,e);
+    }
     if (streamTypes != null && streamTypes.length > 0) {
       dstMimeType=streamTypes[0];
       final String extension=MimeTypeMap.getSingleton().getExtensionFromMimeType(dstMimeType);
       dstDisplayName=src.displayName + (extension != null ? "." + extension : src.displayName);
     }
  else {
-      onFileFailed(src,"Cannot copy virtual file. No streamable formats available.");
-      return false;
+      throw new ResourceException("Cannot copy virtual file %s. No streamable formats " + "available.",src.derivedUri);
     }
   }
  else {
     dstMimeType=src.mimeType;
     dstDisplayName=src.displayName;
   }
-  final Uri dstUri=DocumentsContract.createDocument(getClient(dest),dest.derivedUri,dstMimeType,dstDisplayName);
+  Uri dstUri=null;
+  try {
+    dstUri=DocumentsContract.createDocument(getClient(dest),dest.derivedUri,dstMimeType,dstDisplayName);
+  }
+ catch (  RemoteException|RuntimeException e) {
+    throw new ResourceException("Couldn't create destination document " + dstDisplayName + " in directory %s "+ "due to an exception.",dest.derivedUri,e);
+  }
   if (dstUri == null) {
-    onFileFailed(src,"Couldn't create destination document " + dstDisplayName + " in directory "+ dest.displayName+ ".");
-    return false;
+    throw new ResourceException("Couldn't create destination document " + dstDisplayName + " in directory %s.",dest.derivedUri);
   }
   DocumentInfo dstInfo=null;
   try {
     dstInfo=DocumentInfo.fromUri(getContentResolver(),dstUri);
   }
- catch (  FileNotFoundException e) {
-    onFileFailed(src,"Could not load DocumentInfo for newly created file: " + dstUri + ".");
-    return false;
+ catch (  FileNotFoundException|RuntimeException e) {
+    throw new ResourceException("Could not load DocumentInfo for newly created file %s.",dstUri);
   }
-  final boolean success;
   if (Document.MIME_TYPE_DIR.equals(src.mimeType)) {
-    success=copyDirectoryHelper(src,dstInfo);
+    copyDirectoryHelper(src,dstInfo);
   }
  else {
-    success=copyFileHelper(src,dstInfo,dstMimeType);
+    copyFileHelper(src,dstInfo,dstMimeType);
   }
-  return success;
 }
