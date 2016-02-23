@@ -2,13 +2,44 @@
   if (invalidateAuthenticatorCache) {
     mAuthenticatorCache.invalidateCache(accounts.userId);
   }
-  final HashSet<AuthenticatorDescription> knownAuth=Sets.newHashSet();
+  final HashMap<String,Integer> knownAuth=new HashMap<>();
   for (  RegisteredServicesCache.ServiceInfo<AuthenticatorDescription> service : mAuthenticatorCache.getAllServices(accounts.userId)) {
-    knownAuth.add(service.type);
+    knownAuth.put(service.type.type,service.uid);
   }
 synchronized (accounts.cacheLock) {
     final SQLiteDatabase db=accounts.openHelper.getWritableDatabase();
     boolean accountDeleted=false;
+    Cursor metaCursor=db.query(TABLE_META,new String[]{META_KEY,META_VALUE},SELECTION_META_BY_AUTHENTICATOR_TYPE,new String[]{META_KEY_FOR_AUTHENTICATOR_UID_FOR_TYPE_PREFIX + "%"},null,null,META_KEY);
+    HashSet<String> obsoleteAuthType=Sets.newHashSet();
+    try {
+      while (metaCursor.moveToNext()) {
+        String type=TextUtils.split(metaCursor.getString(0),META_KEY_DELIMITER)[1];
+        String uid=metaCursor.getString(1);
+        if (TextUtils.isEmpty(type) || TextUtils.isEmpty(uid)) {
+          Slog.e(TAG,"Auth type empty: " + TextUtils.isEmpty(type) + ", uid empty: "+ TextUtils.isEmpty(uid));
+          continue;
+        }
+        Integer knownUid=knownAuth.get(type);
+        if (knownUid != null && uid.equals(knownUid.toString())) {
+          knownAuth.remove(type);
+        }
+ else {
+          obsoleteAuthType.add(type);
+          db.delete(TABLE_META,META_KEY + "=? AND " + META_VALUE+ "=?",new String[]{META_KEY_FOR_AUTHENTICATOR_UID_FOR_TYPE_PREFIX + type,uid});
+        }
+      }
+    }
+  finally {
+      metaCursor.close();
+    }
+    Iterator<Entry<String,Integer>> iterator=knownAuth.entrySet().iterator();
+    while (iterator.hasNext()) {
+      Entry<String,Integer> entry=iterator.next();
+      ContentValues values=new ContentValues();
+      values.put(META_KEY,META_KEY_FOR_AUTHENTICATOR_UID_FOR_TYPE_PREFIX + entry.getKey());
+      values.put(META_VALUE,entry.getValue());
+      db.insert(TABLE_META,null,values);
+    }
     Cursor cursor=db.query(TABLE_ACCOUNTS,new String[]{ACCOUNTS_ID,ACCOUNTS_TYPE,ACCOUNTS_NAME},null,null,null,null,ACCOUNTS_ID);
     try {
       accounts.accountCache.clear();
@@ -17,8 +48,8 @@ synchronized (accounts.cacheLock) {
         final long accountId=cursor.getLong(0);
         final String accountType=cursor.getString(1);
         final String accountName=cursor.getString(2);
-        if (!knownAuth.contains(AuthenticatorDescription.newKey(accountType))) {
-          Slog.w(TAG,"deleting account " + accountName + " because type "+ accountType+ " no longer has a registered authenticator");
+        if (obsoleteAuthType.contains(accountType)) {
+          Slog.w(TAG,"deleting account " + accountName + " because type "+ accountType+ "'s registered authenticator no longer exist.");
           db.delete(TABLE_ACCOUNTS,ACCOUNTS_ID + "=" + accountId,null);
           accountDeleted=true;
           logRecord(db,DebugDbHelper.ACTION_AUTHENTICATOR_REMOVE,TABLE_ACCOUNTS,accountId,accounts);
