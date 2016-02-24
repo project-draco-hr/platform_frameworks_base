@@ -3,8 +3,11 @@
   String pkgName=deletedPackage.packageName;
   boolean deletedPkg=true;
   boolean addedPkg=false;
+  boolean updatedSettings=false;
+  final boolean killApp=(scanFlags & SCAN_DONT_KILL_APP) == 0;
+  final int deleteFlags=PackageManager.DELETE_KEEP_DATA | (killApp ? 0 : PackageManager.DELETE_DONT_KILL_APP);
   final long origUpdateTime=(pkg.mExtras != null) ? ((PackageSetting)pkg.mExtras).lastUpdateTime : 0;
-  if (!deletePackageLI(pkgName,null,true,allUsers,PackageManager.DELETE_KEEP_DATA,res.removedInfo,true,pkg)) {
+  if (!deletePackageLI(pkgName,null,true,allUsers,deleteFlags,res.removedInfo,true,pkg)) {
     res.setError(INSTALL_FAILED_REPLACE_COULDNT_DELETE,"replaceNonSystemPackageLI");
     deletedPkg=false;
   }
@@ -22,6 +25,26 @@
     try {
       final PackageParser.Package newPackage=scanPackageTracedLI(pkg,parseFlags,scanFlags | SCAN_UPDATE_TIME,System.currentTimeMillis(),user);
       updateSettingsLI(newPackage,installerPackageName,allUsers,res,user);
+      PackageSetting ps=mSettings.mPackages.get(pkgName);
+      if (!killApp) {
+        if (ps.oldCodePaths == null) {
+          ps.oldCodePaths=new ArraySet<>();
+        }
+        Collections.addAll(ps.oldCodePaths,deletedPackage.baseCodePath);
+        if (deletedPackage.splitCodePaths != null) {
+          Collections.addAll(ps.oldCodePaths,deletedPackage.splitCodePaths);
+        }
+      }
+ else {
+        ps.oldCodePaths=null;
+      }
+      if (ps.childPackageNames != null) {
+        for (int i=ps.childPackageNames.size() - 1; i >= 0; --i) {
+          final String childPkgName=ps.childPackageNames.get(i);
+          final PackageSetting childPs=mSettings.mPackages.get(childPkgName);
+          childPs.oldCodePaths=ps.oldCodePaths;
+        }
+      }
       prepareAppDataAfterInstall(newPackage);
       addedPkg=true;
     }
@@ -32,7 +55,7 @@
   if (res.returnCode != PackageManager.INSTALL_SUCCEEDED) {
     if (DEBUG_INSTALL)     Slog.d(TAG,"Install failed, rolling pack: " + pkgName);
     if (addedPkg) {
-      deletePackageLI(pkgName,null,true,allUsers,PackageManager.DELETE_KEEP_DATA,res.removedInfo,true,null);
+      deletePackageLI(pkgName,null,true,allUsers,deleteFlags,res.removedInfo,true,null);
     }
     if (deletedPkg) {
       if (DEBUG_INSTALL)       Slog.d(TAG,"Install failed, reinstalling: " + deletedPackage);
