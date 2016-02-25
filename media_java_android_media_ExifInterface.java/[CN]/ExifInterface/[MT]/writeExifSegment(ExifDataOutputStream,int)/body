@@ -1,0 +1,127 @@
+{
+  int[] ifdOffsets=new int[EXIF_TAGS.length];
+  int[] ifdDataSizes=new int[EXIF_TAGS.length];
+  HashMap[] ifdTags=new HashMap[EXIF_TAGS.length];
+  for (int i=0; i < EXIF_TAGS.length; ++i) {
+    ifdTags[i]=new HashMap();
+  }
+  for (  ExifTag tag : IFD_POINTER_TAGS) {
+    mAttributes.remove(tag.name);
+  }
+  for (  Map.Entry<String,String> entry : mAttributes.entrySet()) {
+    Pair<Integer,Integer> pair=sExifTagMapForWriting.get(entry.getKey());
+    if (pair != null) {
+      int tagNumber=pair.first;
+      int hint=pair.second;
+      ifdTags[hint].put(tagNumber,entry.getValue());
+    }
+  }
+  if (!ifdTags[IFD_INTEROPERABILITY_HINT].isEmpty()) {
+    ifdTags[IFD_EXIF_HINT].put(IFD_POINTER_TAGS[2].number,"0");
+  }
+  if (!ifdTags[IFD_EXIF_HINT].isEmpty()) {
+    ifdTags[IFD_TIFF_HINT].put(IFD_POINTER_TAGS[0].number,"0");
+  }
+  if (!ifdTags[IFD_GPS_HINT].isEmpty()) {
+    ifdTags[IFD_TIFF_HINT].put(IFD_POINTER_TAGS[1].number,"0");
+  }
+  if (mHasThumbnail) {
+    ifdTags[IFD_TIFF_HINT].put(JPEG_INTERCHANGE_FORMAT_TAG.number,"0");
+    ifdTags[IFD_TIFF_HINT].put(JPEG_INTERCHANGE_FORMAT_LENGTH_TAG.number,String.valueOf(mThumbnailLength));
+  }
+  for (int i=0; i < 5; ++i) {
+    int sum=0;
+    for (    Object entry : ifdTags[i].entrySet()) {
+      String entryValue=(String)((Map.Entry)entry).getValue();
+      int dataFormat=getDataFormatOfExifEntryValue(entryValue);
+      int size=getSizeOfExifEntryValue(dataFormat,entryValue);
+      if (size > 4) {
+        sum+=size;
+      }
+    }
+    ifdDataSizes[i]+=sum;
+  }
+  int position=8;
+  for (int hint=0; hint < EXIF_TAGS.length; ++hint) {
+    if (!ifdTags[hint].isEmpty()) {
+      ifdOffsets[hint]=position;
+      position+=2 + ifdTags[hint].size() * 12 + 4 + ifdDataSizes[hint];
+    }
+  }
+  if (mHasThumbnail) {
+    int thumbnailOffset=position;
+    ifdTags[IFD_TIFF_HINT].put(JPEG_INTERCHANGE_FORMAT_TAG.number,String.valueOf(thumbnailOffset));
+    ifdTags[IFD_TIFF_HINT].put(JPEG_INTERCHANGE_FORMAT_LENGTH_TAG.number,String.valueOf(mThumbnailLength));
+    mThumbnailOffset=exifOffsetFromBeginning + thumbnailOffset;
+    position+=mThumbnailLength;
+  }
+  int totalSize=position + 8;
+  if (DEBUG) {
+    Log.d(TAG,"totalSize length: " + totalSize);
+    for (int i=0; i < 5; ++i) {
+      Log.d(TAG,String.format("index: %d, offsets: %d, tag count: %d, data sizes: %d",i,ifdOffsets[i],ifdTags[i].size(),ifdDataSizes[i]));
+    }
+  }
+  if (!ifdTags[IFD_EXIF_HINT].isEmpty()) {
+    ifdTags[IFD_TIFF_HINT].put(IFD_POINTER_TAGS[0].number,String.valueOf(ifdOffsets[IFD_EXIF_HINT]));
+  }
+  if (!ifdTags[IFD_GPS_HINT].isEmpty()) {
+    ifdTags[IFD_TIFF_HINT].put(IFD_POINTER_TAGS[1].number,String.valueOf(ifdOffsets[IFD_GPS_HINT]));
+  }
+  if (!ifdTags[IFD_INTEROPERABILITY_HINT].isEmpty()) {
+    ifdTags[IFD_EXIF_HINT].put(IFD_POINTER_TAGS[2].number,String.valueOf(ifdOffsets[IFD_INTEROPERABILITY_HINT]));
+  }
+  dataOutputStream.writeUnsignedShort(totalSize);
+  dataOutputStream.write(IDENTIFIER_APP1);
+  dataOutputStream.writeShort(BYTE_ALIGN_MM);
+  dataOutputStream.writeUnsignedShort(0x2a);
+  dataOutputStream.writeUnsignedInt(8);
+  for (int hint=0; hint < EXIF_TAGS.length; ++hint) {
+    if (!ifdTags[hint].isEmpty()) {
+      dataOutputStream.writeUnsignedShort(ifdTags[hint].size());
+      int dataOffset=ifdOffsets[hint] + 2 + ifdTags[hint].size() * 12 + 4;
+      for (      Object obj : ifdTags[hint].entrySet()) {
+        Map.Entry entry=(Map.Entry)obj;
+        int tagNumber=(int)entry.getKey();
+        String entryValue=(String)entry.getValue();
+        int dataFormat=getDataFormatOfExifEntryValue(entryValue);
+        int numberOfComponents=getNumberOfComponentsInExifEntryValue(dataFormat,entryValue);
+        int byteCount=getSizeOfExifEntryValue(dataFormat,entryValue);
+        dataOutputStream.writeUnsignedShort(tagNumber);
+        dataOutputStream.writeUnsignedShort(dataFormat);
+        dataOutputStream.writeInt(numberOfComponents);
+        if (byteCount > 4) {
+          dataOutputStream.writeUnsignedInt(dataOffset);
+          dataOffset+=byteCount;
+        }
+ else {
+          int bytesWritten=writeExifEntryValue(dataOutputStream,entryValue);
+          if (bytesWritten < 4) {
+            for (int i=bytesWritten; i < 4; ++i) {
+              dataOutputStream.write(0);
+            }
+          }
+        }
+      }
+      if (hint == 0 && !ifdTags[IFD_THUMBNAIL_HINT].isEmpty()) {
+        dataOutputStream.writeUnsignedInt(ifdOffsets[IFD_THUMBNAIL_HINT]);
+      }
+ else {
+        dataOutputStream.writeUnsignedInt(0);
+      }
+      for (      Object obj : ifdTags[hint].entrySet()) {
+        Map.Entry entry=(Map.Entry)obj;
+        String entryValue=(String)entry.getValue();
+        int dataFormat=getDataFormatOfExifEntryValue(entryValue);
+        int byteCount=getSizeOfExifEntryValue(dataFormat,entryValue);
+        if (byteCount > 4) {
+          writeExifEntryValue(dataOutputStream,entryValue);
+        }
+      }
+    }
+  }
+  if (mHasThumbnail) {
+    dataOutputStream.write(getThumbnail());
+  }
+  return totalSize;
+}
