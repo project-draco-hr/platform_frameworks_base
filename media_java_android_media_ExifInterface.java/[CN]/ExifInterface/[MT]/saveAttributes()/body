@@ -2,25 +2,56 @@
   if (mIsRaw) {
     throw new UnsupportedOperationException("ExifInterface does not support saving attributes on RAW formats.");
   }
-  StringBuilder sb=new StringBuilder();
-  int size=mAttributes.size();
-  if (mAttributes.containsKey(TAG_HAS_THUMBNAIL)) {
-    --size;
+  if (mFileDescriptor == null && mFilename == null) {
+    throw new UnsupportedOperationException("ExifInterface does not support saving attributes for input streams.");
   }
-  sb.append(size).append(" ");
-  for (  Map.Entry<String,String> entry : mAttributes.entrySet()) {
-    String key=entry.getKey();
-    if (key.equals(TAG_HAS_THUMBNAIL)) {
-      continue;
+  mThumbnailBytes=getThumbnail();
+  FileInputStream in=null;
+  FileOutputStream out=null;
+  File tempFile=null;
+  try {
+    if (mFilename != null) {
+      tempFile=new File(mFilename + ".tmp");
+      File originalFile=new File(mFilename);
+      if (!originalFile.renameTo(tempFile)) {
+        throw new IOException("Could'nt rename to " + tempFile.getAbsolutePath());
+      }
     }
-    String val=entry.getValue();
-    sb.append(key).append("=");
-    sb.append(val.length()).append(" ");
-    sb.append(val);
+    if (mFileDescriptor != null) {
+      tempFile=File.createTempFile("temp","jpg");
+      Os.lseek(mFileDescriptor,0,OsConstants.SEEK_SET);
+      in=new FileInputStream(mFileDescriptor);
+      out=new FileOutputStream(tempFile);
+      Streams.copy(in,out);
+    }
   }
-  String s=sb.toString();
-synchronized (sLock) {
-    saveAttributesNative(mFilename,s);
-    commitChangesNative(mFilename);
+ catch (  ErrnoException e) {
+    e.rethrowAsIOException();
   }
+ finally {
+    IoUtils.closeQuietly(in);
+    IoUtils.closeQuietly(out);
+  }
+  in=null;
+  out=null;
+  try {
+    in=new FileInputStream(tempFile);
+    if (mFilename != null) {
+      out=new FileOutputStream(mFilename);
+    }
+    if (mFileDescriptor != null) {
+      Os.lseek(mFileDescriptor,0,OsConstants.SEEK_SET);
+      out=new FileOutputStream(mFileDescriptor);
+    }
+    saveJpegAttributes(in,out);
+  }
+ catch (  ErrnoException e) {
+    e.rethrowAsIOException();
+  }
+ finally {
+    IoUtils.closeQuietly(in);
+    IoUtils.closeQuietly(out);
+    tempFile.delete();
+  }
+  mThumbnailBytes=null;
 }
