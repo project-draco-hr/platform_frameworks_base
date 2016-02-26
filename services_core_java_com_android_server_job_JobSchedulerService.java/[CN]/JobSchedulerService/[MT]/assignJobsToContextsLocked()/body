@@ -2,82 +2,109 @@
   if (DEBUG) {
     Slog.d(TAG,printPendingQueue());
   }
-  JobStatus[] contextIdToJobMap=new JobStatus[MAX_JOB_CONTEXTS_COUNT];
-  boolean[] act=new boolean[MAX_JOB_CONTEXTS_COUNT];
-  int[] preferredUidForContext=new int[MAX_JOB_CONTEXTS_COUNT];
-  for (int i=0; i < mActiveServices.size(); i++) {
-    contextIdToJobMap[i]=mActiveServices.get(i).getRunningJob();
-    preferredUidForContext[i]=mActiveServices.get(i).getPreferredUid();
+  int memLevel;
+  try {
+    memLevel=ActivityManagerNative.getDefault().getMemoryTrimLevel();
   }
-  if (DEBUG) {
-    Slog.d(TAG,printContextIdToJobMap(contextIdToJobMap,"running jobs initial"));
+ catch (  RemoteException e) {
+    memLevel=ProcessStats.ADJ_MEM_FACTOR_NORMAL;
   }
-  Iterator<JobStatus> it=mPendingJobs.iterator();
-  while (it.hasNext()) {
-    JobStatus nextPending=it.next();
-    int jobRunningContext=findJobContextIdFromMap(nextPending,contextIdToJobMap);
-    if (jobRunningContext != -1) {
-      continue;
-    }
-    nextPending.lastEvaluatedPriority=evaluateJobPriorityLocked(nextPending);
-    int minPriority=Integer.MAX_VALUE;
-    int minPriorityContextId=-1;
-    for (int i=0; i < mActiveServices.size(); i++) {
-      JobStatus job=contextIdToJobMap[i];
-      int preferredUid=preferredUidForContext[i];
-      if (job == null && (preferredUid == nextPending.getUid() || preferredUid == JobServiceContext.NO_PREFERRED_UID)) {
-        minPriorityContextId=i;
-        break;
-      }
-      if (job == null) {
-        continue;
-      }
-      if (job.getUid() != nextPending.getUid()) {
-        continue;
-      }
-      if (evaluateJobPriorityLocked(job) >= nextPending.lastEvaluatedPriority) {
-        continue;
-      }
-      if (minPriority > nextPending.lastEvaluatedPriority) {
-        minPriority=nextPending.lastEvaluatedPriority;
-        minPriorityContextId=i;
-      }
-    }
-    if (minPriorityContextId != -1) {
-      contextIdToJobMap[minPriorityContextId]=nextPending;
-      act[minPriorityContextId]=true;
-    }
-  }
-  if (DEBUG) {
-    Slog.d(TAG,printContextIdToJobMap(contextIdToJobMap,"running jobs final"));
-  }
-  for (int i=0; i < mActiveServices.size(); i++) {
-    boolean preservePreferredUid=false;
-    if (act[i]) {
-      JobStatus js=mActiveServices.get(i).getRunningJob();
-      if (js != null) {
-        if (DEBUG) {
-          Slog.d(TAG,"preempting job: " + mActiveServices.get(i).getRunningJob());
-        }
-        mActiveServices.get(i).preemptExecutingJob();
-        preservePreferredUid=true;
-      }
+switch (memLevel) {
+case ProcessStats.ADJ_MEM_FACTOR_MODERATE:
+    mMaxActiveJobs=((MAX_JOB_CONTEXTS_COUNT - 2) * 2) / 3;
+  break;
+case ProcessStats.ADJ_MEM_FACTOR_LOW:
+mMaxActiveJobs=(MAX_JOB_CONTEXTS_COUNT - 2) / 3;
+break;
+case ProcessStats.ADJ_MEM_FACTOR_CRITICAL:
+mMaxActiveJobs=1;
+break;
+default :
+mMaxActiveJobs=MAX_JOB_CONTEXTS_COUNT - 2;
+break;
+}
+JobStatus[] contextIdToJobMap=mTmpAssignContextIdToJobMap;
+boolean[] act=mTmpAssignAct;
+int[] preferredUidForContext=mTmpAssignPreferredUidForContext;
+int numActive=0;
+for (int i=0; i < MAX_JOB_CONTEXTS_COUNT; i++) {
+final JobServiceContext js=mActiveServices.get(i);
+if ((contextIdToJobMap[i]=js.getRunningJob()) != null) {
+numActive++;
+}
+act[i]=false;
+preferredUidForContext[i]=js.getPreferredUid();
+}
+if (DEBUG) {
+Slog.d(TAG,printContextIdToJobMap(contextIdToJobMap,"running jobs initial"));
+}
+for (int i=0; i < mPendingJobs.size(); i++) {
+JobStatus nextPending=mPendingJobs.get(i);
+int jobRunningContext=findJobContextIdFromMap(nextPending,contextIdToJobMap);
+if (jobRunningContext != -1) {
+continue;
+}
+final int priority=evaluateJobPriorityLocked(nextPending);
+nextPending.lastEvaluatedPriority=priority;
+int minPriority=Integer.MAX_VALUE;
+int minPriorityContextId=-1;
+for (int j=0; j < MAX_JOB_CONTEXTS_COUNT; j++) {
+JobStatus job=contextIdToJobMap[j];
+int preferredUid=preferredUidForContext[j];
+if (job == null) {
+if ((numActive < mMaxActiveJobs || priority >= JobInfo.PRIORITY_TOP_APP) && (preferredUid == nextPending.getUid() || preferredUid == JobServiceContext.NO_PREFERRED_UID)) {
+minPriorityContextId=j;
+numActive++;
+break;
+}
+continue;
+}
+if (job.getUid() != nextPending.getUid()) {
+continue;
+}
+if (evaluateJobPriorityLocked(job) >= nextPending.lastEvaluatedPriority) {
+continue;
+}
+if (minPriority > nextPending.lastEvaluatedPriority) {
+minPriority=nextPending.lastEvaluatedPriority;
+minPriorityContextId=j;
+}
+}
+if (minPriorityContextId != -1) {
+contextIdToJobMap[minPriorityContextId]=nextPending;
+act[minPriorityContextId]=true;
+}
+}
+if (DEBUG) {
+Slog.d(TAG,printContextIdToJobMap(contextIdToJobMap,"running jobs final"));
+}
+for (int i=0; i < MAX_JOB_CONTEXTS_COUNT; i++) {
+boolean preservePreferredUid=false;
+if (act[i]) {
+JobStatus js=mActiveServices.get(i).getRunningJob();
+if (js != null) {
+if (DEBUG) {
+Slog.d(TAG,"preempting job: " + mActiveServices.get(i).getRunningJob());
+}
+mActiveServices.get(i).preemptExecutingJob();
+preservePreferredUid=true;
+}
  else {
-        final JobStatus pendingJob=contextIdToJobMap[i];
-        if (DEBUG) {
-          Slog.d(TAG,"About to run job on context " + String.valueOf(i) + ", job: "+ pendingJob);
-        }
-        for (int ic=0; ic < mControllers.size(); ic++) {
-          mControllers.get(ic).prepareForExecutionLocked(pendingJob);
-        }
-        if (!mActiveServices.get(i).executeRunnableJob(pendingJob)) {
-          Slog.d(TAG,"Error executing " + pendingJob);
-        }
-        mPendingJobs.remove(pendingJob);
-      }
-    }
-    if (!preservePreferredUid) {
-      mActiveServices.get(i).clearPreferredUid();
-    }
-  }
+final JobStatus pendingJob=contextIdToJobMap[i];
+if (DEBUG) {
+Slog.d(TAG,"About to run job on context " + String.valueOf(i) + ", job: "+ pendingJob);
+}
+for (int ic=0; ic < mControllers.size(); ic++) {
+mControllers.get(ic).prepareForExecutionLocked(pendingJob);
+}
+if (!mActiveServices.get(i).executeRunnableJob(pendingJob)) {
+Slog.d(TAG,"Error executing " + pendingJob);
+}
+mPendingJobs.remove(pendingJob);
+}
+}
+if (!preservePreferredUid) {
+mActiveServices.get(i).clearPreferredUid();
+}
+}
 }
