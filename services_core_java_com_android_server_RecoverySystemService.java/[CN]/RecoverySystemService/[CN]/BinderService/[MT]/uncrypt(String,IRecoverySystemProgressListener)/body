@@ -9,54 +9,51 @@
     Slog.e(TAG,"IOException when writing \"" + RecoverySystem.UNCRYPT_PACKAGE_FILE + "\": "+ e.getMessage());
     return false;
   }
-  new File(UNCRYPT_STATUS_FILE).delete();
-  try {
-    Os.mkfifo(UNCRYPT_STATUS_FILE,0600);
-  }
- catch (  ErrnoException e) {
-    Slog.e(TAG,"ErrnoException when creating named pipe \"" + UNCRYPT_STATUS_FILE + "\": "+ e.getMessage());
+  SystemProperties.set("ctl.start","uncrypt");
+  LocalSocket socket=connectService();
+  if (socket == null) {
+    Slog.e(TAG,"Failed to connect to uncrypt socket");
     return false;
   }
-  SystemProperties.set("ctl.start","uncrypt");
-  try (BufferedReader reader=new BufferedReader(new FileReader(UNCRYPT_STATUS_FILE))){
+  try (DataInputStream dis=new DataInputStream(socket.getInputStream());DataOutputStream dos=new DataOutputStream(socket.getOutputStream())){
     int lastStatus=Integer.MIN_VALUE;
     while (true) {
-      String str=reader.readLine();
-      try {
-        int status=Integer.parseInt(str);
-        if (status == lastStatus && lastStatus != Integer.MIN_VALUE) {
-          continue;
-        }
-        lastStatus=status;
-        if (status >= 0 && status <= 100) {
-          Slog.i(TAG,"uncrypt read status: " + status);
-          if (listener != null) {
-            try {
-              listener.onProgress(status);
-            }
- catch (            RemoteException unused) {
-              Slog.w(TAG,"RemoteException when posting progress");
-            }
+      int status=dis.readInt();
+      if (status == lastStatus && lastStatus != Integer.MIN_VALUE) {
+        continue;
+      }
+      lastStatus=status;
+      if (status >= 0 && status <= 100) {
+        Slog.i(TAG,"uncrypt read status: " + status);
+        if (listener != null) {
+          try {
+            listener.onProgress(status);
           }
-          if (status == 100) {
-            Slog.i(TAG,"uncrypt successfully finished.");
-            break;
+ catch (          RemoteException unused) {
+            Slog.w(TAG,"RemoteException when posting progress");
           }
         }
- else {
-          Slog.e(TAG,"uncrypt failed with status: " + status);
-          return false;
+        if (status == 100) {
+          Slog.i(TAG,"uncrypt successfully finished.");
+          dos.writeInt(0);
+          dos.flush();
+          break;
         }
       }
- catch (      NumberFormatException unused) {
-        Slog.e(TAG,"uncrypt invalid status received: " + str);
+ else {
+        Slog.e(TAG,"uncrypt failed with status: " + status);
+        dos.writeInt(0);
+        dos.flush();
         return false;
       }
     }
   }
- catch (  IOException unused) {
-    Slog.e(TAG,"IOException when reading \"" + UNCRYPT_STATUS_FILE + "\".");
+ catch (  IOException e) {
+    Slog.e(TAG,"IOException when reading status: " + e);
     return false;
+  }
+ finally {
+    IoUtils.closeQuietly(socket);
   }
   return true;
 }
