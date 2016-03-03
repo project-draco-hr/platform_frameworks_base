@@ -1,52 +1,39 @@
 {
   mContext.enforceCallingOrSelfPermission(android.Manifest.permission.RECOVERY,null);
   if (isSetup) {
-    try (FileWriter commandFile=new FileWriter(COMMAND_FILE)){
-      commandFile.write(command + "\n");
-    }
- catch (    IOException e) {
-      Slog.e(TAG,"IOException when writing \"" + COMMAND_FILE + "\": "+ e.getMessage());
-      return false;
-    }
-  }
-  new File(UNCRYPT_STATUS_FILE).delete();
-  try {
-    Os.mkfifo(UNCRYPT_STATUS_FILE,0600);
-  }
- catch (  ErrnoException e) {
-    Slog.e(TAG,"ErrnoException when creating named pipe \"" + UNCRYPT_STATUS_FILE + "\": "+ e.getMessage());
-    return false;
-  }
-  if (isSetup) {
     SystemProperties.set("ctl.start","setup-bcb");
   }
  else {
     SystemProperties.set("ctl.start","clear-bcb");
   }
-  try (BufferedReader reader=new BufferedReader(new FileReader(UNCRYPT_STATUS_FILE))){
-    while (true) {
-      String str=reader.readLine();
-      try {
-        int status=Integer.parseInt(str);
-        if (status == 100) {
-          Slog.i(TAG,"uncrypt " + (isSetup ? "setup" : "clear") + " bcb successfully finished.");
-          break;
-        }
- else {
-          Slog.e(TAG,"uncrypt failed with status: " + status);
-          return false;
-        }
-      }
- catch (      NumberFormatException unused) {
-        Slog.e(TAG,"uncrypt invalid status received: " + str);
-        return false;
-      }
-    }
-  }
- catch (  IOException unused) {
-    Slog.e(TAG,"IOException when reading \"" + UNCRYPT_STATUS_FILE + "\".");
+  LocalSocket socket=connectService();
+  if (socket == null) {
+    Slog.e(TAG,"Failed to connect to uncrypt socket");
     return false;
   }
-  new File(COMMAND_FILE).delete();
+  try (DataInputStream dis=new DataInputStream(socket.getInputStream());DataOutputStream dos=new DataOutputStream(socket.getOutputStream())){
+    if (isSetup) {
+      dos.writeInt(command.length());
+      dos.writeBytes(command);
+      dos.flush();
+    }
+    int status=dis.readInt();
+    dos.writeInt(0);
+    dos.flush();
+    if (status == 100) {
+      Slog.i(TAG,"uncrypt " + (isSetup ? "setup" : "clear") + " bcb successfully finished.");
+    }
+ else {
+      Slog.e(TAG,"uncrypt failed with status: " + status);
+      return false;
+    }
+  }
+ catch (  IOException e) {
+    Slog.e(TAG,"IOException when getting output stream: " + e);
+    return false;
+  }
+ finally {
+    IoUtils.closeQuietly(socket);
+  }
   return true;
 }
