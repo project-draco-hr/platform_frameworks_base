@@ -1,5 +1,11 @@
 {
+  if (dataInputStream.peek() + 2 > dataInputStream.mLength) {
+    return;
+  }
   short numberOfDirectoryEntry=dataInputStream.readShort();
+  if (dataInputStream.peek() + 12 * numberOfDirectoryEntry > dataInputStream.mLength) {
+    return;
+  }
   if (DEBUG) {
     Log.d(TAG,"numberOfDirectoryEntry: " + numberOfDirectoryEntry);
   }
@@ -8,8 +14,19 @@
     int dataFormat=dataInputStream.readUnsignedShort();
     int numberOfComponents=dataInputStream.readInt();
     long nextEntryOffset=dataInputStream.peek() + 4;
+    String tagName=(String)sExifTagMapsForReading[hint].get(tagNumber);
     if (DEBUG) {
-      Log.d(TAG,String.format("tagNumber: %d, dataFormat: %d, numberOfComponents: %d",tagNumber,dataFormat,numberOfComponents));
+      Log.d(TAG,String.format("hint: %d, tagNumber: %d, tagName: %s, dataFormat: %d," + "numberOfComponents: %d",hint,tagNumber,tagName,dataFormat,numberOfComponents));
+    }
+    if (tagName == null || dataFormat <= 0 || dataFormat >= IFD_FORMAT_BYTES_PER_FORMAT.length) {
+      if (tagName == null) {
+        Log.w(TAG,"Skip the tag entry since tag number is not defined: " + tagNumber);
+      }
+ else {
+        Log.w(TAG,"Skip the tag entry since data format is invalid: " + dataFormat);
+      }
+      dataInputStream.seek(nextEntryOffset);
+      continue;
     }
     int byteCount=numberOfComponents * IFD_FORMAT_BYTES_PER_FORMAT[dataFormat];
     if (byteCount > 4) {
@@ -17,14 +34,19 @@
       if (DEBUG) {
         Log.d(TAG,"seek to data offset: " + offset);
       }
-      dataInputStream.seek(offset);
-    }
-    String tagName=(String)sExifTagMapsForReading[hint].get(tagNumber);
-    if (tagName == null) {
-      dataInputStream.seek(nextEntryOffset);
-      continue;
+      if (offset + byteCount <= dataInputStream.mLength) {
+        dataInputStream.seek(offset);
+      }
+ else {
+        Log.w(TAG,"Skip the tag entry since data offset is invalid: " + offset);
+        dataInputStream.seek(nextEntryOffset);
+        continue;
+      }
     }
     int innerIfdHint=getIfdHintFromTagNumber(tagNumber);
+    if (DEBUG) {
+      Log.d(TAG,"innerIfdHint: " + innerIfdHint + " byteCount: "+ byteCount);
+    }
     if (innerIfdHint >= 0) {
       long offset=-1L;
 switch (dataFormat) {
@@ -56,9 +78,12 @@ default :
 if (DEBUG) {
 Log.d(TAG,String.format("Offset: %d, tagName: %s",offset,tagName));
 }
-if (offset > 0L) {
+if (offset > 0L && offset < dataInputStream.mLength) {
 dataInputStream.seek(offset);
 readImageFileDirectory(dataInputStream,innerIfdHint);
+}
+ else {
+Log.w(TAG,"Skip jump into the IFD since its offset is invalid: " + offset);
 }
 dataInputStream.seek(nextEntryOffset);
 continue;
@@ -83,12 +108,14 @@ if (dataInputStream.peek() != nextEntryOffset) {
 dataInputStream.seek(nextEntryOffset);
 }
 }
+if (dataInputStream.peek() + 4 <= dataInputStream.mLength) {
 long nextIfdOffset=dataInputStream.readUnsignedInt();
 if (DEBUG) {
 Log.d(TAG,String.format("nextIfdOffset: %d",nextIfdOffset));
 }
-if (nextIfdOffset > 8) {
+if (nextIfdOffset > 8 && nextIfdOffset < dataInputStream.mLength) {
 dataInputStream.seek(nextIfdOffset);
 readImageFileDirectory(dataInputStream,IFD_THUMBNAIL_HINT);
+}
 }
 }
