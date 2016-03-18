@@ -1,0 +1,32 @@
+{
+  if (expectedDigests.isEmpty()) {
+    throw new SecurityException("No digests provided");
+  }
+  DataSource beforeApkSigningBlock=new MemoryMappedFileDataSource(apkFileDescriptor,0,apkSigningBlockOffset);
+  DataSource centralDir=new MemoryMappedFileDataSource(apkFileDescriptor,centralDirOffset,eocdOffset - centralDirOffset);
+  eocdBuf=eocdBuf.duplicate();
+  eocdBuf.order(ByteOrder.LITTLE_ENDIAN);
+  ZipUtils.setZipEocdCentralDirectoryOffset(eocdBuf,apkSigningBlockOffset);
+  DataSource eocd=new ByteBufferDataSource(eocdBuf);
+  int[] digestAlgorithms=new int[expectedDigests.size()];
+  int digestAlgorithmCount=0;
+  for (  int digestAlgorithm : expectedDigests.keySet()) {
+    digestAlgorithms[digestAlgorithmCount]=digestAlgorithm;
+    digestAlgorithmCount++;
+  }
+  byte[][] actualDigests;
+  try {
+    actualDigests=computeContentDigests(digestAlgorithms,new DataSource[]{beforeApkSigningBlock,centralDir,eocd});
+  }
+ catch (  DigestException e) {
+    throw new SecurityException("Failed to compute digest(s) of contents",e);
+  }
+  for (int i=0; i < digestAlgorithms.length; i++) {
+    int digestAlgorithm=digestAlgorithms[i];
+    byte[] expectedDigest=expectedDigests.get(digestAlgorithm);
+    byte[] actualDigest=actualDigests[i];
+    if (!MessageDigest.isEqual(expectedDigest,actualDigest)) {
+      throw new SecurityException(getContentDigestAlgorithmJcaDigestAlgorithm(digestAlgorithm) + " digest of contents did not verify");
+    }
+  }
+}

@@ -1,0 +1,30 @@
+{
+  if (centralDirOffset < APK_SIG_BLOCK_MIN_SIZE) {
+    throw new SignatureNotFoundException("APK too small for APK Signing Block. ZIP Central Directory offset: " + centralDirOffset);
+  }
+  ByteBuffer footer=ByteBuffer.allocate(24);
+  footer.order(ByteOrder.LITTLE_ENDIAN);
+  apk.seek(centralDirOffset - footer.capacity());
+  apk.readFully(footer.array(),footer.arrayOffset(),footer.capacity());
+  if ((footer.getLong(8) != APK_SIG_BLOCK_MAGIC_LO) || (footer.getLong(16) != APK_SIG_BLOCK_MAGIC_HI)) {
+    throw new SignatureNotFoundException("No APK Signing Block before ZIP Central Directory");
+  }
+  long apkSigBlockSizeInFooter=footer.getLong(0);
+  if ((apkSigBlockSizeInFooter < footer.capacity()) || (apkSigBlockSizeInFooter > Integer.MAX_VALUE - 8)) {
+    throw new SignatureNotFoundException("APK Signing Block size out of range: " + apkSigBlockSizeInFooter);
+  }
+  int totalSize=(int)(apkSigBlockSizeInFooter + 8);
+  long apkSigBlockOffset=centralDirOffset - totalSize;
+  if (apkSigBlockOffset < 0) {
+    throw new SignatureNotFoundException("APK Signing Block offset out of range: " + apkSigBlockOffset);
+  }
+  ByteBuffer apkSigBlock=ByteBuffer.allocate(totalSize);
+  apkSigBlock.order(ByteOrder.LITTLE_ENDIAN);
+  apk.seek(apkSigBlockOffset);
+  apk.readFully(apkSigBlock.array(),apkSigBlock.arrayOffset(),apkSigBlock.capacity());
+  long apkSigBlockSizeInHeader=apkSigBlock.getLong(0);
+  if (apkSigBlockSizeInHeader != apkSigBlockSizeInFooter) {
+    throw new SignatureNotFoundException("APK Signing Block sizes in header and footer do not match: " + apkSigBlockSizeInHeader + " vs "+ apkSigBlockSizeInFooter);
+  }
+  return Pair.create(apkSigBlock,apkSigBlockOffset);
+}
