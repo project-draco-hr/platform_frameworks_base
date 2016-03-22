@@ -1,53 +1,101 @@
 {
   boolean success=false;
-  boolean needCrop=false;
-  boolean needScale=false;
+  Rect cropHint=new Rect(wallpaper.cropHint);
   if (DEBUG) {
-    Slog.v(TAG,"Generating crop for new wallpaper(s): 0x" + Integer.toHexString(wallpaper.whichPending) + " to "+ wallpaper.cropFile.getName());
+    Slog.v(TAG,"Generating crop for new wallpaper(s): 0x" + Integer.toHexString(wallpaper.whichPending) + " to "+ wallpaper.cropFile.getName()+ " crop=("+ cropHint.width()+ 'x'+ cropHint.height()+ ") dim=("+ wallpaper.width+ 'x'+ wallpaper.height+ ')');
   }
   BitmapFactory.Options options=new BitmapFactory.Options();
   options.inJustDecodeBounds=true;
   BitmapFactory.decodeFile(wallpaper.wallpaperFile.getAbsolutePath(),options);
-  if (!wallpaper.cropHint.isEmpty()) {
-    wallpaper.cropHint.right=Math.min(wallpaper.cropHint.right,options.outWidth);
-    wallpaper.cropHint.bottom=Math.min(wallpaper.cropHint.bottom,options.outHeight);
-    needCrop=(options.outHeight >= wallpaper.cropHint.height() && options.outWidth >= wallpaper.cropHint.width());
+  if (options.outWidth <= 0 || options.outHeight <= 0) {
+    Slog.e(TAG,"Invalid wallpaper data");
+    success=false;
   }
-  if (!needCrop && !needScale) {
+ else {
+    boolean needCrop=false;
+    boolean needScale=false;
+    if (cropHint.isEmpty()) {
+      cropHint.left=cropHint.top=0;
+      cropHint.right=options.outWidth;
+      cropHint.bottom=options.outHeight;
+    }
+ else {
+      cropHint.offset((cropHint.right > options.outWidth ? options.outWidth - cropHint.right : 0),(cropHint.bottom > options.outHeight ? options.outHeight - cropHint.bottom : 0));
+      needCrop=(options.outHeight >= cropHint.height() && options.outWidth >= cropHint.width());
+    }
+    needScale=(wallpaper.height != cropHint.height());
     if (DEBUG) {
-      Slog.v(TAG,"Null crop of new wallpaper; copying");
+      Slog.v(TAG,"crop: w=" + cropHint.width() + " h="+ cropHint.height());
+      Slog.v(TAG,"dims: w=" + wallpaper.width + " h="+ wallpaper.height);
+      Slog.v(TAG,"meas: w=" + options.outWidth + " h="+ options.outHeight);
+      Slog.v(TAG,"crop?=" + needCrop + " scale?="+ needScale);
     }
-    success=FileUtils.copyFile(wallpaper.wallpaperFile,wallpaper.cropFile);
-    if (!success) {
-      wallpaper.cropFile.delete();
-    }
-  }
- else {
-    FileOutputStream f=null;
-    BufferedOutputStream bos=null;
-    try {
-      BitmapRegionDecoder decoder=BitmapRegionDecoder.newInstance(wallpaper.wallpaperFile.getAbsolutePath(),false);
-      Bitmap cropped=decoder.decodeRegion(wallpaper.cropHint,null);
-      decoder.recycle();
-      if (cropped == null) {
-        Slog.e(TAG,"Could not decode new wallpaper");
-      }
- else {
-        f=new FileOutputStream(wallpaper.cropFile);
-        bos=new BufferedOutputStream(f,32 * 1024);
-        cropped.compress(Bitmap.CompressFormat.PNG,90,bos);
-        bos.flush();
-        success=true;
-      }
-    }
- catch (    IOException e) {
+    if (!needCrop && !needScale) {
       if (DEBUG) {
-        Slog.e(TAG,"I/O error decoding crop: " + e.getMessage());
+        Slog.v(TAG,"Null crop of new wallpaper; copying");
+      }
+      success=FileUtils.copyFile(wallpaper.wallpaperFile,wallpaper.cropFile);
+      if (!success) {
+        wallpaper.cropFile.delete();
       }
     }
+ else {
+      FileOutputStream f=null;
+      BufferedOutputStream bos=null;
+      try {
+        BitmapRegionDecoder decoder=BitmapRegionDecoder.newInstance(wallpaper.wallpaperFile.getAbsolutePath(),false);
+        final BitmapFactory.Options scaler;
+        final int actualScale=cropHint.height() / wallpaper.height;
+        int scale=1;
+        while (2 * scale < actualScale) {
+          scale*=2;
+        }
+        if (scale > 1) {
+          scaler=new BitmapFactory.Options();
+          scaler.inSampleSize=scale;
+          if (DEBUG) {
+            Slog.v(TAG,"Downsampling cropped rect with scale " + scale);
+          }
+        }
+ else {
+          scaler=null;
+        }
+        Bitmap cropped=decoder.decodeRegion(cropHint,scaler);
+        decoder.recycle();
+        if (cropped == null) {
+          Slog.e(TAG,"Could not decode new wallpaper");
+        }
+ else {
+          cropHint.offsetTo(0,0);
+          cropHint.right/=scale;
+          cropHint.bottom/=scale;
+          final float heightR=((float)wallpaper.height) / ((float)cropHint.height());
+          if (DEBUG) {
+            Slog.v(TAG,"scale " + heightR + ", extracting "+ cropHint);
+          }
+          final int destWidth=(int)(cropHint.width() * heightR);
+          final Bitmap finalCrop=Bitmap.createScaledBitmap(cropped,destWidth,wallpaper.height,true);
+          if (DEBUG) {
+            Slog.v(TAG,"Final extract:");
+            Slog.v(TAG,"  dims: w=" + wallpaper.width + " h="+ wallpaper.height);
+            Slog.v(TAG,"   out: w=" + finalCrop.getWidth() + " h="+ finalCrop.getHeight());
+          }
+          f=new FileOutputStream(wallpaper.cropFile);
+          bos=new BufferedOutputStream(f,32 * 1024);
+          finalCrop.compress(Bitmap.CompressFormat.PNG,90,bos);
+          bos.flush();
+          success=true;
+        }
+      }
+ catch (      Exception e) {
+        if (DEBUG) {
+          Slog.e(TAG,"Error decoding crop",e);
+        }
+      }
  finally {
-      IoUtils.closeQuietly(bos);
-      IoUtils.closeQuietly(f);
+        IoUtils.closeQuietly(bos);
+        IoUtils.closeQuietly(f);
+      }
     }
   }
   if (!success) {
