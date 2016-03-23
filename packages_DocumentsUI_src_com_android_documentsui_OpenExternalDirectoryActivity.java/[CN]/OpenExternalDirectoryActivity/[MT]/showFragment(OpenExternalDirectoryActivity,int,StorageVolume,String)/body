@@ -1,8 +1,10 @@
 {
   if (DEBUG)   Log.d(TAG,"showFragment() for volume " + storageVolume.dump() + ", directory "+ directoryName+ ", and user "+ userId);
+  final boolean isRoot=directoryName.equals(DIRECTORY_ROOT);
+  final File volumeRoot=storageVolume.getPathFile();
   File file;
   try {
-    file=new File(storageVolume.getPathFile(),directoryName).getCanonicalFile();
+    file=isRoot ? volumeRoot : new File(volumeRoot,directoryName).getCanonicalFile();
   }
  catch (  IOException e) {
     Log.e(TAG,"Could not get canonical file for volume " + storageVolume.dump() + " and directory "+ directoryName);
@@ -10,28 +12,36 @@
     return false;
   }
   final StorageManager sm=(StorageManager)activity.getSystemService(Context.STORAGE_SERVICE);
-  final String root=file.getParent();
-  final String directory=file.getName();
-  if (TextUtils.isEmpty(directory) || !isStandardDirectory(directory)) {
-    if (DEBUG)     Log.d(TAG,"Directory '" + directory + "' is not standard (full path: '"+ file.getAbsolutePath()+ "')");
-    logInvalidScopedAccessRequest(activity,SCOPED_DIRECTORY_ACCESS_INVALID_DIRECTORY);
-    return false;
+  final String root, directory;
+  if (isRoot) {
+    root=volumeRoot.getAbsolutePath();
+    directory=".";
+  }
+ else {
+    root=file.getParent();
+    directory=file.getName();
+    if (TextUtils.isEmpty(directory) || !isStandardDirectory(directory)) {
+      if (DEBUG)       Log.d(TAG,"Directory '" + directory + "' is not standard (full path: '"+ file.getAbsolutePath()+ "')");
+      logInvalidScopedAccessRequest(activity,SCOPED_DIRECTORY_ACCESS_INVALID_DIRECTORY);
+      return false;
+    }
   }
   String volumeLabel=null;
   String volumeUuid=null;
   final List<VolumeInfo> volumes=sm.getVolumes();
   if (DEBUG)   Log.d(TAG,"Number of volumes: " + volumes.size());
+  File internalRoot=null;
   for (  VolumeInfo volume : volumes) {
     if (isRightVolume(volume,root,userId)) {
-      final File internalRoot=volume.getInternalPathForUser(userId);
+      internalRoot=volume.getInternalPathForUser(userId);
       if (DEBUG)       Log.d(TAG,"Converting " + root + " to "+ internalRoot);
-      file=new File(internalRoot,directory);
+      file=isRoot ? internalRoot : new File(internalRoot,directory);
       volumeLabel=sm.getBestVolumeDescription(volume);
       volumeUuid=volume.getFsUuid();
       break;
     }
   }
-  final Intent intent=getIntentForExistingPermission(activity,file);
+  final Intent intent=getIntentForExistingPermission(activity,isRoot,internalRoot,file);
   if (intent != null) {
     logValidScopedAccessRequest(activity,directory,SCOPED_DIRECTORY_ACCESS_ALREADY_GRANTED);
     activity.setResult(RESULT_OK,intent);
@@ -52,6 +62,7 @@
   args.putString(EXTRA_VOLUME_LABEL,volumeLabel);
   args.putString(EXTRA_VOLUME_UUID,volumeUuid);
   args.putString(EXTRA_APP_LABEL,appLabel);
+  args.putBoolean(EXTRA_IS_ROOT,isRoot);
   final FragmentManager fm=activity.getFragmentManager();
   final FragmentTransaction ft=fm.beginTransaction();
   final OpenExternalDirectoryDialogFragment fragment=new OpenExternalDirectoryDialogFragment();
