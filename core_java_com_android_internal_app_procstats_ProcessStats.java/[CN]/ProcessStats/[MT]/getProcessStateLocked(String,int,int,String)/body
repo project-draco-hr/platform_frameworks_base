@@ -1,0 +1,52 @@
+{
+  final PackageState pkgState=getPackageStateLocked(packageName,uid,vers);
+  ProcessState ps=pkgState.mProcesses.get(processName);
+  if (ps != null) {
+    return ps;
+  }
+  ProcessState commonProc=mProcesses.get(processName,uid);
+  if (commonProc == null) {
+    commonProc=new ProcessState(this,packageName,uid,vers,processName);
+    mProcesses.put(processName,uid,commonProc);
+    if (DEBUG)     Slog.d(TAG,"GETPROC created new common " + commonProc);
+  }
+  if (!commonProc.isMultiPackage()) {
+    if (packageName.equals(commonProc.getPackage()) && vers == commonProc.getVersion()) {
+      ps=commonProc;
+      if (DEBUG)       Slog.d(TAG,"GETPROC also using for pkg " + commonProc);
+    }
+ else {
+      if (DEBUG)       Slog.d(TAG,"GETPROC need to split common proc!");
+      commonProc.setMultiPackage(true);
+      long now=SystemClock.uptimeMillis();
+      final PackageState commonPkgState=getPackageStateLocked(commonProc.getPackage(),uid,commonProc.getVersion());
+      if (commonPkgState != null) {
+        ProcessState cloned=commonProc.clone(now);
+        if (DEBUG)         Slog.d(TAG,"GETPROC setting clone to pkg " + commonProc.getPackage() + ": "+ cloned);
+        commonPkgState.mProcesses.put(commonProc.getName(),cloned);
+        for (int i=commonPkgState.mServices.size() - 1; i >= 0; i--) {
+          ServiceState ss=commonPkgState.mServices.valueAt(i);
+          if (ss.getProcess() == commonProc) {
+            if (DEBUG)             Slog.d(TAG,"GETPROC switching service to cloned: " + ss);
+            ss.setProcess(cloned);
+          }
+ else           if (DEBUG) {
+            Slog.d(TAG,"GETPROC leaving proc of " + ss);
+          }
+        }
+      }
+ else {
+        Slog.w(TAG,"Cloning proc state: no package state " + commonProc.getPackage() + "/"+ uid+ " for proc "+ commonProc.getName());
+      }
+      ps=new ProcessState(commonProc,packageName,uid,vers,processName,now);
+      if (DEBUG)       Slog.d(TAG,"GETPROC created new pkg " + ps);
+    }
+  }
+ else {
+    ps=new ProcessState(commonProc,packageName,uid,vers,processName,SystemClock.uptimeMillis());
+    if (DEBUG)     Slog.d(TAG,"GETPROC created new pkg " + ps);
+  }
+  pkgState.mProcesses.put(processName,ps);
+  if (DEBUG)   Slog.d(TAG,"GETPROC adding new pkg " + ps);
+  return ps;
+}
