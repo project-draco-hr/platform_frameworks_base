@@ -7,25 +7,33 @@
 switch (mLightState) {
 case LIGHT_STATE_INACTIVE:
     mCurIdleBudget=mConstants.LIGHT_IDLE_MAINTENANCE_MIN_BUDGET;
-  mMaintenanceStartTime=0;
+  mNextLightIdleDelay=mConstants.LIGHT_IDLE_TIMEOUT;
+mMaintenanceStartTime=0;
 case LIGHT_STATE_IDLE_MAINTENANCE:
 if (mMaintenanceStartTime != 0) {
-  long duration=SystemClock.elapsedRealtime() - mMaintenanceStartTime;
-  if (duration < mConstants.LIGHT_IDLE_MAINTENANCE_MIN_BUDGET) {
-    mCurIdleBudget+=(mConstants.LIGHT_IDLE_MAINTENANCE_MIN_BUDGET - duration);
-  }
+long duration=SystemClock.elapsedRealtime() - mMaintenanceStartTime;
+if (duration < mConstants.LIGHT_IDLE_MAINTENANCE_MIN_BUDGET) {
+  mCurIdleBudget+=(mConstants.LIGHT_IDLE_MAINTENANCE_MIN_BUDGET - duration);
+}
  else {
-    mCurIdleBudget-=(duration - mConstants.LIGHT_IDLE_MAINTENANCE_MIN_BUDGET);
-  }
+  mCurIdleBudget-=(duration - mConstants.LIGHT_IDLE_MAINTENANCE_MIN_BUDGET);
+}
 }
 mMaintenanceStartTime=0;
-scheduleLightAlarmLocked(mConstants.LIGHT_IDLE_TIMEOUT);
+scheduleLightAlarmLocked(mNextLightIdleDelay);
+mNextLightIdleDelay=Math.min(mConstants.LIGHT_MAX_IDLE_TIMEOUT,(long)(mNextLightIdleDelay * mConstants.LIGHT_IDLE_FACTOR));
+if (mNextLightIdleDelay < mConstants.LIGHT_IDLE_TIMEOUT) {
+mNextLightIdleDelay=mConstants.LIGHT_IDLE_TIMEOUT;
+}
 if (DEBUG) Slog.d(TAG,"Moved to LIGHT_STATE_IDLE.");
 mLightState=LIGHT_STATE_IDLE;
 EventLogTags.writeDeviceIdleLight(mLightState,reason);
 addEvent(EVENT_LIGHT_IDLE);
 mHandler.sendEmptyMessage(MSG_REPORT_IDLE_ON_LIGHT);
+if (mMaintenanceMinCheckScheduled) {
 mAlarmManager.cancel(mMaintenanceMinCheckListener);
+mMaintenanceMinCheckScheduled=false;
+}
 break;
 case LIGHT_STATE_IDLE:
 mActiveIdleOpCount=1;
@@ -43,6 +51,7 @@ EventLogTags.writeDeviceIdleLight(mLightState,reason);
 addEvent(EVENT_LIGHT_MAINTENANCE);
 mHandler.sendEmptyMessage(MSG_REPORT_IDLE_OFF);
 mAlarmManager.setExact(AlarmManager.ELAPSED_REALTIME,mMaintenanceStartTime + mConstants.MIN_LIGHT_MAINTENANCE_TIME,"DeviceIdleController.maint-check",mMaintenanceMinCheckListener,mHandler);
+mMaintenanceMinCheckScheduled=true;
 break;
 }
 }
