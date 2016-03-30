@@ -1,0 +1,63 @@
+{
+  if (!uidDeleted && !isUidValidForWhitelistRules(uid)) {
+    if (LOGD)     Slog.d(TAG,"no need to update restrict data rules for uid " + uid);
+    return;
+  }
+  final int uidPolicy=mUidPolicy.get(uid,POLICY_NONE);
+  final boolean isForeground=isUidForegroundLocked(uid);
+  final boolean isBlacklisted=(uidPolicy & POLICY_REJECT_METERED_BACKGROUND) != 0;
+  final boolean isWhitelisted=mRestrictBackgroundWhitelistUids.get(uid);
+  int newRule=RULE_ALLOW_ALL;
+  final int oldRule=mUidRules.get(uid);
+  if (isForeground) {
+    if (isBlacklisted || (mRestrictBackground && !isWhitelisted)) {
+      newRule=RULE_TEMPORARY_ALLOW_METERED;
+    }
+  }
+ else {
+    if (isBlacklisted) {
+      newRule=RULE_REJECT_METERED;
+    }
+ else     if (isWhitelisted) {
+      newRule=RULE_ALLOW_METERED;
+    }
+  }
+  if (LOGV) {
+    Log.v(TAG,"updateRuleForRestrictBackgroundLocked(" + uid + "):"+ " isForeground="+ isForeground+ ", isBlacklisted: "+ isBlacklisted+ ", isWhitelisted: "+ isWhitelisted+ ", newRule: "+ ruleToString(newRule)+ ", oldRule: "+ ruleToString(oldRule));
+  }
+  if (newRule == RULE_ALLOW_ALL) {
+    mUidRules.delete(uid);
+  }
+ else {
+    mUidRules.put(uid,newRule);
+  }
+  if (newRule != oldRule) {
+    if (newRule == RULE_TEMPORARY_ALLOW_METERED) {
+      setMeteredNetworkWhitelist(uid,true);
+      if (isBlacklisted) {
+        setMeteredNetworkBlacklist(uid,false);
+      }
+    }
+ else     if (oldRule == RULE_TEMPORARY_ALLOW_METERED) {
+      if (!isWhitelisted) {
+        setMeteredNetworkWhitelist(uid,false);
+      }
+      if (isBlacklisted) {
+        setMeteredNetworkBlacklist(uid,true);
+      }
+    }
+ else     if (newRule == RULE_REJECT_METERED || oldRule == RULE_REJECT_METERED) {
+      setMeteredNetworkBlacklist(uid,isBlacklisted);
+      if (oldRule == RULE_REJECT_METERED && isWhitelisted) {
+        setMeteredNetworkWhitelist(uid,isWhitelisted);
+      }
+    }
+ else     if (newRule == RULE_ALLOW_METERED || oldRule == RULE_ALLOW_METERED) {
+      setMeteredNetworkWhitelist(uid,isWhitelisted);
+    }
+ else {
+      Log.wtf(TAG,"Unexpected change of state for " + uid + ": foreground="+ isForeground+ ", whitelisted="+ isWhitelisted+ ", blacklisted="+ isBlacklisted+ ", newRule="+ ruleToString(newRule)+ ", oldRule="+ ruleToString(oldRule));
+    }
+    mHandler.obtainMessage(MSG_RULES_CHANGED,uid,newRule).sendToTarget();
+  }
+}
