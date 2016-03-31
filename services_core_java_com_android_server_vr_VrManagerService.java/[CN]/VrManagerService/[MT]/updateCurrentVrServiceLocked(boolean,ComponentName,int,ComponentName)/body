@@ -1,41 +1,51 @@
 {
   boolean sendUpdatedCaller=false;
-  boolean validUserComponent=(mComponentObserver.isValid(component,userId) == EnabledComponentsObserver.NO_ERROR);
-  changeVrModeLocked(enabled,(enabled && validUserComponent) ? component : null);
-  if (!enabled || !validUserComponent) {
-    if (mCurrentVrService != null) {
-      Slog.i(TAG,"Disconnecting " + mCurrentVrService.getComponent() + " for user "+ mCurrentVrService.getUserId());
-      mCurrentVrService.disconnect();
-      mCurrentVrService=null;
-    }
-  }
- else {
-    if (mCurrentVrService != null) {
-      if (mCurrentVrService.disconnectIfNotMatching(component,userId)) {
+  final long identity=Binder.clearCallingIdentity();
+  try {
+    boolean validUserComponent=(mComponentObserver.isValid(component,userId) == EnabledComponentsObserver.NO_ERROR);
+    changeVrModeLocked(enabled,(enabled && validUserComponent) ? component : null);
+    if (!enabled || !validUserComponent) {
+      if (mCurrentVrService != null) {
         Slog.i(TAG,"Disconnecting " + mCurrentVrService.getComponent() + " for user "+ mCurrentVrService.getUserId());
+        mCurrentVrService.disconnect();
+        disableImpliedPermissionsLocked(mCurrentVrService.getComponent(),new UserHandle(mCurrentVrService.getUserId()));
+        mCurrentVrService=null;
+      }
+    }
+ else {
+      if (mCurrentVrService != null) {
+        if (mCurrentVrService.disconnectIfNotMatching(component,userId)) {
+          Slog.i(TAG,"Disconnecting " + mCurrentVrService.getComponent() + " for user "+ mCurrentVrService.getUserId());
+          disableImpliedPermissionsLocked(mCurrentVrService.getComponent(),new UserHandle(mCurrentVrService.getUserId()));
+          createAndConnectService(component,userId);
+          enableImpliedPermissionsLocked(mCurrentVrService.getComponent(),new UserHandle(mCurrentVrService.getUserId()));
+          sendUpdatedCaller=true;
+        }
+      }
+ else {
         createAndConnectService(component,userId);
+        enableImpliedPermissionsLocked(mCurrentVrService.getComponent(),new UserHandle(mCurrentVrService.getUserId()));
         sendUpdatedCaller=true;
       }
     }
- else {
-      createAndConnectService(component,userId);
+    if (calling != null && !Objects.equals(calling,mCurrentVrModeComponent)) {
+      mCurrentVrModeComponent=calling;
+      mCurrentVrModeUser=userId;
       sendUpdatedCaller=true;
     }
-  }
-  if (calling != null && !Objects.equals(calling,mCurrentVrModeComponent)) {
-    mCurrentVrModeComponent=calling;
-    mCurrentVrModeUser=userId;
-    sendUpdatedCaller=true;
-  }
-  if (mCurrentVrService != null && sendUpdatedCaller) {
-    final ComponentName c=mCurrentVrModeComponent;
-    mCurrentVrService.sendEvent(new PendingEvent(){
-      @Override public void runEvent(      IInterface service) throws RemoteException {
-        IVrListener l=(IVrListener)service;
-        l.focusedActivityChanged(c);
+    if (mCurrentVrService != null && sendUpdatedCaller) {
+      final ComponentName c=mCurrentVrModeComponent;
+      mCurrentVrService.sendEvent(new PendingEvent(){
+        @Override public void runEvent(        IInterface service) throws RemoteException {
+          IVrListener l=(IVrListener)service;
+          l.focusedActivityChanged(c);
+        }
       }
-    }
 );
+    }
+    return validUserComponent;
   }
-  return validUserComponent;
+  finally {
+    Binder.restoreCallingIdentity(identity);
+  }
 }
