@@ -2,28 +2,22 @@
   if (!mUserManager.isUserRunning(userHandle)) {
     return;
   }
-  boolean hasCert=false;
+  final List<String> pendingCertificates;
   try {
-    KeyChainConnection kcs=KeyChain.bindAsUser(mContext,userHandle);
-    try {
-      if (!kcs.getService().getUserCaAliases().getList().isEmpty()) {
-        hasCert=true;
-      }
-    }
- catch (    RemoteException e) {
-      Log.e(LOG_TAG,"Could not connect to KeyChain service",e);
-    }
- finally {
-      kcs.close();
-    }
+    pendingCertificates=getInstalledCaCertificates(userHandle);
   }
- catch (  InterruptedException e) {
-    Thread.currentThread().interrupt();
+ catch (  RemoteException|RuntimeException e) {
+    Log.e(LOG_TAG,"Could not retrieve certificates from KeyChain service",e);
+    return;
   }
-catch (  RuntimeException|AssertionError e) {
-    Log.e(LOG_TAG,"Could not connect to KeyChain service",e);
+synchronized (DevicePolicyManagerService.this) {
+    final DevicePolicyData policy=getUserData(userHandle.getIdentifier());
+    if (policy.mAcceptedCaCertificates.retainAll(pendingCertificates)) {
+      saveSettingsLocked(userHandle.getIdentifier());
+    }
+    pendingCertificates.removeAll(policy.mAcceptedCaCertificates);
   }
-  if (!hasCert) {
+  if (pendingCertificates.isEmpty()) {
     mInjector.getNotificationManager().cancelAsUser(null,MONITORING_CERT_NOTIFICATION_ID,userHandle);
     return;
   }
@@ -48,7 +42,8 @@ catch (  RuntimeException|AssertionError e) {
   PendingIntent notifyIntent=PendingIntent.getActivityAsUser(mContext,0,dialogIntent,PendingIntent.FLAG_UPDATE_CURRENT,null,userHandle);
   final Context userContext;
   try {
-    userContext=mContext.createPackageContextAsUser("android",0,userHandle);
+    final String packageName=mContext.getPackageName();
+    userContext=mContext.createPackageContextAsUser(packageName,0,userHandle);
   }
  catch (  PackageManager.NameNotFoundException e) {
     Log.e(LOG_TAG,"Create context as " + userHandle + " failed",e);
