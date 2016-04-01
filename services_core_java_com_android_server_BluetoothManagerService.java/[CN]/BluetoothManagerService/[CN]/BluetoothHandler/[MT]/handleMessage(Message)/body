@@ -1,11 +1,41 @@
 {
   if (DBG)   Slog.d(TAG,"Message: " + msg.what);
 switch (msg.what) {
-case MESSAGE_ENABLE:
-    if (DBG) {
-      Slog.d(TAG,"MESSAGE_ENABLE: mBluetooth = " + mBluetooth);
+case MESSAGE_GET_NAME_AND_ADDRESS:
+    if (DBG)     Slog.d(TAG,"MESSAGE_GET_NAME_AND_ADDRESS");
+synchronized (mConnection) {
+    if ((mBluetooth == null) && (!mBinding)) {
+      if (DBG)       Slog.d(TAG,"Binding to service to get name and address");
+      mGetNameAddressOnly=true;
+      Message timeoutMsg=mHandler.obtainMessage(MESSAGE_TIMEOUT_BIND);
+      mHandler.sendMessageDelayed(timeoutMsg,TIMEOUT_BIND_MS);
+      Intent i=new Intent(IBluetooth.class.getName());
+      if (!doBind(i,mConnection,Context.BIND_AUTO_CREATE | Context.BIND_IMPORTANT,UserHandle.CURRENT)) {
+        mHandler.removeMessages(MESSAGE_TIMEOUT_BIND);
+      }
+ else {
+        mBinding=true;
+      }
     }
-  mHandler.removeMessages(MESSAGE_RESTART_BLUETOOTH_SERVICE);
+ else     if (mBluetooth != null) {
+      try {
+        storeNameAndAddress(mBluetooth.getName(),mBluetooth.getAddress());
+      }
+ catch (      RemoteException re) {
+        Slog.e(TAG,"Unable to grab names",re);
+      }
+      if (mGetNameAddressOnly && !mEnable) {
+        unbindAndFinish();
+      }
+      mGetNameAddressOnly=false;
+    }
+  }
+break;
+case MESSAGE_ENABLE:
+if (DBG) {
+Slog.d(TAG,"MESSAGE_ENABLE: mBluetooth = " + mBluetooth);
+}
+mHandler.removeMessages(MESSAGE_RESTART_BLUETOOTH_SERVICE);
 mEnable=true;
 handleEnable(msg.arg1 == 1);
 break;
@@ -86,6 +116,11 @@ mHandler.removeMessages(MESSAGE_TIMEOUT_BIND);
 mBinding=false;
 mBluetoothBinder=service;
 mBluetooth=IBluetooth.Stub.asInterface(service);
+if (!isNameAndAddressSet()) {
+Message getMsg=mHandler.obtainMessage(MESSAGE_GET_NAME_AND_ADDRESS);
+mHandler.sendMessage(getMsg);
+if (mGetNameAddressOnly) return;
+}
 try {
 boolean enableHciSnoopLog=(Settings.Secure.getInt(mContentResolver,Settings.Secure.BLUETOOTH_HCI_LOG,0) == 1);
 if (!mBluetooth.configHciSnoopLog(enableHciSnoopLog)) {
@@ -94,14 +129,6 @@ Slog.e(TAG,"IBluetooth.configHciSnoopLog return false");
 }
  catch (RemoteException e) {
 Slog.e(TAG,"Unable to call configHciSnoopLog",e);
-}
-if (!isNameAndAddressSet()) {
-try {
-storeNameAndAddress(mBluetooth.getName(),mBluetooth.getAddress());
-}
- catch (RemoteException re) {
-Slog.e(TAG,"Unable to grab names",re);
-}
 }
 try {
 mBluetooth.registerCallback(mBluetoothCallback);
