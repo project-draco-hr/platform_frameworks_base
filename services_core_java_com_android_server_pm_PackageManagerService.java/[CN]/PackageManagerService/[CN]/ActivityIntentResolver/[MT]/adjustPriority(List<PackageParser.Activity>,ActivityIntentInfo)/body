@@ -1,0 +1,104 @@
+{
+  if (intent.getPriority() <= 0) {
+    return;
+  }
+  final ActivityInfo activityInfo=intent.activity.info;
+  final ApplicationInfo applicationInfo=activityInfo.applicationInfo;
+  final boolean privilegedApp=((applicationInfo.privateFlags & ApplicationInfo.PRIVATE_FLAG_PRIVILEGED) != 0);
+  if (!privilegedApp) {
+    Slog.w(TAG,"Non-privileged app; cap priority to 0;" + " package: " + applicationInfo.packageName + " activity: "+ intent.activity.className+ " origPrio: "+ intent.getPriority());
+    intent.setPriority(0);
+    return;
+  }
+  if (systemActivities == null) {
+    if (isProtectedAction(intent)) {
+      if (mDeferProtectedFilters) {
+        mProtectedFilters.add(intent);
+        if (DEBUG_FILTERS) {
+          Slog.i(TAG,"Protected action; save for later;" + " package: " + applicationInfo.packageName + " activity: "+ intent.activity.className+ " origPrio: "+ intent.getPriority());
+        }
+        return;
+      }
+ else {
+        if (DEBUG_FILTERS && mSetupWizardPackage == null) {
+          Slog.i(TAG,"No setup wizard;" + " All protected intents capped to priority 0");
+        }
+        if (intent.activity.info.packageName.equals(mSetupWizardPackage)) {
+          if (DEBUG_FILTERS) {
+            Slog.i(TAG,"Found setup wizard;" + " allow priority " + intent.getPriority() + ";"+ " package: "+ intent.activity.info.packageName+ " activity: "+ intent.activity.className+ " priority: "+ intent.getPriority());
+          }
+          return;
+        }
+        Slog.w(TAG,"Protected action; cap priority to 0;" + " package: " + intent.activity.info.packageName + " activity: "+ intent.activity.className+ " origPrio: "+ intent.getPriority());
+        intent.setPriority(0);
+        return;
+      }
+    }
+    return;
+  }
+  final PackageParser.Activity foundActivity=findMatchingActivity(systemActivities,activityInfo);
+  if (foundActivity == null) {
+    if (DEBUG_FILTERS) {
+      Slog.i(TAG,"New activity; cap priority to 0;" + " package: " + applicationInfo.packageName + " activity: "+ intent.activity.className+ " origPrio: "+ intent.getPriority());
+    }
+    intent.setPriority(0);
+    return;
+  }
+  final List<ActivityIntentInfo> intentListCopy=new ArrayList<>(foundActivity.intents);
+  final List<ActivityIntentInfo> foundFilters=findFilters(intent);
+  final Iterator<String> actionsIterator=intent.actionsIterator();
+  if (actionsIterator != null) {
+    getIntentListSubset(intentListCopy,new ActionIterGenerator(),actionsIterator);
+    if (intentListCopy.size() == 0) {
+      if (DEBUG_FILTERS) {
+        Slog.i(TAG,"Mismatched action; cap priority to 0;" + " package: " + applicationInfo.packageName + " activity: "+ intent.activity.className+ " origPrio: "+ intent.getPriority());
+      }
+      intent.setPriority(0);
+      return;
+    }
+  }
+  final Iterator<String> categoriesIterator=intent.categoriesIterator();
+  if (categoriesIterator != null) {
+    getIntentListSubset(intentListCopy,new CategoriesIterGenerator(),categoriesIterator);
+    if (intentListCopy.size() == 0) {
+      if (DEBUG_FILTERS) {
+        Slog.i(TAG,"Mismatched category; cap priority to 0;" + " package: " + applicationInfo.packageName + " activity: "+ intent.activity.className+ " origPrio: "+ intent.getPriority());
+      }
+      intent.setPriority(0);
+      return;
+    }
+  }
+  final Iterator<String> schemesIterator=intent.schemesIterator();
+  if (schemesIterator != null) {
+    getIntentListSubset(intentListCopy,new SchemesIterGenerator(),schemesIterator);
+    if (intentListCopy.size() == 0) {
+      if (DEBUG_FILTERS) {
+        Slog.i(TAG,"Mismatched scheme; cap priority to 0;" + " package: " + applicationInfo.packageName + " activity: "+ intent.activity.className+ " origPrio: "+ intent.getPriority());
+      }
+      intent.setPriority(0);
+      return;
+    }
+  }
+  final Iterator<IntentFilter.AuthorityEntry> authoritiesIterator=intent.authoritiesIterator();
+  if (authoritiesIterator != null) {
+    getIntentListSubset(intentListCopy,new AuthoritiesIterGenerator(),authoritiesIterator);
+    if (intentListCopy.size() == 0) {
+      if (DEBUG_FILTERS) {
+        Slog.i(TAG,"Mismatched authority; cap priority to 0;" + " package: " + applicationInfo.packageName + " activity: "+ intent.activity.className+ " origPrio: "+ intent.getPriority());
+      }
+      intent.setPriority(0);
+      return;
+    }
+  }
+  int cappedPriority=0;
+  for (int i=intentListCopy.size() - 1; i >= 0; --i) {
+    cappedPriority=Math.max(cappedPriority,intentListCopy.get(i).getPriority());
+  }
+  if (intent.getPriority() > cappedPriority) {
+    if (DEBUG_FILTERS) {
+      Slog.i(TAG,"Found matching filter(s);" + " cap priority to " + cappedPriority + ";"+ " package: "+ applicationInfo.packageName+ " activity: "+ intent.activity.className+ " origPrio: "+ intent.getPriority());
+    }
+    intent.setPriority(cappedPriority);
+    return;
+  }
+}
