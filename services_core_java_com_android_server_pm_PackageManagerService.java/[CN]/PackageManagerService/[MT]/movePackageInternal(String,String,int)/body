@@ -11,6 +11,7 @@
   final String seinfo;
   final String label;
   final int targetSdkVersion;
+  final PackageFreezer freezer;
 synchronized (mPackages) {
     final PackageParser.Package pkg=mPackages.get(packageName);
     final PackageSetting ps=mSettings.mPackages.get(packageName);
@@ -43,10 +44,9 @@ synchronized (mPackages) {
     if (pkg.applicationInfo.isInternal() && isPackageDeviceAdminOnAnyUser(packageName)) {
       throw new PackageManagerException(MOVE_FAILED_DEVICE_ADMIN,"Device admin cannot be moved");
     }
-    if (ps.frozen) {
+    if (mFrozenPackages.contains(packageName)) {
       throw new PackageManagerException(MOVE_FAILED_OPERATION_PENDING,"Failed to move already frozen package");
     }
-    ps.frozen=true;
     codeFile=new File(pkg.codePath);
     installerPackageName=ps.installerPackageName;
     packageAbiOverride=ps.cpuAbiOverrideString;
@@ -54,13 +54,7 @@ synchronized (mPackages) {
     seinfo=pkg.applicationInfo.seinfo;
     label=String.valueOf(pm.getApplicationLabel(pkg.applicationInfo));
     targetSdkVersion=pkg.applicationInfo.targetSdkVersion;
-  }
-  final long token=Binder.clearCallingIdentity();
-  try {
-    killApplication(packageName,appId,"move pkg");
-  }
-  finally {
-    Binder.restoreCallingIdentity(token);
+    freezer=new PackageFreezer(packageName,"movePackageInternal");
   }
   final Bundle extras=new Bundle();
   extras.putString(Intent.EXTRA_PACKAGE_NAME,packageName);
@@ -82,7 +76,7 @@ synchronized (mPackages) {
  else {
     final VolumeInfo volume=storage.findVolumeByUuid(volumeUuid);
     if (volume == null || volume.getType() != VolumeInfo.TYPE_PRIVATE || !volume.isMountedWritable()) {
-      unfreezePackage(packageName);
+      freezer.close();
       throw new PackageManagerException(MOVE_FAILED_INTERNAL_ERROR,"Move location not mounted private volume");
     }
     Preconditions.checkState(!currentAsec);
@@ -93,7 +87,7 @@ synchronized (mPackages) {
   final PackageStats stats=new PackageStats(null,-1);
 synchronized (mInstaller) {
     if (!getPackageSizeInfoLI(packageName,-1,stats)) {
-      unfreezePackage(packageName);
+      freezer.close();
       throw new PackageManagerException(MOVE_FAILED_INTERNAL_ERROR,"Failed to measure package size");
     }
   }
@@ -107,7 +101,7 @@ synchronized (mInstaller) {
     sizeBytes=stats.codeSize;
   }
   if (sizeBytes > storage.getStorageBytesUntilLow(measurePath)) {
-    unfreezePackage(packageName);
+    freezer.close();
     throw new PackageManagerException(MOVE_FAILED_INTERNAL_ERROR,"Not enough free space to move");
   }
   mMoveCallbacks.notifyStatusChanged(moveId,10);
@@ -119,7 +113,7 @@ synchronized (mInstaller) {
     @Override public void onPackageInstalled(    String basePackageName,    int returnCode,    String msg,    Bundle extras) throws RemoteException {
       if (DEBUG_INSTALL)       Slog.d(TAG,"Install result for move: " + PackageManager.installStatusToString(returnCode,msg));
       installedLatch.countDown();
-      unfreezePackage(packageName);
+      freezer.close();
       final int status=PackageManager.installStatusToPublicStatus(returnCode);
 switch (status) {
 case PackageInstaller.STATUS_SUCCESS:
