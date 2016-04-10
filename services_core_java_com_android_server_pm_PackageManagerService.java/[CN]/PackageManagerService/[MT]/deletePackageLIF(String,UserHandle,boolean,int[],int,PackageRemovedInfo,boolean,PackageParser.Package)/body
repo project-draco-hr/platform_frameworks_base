@@ -1,0 +1,117 @@
+{
+  if (packageName == null) {
+    Slog.w(TAG,"Attempt to delete null packageName.");
+    return false;
+  }
+  if (DEBUG_REMOVE)   Slog.d(TAG,"deletePackageLI: " + packageName + " user "+ user);
+  PackageSetting ps;
+synchronized (mPackages) {
+    ps=mSettings.mPackages.get(packageName);
+    if (ps == null) {
+      Slog.w(TAG,"Package named '" + packageName + "' doesn't exist.");
+      return false;
+    }
+    if (ps.parentPackageName != null && (!isSystemApp(ps) || (flags & PackageManager.DELETE_SYSTEM_APP) != 0)) {
+      if (DEBUG_REMOVE) {
+        Slog.d(TAG,"Uninstalled child package:" + packageName + " for user:"+ ((user == null) ? UserHandle.USER_ALL : user));
+      }
+      final int removedUserId=(user != null) ? user.getIdentifier() : UserHandle.USER_ALL;
+      if (!clearPackageStateForUserLIF(ps,removedUserId,outInfo)) {
+        return false;
+      }
+      markPackageUninstalledForUserLPw(ps,user);
+      scheduleWritePackageRestrictionsLocked(user);
+      return true;
+    }
+  }
+  if (((!isSystemApp(ps) || (flags & PackageManager.DELETE_SYSTEM_APP) != 0) && user != null && user.getIdentifier() != UserHandle.USER_ALL)) {
+    markPackageUninstalledForUserLPw(ps,user);
+    if (!isSystemApp(ps)) {
+      boolean keepUninstalledPackage=shouldKeepUninstalledPackageLPr(packageName);
+      if (ps.isAnyInstalled(sUserManager.getUserIds()) || keepUninstalledPackage) {
+        if (DEBUG_REMOVE)         Slog.d(TAG,"Still installed by other users");
+        if (!clearPackageStateForUserLIF(ps,user.getIdentifier(),outInfo)) {
+          return false;
+        }
+        scheduleWritePackageRestrictionsLocked(user);
+        return true;
+      }
+ else {
+        if (DEBUG_REMOVE)         Slog.d(TAG,"Not installed by other users, full delete");
+        ps.setInstalled(true,user.getIdentifier());
+      }
+    }
+ else {
+      if (DEBUG_REMOVE)       Slog.d(TAG,"Deleting system app");
+      if (!clearPackageStateForUserLIF(ps,user.getIdentifier(),outInfo)) {
+        return false;
+      }
+      scheduleWritePackageRestrictionsLocked(user);
+      return true;
+    }
+  }
+  if (ps.childPackageNames != null && outInfo != null) {
+synchronized (mPackages) {
+      final int childCount=ps.childPackageNames.size();
+      outInfo.removedChildPackages=new ArrayMap<>(childCount);
+      for (int i=0; i < childCount; i++) {
+        String childPackageName=ps.childPackageNames.get(i);
+        PackageRemovedInfo childInfo=new PackageRemovedInfo();
+        childInfo.removedPackage=childPackageName;
+        outInfo.removedChildPackages.put(childPackageName,childInfo);
+        PackageSetting childPs=mSettings.peekPackageLPr(childPackageName);
+        if (childPs != null) {
+          childInfo.origUsers=childPs.queryInstalledUsers(allUserHandles,true);
+        }
+      }
+    }
+  }
+  boolean ret=false;
+  if (isSystemApp(ps)) {
+    if (DEBUG_REMOVE)     Slog.d(TAG,"Removing system package: " + ps.name);
+    ret=deleteSystemPackageLIF(ps.pkg,ps,allUserHandles,flags,outInfo,writeSettings);
+  }
+ else {
+    if (DEBUG_REMOVE)     Slog.d(TAG,"Removing non-system package: " + ps.name);
+    ret=deleteInstalledPackageLIF(ps,deleteCodeAndResources,flags,allUserHandles,outInfo,writeSettings,replacingPackage);
+  }
+  if (outInfo != null) {
+    outInfo.removedForAllUsers=mPackages.get(ps.name) == null;
+    if (outInfo.removedChildPackages != null) {
+synchronized (mPackages) {
+        final int childCount=outInfo.removedChildPackages.size();
+        for (int i=0; i < childCount; i++) {
+          PackageRemovedInfo childInfo=outInfo.removedChildPackages.valueAt(i);
+          if (childInfo != null) {
+            childInfo.removedForAllUsers=mPackages.get(childInfo.removedPackage) == null;
+          }
+        }
+      }
+    }
+    if (isSystemApp(ps)) {
+synchronized (mPackages) {
+        PackageSetting updatedPs=mSettings.peekPackageLPr(ps.name);
+        final int childCount=(updatedPs.childPackageNames != null) ? updatedPs.childPackageNames.size() : 0;
+        for (int i=0; i < childCount; i++) {
+          String childPackageName=updatedPs.childPackageNames.get(i);
+          if (outInfo.removedChildPackages == null || outInfo.removedChildPackages.indexOfKey(childPackageName) < 0) {
+            PackageSetting childPs=mSettings.peekPackageLPr(childPackageName);
+            if (childPs == null) {
+              continue;
+            }
+            PackageInstalledInfo installRes=new PackageInstalledInfo();
+            installRes.name=childPackageName;
+            installRes.newUsers=childPs.queryInstalledUsers(allUserHandles,true);
+            installRes.pkg=mPackages.get(childPackageName);
+            installRes.uid=childPs.pkg.applicationInfo.uid;
+            if (outInfo.appearedChildPackages == null) {
+              outInfo.appearedChildPackages=new ArrayMap<>();
+            }
+            outInfo.appearedChildPackages.put(childPackageName,installRes);
+          }
+        }
+      }
+    }
+  }
+  return ret;
+}
