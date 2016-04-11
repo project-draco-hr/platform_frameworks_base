@@ -1,13 +1,27 @@
 {
   int deleted;
+  boolean userUnlocked=isUserUnlocked(accounts.userId);
+  if (!userUnlocked) {
+    Slog.i(TAG,"Removing account " + account + " while user "+ accounts.userId+ " is still locked. CE data will be removed later");
+  }
 synchronized (accounts.cacheLock) {
-    final SQLiteDatabase db=accounts.openHelper.getWritableDatabaseUserIsUnlocked();
+    final SQLiteDatabase db=userUnlocked ? accounts.openHelper.getWritableDatabaseUserIsUnlocked() : accounts.openHelper.getWritableDatabase();
     final long accountId=getAccountIdLocked(db,account);
-    deleted=db.delete(TABLE_ACCOUNTS,ACCOUNTS_NAME + "=? AND " + ACCOUNTS_TYPE+ "=?",new String[]{account.name,account.type});
-    db.delete(CE_TABLE_ACCOUNTS,ACCOUNTS_NAME + "=? AND " + ACCOUNTS_TYPE+ "=?",new String[]{account.name,account.type});
+    db.beginTransaction();
+    try {
+      deleted=db.delete(TABLE_ACCOUNTS,ACCOUNTS_NAME + "=? AND " + ACCOUNTS_TYPE+ "=?",new String[]{account.name,account.type});
+      if (userUnlocked) {
+        deleted=db.delete(CE_TABLE_ACCOUNTS,ACCOUNTS_NAME + "=? AND " + ACCOUNTS_TYPE+ "=?",new String[]{account.name,account.type});
+      }
+      db.setTransactionSuccessful();
+    }
+  finally {
+      db.endTransaction();
+    }
     removeAccountFromCacheLocked(accounts,account);
     sendAccountsChangedBroadcast(accounts.userId);
-    logRecord(db,DebugDbHelper.ACTION_ACCOUNT_REMOVE,TABLE_ACCOUNTS,accountId,accounts);
+    String action=userUnlocked ? DebugDbHelper.ACTION_ACCOUNT_REMOVE : DebugDbHelper.ACTION_ACCOUNT_REMOVE_DE;
+    logRecord(db,action,TABLE_ACCOUNTS,accountId,accounts);
   }
   long id=Binder.clearCallingIdentity();
   try {
