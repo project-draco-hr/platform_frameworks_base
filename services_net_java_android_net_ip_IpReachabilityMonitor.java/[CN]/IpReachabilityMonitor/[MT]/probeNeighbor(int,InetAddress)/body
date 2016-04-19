@@ -1,25 +1,25 @@
 {
-  final long IO_TIMEOUT=300L;
   final String msgSnippet="probing ip=" + ip.getHostAddress() + "%"+ ifIndex;
   if (DBG) {
     Log.d(TAG,msgSnippet);
   }
   final byte[] msg=RtNetlinkNeighborMessage.newNewNeighborMessage(1,ip,StructNdMsg.NUD_PROBE,ifIndex,null);
-  boolean returnValue=false;
+  int errno=-OsConstants.EPROTO;
   try (NetlinkSocket nlSocket=new NetlinkSocket(OsConstants.NETLINK_ROUTE)){
+    final long IO_TIMEOUT=300L;
     nlSocket.connectToKernel();
     nlSocket.sendMessage(msg,0,msg.length,IO_TIMEOUT);
     final ByteBuffer bytes=nlSocket.recvMessage(IO_TIMEOUT);
     final NetlinkMessage response=NetlinkMessage.parse(bytes);
-    if (response != null && response instanceof NetlinkErrorMessage && (((NetlinkErrorMessage)response).getNlMsgError() != null) && (((NetlinkErrorMessage)response).getNlMsgError().error == 0)) {
-      returnValue=true;
+    if (response != null && response instanceof NetlinkErrorMessage && (((NetlinkErrorMessage)response).getNlMsgError() != null)) {
+      errno=((NetlinkErrorMessage)response).getNlMsgError().error;
+      if (errno != 0) {
+        Log.e(TAG,"Error " + msgSnippet + ", errmsg="+ response.toString());
+      }
     }
  else {
       String errmsg;
-      if (bytes == null) {
-        errmsg="null recvMessage";
-      }
- else       if (response == null) {
+      if (response == null) {
         bytes.position(0);
         errmsg="raw bytes: " + NetlinkConstants.hexify(bytes);
       }
@@ -29,9 +29,17 @@
       Log.e(TAG,"Error " + msgSnippet + ", errmsg="+ errmsg);
     }
   }
- catch (  ErrnoException|InterruptedIOException|SocketException e) {
-    Log.d(TAG,"Error " + msgSnippet,e);
+ catch (  ErrnoException e) {
+    Log.e(TAG,"Error " + msgSnippet,e);
+    errno=-e.errno;
   }
-  IpReachabilityMonitorProbeEvent.logEvent("ifindex-" + ifIndex,ip.getHostAddress(),returnValue);
-  return returnValue;
+catch (  InterruptedIOException e) {
+    Log.e(TAG,"Error " + msgSnippet,e);
+    errno=-OsConstants.ETIMEDOUT;
+  }
+catch (  SocketException e) {
+    Log.e(TAG,"Error " + msgSnippet,e);
+    errno=-OsConstants.EIO;
+  }
+  return errno;
 }
