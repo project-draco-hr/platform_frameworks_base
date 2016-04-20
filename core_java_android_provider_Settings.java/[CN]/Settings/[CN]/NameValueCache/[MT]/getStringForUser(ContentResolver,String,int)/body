@@ -1,17 +1,17 @@
 {
   final boolean isSelf=(userHandle == UserHandle.myUserId());
   if (isSelf) {
-    long newValuesVersion=SystemProperties.getLong(mVersionSystemProperty,0);
 synchronized (this) {
-      if (mValuesVersion != newValuesVersion) {
-        if (LOCAL_LOGV || false) {
-          Log.v(TAG,"invalidate [" + mUri.getLastPathSegment() + "]: current "+ newValuesVersion+ " != cached "+ mValuesVersion);
+      if (mGenerationTracker != null) {
+        if (mGenerationTracker.isGenerationChanged()) {
+          if (DEBUG) {
+            Log.i(TAG,"Generation changed for type:" + mUri.getPath() + " in package:"+ cr.getPackageName()+ " and user:"+ userHandle);
+          }
+          mValues.clear();
         }
-        mValues.clear();
-        mValuesVersion=newValuesVersion;
-      }
-      if (mValues.containsKey(name)) {
-        return mValues.get(name);
+ else         if (mValues.containsKey(name)) {
+          return mValues.get(name);
+        }
       }
     }
   }
@@ -26,11 +26,34 @@ synchronized (this) {
         args=new Bundle();
         args.putInt(CALL_METHOD_USER_KEY,userHandle);
       }
+      boolean needsGenerationTracker=false;
+synchronized (this) {
+        if (isSelf && mGenerationTracker == null) {
+          needsGenerationTracker=true;
+          if (args == null) {
+            args=new Bundle();
+          }
+          args.putString(CALL_METHOD_TRACK_GENERATION_KEY,null);
+          if (DEBUG) {
+            Log.i(TAG,"Requested generation tracker for type: " + mUri.getPath() + " in package:"+ cr.getPackageName()+ " and user:"+ userHandle);
+          }
+        }
+      }
       Bundle b=cp.call(cr.getPackageName(),mCallGetCommand,name,args);
       if (b != null) {
-        String value=b.getPairValue();
+        String value=b.getString(Settings.NameValueTable.VALUE);
         if (isSelf) {
 synchronized (this) {
+            if (needsGenerationTracker) {
+              MemoryIntArray array=b.getParcelable(CALL_METHOD_TRACK_GENERATION_KEY);
+              final int index=b.getInt(CALL_METHOD_GENERATION_INDEX_KEY,-1);
+              if (array != null && index >= 0) {
+                if (DEBUG) {
+                  Log.i(TAG,"Received generation tracker for type:" + mUri.getPath() + " in package:"+ cr.getPackageName()+ " and user:"+ userHandle+ " with index:"+ index);
+                }
+                mGenerationTracker=new GenerationTracker(array,index);
+              }
+            }
             mValues.put(name,value);
           }
         }
