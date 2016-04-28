@@ -2,31 +2,34 @@
   final int userId=uss.mHandle.getIdentifier();
 synchronized (mService) {
     if (mStartedUsers.get(uss.mHandle.getIdentifier()) != uss)     return;
-    final UserInfo userInfo=getUserInfo(userId);
-    if (userInfo == null) {
-      return;
-    }
-    if (!isUserKeyUnlocked(userId))     return;
+    if (!StorageManager.isUserKeyUnlocked(userId))     return;
     if (uss.setState(STATE_RUNNING_UNLOCKING,STATE_RUNNING_UNLOCKED)) {
-      mUserManager.onUserLoggedIn(userId);
-      if (!userInfo.isInitialized()) {
-        if (userId != UserHandle.USER_SYSTEM) {
-          Slog.d(TAG,"Initializing user #" + userId);
-          Intent intent=new Intent(Intent.ACTION_USER_INITIALIZE);
-          intent.addFlags(Intent.FLAG_RECEIVER_FOREGROUND);
-          mService.broadcastIntentLocked(null,null,intent,null,new IIntentReceiver.Stub(){
-            @Override public void performReceive(            Intent intent,            int resultCode,            String data,            Bundle extras,            boolean ordered,            boolean sticky,            int sendingUser){
-              getUserManager().makeInitialized(userInfo.id);
-            }
-          }
-,0,null,null,null,AppOpsManager.OP_NONE,null,true,false,MY_PID,SYSTEM_UID,userId);
+      uss.mUnlockProgress.finish();
+      final Intent unlockedIntent=new Intent(Intent.ACTION_USER_UNLOCKED);
+      unlockedIntent.putExtra(Intent.EXTRA_USER_HANDLE,userId);
+      unlockedIntent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY | Intent.FLAG_RECEIVER_FOREGROUND);
+      mService.broadcastIntentLocked(null,null,unlockedIntent,null,null,0,null,null,null,AppOpsManager.OP_NONE,null,false,false,MY_PID,SYSTEM_UID,userId);
+      if (getUserInfo(userId).isManagedProfile()) {
+        UserInfo parent=getUserManager().getProfileParent(userId);
+        if (parent != null) {
+          final Intent profileUnlockedIntent=new Intent(Intent.ACTION_MANAGED_PROFILE_UNLOCKED);
+          profileUnlockedIntent.putExtra(Intent.EXTRA_USER,UserHandle.of(userId));
+          profileUnlockedIntent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY | Intent.FLAG_RECEIVER_FOREGROUND);
+          mService.broadcastIntentLocked(null,null,profileUnlockedIntent,null,null,0,null,null,null,AppOpsManager.OP_NONE,null,false,false,MY_PID,SYSTEM_UID,parent.id);
         }
       }
-      Slog.d(TAG,"Sending BOOT_COMPLETE user #" + userId);
-      final Intent bootIntent=new Intent(Intent.ACTION_BOOT_COMPLETED,null);
-      bootIntent.putExtra(Intent.EXTRA_USER_HANDLE,userId);
-      bootIntent.addFlags(Intent.FLAG_RECEIVER_NO_ABORT | Intent.FLAG_RECEIVER_INCLUDE_BACKGROUND);
-      mService.broadcastIntentLocked(null,null,bootIntent,null,null,0,null,null,new String[]{android.Manifest.permission.RECEIVE_BOOT_COMPLETED},AppOpsManager.OP_NONE,null,true,false,MY_PID,SYSTEM_UID,userId);
+      final UserInfo info=getUserInfo(userId);
+      if (!Objects.equals(info.lastLoggedInFingerprint,Build.FINGERPRINT)) {
+        new PreBootBroadcaster(mService,userId,null){
+          @Override public void onFinished(){
+            finishUserUnlockedCompleted(uss);
+          }
+        }
+.sendNext();
+      }
+ else {
+        finishUserUnlockedCompleted(uss);
+      }
     }
   }
 }
