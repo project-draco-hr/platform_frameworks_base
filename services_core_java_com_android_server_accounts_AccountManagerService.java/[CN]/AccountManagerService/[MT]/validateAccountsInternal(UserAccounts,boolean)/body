@@ -5,16 +5,14 @@
   if (invalidateAuthenticatorCache) {
     mAuthenticatorCache.invalidateCache(accounts.userId);
   }
-  final HashMap<String,Integer> knownAuth=new HashMap<>();
-  for (  RegisteredServicesCache.ServiceInfo<AuthenticatorDescription> service : mAuthenticatorCache.getAllServices(accounts.userId)) {
-    knownAuth.put(service.type.type,service.uid);
-  }
+  final HashMap<String,Integer> knownAuth=getAuthenticatorTypeAndUIDForUser(mAuthenticatorCache,accounts.userId);
 synchronized (accounts.cacheLock) {
     final SQLiteDatabase db=accounts.openHelper.getWritableDatabase();
     boolean accountDeleted=false;
     Cursor metaCursor=db.query(TABLE_META,new String[]{META_KEY,META_VALUE},SELECTION_META_BY_AUTHENTICATOR_TYPE,new String[]{META_KEY_FOR_AUTHENTICATOR_UID_FOR_TYPE_PREFIX + "%"},null,null,META_KEY);
     HashSet<String> obsoleteAuthType=Sets.newHashSet();
     try {
+      SparseBooleanArray knownUids=null;
       while (metaCursor.moveToNext()) {
         String type=TextUtils.split(metaCursor.getString(0),META_KEY_DELIMITER)[1];
         String uid=metaCursor.getString(1);
@@ -27,8 +25,13 @@ synchronized (accounts.cacheLock) {
           knownAuth.remove(type);
         }
  else {
-          obsoleteAuthType.add(type);
-          db.delete(TABLE_META,META_KEY + "=? AND " + META_VALUE+ "=?",new String[]{META_KEY_FOR_AUTHENTICATOR_UID_FOR_TYPE_PREFIX + type,uid});
+          if (knownUids == null) {
+            knownUids=getUidsOfInstalledOrUpdatedPackagesAsUser(accounts.userId);
+          }
+          if (!knownUids.get(Integer.parseInt(uid))) {
+            obsoleteAuthType.add(type);
+            db.delete(TABLE_META,META_KEY + "=? AND " + META_VALUE+ "=?",new String[]{META_KEY_FOR_AUTHENTICATOR_UID_FOR_TYPE_PREFIX + type,uid});
+          }
         }
       }
     }
@@ -41,7 +44,7 @@ synchronized (accounts.cacheLock) {
       ContentValues values=new ContentValues();
       values.put(META_KEY,META_KEY_FOR_AUTHENTICATOR_UID_FOR_TYPE_PREFIX + entry.getKey());
       values.put(META_VALUE,entry.getValue());
-      db.insert(TABLE_META,null,values);
+      db.insertWithOnConflict(TABLE_META,null,values,SQLiteDatabase.CONFLICT_REPLACE);
     }
     Cursor cursor=db.query(TABLE_ACCOUNTS,new String[]{ACCOUNTS_ID,ACCOUNTS_TYPE,ACCOUNTS_NAME},null,null,null,null,ACCOUNTS_ID);
     try {
