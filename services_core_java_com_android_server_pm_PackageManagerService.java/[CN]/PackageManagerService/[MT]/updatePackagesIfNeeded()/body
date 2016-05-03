@@ -10,26 +10,51 @@
 synchronized (mPackages) {
     pkgs=PackageManagerServiceUtils.getPackagesForDexopt(mPackages.values(),this);
   }
-  int curr=0;
-  int total=pkgs.size();
+  int numberOfPackagesVisited=0;
+  int numberOfPackagesOptimized=0;
+  int numberOfPackagesSkipped=0;
+  int numberOfPackagesFailed=0;
+  final int numberOfPackagesToDexopt=pkgs.size();
+  final long startTime=System.nanoTime();
   for (  PackageParser.Package pkg : pkgs) {
-    curr++;
+    numberOfPackagesVisited++;
     if (!PackageDexOptimizer.canOptimizePackage(pkg)) {
       if (DEBUG_DEXOPT) {
         Log.i(TAG,"Skipping update of of non-optimizable app " + pkg.packageName);
       }
+      numberOfPackagesSkipped++;
       continue;
     }
     if (DEBUG_DEXOPT) {
-      Log.i(TAG,"Extracting app " + curr + " of "+ total+ ": "+ pkg.packageName);
+      Log.i(TAG,"Updating app " + numberOfPackagesVisited + " of "+ numberOfPackagesToDexopt+ ": "+ pkg.packageName);
     }
     if (!isFirstBoot()) {
       try {
-        ActivityManagerNative.getDefault().showBootMessage(mContext.getResources().getString(R.string.android_upgrading_apk,curr,total),true);
+        ActivityManagerNative.getDefault().showBootMessage(mContext.getResources().getString(R.string.android_upgrading_apk,numberOfPackagesVisited,numberOfPackagesToDexopt),true);
       }
  catch (      RemoteException e) {
       }
     }
-    performDexOpt(pkg.packageName,null,true,causeFirstBoot ? REASON_FIRST_BOOT : REASON_BOOT,false);
-  }
+    int dexOptStatus=performDexOptTraced(pkg.packageName,null,true,getCompilerFilterForReason(causeFirstBoot ? REASON_FIRST_BOOT : REASON_BOOT),false);
+switch (dexOptStatus) {
+case PackageDexOptimizer.DEX_OPT_PERFORMED:
+      numberOfPackagesOptimized++;
+    break;
+case PackageDexOptimizer.DEX_OPT_SKIPPED:
+  numberOfPackagesSkipped++;
+break;
+case PackageDexOptimizer.DEX_OPT_FAILED:
+numberOfPackagesFailed++;
+break;
+default :
+Log.e(TAG,"Unexpected dexopt return code " + dexOptStatus);
+break;
+}
+}
+final int elapsedTime=(int)TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime);
+MetricsLogger.action(mContext,MetricsEvent.OPTIMIZING_APPS_NUM_PKGS_DEXOPTED,numberOfPackagesOptimized);
+MetricsLogger.action(mContext,MetricsEvent.OPTIMIZING_APPS_NUM_PKGS_SKIPPED,numberOfPackagesSkipped);
+MetricsLogger.action(mContext,MetricsEvent.OPTIMIZING_APPS_NUM_PKGS_FAILED,numberOfPackagesFailed);
+MetricsLogger.action(mContext,MetricsEvent.OPTIMIZING_APPS_NUM_PKGS_TOTAL,getOptimizablePackages().size());
+MetricsLogger.action(mContext,MetricsEvent.OPTIMIZING_APPS_TOTAL_TIME_MS,elapsedTime);
 }
