@@ -8,24 +8,36 @@
   final boolean isForeground=isUidForegroundOnRestrictBackgroundLocked(uid);
   final boolean isDsBlacklisted=(uidPolicy & POLICY_REJECT_METERED_BACKGROUND) != 0;
   final boolean isDsWhitelisted=mRestrictBackgroundWhitelistUids.get(uid);
-  int newDsRule=RULE_NONE;
   final int oldDsRule=oldUidRules & MASK_METERED_NETWORKS;
+  int newDsRule=RULE_NONE;
+  final boolean isBsWhitelisted=isWhitelistedBatterySaverLocked(uid);
+  final int oldBsRule=oldUidRules & MASK_ALL_NETWORKS;
+  int newBsRule=RULE_NONE;
   if (isForeground) {
     if (isDsBlacklisted || (mRestrictBackground && !isDsWhitelisted)) {
       newDsRule=RULE_TEMPORARY_ALLOW_METERED;
+    }
+ else     if (isDsWhitelisted) {
+      newDsRule=RULE_ALLOW_METERED;
+    }
+    if (mRestrictPower) {
+      newBsRule=RULE_ALLOW_ALL;
     }
   }
  else {
     if (isDsBlacklisted) {
       newDsRule=RULE_REJECT_METERED;
     }
- else     if (isDsWhitelisted) {
+ else     if (mRestrictBackground && isDsWhitelisted) {
       newDsRule=RULE_ALLOW_METERED;
     }
+    if (mRestrictPower) {
+      newBsRule=isBsWhitelisted ? RULE_ALLOW_ALL : RULE_REJECT_ALL;
+    }
   }
-  final int newUidRules=newDsRule;
+  final int newUidRules=newDsRule | newBsRule;
   if (LOGV) {
-    Log.v(TAG,"updateRuleForRestrictBackgroundLocked(" + uid + "):"+ " isForeground="+ isForeground+ ", isBlacklisted: "+ isDsBlacklisted+ ", isDsWhitelisted: "+ isDsWhitelisted+ ", newUidRule: "+ uidRulesToString(newUidRules)+ ", oldUidRule: "+ uidRulesToString(oldUidRules));
+    Log.v(TAG,"updateRuleForRestrictBackgroundLocked(" + uid + "):"+ " isForeground="+ isForeground+ ", isBlacklisted: "+ isDsBlacklisted+ ", isDsWhitelisted: "+ isDsWhitelisted+ ", isBsWhitelisted: "+ isBsWhitelisted+ ", newUidRules: "+ uidRulesToString(newUidRules)+ ", oldUidRules: "+ uidRulesToString(oldUidRules));
   }
   if (newUidRules == RULE_NONE) {
     mUidRules.delete(uid);
@@ -33,7 +45,9 @@
  else {
     mUidRules.put(uid,newUidRules);
   }
+  boolean changed=false;
   if (newDsRule != oldDsRule) {
+    changed=true;
     if ((newDsRule & RULE_TEMPORARY_ALLOW_METERED) != 0) {
       setMeteredNetworkWhitelist(uid,true);
       if (isDsBlacklisted) {
@@ -58,8 +72,22 @@
       setMeteredNetworkWhitelist(uid,isDsWhitelisted);
     }
  else {
-      Log.wtf(TAG,"Unexpected change of metered UID state for " + uid + ": foreground="+ isForeground+ ", whitelisted="+ isDsWhitelisted+ ", blacklisted="+ isDsBlacklisted+ ", newRules="+ uidRulesToString(newUidRules)+ ", oldRules="+ uidRulesToString(oldUidRules));
+      Log.wtf(TAG,"Unexpected change of metered UID state for " + uid + ": foreground="+ isForeground+ ", whitelisted="+ isDsWhitelisted+ ", blacklisted="+ isDsBlacklisted+ ", newRule="+ uidRulesToString(newUidRules)+ ", oldRule="+ uidRulesToString(oldUidRules));
     }
+  }
+  if (newBsRule != oldBsRule) {
+    changed=true;
+    if (newBsRule == RULE_NONE || (newBsRule & RULE_ALLOW_ALL) != 0) {
+      if (LOGV)       Log.v(TAG,"Allowing non-metered access for UID " + uid);
+    }
+ else     if ((newBsRule & RULE_REJECT_ALL) != 0) {
+      if (LOGV)       Log.v(TAG,"Rejecting non-metered access for UID " + uid);
+    }
+ else {
+      Log.wtf(TAG,"Unexpected change of non-metered UID state for " + uid + ": foreground="+ isForeground+ ", whitelisted="+ isBsWhitelisted+ ", newRule="+ uidRulesToString(newUidRules)+ ", oldRule="+ uidRulesToString(oldUidRules));
+    }
+  }
+  if (changed) {
     mHandler.obtainMessage(MSG_RULES_CHANGED,uid,newUidRules).sendToTarget();
   }
 }
