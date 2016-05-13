@@ -1,0 +1,44 @@
+{
+  if (!isUidValidForBlacklistRules(uid)) {
+    if (LOGD)     Slog.d(TAG,"no need to update restrict power rules for uid " + uid);
+    return;
+  }
+  final boolean isIdle=isUidIdle(uid);
+  final boolean restrictMode=isIdle || mRestrictPower || mDeviceIdleMode;
+  final int uidPolicy=mUidPolicy.get(uid,POLICY_NONE);
+  final int oldUidRules=mUidRules.get(uid,RULE_NONE);
+  final boolean isForeground=isUidForegroundOnRestrictPowerLocked(uid);
+  final boolean isWhitelisted=isWhitelistedBatterySaverLocked(uid);
+  final int oldRule=oldUidRules & MASK_ALL_NETWORKS;
+  int newRule=RULE_NONE;
+  if (isForeground) {
+    if (restrictMode) {
+      newRule=RULE_ALLOW_ALL;
+    }
+  }
+ else   if (restrictMode) {
+    newRule=isWhitelisted ? RULE_ALLOW_ALL : RULE_REJECT_ALL;
+  }
+  final int newUidRules=(oldUidRules & MASK_METERED_NETWORKS) | newRule;
+  if (LOGV) {
+    Log.v(TAG,"updateRulesForNonMeteredNetworksLocked(" + uid + ")"+ ", isIdle: "+ isIdle+ ", mRestrictPower: "+ mRestrictPower+ ", mDeviceIdleMode: "+ mDeviceIdleMode+ ", isForeground="+ isForeground+ ", isWhitelisted="+ isWhitelisted+ ", oldRule="+ uidRulesToString(oldRule)+ ", newRule="+ uidRulesToString(newRule)+ ", newUidRules="+ uidRulesToString(newUidRules)+ ", oldUidRules="+ uidRulesToString(oldUidRules));
+  }
+  if (newUidRules == RULE_NONE) {
+    mUidRules.delete(uid);
+  }
+ else {
+    mUidRules.put(uid,newUidRules);
+  }
+  if (newRule != oldRule) {
+    if (newRule == RULE_NONE || (newRule & RULE_ALLOW_ALL) != 0) {
+      if (LOGV)       Log.v(TAG,"Allowing non-metered access for UID " + uid);
+    }
+ else     if ((newRule & RULE_REJECT_ALL) != 0) {
+      if (LOGV)       Log.v(TAG,"Rejecting non-metered access for UID " + uid);
+    }
+ else {
+      Log.wtf(TAG,"Unexpected change of non-metered UID state for " + uid + ": foreground="+ isForeground+ ", whitelisted="+ isWhitelisted+ ", newRule="+ uidRulesToString(newUidRules)+ ", oldRule="+ uidRulesToString(oldUidRules));
+    }
+    mHandler.obtainMessage(MSG_RULES_CHANGED,uid,newUidRules).sendToTarget();
+  }
+}
