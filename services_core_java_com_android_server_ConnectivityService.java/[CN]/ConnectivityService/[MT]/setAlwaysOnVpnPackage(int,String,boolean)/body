@@ -4,22 +4,30 @@
   if (LockdownVpnTracker.isEnabled()) {
     return false;
   }
-  final String oldPackage=getAlwaysOnVpnPackage(userId);
-  if (TextUtils.equals(oldPackage,packageName)) {
-    return true;
-  }
 synchronized (mVpns) {
     Vpn vpn=mVpns.get(userId);
     if (vpn == null) {
       Slog.w(TAG,"User " + userId + " has no Vpn configuration");
       return false;
     }
-    if (!vpn.setAlwaysOnPackage(packageName)) {
+    if (TextUtils.equals(packageName,vpn.getAlwaysOnPackage())) {
+      return true;
+    }
+    if (!vpn.setAlwaysOnPackage(packageName,lockdown)) {
       return false;
     }
-    if (!updateAlwaysOnVpn(userId)) {
-      vpn.setAlwaysOnPackage(null);
+    if (!startAlwaysOnVpn(userId)) {
+      vpn.setAlwaysOnPackage(null,false);
       return false;
+    }
+    final long token=Binder.clearCallingIdentity();
+    try {
+      final ContentResolver cr=mContext.getContentResolver();
+      Settings.Secure.putStringForUser(cr,Settings.Secure.ALWAYS_ON_VPN_APP,packageName,userId);
+      Settings.Secure.putIntForUser(cr,Settings.Secure.ALWAYS_ON_VPN_LOCKDOWN,(lockdown ? 1 : 0),userId);
+    }
+  finally {
+      Binder.restoreCallingIdentity(token);
     }
   }
   return true;
