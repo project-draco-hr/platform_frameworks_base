@@ -3,7 +3,8 @@
 switch (msg.what) {
 case MESSAGE_GET_NAME_AND_ADDRESS:
     if (DBG)     Slog.d(TAG,"MESSAGE_GET_NAME_AND_ADDRESS");
-synchronized (mConnection) {
+  try {
+    mBluetoothLock.writeLock().lock();
     if ((mBluetooth == null) && (!mBinding)) {
       if (DBG)       Slog.d(TAG,"Binding to service to get name and address");
       mGetNameAddressOnly=true;
@@ -29,6 +30,9 @@ synchronized (mConnection) {
       }
       mGetNameAddressOnly=false;
     }
+  }
+  finally {
+    mBluetoothLock.writeLock().unlock();
   }
 break;
 case MESSAGE_ENABLE:
@@ -106,7 +110,8 @@ case MESSAGE_BLUETOOTH_SERVICE_CONNECTED:
 {
 if (DBG) Slog.d(TAG,"MESSAGE_BLUETOOTH_SERVICE_CONNECTED: " + msg.arg1);
 IBinder service=(IBinder)msg.obj;
-synchronized (mConnection) {
+try {
+mBluetoothLock.writeLock().lock();
 if (msg.arg1 == SERVICE_IBLUETOOTHGATT) {
 mBluetoothGatt=IBluetoothGatt.Stub.asInterface(service);
 onBluetoothGattServiceUp();
@@ -153,6 +158,9 @@ Slog.e(TAG,"IBluetooth.enableNoAutoConnect() returned false");
 Slog.e(TAG,"Unable to call enable()",e);
 }
 }
+  finally {
+mBluetoothLock.writeLock().unlock();
+}
 if (!mEnable) {
 waitForOnOff(true,false);
 handleDisable();
@@ -163,9 +171,9 @@ break;
 case MESSAGE_TIMEOUT_BIND:
 {
 Slog.e(TAG,"MESSAGE_TIMEOUT_BIND");
-synchronized (mConnection) {
+mBluetoothLock.writeLock().lock();
 mBinding=false;
-}
+mBluetoothLock.writeLock().unlock();
 break;
 }
 case MESSAGE_BLUETOOTH_STATE_CHANGE:
@@ -192,7 +200,8 @@ break;
 case MESSAGE_BLUETOOTH_SERVICE_DISCONNECTED:
 {
 Slog.e(TAG,"MESSAGE_BLUETOOTH_SERVICE_DISCONNECTED: " + msg.arg1);
-synchronized (mConnection) {
+try {
+mBluetoothLock.writeLock().lock();
 if (msg.arg1 == SERVICE_IBLUETOOTH) {
 if (mBluetooth == null) break;
 mBluetooth=null;
@@ -205,6 +214,9 @@ break;
 Slog.e(TAG,"Bad msg.arg1: " + msg.arg1);
 break;
 }
+}
+  finally {
+mBluetoothLock.writeLock().unlock();
 }
 if (mEnable) {
 mEnable=false;
@@ -233,9 +245,9 @@ break;
 case MESSAGE_TIMEOUT_UNBIND:
 {
 Slog.e(TAG,"MESSAGE_TIMEOUT_UNBIND");
-synchronized (mConnection) {
+mBluetoothLock.writeLock().lock();
 mUnbinding=false;
-}
+mBluetoothLock.writeLock().unlock();
 break;
 }
 case MESSAGE_USER_SWITCHED:
@@ -243,15 +255,17 @@ case MESSAGE_USER_SWITCHED:
 if (DBG) Slog.d(TAG,"MESSAGE_USER_SWITCHED");
 mHandler.removeMessages(MESSAGE_USER_SWITCHED);
 if (mEnable && mBluetooth != null) {
-synchronized (mConnection) {
-if (mBluetooth != null) {
 try {
+mBluetoothLock.readLock().lock();
+if (mBluetooth != null) {
 mBluetooth.unregisterCallback(mBluetoothCallback);
+}
 }
  catch (RemoteException re) {
 Slog.e(TAG,"Unable to unregister",re);
 }
-}
+ finally {
+mBluetoothLock.readLock().unlock();
 }
 if (mState == BluetoothAdapter.STATE_TURNING_OFF) {
 bluetoothStateChangeHandler(mState,BluetoothAdapter.STATE_OFF);
@@ -271,13 +285,13 @@ bluetoothStateChangeHandler(BluetoothAdapter.STATE_ON,BluetoothAdapter.STATE_TUR
 waitForOnOff(false,true);
 bluetoothStateChangeHandler(BluetoothAdapter.STATE_TURNING_OFF,BluetoothAdapter.STATE_OFF);
 sendBluetoothServiceDownCallback();
-synchronized (mConnection) {
+mBluetoothLock.writeLock().lock();
 if (mBluetooth != null) {
 mBluetooth=null;
 mContext.unbindService(mConnection);
 }
 mBluetoothGatt=null;
-}
+mBluetoothLock.writeLock().unlock();
 SystemClock.sleep(100);
 mHandler.removeMessages(MESSAGE_BLUETOOTH_STATE_CHANGE);
 mState=BluetoothAdapter.STATE_OFF;
@@ -297,11 +311,9 @@ case MESSAGE_USER_UNLOCKED:
 {
 if (DBG) Slog.d(TAG,"MESSAGE_USER_UNLOCKED");
 mHandler.removeMessages(MESSAGE_USER_SWITCHED);
-synchronized (mConnection) {
 if (mEnable && !mBinding && (mBluetooth == null)) {
 if (DBG) Slog.d(TAG,"Enabled but not bound; retrying after unlock");
 handleEnable(mQuietEnable);
-}
 }
 }
 }
