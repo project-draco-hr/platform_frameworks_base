@@ -11,26 +11,31 @@
   }
 switch (memLevel) {
 case ProcessStats.ADJ_MEM_FACTOR_MODERATE:
-    mMaxActiveJobs=((MAX_JOB_CONTEXTS_COUNT - FG_JOB_CONTEXTS_COUNT) * 2) / 3;
+    mMaxActiveJobs=mConstants.BG_MODERATE_JOB_COUNT;
   break;
 case ProcessStats.ADJ_MEM_FACTOR_LOW:
-mMaxActiveJobs=(MAX_JOB_CONTEXTS_COUNT - FG_JOB_CONTEXTS_COUNT) / 3;
+mMaxActiveJobs=mConstants.BG_LOW_JOB_COUNT;
 break;
 case ProcessStats.ADJ_MEM_FACTOR_CRITICAL:
-mMaxActiveJobs=1;
+mMaxActiveJobs=mConstants.BG_CRITICAL_JOB_COUNT;
 break;
 default :
-mMaxActiveJobs=MAX_JOB_CONTEXTS_COUNT - FG_JOB_CONTEXTS_COUNT;
+mMaxActiveJobs=mConstants.BG_NORMAL_JOB_COUNT;
 break;
 }
 JobStatus[] contextIdToJobMap=mTmpAssignContextIdToJobMap;
 boolean[] act=mTmpAssignAct;
 int[] preferredUidForContext=mTmpAssignPreferredUidForContext;
 int numActive=0;
+int numForeground=0;
 for (int i=0; i < MAX_JOB_CONTEXTS_COUNT; i++) {
 final JobServiceContext js=mActiveServices.get(i);
-if ((contextIdToJobMap[i]=js.getRunningJob()) != null) {
+final JobStatus status=js.getRunningJob();
+if ((contextIdToJobMap[i]=status) != null) {
 numActive++;
+if (status.lastEvaluatedPriority >= JobInfo.PRIORITY_TOP_APP) {
+numForeground++;
+}
 }
 act[i]=false;
 preferredUidForContext[i]=js.getPreferredUid();
@@ -52,9 +57,8 @@ for (int j=0; j < MAX_JOB_CONTEXTS_COUNT; j++) {
 JobStatus job=contextIdToJobMap[j];
 int preferredUid=preferredUidForContext[j];
 if (job == null) {
-if ((numActive < mMaxActiveJobs || priority >= JobInfo.PRIORITY_TOP_APP) && (preferredUid == nextPending.getUid() || preferredUid == JobServiceContext.NO_PREFERRED_UID)) {
+if ((numActive < mMaxActiveJobs || (priority >= JobInfo.PRIORITY_TOP_APP && numForeground < mConstants.FG_JOB_COUNT)) && (preferredUid == nextPending.getUid() || preferredUid == JobServiceContext.NO_PREFERRED_UID)) {
 minPriorityContextId=j;
-numActive++;
 break;
 }
 continue;
@@ -73,11 +77,16 @@ minPriorityContextId=j;
 if (minPriorityContextId != -1) {
 contextIdToJobMap[minPriorityContextId]=nextPending;
 act[minPriorityContextId]=true;
+numActive++;
+if (priority >= JobInfo.PRIORITY_TOP_APP) {
+numForeground++;
+}
 }
 }
 if (DEBUG) {
 Slog.d(TAG,printContextIdToJobMap(contextIdToJobMap,"running jobs final"));
 }
+mJobPackageTracker.noteConcurrency(numActive,numForeground);
 for (int i=0; i < MAX_JOB_CONTEXTS_COUNT; i++) {
 boolean preservePreferredUid=false;
 if (act[i]) {
