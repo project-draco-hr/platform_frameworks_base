@@ -169,7 +169,7 @@ case CodecProfileLevel.MPEG2LevelML:
 FR=30;
 W=45;
 H=36;
-MBPS=48600;
+MBPS=40500;
 FS=1620;
 BR=15000;
 break;
@@ -192,7 +192,7 @@ case CodecProfileLevel.MPEG2LevelML:
 FR=30;
 W=45;
 H=36;
-MBPS=48600;
+MBPS=40500;
 FS=1620;
 BR=15000;
 break;
@@ -257,11 +257,13 @@ maxBlocksPerSecond=1485;
 maxBps=64000;
 for (CodecProfileLevel profileLevel : profileLevels) {
 int MBPS=0, FS=0, BR=0, FR=0, W=0, H=0;
+boolean strict=false;
 boolean supported=true;
 switch (profileLevel.profile) {
 case CodecProfileLevel.MPEG4ProfileSimple:
 switch (profileLevel.level) {
 case CodecProfileLevel.MPEG4Level0:
+strict=true;
 FR=15;
 W=11;
 H=9;
@@ -278,7 +280,8 @@ FS=99;
 BR=64;
 break;
 case CodecProfileLevel.MPEG4Level0b:
-FR=30;
+strict=true;
+FR=15;
 W=11;
 H=9;
 MBPS=1485;
@@ -394,11 +397,11 @@ case CodecProfileLevel.MPEG4ProfileAdvancedCoding:
 case CodecProfileLevel.MPEG4ProfileCore:
 case CodecProfileLevel.MPEG4ProfileAdvancedCore:
 case CodecProfileLevel.MPEG4ProfileSimpleScalable:
-case CodecProfileLevel.MPEG4ProfileAdvancedScalable:
 case CodecProfileLevel.MPEG4ProfileHybrid:
 case CodecProfileLevel.MPEG4ProfileBasicAnimated:
 case CodecProfileLevel.MPEG4ProfileScalableTexture:
 case CodecProfileLevel.MPEG4ProfileSimpleFace:
+case CodecProfileLevel.MPEG4ProfileAdvancedScalable:
 case CodecProfileLevel.MPEG4ProfileSimpleFBA:
 Log.i(TAG,"Unsupported profile " + profileLevel.profile + " for "+ mime);
 errors|=ERROR_UNSUPPORTED;
@@ -414,22 +417,34 @@ errors&=~ERROR_NONE_SUPPORTED;
 maxBlocksPerSecond=Math.max(MBPS,maxBlocksPerSecond);
 maxBlocks=Math.max(FS,maxBlocks);
 maxBps=Math.max(BR * 1000,maxBps);
+if (strict) {
 maxWidth=Math.max(W,maxWidth);
 maxHeight=Math.max(H,maxHeight);
 maxRate=Math.max(FR,maxRate);
+}
+ else {
+int maxDim=(int)Math.sqrt(FS * 2);
+maxWidth=Math.max(maxDim,maxWidth);
+maxHeight=Math.max(maxDim,maxHeight);
+maxRate=Math.max(Math.max(FR,60),maxRate);
+}
 }
 applyMacroBlockLimits(maxWidth,maxHeight,maxBlocks,maxBlocksPerSecond,16,16,1,1);
 mFrameRateRange=mFrameRateRange.intersect(12,maxRate);
 }
  else if (mime.equalsIgnoreCase(MediaFormat.MIMETYPE_VIDEO_H263)) {
 int maxWidth=11, maxHeight=9, maxRate=15;
+int minWidth=maxWidth, minHeight=maxHeight;
+int minAlignment=16;
 maxBlocks=99;
 maxBlocksPerSecond=1485;
 maxBps=64000;
 for (CodecProfileLevel profileLevel : profileLevels) {
-int MBPS=0, BR=0, FR=0, W=0, H=0;
+int MBPS=0, BR=0, FR=0, W=0, H=0, minW=minWidth, minH=minHeight;
+boolean strict=false;
 switch (profileLevel.level) {
 case CodecProfileLevel.H263Level10:
+strict=true;
 FR=15;
 W=11;
 H=9;
@@ -437,13 +452,15 @@ BR=1;
 MBPS=W * H * FR;
 break;
 case CodecProfileLevel.H263Level20:
+strict=true;
 FR=30;
 W=22;
 H=18;
 BR=2;
-MBPS=W * H * FR;
+MBPS=W * H * 15;
 break;
 case CodecProfileLevel.H263Level30:
+strict=true;
 FR=30;
 W=22;
 H=18;
@@ -451,6 +468,7 @@ BR=6;
 MBPS=W * H * FR;
 break;
 case CodecProfileLevel.H263Level40:
+strict=true;
 FR=30;
 W=22;
 H=18;
@@ -458,13 +476,22 @@ BR=32;
 MBPS=W * H * FR;
 break;
 case CodecProfileLevel.H263Level45:
-FR=30;
+strict=profileLevel.profile == CodecProfileLevel.H263ProfileBaseline || profileLevel.profile == CodecProfileLevel.H263ProfileBackwardCompatible;
+if (!strict) {
+minW=1;
+minH=1;
+minAlignment=4;
+}
+FR=15;
 W=11;
 H=9;
 BR=2;
 MBPS=W * H * FR;
 break;
 case CodecProfileLevel.H263Level50:
+minW=1;
+minH=1;
+minAlignment=4;
 FR=60;
 W=22;
 H=18;
@@ -472,6 +499,9 @@ BR=64;
 MBPS=W * H * 50;
 break;
 case CodecProfileLevel.H263Level60:
+minW=1;
+minH=1;
+minAlignment=4;
 FR=60;
 W=45;
 H=18;
@@ -479,6 +509,9 @@ BR=128;
 MBPS=W * H * 50;
 break;
 case CodecProfileLevel.H263Level70:
+minW=1;
+minH=1;
+minAlignment=4;
 FR=60;
 W=45;
 H=36;
@@ -504,6 +537,13 @@ default :
 Log.w(TAG,"Unrecognized profile " + profileLevel.profile + " for "+ mime);
 errors|=ERROR_UNRECOGNIZED;
 }
+if (strict) {
+minW=11;
+minH=9;
+}
+ else {
+mAllowMbOverride=true;
+}
 errors&=~ERROR_NONE_SUPPORTED;
 maxBlocksPerSecond=Math.max(MBPS,maxBlocksPerSecond);
 maxBlocks=Math.max(W * H,maxBlocks);
@@ -511,8 +551,13 @@ maxBps=Math.max(BR * 64000,maxBps);
 maxWidth=Math.max(W,maxWidth);
 maxHeight=Math.max(H,maxHeight);
 maxRate=Math.max(FR,maxRate);
+minWidth=Math.min(minW,minWidth);
+minHeight=Math.min(minH,minHeight);
 }
-applyMacroBlockLimits(maxWidth,maxHeight,maxBlocks,maxBlocksPerSecond,16,16,1,1);
+if (!mAllowMbOverride) {
+mBlockAspectRatioRange=Range.create(new Rational(11,9),new Rational(11,9));
+}
+applyMacroBlockLimits(minWidth,minHeight,maxWidth,maxHeight,maxBlocks,maxBlocksPerSecond,16,16,minAlignment,minAlignment);
 mFrameRateRange=Range.create(1,maxRate);
 }
  else if (mime.equalsIgnoreCase(MediaFormat.MIMETYPE_VIDEO_VP8)) {
@@ -646,6 +691,8 @@ case CodecProfileLevel.VP9Profile0:
 case CodecProfileLevel.VP9Profile1:
 case CodecProfileLevel.VP9Profile2:
 case CodecProfileLevel.VP9Profile3:
+case CodecProfileLevel.VP9Profile2HDR:
+case CodecProfileLevel.VP9Profile3HDR:
 break;
 default :
 Log.w(TAG,"Unrecognized profile " + profileLevel.profile + " for "+ mime);
@@ -664,7 +711,7 @@ maxBlocksPerSecond=Utils.divUp(maxBlocksPerSecond,blockSize * blockSize);
 applyMacroBlockLimits(maxLengthInBlocks,maxLengthInBlocks,maxBlocks,maxBlocksPerSecond,blockSize,blockSize,1,1);
 }
  else if (mime.equalsIgnoreCase(MediaFormat.MIMETYPE_VIDEO_HEVC)) {
-maxBlocks=36864;
+maxBlocks=36864 >> 6;
 maxBlocksPerSecond=maxBlocks * 15;
 maxBps=128000;
 for (CodecProfileLevel profileLevel : profileLevels) {
@@ -795,15 +842,13 @@ default :
 Log.w(TAG,"Unrecognized profile " + profileLevel.profile + " for "+ mime);
 errors|=ERROR_UNRECOGNIZED;
 }
+FS>>=6;
 errors&=~ERROR_NONE_SUPPORTED;
 maxBlocksPerSecond=Math.max((int)(FR * FS),maxBlocksPerSecond);
 maxBlocks=Math.max(FS,maxBlocks);
 maxBps=Math.max(BR * 1000,maxBps);
 }
 int maxLengthInBlocks=(int)(Math.sqrt(maxBlocks * 8));
-maxBlocks=Utils.divUp(maxBlocks,8 * 8);
-maxBlocksPerSecond=Utils.divUp(maxBlocksPerSecond,8 * 8);
-maxLengthInBlocks=Utils.divUp(maxLengthInBlocks,8);
 applyMacroBlockLimits(maxLengthInBlocks,maxLengthInBlocks,maxBlocks,maxBlocksPerSecond,8,8,1,1);
 }
  else {
