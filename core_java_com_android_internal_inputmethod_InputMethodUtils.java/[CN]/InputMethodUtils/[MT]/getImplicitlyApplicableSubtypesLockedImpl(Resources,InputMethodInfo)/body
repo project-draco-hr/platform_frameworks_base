@@ -1,0 +1,68 @@
+{
+  final List<InputMethodSubtype> subtypes=InputMethodUtils.getSubtypes(imi);
+  final LocaleList systemLocales=res.getConfiguration().getLocales();
+  final String systemLocale=systemLocales.get(0).toString();
+  if (TextUtils.isEmpty(systemLocale))   return new ArrayList<>();
+  final int numSubtypes=subtypes.size();
+  final HashMap<String,InputMethodSubtype> applicableModeAndSubtypesMap=new HashMap<>();
+  for (int i=0; i < numSubtypes; ++i) {
+    final InputMethodSubtype subtype=subtypes.get(i);
+    if (subtype.overridesImplicitlyEnabledSubtype()) {
+      final String mode=subtype.getMode();
+      if (!applicableModeAndSubtypesMap.containsKey(mode)) {
+        applicableModeAndSubtypesMap.put(mode,subtype);
+      }
+    }
+  }
+  if (applicableModeAndSubtypesMap.size() > 0) {
+    return new ArrayList<>(applicableModeAndSubtypesMap.values());
+  }
+  final HashMap<String,ArrayList<InputMethodSubtype>> nonKeyboardSubtypesMap=new HashMap<>();
+  final ArrayList<InputMethodSubtype> keyboardSubtypes=new ArrayList<>();
+  for (int i=0; i < numSubtypes; ++i) {
+    final InputMethodSubtype subtype=subtypes.get(i);
+    final String mode=subtype.getMode();
+    if (SUBTYPE_MODE_KEYBOARD.equals(mode)) {
+      keyboardSubtypes.add(subtype);
+    }
+ else {
+      if (!nonKeyboardSubtypesMap.containsKey(mode)) {
+        nonKeyboardSubtypesMap.put(mode,new ArrayList<>());
+      }
+      nonKeyboardSubtypesMap.get(mode).add(subtype);
+    }
+  }
+  final ArrayList<InputMethodSubtype> applicableSubtypes=new ArrayList<>();
+  LocaleUtils.filterByLanguage(keyboardSubtypes,sSubtypeToLocale,systemLocales,applicableSubtypes);
+  if (!applicableSubtypes.isEmpty()) {
+    boolean hasAsciiCapableKeyboard=false;
+    final int numApplicationSubtypes=applicableSubtypes.size();
+    for (int i=0; i < numApplicationSubtypes; ++i) {
+      final InputMethodSubtype subtype=applicableSubtypes.get(i);
+      if (subtype.containsExtraValueKey(TAG_ASCII_CAPABLE)) {
+        hasAsciiCapableKeyboard=true;
+        break;
+      }
+    }
+    if (!hasAsciiCapableKeyboard) {
+      final int numKeyboardSubtypes=keyboardSubtypes.size();
+      for (int i=0; i < numKeyboardSubtypes; ++i) {
+        final InputMethodSubtype subtype=keyboardSubtypes.get(i);
+        final String mode=subtype.getMode();
+        if (SUBTYPE_MODE_KEYBOARD.equals(mode) && subtype.containsExtraValueKey(TAG_ENABLED_WHEN_DEFAULT_IS_NOT_ASCII_CAPABLE)) {
+          applicableSubtypes.add(subtype);
+        }
+      }
+    }
+  }
+  if (applicableSubtypes.isEmpty()) {
+    InputMethodSubtype lastResortKeyboardSubtype=findLastResortApplicableSubtypeLocked(res,subtypes,SUBTYPE_MODE_KEYBOARD,systemLocale,true);
+    if (lastResortKeyboardSubtype != null) {
+      applicableSubtypes.add(lastResortKeyboardSubtype);
+    }
+  }
+  for (  final ArrayList<InputMethodSubtype> subtypeList : nonKeyboardSubtypesMap.values()) {
+    LocaleUtils.filterByLanguage(subtypeList,sSubtypeToLocale,systemLocales,applicableSubtypes);
+  }
+  return applicableSubtypes;
+}
