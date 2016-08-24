@@ -1,0 +1,118 @@
+{
+  if (DEBUG) {
+    Log.d(TAG,"getJpegAttributes starting with: " + inputStream);
+  }
+  DataInputStream dataInputStream=new DataInputStream(inputStream);
+  byte marker;
+  int bytesRead=0;
+  if ((marker=dataInputStream.readByte()) != MARKER) {
+    throw new IOException("Invalid marker: " + Integer.toHexString(marker & 0xff));
+  }
+  ++bytesRead;
+  if (dataInputStream.readByte() != MARKER_SOI) {
+    throw new IOException("Invalid marker: " + Integer.toHexString(marker & 0xff));
+  }
+  ++bytesRead;
+  while (true) {
+    marker=dataInputStream.readByte();
+    if (marker != MARKER) {
+      throw new IOException("Invalid marker:" + Integer.toHexString(marker & 0xff));
+    }
+    ++bytesRead;
+    marker=dataInputStream.readByte();
+    if (DEBUG) {
+      Log.d(TAG,"Found JPEG segment indicator: " + Integer.toHexString(marker & 0xff));
+    }
+    ++bytesRead;
+    if (marker == MARKER_EOI || marker == MARKER_SOS) {
+      break;
+    }
+    int length=dataInputStream.readUnsignedShort() - 2;
+    bytesRead+=2;
+    if (DEBUG) {
+      Log.d(TAG,"JPEG segment: " + Integer.toHexString(marker & 0xff) + " (length: "+ (length + 2)+ ")");
+    }
+    if (length < 0) {
+      throw new IOException("Invalid length");
+    }
+switch (marker) {
+case MARKER_APP1:
+{
+        if (DEBUG) {
+          Log.d(TAG,"MARKER_APP1");
+        }
+        if (length < 6) {
+          break;
+        }
+        byte[] identifier=new byte[6];
+        if (inputStream.read(identifier) != 6) {
+          throw new IOException("Invalid exif");
+        }
+        bytesRead+=6;
+        length-=6;
+        if (!Arrays.equals(identifier,IDENTIFIER_EXIF_APP1)) {
+          break;
+        }
+        if (length <= 0) {
+          throw new IOException("Invalid exif");
+        }
+        if (DEBUG) {
+          Log.d(TAG,"readExifSegment with a byte array (length: " + length + ")");
+        }
+        byte[] bytes=new byte[length];
+        if (dataInputStream.read(bytes) != length) {
+          throw new IOException("Invalid exif");
+        }
+        readExifSegment(bytes,bytesRead);
+        bytesRead+=length;
+        length=0;
+        break;
+      }
+case MARKER_COM:
+{
+      byte[] bytes=new byte[length];
+      if (dataInputStream.read(bytes) != length) {
+        throw new IOException("Invalid exif");
+      }
+      length=0;
+      if (getAttribute(TAG_USER_COMMENT) == null) {
+        mAttributes[IFD_EXIF_HINT].put(TAG_USER_COMMENT,ExifAttribute.createString(new String(bytes,ASCII)));
+      }
+      break;
+    }
+case MARKER_SOF0:
+case MARKER_SOF1:
+case MARKER_SOF2:
+case MARKER_SOF3:
+case MARKER_SOF5:
+case MARKER_SOF6:
+case MARKER_SOF7:
+case MARKER_SOF9:
+case MARKER_SOF10:
+case MARKER_SOF11:
+case MARKER_SOF13:
+case MARKER_SOF14:
+case MARKER_SOF15:
+{
+    if (dataInputStream.skipBytes(1) != 1) {
+      throw new IOException("Invalid SOFx");
+    }
+    mAttributes[IFD_TIFF_HINT].put(TAG_IMAGE_LENGTH,ExifAttribute.createULong(dataInputStream.readUnsignedShort(),mExifByteOrder));
+    mAttributes[IFD_TIFF_HINT].put(TAG_IMAGE_WIDTH,ExifAttribute.createULong(dataInputStream.readUnsignedShort(),mExifByteOrder));
+    length-=5;
+    break;
+  }
+default :
+{
+  break;
+}
+}
+if (length < 0) {
+throw new IOException("Invalid length");
+}
+if (dataInputStream.skipBytes(length) != length) {
+throw new IOException("Invalid JPEG segment");
+}
+bytesRead+=length;
+}
+}

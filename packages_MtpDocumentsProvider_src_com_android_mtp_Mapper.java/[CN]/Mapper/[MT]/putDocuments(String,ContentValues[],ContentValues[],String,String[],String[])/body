@@ -1,0 +1,53 @@
+{
+  final SQLiteDatabase database=mDatabase.getSQLiteDatabase();
+  boolean changed=false;
+  database.beginTransaction();
+  try {
+    getParentOrHaltMapping(parentId);
+    Preconditions.checkState(mInMappingIds.contains(parentId));
+    final ContentValues oldRowSnapshot=new ContentValues();
+    final ContentValues newRowSnapshot=new ContentValues();
+    for (int i=0; i < valuesList.length; i++) {
+      final ContentValues values=valuesList[i];
+      final ContentValues rootExtraValues;
+      if (rootExtraValuesList != null) {
+        rootExtraValues=rootExtraValuesList[i];
+      }
+ else {
+        rootExtraValues=null;
+      }
+      try (final Cursor candidateCursor=queryCandidate(selection,args,mappingKeys,values)){
+        final long rowId;
+        if (candidateCursor == null) {
+          rowId=database.insert(TABLE_DOCUMENTS,null,values);
+          changed=true;
+        }
+ else {
+          candidateCursor.moveToNext();
+          rowId=candidateCursor.getLong(0);
+          if (!changed) {
+            mDatabase.writeRowSnapshot(String.valueOf(rowId),oldRowSnapshot);
+          }
+          database.update(TABLE_DOCUMENTS,values,SELECTION_DOCUMENT_ID,strings(rowId));
+        }
+        values.put(Document.COLUMN_DOCUMENT_ID,rowId);
+        if (rootExtraValues != null) {
+          rootExtraValues.put(Root.COLUMN_ROOT_ID,rowId);
+          database.replace(TABLE_ROOT_EXTRA,null,rootExtraValues);
+        }
+        if (!changed) {
+          mDatabase.writeRowSnapshot(String.valueOf(rowId),newRowSnapshot);
+          oldRowSnapshot.put(COLUMN_ROW_STATE,String.valueOf(ROW_STATE_VALID));
+          if (!oldRowSnapshot.equals(newRowSnapshot)) {
+            changed=true;
+          }
+        }
+      }
+     }
+    database.setTransactionSuccessful();
+    return changed;
+  }
+  finally {
+    database.endTransaction();
+  }
+}

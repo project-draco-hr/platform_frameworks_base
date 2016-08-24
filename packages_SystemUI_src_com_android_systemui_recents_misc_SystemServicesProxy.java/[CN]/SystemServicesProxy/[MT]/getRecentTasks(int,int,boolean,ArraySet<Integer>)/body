@@ -1,0 +1,52 @@
+{
+  if (mAm == null)   return null;
+  if (RecentsDebugFlags.Static.EnableMockTasks) {
+    ArrayList<ActivityManager.RecentTaskInfo> tasks=new ArrayList<ActivityManager.RecentTaskInfo>();
+    int count=Math.min(numLatestTasks,RecentsDebugFlags.Static.MockTaskCount);
+    for (int i=0; i < count; i++) {
+      int packageIndex=i % RecentsDebugFlags.Static.MockTasksPackageCount;
+      ComponentName cn=new ComponentName("com.android.test" + packageIndex,"com.android.test" + i + ".Activity");
+      String description="" + i + " - "+ Long.toString(Math.abs(new Random().nextLong()),36);
+      ActivityManager.RecentTaskInfo rti=new ActivityManager.RecentTaskInfo();
+      rti.id=rti.persistentId=rti.affiliatedTaskId=i;
+      rti.baseIntent=new Intent();
+      rti.baseIntent.setComponent(cn);
+      rti.description=description;
+      rti.firstActiveTime=rti.lastActiveTime=i;
+      if (i % 2 == 0) {
+        rti.taskDescription=new ActivityManager.TaskDescription(description,Bitmap.createBitmap(mDummyIcon),null,0xFF000000 | (0xFFFFFF & new Random().nextInt()),0xFF000000 | (0xFFFFFF & new Random().nextInt()));
+      }
+ else {
+        rti.taskDescription=new ActivityManager.TaskDescription();
+      }
+      tasks.add(rti);
+    }
+    return tasks;
+  }
+  int minNumTasksToQuery=10;
+  int numTasksToQuery=Math.max(minNumTasksToQuery,numLatestTasks);
+  int flags=ActivityManager.RECENT_IGNORE_HOME_STACK_TASKS | ActivityManager.RECENT_INGORE_DOCKED_STACK_TOP_TASK | ActivityManager.RECENT_INGORE_PINNED_STACK_TASKS| ActivityManager.RECENT_IGNORE_UNAVAILABLE| ActivityManager.RECENT_INCLUDE_PROFILES;
+  if (includeFrontMostExcludedTask) {
+    flags|=ActivityManager.RECENT_WITH_EXCLUDED;
+  }
+  List<ActivityManager.RecentTaskInfo> tasks=mAm.getRecentTasksForUser(numTasksToQuery,flags,userId);
+  if (tasks == null) {
+    return new ArrayList<>();
+  }
+  boolean isFirstValidTask=true;
+  Iterator<ActivityManager.RecentTaskInfo> iter=tasks.iterator();
+  while (iter.hasNext()) {
+    ActivityManager.RecentTaskInfo t=iter.next();
+    if (sRecentsBlacklist.contains(t.realActivity.getClassName())) {
+      iter.remove();
+      continue;
+    }
+    boolean isExcluded=(t.baseIntent.getFlags() & Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS) == Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS;
+    isExcluded|=quietProfileIds.contains(t.userId);
+    if (isExcluded && (!isFirstValidTask || !includeFrontMostExcludedTask)) {
+      iter.remove();
+    }
+    isFirstValidTask=false;
+  }
+  return tasks.subList(0,Math.min(tasks.size(),numLatestTasks));
+}

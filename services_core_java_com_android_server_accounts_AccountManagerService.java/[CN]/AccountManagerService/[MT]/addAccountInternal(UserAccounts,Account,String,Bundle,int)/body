@@ -1,0 +1,59 @@
+{
+  Bundle.setDefusable(extras,true);
+  if (account == null) {
+    return false;
+  }
+  if (!isLocalUnlockedUser(accounts.userId)) {
+    Log.w(TAG,"Account " + account + " cannot be added - user "+ accounts.userId+ " is locked. callingUid="+ callingUid);
+    return false;
+  }
+synchronized (accounts.cacheLock) {
+    final SQLiteDatabase db=accounts.openHelper.getWritableDatabaseUserIsUnlocked();
+    db.beginTransaction();
+    try {
+      long numMatches=DatabaseUtils.longForQuery(db,"select count(*) from " + CE_TABLE_ACCOUNTS + " WHERE "+ ACCOUNTS_NAME+ "=? AND "+ ACCOUNTS_TYPE+ "=?",new String[]{account.name,account.type});
+      if (numMatches > 0) {
+        Log.w(TAG,"insertAccountIntoDatabase: " + account + ", skipping since the account already exists");
+        return false;
+      }
+      ContentValues values=new ContentValues();
+      values.put(ACCOUNTS_NAME,account.name);
+      values.put(ACCOUNTS_TYPE,account.type);
+      values.put(ACCOUNTS_PASSWORD,password);
+      long accountId=db.insert(CE_TABLE_ACCOUNTS,ACCOUNTS_NAME,values);
+      if (accountId < 0) {
+        Log.w(TAG,"insertAccountIntoDatabase: " + account + ", skipping the DB insert failed");
+        return false;
+      }
+      values=new ContentValues();
+      values.put(ACCOUNTS_ID,accountId);
+      values.put(ACCOUNTS_NAME,account.name);
+      values.put(ACCOUNTS_TYPE,account.type);
+      values.put(ACCOUNTS_LAST_AUTHENTICATE_TIME_EPOCH_MILLIS,System.currentTimeMillis());
+      if (db.insert(TABLE_ACCOUNTS,ACCOUNTS_NAME,values) < 0) {
+        Log.w(TAG,"insertAccountIntoDatabase: " + account + ", skipping the DB insert failed");
+        return false;
+      }
+      if (extras != null) {
+        for (        String key : extras.keySet()) {
+          final String value=extras.getString(key);
+          if (insertExtraLocked(db,accountId,key,value) < 0) {
+            Log.w(TAG,"insertAccountIntoDatabase: " + account + ", skipping since insertExtra failed for key "+ key);
+            return false;
+          }
+        }
+      }
+      db.setTransactionSuccessful();
+      logRecord(db,DebugDbHelper.ACTION_ACCOUNT_ADD,TABLE_ACCOUNTS,accountId,accounts,callingUid);
+      insertAccountIntoCacheLocked(accounts,account);
+    }
+  finally {
+      db.endTransaction();
+    }
+    sendAccountsChangedBroadcast(accounts.userId);
+  }
+  if (getUserManager().getUserInfo(accounts.userId).canHaveProfile()) {
+    addAccountToLinkedRestrictedUsers(account,accounts.userId);
+  }
+  return true;
+}

@@ -1,0 +1,280 @@
+{
+  if (DEBUG_LOCKSCREEN)   mService.logLockScreen("");
+  if (!mService.mBooting && !mService.mBooted) {
+    return false;
+  }
+  ActivityRecord parent=mActivityContainer.mParentActivity;
+  if ((parent != null && parent.state != ActivityState.RESUMED) || !mActivityContainer.isAttachedLocked()) {
+    return false;
+  }
+  mStackSupervisor.cancelInitializingActivities();
+  final ActivityRecord next=topRunningActivityLocked();
+  final boolean userLeaving=mStackSupervisor.mUserLeaving;
+  mStackSupervisor.mUserLeaving=false;
+  final TaskRecord prevTask=prev != null ? prev.task : null;
+  if (next == null) {
+    final String reason="noMoreActivities";
+    final int returnTaskType=prevTask == null || !prevTask.isOverHomeStack() ? HOME_ACTIVITY_TYPE : prevTask.getTaskToReturnTo();
+    if (!mFullscreen && adjustFocusToNextFocusableStackLocked(returnTaskType,reason)) {
+      return mStackSupervisor.resumeFocusedStackTopActivityLocked(mStackSupervisor.getFocusedStack(),prev,null);
+    }
+    ActivityOptions.abort(options);
+    if (DEBUG_STATES)     Slog.d(TAG_STATES,"resumeTopActivityLocked: No more activities go home");
+    if (DEBUG_STACK)     mStackSupervisor.validateTopActivitiesLocked();
+    return isOnHomeDisplay() && mStackSupervisor.resumeHomeStackTask(returnTaskType,prev,reason);
+  }
+  next.delayedResume=false;
+  if (mResumedActivity == next && next.state == ActivityState.RESUMED && mStackSupervisor.allResumedActivitiesComplete()) {
+    mWindowManager.executeAppTransition();
+    mNoAnimActivities.clear();
+    ActivityOptions.abort(options);
+    if (DEBUG_STATES)     Slog.d(TAG_STATES,"resumeTopActivityLocked: Top activity resumed " + next);
+    if (DEBUG_STACK)     mStackSupervisor.validateTopActivitiesLocked();
+    return false;
+  }
+  final TaskRecord nextTask=next.task;
+  if (prevTask != null && prevTask.stack == this && prevTask.isOverHomeStack() && prev.finishing && prev.frontOfTask) {
+    if (DEBUG_STACK)     mStackSupervisor.validateTopActivitiesLocked();
+    if (prevTask == nextTask) {
+      prevTask.setFrontOfTask();
+    }
+ else     if (prevTask != topTask()) {
+      final int taskNdx=mTaskHistory.indexOf(prevTask) + 1;
+      mTaskHistory.get(taskNdx).setTaskToReturnTo(HOME_ACTIVITY_TYPE);
+    }
+ else     if (!isOnHomeDisplay()) {
+      return false;
+    }
+ else     if (!isHomeStack()) {
+      if (DEBUG_STATES)       Slog.d(TAG_STATES,"resumeTopActivityLocked: Launching home next");
+      final int returnTaskType=prevTask == null || !prevTask.isOverHomeStack() ? HOME_ACTIVITY_TYPE : prevTask.getTaskToReturnTo();
+      return isOnHomeDisplay() && mStackSupervisor.resumeHomeStackTask(returnTaskType,prev,"prevFinished");
+    }
+  }
+  if (mService.isSleepingOrShuttingDownLocked() && mLastPausedActivity == next && mStackSupervisor.allPausedActivitiesComplete()) {
+    mWindowManager.executeAppTransition();
+    mNoAnimActivities.clear();
+    ActivityOptions.abort(options);
+    if (DEBUG_STATES)     Slog.d(TAG_STATES,"resumeTopActivityLocked: Going to sleep and all paused");
+    if (DEBUG_STACK)     mStackSupervisor.validateTopActivitiesLocked();
+    return false;
+  }
+  if (!mService.mUserController.hasStartedUserState(next.userId)) {
+    Slog.w(TAG,"Skipping resume of top activity " + next + ": user "+ next.userId+ " is stopped");
+    if (DEBUG_STACK)     mStackSupervisor.validateTopActivitiesLocked();
+    return false;
+  }
+  mStackSupervisor.mStoppingActivities.remove(next);
+  mStackSupervisor.mGoingToSleepActivities.remove(next);
+  next.sleeping=false;
+  mStackSupervisor.mWaitingVisibleActivities.remove(next);
+  if (DEBUG_SWITCH)   Slog.v(TAG_SWITCH,"Resuming " + next);
+  if (!mStackSupervisor.allPausedActivitiesComplete()) {
+    if (DEBUG_SWITCH || DEBUG_PAUSE || DEBUG_STATES)     Slog.v(TAG_PAUSE,"resumeTopActivityLocked: Skip resume: some activity pausing.");
+    if (DEBUG_STACK)     mStackSupervisor.validateTopActivitiesLocked();
+    return false;
+  }
+  mStackSupervisor.setLaunchSource(next.info.applicationInfo.uid);
+  final boolean dontWaitForPause=(next.info.flags & FLAG_RESUME_WHILE_PAUSING) != 0;
+  boolean pausing=mStackSupervisor.pauseBackStacks(userLeaving,true,dontWaitForPause);
+  if (mResumedActivity != null) {
+    if (DEBUG_STATES)     Slog.d(TAG_STATES,"resumeTopActivityLocked: Pausing " + mResumedActivity);
+    pausing|=startPausingLocked(userLeaving,false,true,dontWaitForPause);
+  }
+  if (pausing) {
+    if (DEBUG_SWITCH || DEBUG_STATES)     Slog.v(TAG_STATES,"resumeTopActivityLocked: Skip resume: need to start pausing");
+    if (next.app != null && next.app.thread != null) {
+      mService.updateLruProcessLocked(next.app,true,null);
+    }
+    if (DEBUG_STACK)     mStackSupervisor.validateTopActivitiesLocked();
+    return true;
+  }
+ else   if (mResumedActivity == next && next.state == ActivityState.RESUMED && mStackSupervisor.allResumedActivitiesComplete()) {
+    mWindowManager.executeAppTransition();
+    mNoAnimActivities.clear();
+    ActivityOptions.abort(options);
+    if (DEBUG_STATES)     Slog.d(TAG_STATES,"resumeTopActivityLocked: Top activity resumed (dontWaitForPause) " + next);
+    if (DEBUG_STACK)     mStackSupervisor.validateTopActivitiesLocked();
+    return true;
+  }
+  if (mService.isSleepingLocked() && mLastNoHistoryActivity != null && !mLastNoHistoryActivity.finishing) {
+    if (DEBUG_STATES)     Slog.d(TAG_STATES,"no-history finish of " + mLastNoHistoryActivity + " on new resume");
+    requestFinishActivityLocked(mLastNoHistoryActivity.appToken,Activity.RESULT_CANCELED,null,"resume-no-history",false);
+    mLastNoHistoryActivity=null;
+  }
+  if (prev != null && prev != next) {
+    if (!mStackSupervisor.mWaitingVisibleActivities.contains(prev) && next != null && !next.nowVisible) {
+      mStackSupervisor.mWaitingVisibleActivities.add(prev);
+      if (DEBUG_SWITCH)       Slog.v(TAG_SWITCH,"Resuming top, waiting visible to hide: " + prev);
+    }
+ else {
+      if (prev.finishing) {
+        mWindowManager.setAppVisibility(prev.appToken,false);
+        if (DEBUG_SWITCH)         Slog.v(TAG_SWITCH,"Not waiting for visible to hide: " + prev + ", waitingVisible="+ mStackSupervisor.mWaitingVisibleActivities.contains(prev)+ ", nowVisible="+ next.nowVisible);
+      }
+ else {
+        if (DEBUG_SWITCH)         Slog.v(TAG_SWITCH,"Previous already visible but still waiting to hide: " + prev + ", waitingVisible="+ mStackSupervisor.mWaitingVisibleActivities.contains(prev)+ ", nowVisible="+ next.nowVisible);
+      }
+    }
+  }
+  try {
+    AppGlobals.getPackageManager().setPackageStoppedState(next.packageName,false,next.userId);
+  }
+ catch (  RemoteException e1) {
+  }
+catch (  IllegalArgumentException e) {
+    Slog.w(TAG,"Failed trying to unstop package " + next.packageName + ": "+ e);
+  }
+  boolean anim=true;
+  if (prev != null) {
+    if (prev.finishing) {
+      if (DEBUG_TRANSITION)       Slog.v(TAG_TRANSITION,"Prepare close transition: prev=" + prev);
+      if (mNoAnimActivities.contains(prev)) {
+        anim=false;
+        mWindowManager.prepareAppTransition(TRANSIT_NONE,false);
+      }
+ else {
+        mWindowManager.prepareAppTransition(prev.task == next.task ? TRANSIT_ACTIVITY_CLOSE : TRANSIT_TASK_CLOSE,false);
+      }
+      mWindowManager.setAppVisibility(prev.appToken,false);
+    }
+ else {
+      if (DEBUG_TRANSITION)       Slog.v(TAG_TRANSITION,"Prepare open transition: prev=" + prev);
+      if (mNoAnimActivities.contains(next)) {
+        anim=false;
+        mWindowManager.prepareAppTransition(TRANSIT_NONE,false);
+      }
+ else {
+        mWindowManager.prepareAppTransition(prev.task == next.task ? TRANSIT_ACTIVITY_OPEN : next.mLaunchTaskBehind ? TRANSIT_TASK_OPEN_BEHIND : TRANSIT_TASK_OPEN,false);
+      }
+    }
+  }
+ else {
+    if (DEBUG_TRANSITION)     Slog.v(TAG_TRANSITION,"Prepare open transition: no previous");
+    if (mNoAnimActivities.contains(next)) {
+      anim=false;
+      mWindowManager.prepareAppTransition(TRANSIT_NONE,false);
+    }
+ else {
+      mWindowManager.prepareAppTransition(TRANSIT_ACTIVITY_OPEN,false);
+    }
+  }
+  Bundle resumeAnimOptions=null;
+  if (anim) {
+    ActivityOptions opts=next.getOptionsForTargetActivityLocked();
+    if (opts != null) {
+      resumeAnimOptions=opts.toBundle();
+    }
+    next.applyOptionsLocked();
+  }
+ else {
+    next.clearOptionsLocked();
+  }
+  ActivityStack lastStack=mStackSupervisor.getLastStack();
+  if (next.app != null && next.app.thread != null) {
+    if (DEBUG_SWITCH)     Slog.v(TAG_SWITCH,"Resume running: " + next + " stopped="+ next.stopped+ " visible="+ next.visible);
+    final boolean lastActivityTranslucent=lastStack != null && (!lastStack.mFullscreen || (lastStack.mLastPausedActivity != null && !lastStack.mLastPausedActivity.fullscreen));
+    if (!next.visible || next.stopped || lastActivityTranslucent) {
+      mWindowManager.setAppVisibility(next.appToken,true);
+    }
+    next.startLaunchTickingLocked();
+    ActivityRecord lastResumedActivity=lastStack == null ? null : lastStack.mResumedActivity;
+    ActivityState lastState=next.state;
+    mService.updateCpuStats();
+    if (DEBUG_STATES)     Slog.v(TAG_STATES,"Moving to RESUMED: " + next + " (in existing)");
+    next.state=ActivityState.RESUMED;
+    mResumedActivity=next;
+    next.task.touchActiveTime();
+    mRecentTasks.addLocked(next.task);
+    mService.updateLruProcessLocked(next.app,true,null);
+    updateLRUListLocked(next);
+    mService.updateOomAdjLocked();
+    boolean notUpdated=true;
+    if (mStackSupervisor.isFocusedStack(this)) {
+      Configuration config=mWindowManager.updateOrientationFromAppTokens(mService.mConfiguration,next.mayFreezeScreenLocked(next.app) ? next.appToken : null);
+      if (config != null) {
+        next.frozenBeforeDestroy=true;
+      }
+      notUpdated=!mService.updateConfigurationLocked(config,next,false);
+    }
+    if (notUpdated) {
+      ActivityRecord nextNext=topRunningActivityLocked();
+      if (DEBUG_SWITCH || DEBUG_STATES)       Slog.i(TAG_STATES,"Activity config changed during resume: " + next + ", new next: "+ nextNext);
+      if (nextNext != next) {
+        mStackSupervisor.scheduleResumeTopActivities();
+      }
+      if (mStackSupervisor.reportResumedActivityLocked(next)) {
+        mNoAnimActivities.clear();
+        if (DEBUG_STACK)         mStackSupervisor.validateTopActivitiesLocked();
+        return true;
+      }
+      if (DEBUG_STACK)       mStackSupervisor.validateTopActivitiesLocked();
+      return false;
+    }
+    try {
+      ArrayList<ResultInfo> a=next.results;
+      if (a != null) {
+        final int N=a.size();
+        if (!next.finishing && N > 0) {
+          if (DEBUG_RESULTS)           Slog.v(TAG_RESULTS,"Delivering results to " + next + ": "+ a);
+          next.app.thread.scheduleSendResult(next.appToken,a);
+        }
+      }
+      if (next.newIntents != null) {
+        next.app.thread.scheduleNewIntent(next.newIntents,next.appToken);
+      }
+      mWindowManager.notifyAppStopped(next.appToken,false);
+      EventLog.writeEvent(EventLogTags.AM_RESUME_ACTIVITY,next.userId,System.identityHashCode(next),next.task.taskId,next.shortComponentName);
+      next.sleeping=false;
+      mService.showUnsupportedZoomDialogIfNeededLocked(next);
+      mService.showAskCompatModeDialogLocked(next);
+      next.app.pendingUiClean=true;
+      next.app.forceProcessStateUpTo(mService.mTopProcessState);
+      next.clearOptionsLocked();
+      next.app.thread.scheduleResumeActivity(next.appToken,next.app.repProcState,mService.isNextTransitionForward(),resumeAnimOptions);
+      mStackSupervisor.checkReadyForSleepLocked();
+      if (DEBUG_STATES)       Slog.d(TAG_STATES,"resumeTopActivityLocked: Resumed " + next);
+    }
+ catch (    Exception e) {
+      if (DEBUG_STATES)       Slog.v(TAG_STATES,"Resume failed; resetting state to " + lastState + ": "+ next);
+      next.state=lastState;
+      if (lastStack != null) {
+        lastStack.mResumedActivity=lastResumedActivity;
+      }
+      Slog.i(TAG,"Restarting because process died: " + next);
+      if (!next.hasBeenLaunched) {
+        next.hasBeenLaunched=true;
+      }
+ else       if (SHOW_APP_STARTING_PREVIEW && lastStack != null && mStackSupervisor.isFrontStack(lastStack)) {
+        next.showStartingWindow(null,true);
+      }
+      mStackSupervisor.startSpecificActivityLocked(next,true,false);
+      if (DEBUG_STACK)       mStackSupervisor.validateTopActivitiesLocked();
+      return true;
+    }
+    try {
+      completeResumeLocked(next);
+    }
+ catch (    Exception e) {
+      Slog.w(TAG,"Exception thrown during resume of " + next,e);
+      requestFinishActivityLocked(next.appToken,Activity.RESULT_CANCELED,null,"resume-exception",true);
+      if (DEBUG_STACK)       mStackSupervisor.validateTopActivitiesLocked();
+      return true;
+    }
+  }
+ else {
+    if (!next.hasBeenLaunched) {
+      next.hasBeenLaunched=true;
+    }
+ else {
+      if (SHOW_APP_STARTING_PREVIEW) {
+        next.showStartingWindow(null,true);
+      }
+      if (DEBUG_SWITCH)       Slog.v(TAG_SWITCH,"Restarting: " + next);
+    }
+    if (DEBUG_STATES)     Slog.d(TAG_STATES,"resumeTopActivityLocked: Restarting " + next);
+    mStackSupervisor.startSpecificActivityLocked(next,true,true);
+  }
+  if (DEBUG_STACK)   mStackSupervisor.validateTopActivitiesLocked();
+  return true;
+}

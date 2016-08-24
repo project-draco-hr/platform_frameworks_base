@@ -7,12 +7,18 @@
   mHandlerThread.start();
   mHandler=new MainHandler(mHandlerThread.getLooper());
   mUiHandler=new UiHandler();
+  if (sKillHandler == null) {
+    sKillThread=new ServiceThread(TAG + ":kill",android.os.Process.THREAD_PRIORITY_BACKGROUND,true);
+    sKillThread.start();
+    sKillHandler=new KillHandler(sKillThread.getLooper());
+  }
   mFgBroadcastQueue=new BroadcastQueue(this,mHandler,"foreground",BROADCAST_FG_TIMEOUT,false);
   mBgBroadcastQueue=new BroadcastQueue(this,mHandler,"background",BROADCAST_BG_TIMEOUT,true);
   mBroadcastQueues[0]=mFgBroadcastQueue;
   mBroadcastQueues[1]=mBgBroadcastQueue;
   mServices=new ActiveServices(this);
   mProviderMap=new ProviderMap(this);
+  mAppErrors=new AppErrors(mContext,this);
   File dataDir=Environment.getDataDirectory();
   File systemDir=new File(dataDir,"system");
   systemDir.mkdirs();
@@ -23,21 +29,29 @@
   mBatteryStatsService.getActiveStatistics().setCallback(this);
   mProcessStats=new ProcessStatsService(this,new File(systemDir,"procstats"));
   mAppOpsService=new AppOpsService(new File(systemDir,"appops.xml"),mHandler);
+  mAppOpsService.startWatchingMode(AppOpsManager.OP_RUN_IN_BACKGROUND,null,new IAppOpsCallback.Stub(){
+    @Override public void opChanged(    int op,    int uid,    String packageName){
+      if (op == AppOpsManager.OP_RUN_IN_BACKGROUND && packageName != null) {
+        if (mAppOpsService.checkOperation(op,uid,packageName) != AppOpsManager.MODE_ALLOWED) {
+          runInBackgroundDisabled(uid);
+        }
+      }
+    }
+  }
+);
   mGrantFile=new AtomicFile(new File(systemDir,"urigrants.xml"));
-  mStartedUsers.put(UserHandle.USER_OWNER,new UserState(UserHandle.OWNER,true));
-  mUserLru.add(UserHandle.USER_OWNER);
-  updateStartedUserArrayLocked();
+  mUserController=new UserController(this);
   GL_ES_VERSION=SystemProperties.getInt("ro.opengles.version",ConfigurationInfo.GL_ES_VERSION_UNDEFINED);
   mTrackingAssociations="1".equals(SystemProperties.get("debug.track-associations"));
   mConfiguration.setToDefaults();
-  mConfiguration.setLocale(Locale.getDefault());
+  mConfiguration.setLocales(LocaleList.getDefault());
   mConfigurationSeq=mConfiguration.seq=1;
   mProcessCpuTracker.init();
   mCompatModePackages=new CompatModePackages(this,systemDir,mHandler);
   mIntentFirewall=new IntentFirewall(new IntentFirewallInterface(),mHandler);
-  mRecentTasks=new RecentTasks(this);
-  mStackSupervisor=new ActivityStackSupervisor(this,mRecentTasks);
-  mTaskPersister=new TaskPersister(systemDir,mStackSupervisor,mRecentTasks);
+  mStackSupervisor=new ActivityStackSupervisor(this);
+  mActivityStarter=new ActivityStarter(this,mStackSupervisor);
+  mRecentTasks=new RecentTasks(this,mStackSupervisor);
   mProcessCpuThread=new Thread("CpuTracker"){
     @Override public void run(){
       while (true) {

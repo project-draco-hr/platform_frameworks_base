@@ -1,0 +1,48 @@
+{
+  checkPermission(android.Manifest.permission.SET_WALLPAPER);
+  if ((which & (FLAG_LOCK | FLAG_SYSTEM)) == 0) {
+    final String msg="Must specify a valid wallpaper category to set";
+    Slog.e(TAG,msg);
+    throw new IllegalArgumentException(msg);
+  }
+  if (!isWallpaperSupported(callingPackage) || !isSetWallpaperAllowed(callingPackage)) {
+    return null;
+  }
+  if (cropHint == null) {
+    cropHint=new Rect(0,0,0,0);
+  }
+ else {
+    if (cropHint.isEmpty() || cropHint.left < 0 || cropHint.top < 0) {
+      throw new IllegalArgumentException("Invalid crop rect supplied: " + cropHint);
+    }
+  }
+  final int userId=UserHandle.getCallingUserId();
+synchronized (mLock) {
+    if (DEBUG)     Slog.v(TAG,"setWallpaper which=0x" + Integer.toHexString(which));
+    WallpaperData wallpaper;
+    if (which == FLAG_SYSTEM && mLockWallpaperMap.get(userId) == null) {
+      if (DEBUG) {
+        Slog.i(TAG,"Migrating system->lock to preserve");
+      }
+      migrateSystemToLockWallpaperLocked(userId);
+    }
+    wallpaper=getWallpaperSafeLocked(userId,which);
+    final long ident=Binder.clearCallingIdentity();
+    try {
+      ParcelFileDescriptor pfd=updateWallpaperBitmapLocked(name,wallpaper,extras);
+      if (pfd != null) {
+        wallpaper.imageWallpaperPending=true;
+        wallpaper.whichPending=which;
+        wallpaper.setComplete=completion;
+        wallpaper.cropHint.set(cropHint);
+        if ((which & FLAG_SYSTEM) != 0) {
+          wallpaper.allowBackup=allowBackup;
+        }
+      }
+      return pfd;
+    }
+  finally {
+      Binder.restoreCallingIdentity(ident);
+    }
+  }
+}

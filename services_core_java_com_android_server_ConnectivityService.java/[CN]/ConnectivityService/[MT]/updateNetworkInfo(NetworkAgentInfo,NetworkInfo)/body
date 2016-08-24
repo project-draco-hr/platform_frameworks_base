@@ -8,13 +8,17 @@ synchronized (networkAgent) {
   }
   notifyLockdownVpn(networkAgent);
   if (oldInfo != null && oldInfo.getState() == state) {
-    if (VDBG)     log("ignoring duplicate network state non-change");
+    if (oldInfo.isRoaming() != newInfo.isRoaming()) {
+      if (VDBG)       log("roaming status changed, notifying NetworkStatsService");
+      notifyIfacesChangedForNetworkStats();
+    }
+ else     if (VDBG)     log("ignoring duplicate network state non-change");
     return;
   }
   if (DBG) {
     log(networkAgent.name() + " EVENT_NETWORK_INFO_CHANGED, going from " + (oldInfo == null ? "null" : oldInfo.getState())+ " to "+ state);
   }
-  if (state == NetworkInfo.State.CONNECTED && !networkAgent.created) {
+  if (!networkAgent.created && (state == NetworkInfo.State.CONNECTED || (state == NetworkInfo.State.CONNECTING && networkAgent.isVPN()))) {
     try {
       if (networkAgent.isVPN()) {
         mNetd.createVirtualNetwork(networkAgent.network.netId,!networkAgent.linkProperties.getDnsServers().isEmpty(),(networkAgent.networkMisc == null || !networkAgent.networkMisc.allowBypass));
@@ -28,8 +32,11 @@ synchronized (networkAgent) {
       return;
     }
     networkAgent.created=true;
+  }
+  if (!networkAgent.everConnected && state == NetworkInfo.State.CONNECTED) {
+    networkAgent.everConnected=true;
     updateLinkProperties(networkAgent,null);
-    notifyIfacesChanged();
+    notifyIfacesChangedForNetworkStats();
     networkAgent.networkMonitor.sendMessage(NetworkMonitor.CMD_NETWORK_CONNECTED);
     scheduleUnvalidatedPrompt(networkAgent);
     if (networkAgent.isVPN()) {

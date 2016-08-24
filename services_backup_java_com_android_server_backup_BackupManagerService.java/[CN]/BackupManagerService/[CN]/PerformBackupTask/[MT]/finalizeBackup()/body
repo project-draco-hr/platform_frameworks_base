@@ -16,13 +16,49 @@
 synchronized (mQueueLock) {
     mBackupRunning=false;
     if (mStatus == BackupTransport.TRANSPORT_NOT_INITIALIZED) {
-      clearMetadata();
       if (MORE_DEBUG)       Slog.d(TAG,"Server requires init; rerunning");
       addBackupTrace("init required; rerunning");
+      try {
+        final String name=getTransportName(mTransport);
+        if (name != null) {
+          mPendingInits.add(name);
+        }
+ else {
+          if (DEBUG) {
+            Slog.w(TAG,"Couldn't find name of transport " + mTransport + " for init");
+          }
+        }
+      }
+ catch (      Exception e) {
+        Slog.w(TAG,"Failed to query transport name heading for init",e);
+      }
+      clearMetadata();
       backupNow();
     }
   }
   clearBackupTrace();
-  Slog.i(BackupManagerService.TAG,"Backup pass finished.");
-  mWakelock.release();
+  if (mStatus == BackupTransport.TRANSPORT_OK && mPendingFullBackups != null && !mPendingFullBackups.isEmpty()) {
+    Slog.d(TAG,"Starting full backups for: " + mPendingFullBackups);
+    CountDownLatch latch=new CountDownLatch(1);
+    String[] fullBackups=mPendingFullBackups.toArray(new String[mPendingFullBackups.size()]);
+    PerformFullTransportBackupTask task=new PerformFullTransportBackupTask(null,fullBackups,false,null,latch,mObserver,mUserInitiated);
+    mWakelock.acquire();
+    (new Thread(task,"full-transport-requested")).start();
+  }
+ else {
+switch (mStatus) {
+case BackupTransport.TRANSPORT_OK:
+      sendBackupFinished(mObserver,BackupManager.SUCCESS);
+    break;
+case BackupTransport.TRANSPORT_NOT_INITIALIZED:
+  sendBackupFinished(mObserver,BackupManager.ERROR_TRANSPORT_ABORTED);
+break;
+case BackupTransport.TRANSPORT_ERROR:
+default :
+sendBackupFinished(mObserver,BackupManager.ERROR_TRANSPORT_ABORTED);
+break;
+}
+}
+Slog.i(BackupManagerService.TAG,"K/V backup pass finished.");
+mWakelock.release();
 }

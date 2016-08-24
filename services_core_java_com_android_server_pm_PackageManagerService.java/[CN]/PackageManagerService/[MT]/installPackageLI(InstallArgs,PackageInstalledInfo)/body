@@ -5,17 +5,28 @@
   final File tmpPackageFile=new File(args.getCodePath());
   final boolean forwardLocked=((installFlags & PackageManager.INSTALL_FORWARD_LOCK) != 0);
   final boolean onExternal=(((installFlags & PackageManager.INSTALL_EXTERNAL) != 0) || (args.volumeUuid != null));
+  final boolean ephemeral=((installFlags & PackageManager.INSTALL_EPHEMERAL) != 0);
+  final boolean forceSdk=((installFlags & PackageManager.INSTALL_FORCE_SDK) != 0);
   boolean replace=false;
   int scanFlags=SCAN_NEW_INSTALL | SCAN_UPDATE_SIGNATURE;
   if (args.move != null) {
     scanFlags|=SCAN_INITIAL;
   }
-  res.returnCode=PackageManager.INSTALL_SUCCEEDED;
+  if ((installFlags & PackageManager.INSTALL_DONT_KILL_APP) != 0) {
+    scanFlags|=SCAN_DONT_KILL_APP;
+  }
+  res.setReturnCode(PackageManager.INSTALL_SUCCEEDED);
   if (DEBUG_INSTALL)   Slog.d(TAG,"installPackageLI: path=" + tmpPackageFile);
-  final int parseFlags=mDefParseFlags | PackageParser.PARSE_CHATTY | (forwardLocked ? PackageParser.PARSE_FORWARD_LOCK : 0)| (onExternal ? PackageParser.PARSE_EXTERNAL_STORAGE : 0);
+  if (ephemeral && (forwardLocked || onExternal)) {
+    Slog.i(TAG,"Incompatible ephemeral install; fwdLocked=" + forwardLocked + " external="+ onExternal);
+    res.setReturnCode(PackageManager.INSTALL_FAILED_EPHEMERAL_INVALID);
+    return;
+  }
+  final int parseFlags=mDefParseFlags | PackageParser.PARSE_CHATTY | PackageParser.PARSE_ENFORCE_CODE| (forwardLocked ? PackageParser.PARSE_FORWARD_LOCK : 0)| (onExternal ? PackageParser.PARSE_EXTERNAL_STORAGE : 0)| (ephemeral ? PackageParser.PARSE_IS_EPHEMERAL : 0)| (forceSdk ? PackageParser.PARSE_FORCE_SDK : 0);
   PackageParser pp=new PackageParser();
   pp.setSeparateProcesses(mSeparateProcesses);
   pp.setDisplayMetrics(mMetrics);
+  Trace.traceBegin(TRACE_TAG_PACKAGE_MANAGER,"parsePackage");
   final PackageParser.Package pkg;
   try {
     pkg=pp.parsePackage(tmpPackageFile,parseFlags);
@@ -24,7 +35,36 @@
     res.setError("Failed parse during installPackageLI",e);
     return;
   }
-  pkg.cpuAbiOverride=args.abiOverride;
+ finally {
+    Trace.traceEnd(TRACE_TAG_PACKAGE_MANAGER);
+  }
+  if (pkg.childPackages != null) {
+synchronized (mPackages) {
+      final int childCount=pkg.childPackages.size();
+      for (int i=0; i < childCount; i++) {
+        PackageParser.Package childPkg=pkg.childPackages.get(i);
+        PackageInstalledInfo childRes=new PackageInstalledInfo();
+        childRes.setReturnCode(PackageManager.INSTALL_SUCCEEDED);
+        childRes.pkg=childPkg;
+        childRes.name=childPkg.packageName;
+        PackageSetting childPs=mSettings.peekPackageLPr(childPkg.packageName);
+        if (childPs != null) {
+          childRes.origUsers=childPs.queryInstalledUsers(sUserManager.getUserIds(),true);
+        }
+        if ((mPackages.containsKey(childPkg.packageName))) {
+          childRes.removedInfo=new PackageRemovedInfo();
+          childRes.removedInfo.removedPackage=childPkg.packageName;
+        }
+        if (res.addedChildPackages == null) {
+          res.addedChildPackages=new ArrayMap<>();
+        }
+        res.addedChildPackages.put(childPkg.packageName,childRes);
+      }
+    }
+  }
+  if (TextUtils.isEmpty(pkg.cpuAbiOverride)) {
+    pkg.cpuAbiOverride=args.abiOverride;
+  }
   String pkgName=res.name=pkg.packageName;
   if ((pkg.applicationInfo.flags & ApplicationInfo.FLAG_TEST_ONLY) != 0) {
     if ((installFlags & PackageManager.INSTALL_ALLOW_TEST) == 0) {
@@ -33,26 +73,21 @@
     }
   }
   try {
-    pp.collectCertificates(pkg,parseFlags);
-    pp.collectManifestDigest(pkg);
+    if (args.certificates != null) {
+      try {
+        PackageParser.populateCertificates(pkg,args.certificates);
+      }
+ catch (      PackageParserException e) {
+        PackageParser.collectCertificates(pkg,parseFlags);
+      }
+    }
+ else {
+      PackageParser.collectCertificates(pkg,parseFlags);
+    }
   }
  catch (  PackageParserException e) {
     res.setError("Failed collect during installPackageLI",e);
     return;
-  }
-  if (args.manifestDigest != null) {
-    if (DEBUG_INSTALL) {
-      final String parsedManifest=pkg.manifestDigest == null ? "null" : pkg.manifestDigest.toString();
-      Slog.d(TAG,"Comparing manifests: " + args.manifestDigest.toString() + " vs. "+ parsedManifest);
-    }
-    if (!args.manifestDigest.equals(pkg.manifestDigest)) {
-      res.setError(INSTALL_FAILED_PACKAGE_CHANGED,"Manifest digest changed");
-      return;
-    }
-  }
- else   if (DEBUG_INSTALL) {
-    final String parsedManifest=pkg.manifestDigest == null ? "null" : pkg.manifestDigest.toString();
-    Slog.d(TAG,"manifestDigest was not present, but parser got: " + parsedManifest);
   }
   pp=null;
   String oldCodePath=null;
@@ -70,12 +105,20 @@ synchronized (mPackages) {
         replace=true;
         if (DEBUG_INSTALL)         Slog.d(TAG,"Replace existing pacakge: " + pkgName);
       }
+      if (pkg.parentPackage != null) {
+        res.setError(PackageManager.INSTALL_PARSE_FAILED_BAD_PACKAGE_NAME,"Package " + pkg.packageName + " is child of package "+ pkg.parentPackage.parentPackage+ ". Child packages "+ "can be updated only through the parent package.");
+        return;
+      }
       if (replace) {
         PackageParser.Package oldPackage=mPackages.get(pkgName);
         final int oldTargetSdk=oldPackage.applicationInfo.targetSdkVersion;
         final int newTargetSdk=pkg.applicationInfo.targetSdkVersion;
         if (oldTargetSdk > Build.VERSION_CODES.LOLLIPOP_MR1 && newTargetSdk <= Build.VERSION_CODES.LOLLIPOP_MR1) {
           res.setError(PackageManager.INSTALL_FAILED_PERMISSION_MODEL_DOWNGRADE,"Package " + pkg.packageName + " new target SDK "+ newTargetSdk+ " doesn't support runtime permissions but the old"+ " target SDK "+ oldTargetSdk+ " does.");
+          return;
+        }
+        if (oldPackage.parentPackage != null) {
+          res.setError(PackageManager.INSTALL_PARSE_FAILED_BAD_PACKAGE_NAME,"Package " + pkg.packageName + " is child of package "+ oldPackage.parentPackage+ ". Child packages "+ "can be updated only through the parent package.");
           return;
         }
       }
@@ -131,9 +174,15 @@ synchronized (mPackages) {
       }
     }
   }
-  if (systemApp && onExternal) {
-    res.setError(INSTALL_FAILED_INVALID_INSTALL_LOCATION,"Cannot install updates to system apps on sdcard");
-    return;
+  if (systemApp) {
+    if (onExternal) {
+      res.setError(INSTALL_FAILED_INVALID_INSTALL_LOCATION,"Cannot install updates to system apps on sdcard");
+      return;
+    }
+ else     if (ephemeral) {
+      res.setError(INSTALL_FAILED_EPHEMERAL_INVALID,"Cannot update a system app with an ephemeral app");
+      return;
+    }
   }
   if (args.move != null) {
     scanFlags|=SCAN_NO_DEX;
@@ -150,34 +199,53 @@ synchronized (mPackages) {
  else   if (!forwardLocked && !pkg.applicationInfo.isExternalAsec()) {
     scanFlags|=SCAN_NO_DEX;
     try {
-      derivePackageAbi(pkg,new File(pkg.codePath),args.abiOverride,true);
+      String abiOverride=(TextUtils.isEmpty(pkg.cpuAbiOverride) ? args.abiOverride : pkg.cpuAbiOverride);
+      derivePackageAbi(pkg,new File(pkg.codePath),abiOverride,true);
     }
  catch (    PackageManagerException pme) {
       Slog.e(TAG,"Error deriving application ABI",pme);
       res.setError(INSTALL_FAILED_INTERNAL_ERROR,"Error deriving application ABI");
       return;
     }
-    int result=mPackageDexOptimizer.performDexOpt(pkg,null,false,false,false,true,false);
-    if (result == PackageDexOptimizer.DEX_OPT_FAILED) {
-      res.setError(INSTALL_FAILED_DEXOPT,"Dexopt failed for " + pkg.codePath);
-      return;
+synchronized (mPackages) {
+      try {
+        updateSharedLibrariesLPw(pkg,null);
+      }
+ catch (      PackageManagerException e) {
+        Slog.e(TAG,"updateSharedLibrariesLPw failed: " + e.getMessage());
+      }
     }
+    Trace.traceBegin(TRACE_TAG_PACKAGE_MANAGER,"dexopt");
+    mPackageDexOptimizer.performDexOpt(pkg,pkg.usesLibraryFiles,null,false,getCompilerFilterForReason(REASON_INSTALL));
+    Trace.traceEnd(TRACE_TAG_PACKAGE_MANAGER);
+    BackgroundDexOptService.notifyPackageChanged(pkg.packageName);
   }
   if (!args.doRename(res.returnCode,pkg,oldCodePath)) {
     res.setError(INSTALL_FAILED_INSUFFICIENT_STORAGE,"Failed rename");
     return;
   }
   startIntentFilterVerifications(args.user.getIdentifier(),replace,pkg);
-  if (replace) {
-    replacePackageLI(pkg,parseFlags,scanFlags | SCAN_REPLACING,args.user,installerPackageName,volumeUuid,res);
-  }
+  try (PackageFreezer freezer=freezePackageForInstall(pkgName,installFlags,"installPackageLI")){
+    if (replace) {
+      replacePackageLIF(pkg,parseFlags,scanFlags | SCAN_REPLACING,args.user,installerPackageName,res);
+    }
  else {
-    installNewPackageLI(pkg,parseFlags,scanFlags | SCAN_DELETE_DATA_ON_FAILURES,args.user,installerPackageName,volumeUuid,res);
+      installNewPackageLIF(pkg,parseFlags,scanFlags | SCAN_DELETE_DATA_ON_FAILURES,args.user,installerPackageName,volumeUuid,res);
+    }
   }
-synchronized (mPackages) {
+ synchronized (mPackages) {
     final PackageSetting ps=mSettings.mPackages.get(pkgName);
     if (ps != null) {
       res.newUsers=ps.queryInstalledUsers(sUserManager.getUserIds(),true);
+    }
+    final int childCount=(pkg.childPackages != null) ? pkg.childPackages.size() : 0;
+    for (int i=0; i < childCount; i++) {
+      PackageParser.Package childPkg=pkg.childPackages.get(i);
+      PackageInstalledInfo childRes=res.addedChildPackages.get(childPkg.packageName);
+      PackageSetting childPs=mSettings.peekPackageLPr(childPkg.packageName);
+      if (childPs != null) {
+        childRes.newUsers=childPs.queryInstalledUsers(sUserManager.getUserIds(),true);
+      }
     }
   }
 }

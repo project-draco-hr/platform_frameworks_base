@@ -5,52 +5,18 @@
     if (mViewRoot == null) {
       return ERROR_NOT_INFLATED.createResult();
     }
-    RenderingMode renderingMode=params.getRenderingMode();
+    measure(params);
     HardwareConfig hardwareConfig=params.getHardwareConfig();
-    boolean newRenderSize=false;
-    if (mMeasuredScreenWidth == -1) {
-      newRenderSize=true;
-      mMeasuredScreenWidth=hardwareConfig.getScreenWidth();
-      mMeasuredScreenHeight=hardwareConfig.getScreenHeight();
-      if (renderingMode != RenderingMode.NORMAL) {
-        int widthMeasureSpecMode=renderingMode.isHorizExpand() ? MeasureSpec.UNSPECIFIED : MeasureSpec.EXACTLY;
-        int heightMeasureSpecMode=renderingMode.isVertExpand() ? MeasureSpec.UNSPECIFIED : MeasureSpec.EXACTLY;
-        @SuppressWarnings("deprecation") Pair<Integer,Integer> exactMeasure=measureView(mViewRoot,mContentRoot.getChildAt(0),mMeasuredScreenWidth,MeasureSpec.EXACTLY,mMeasuredScreenHeight,MeasureSpec.EXACTLY);
-        @SuppressWarnings("deprecation") Pair<Integer,Integer> result=measureView(mContentRoot,mContentRoot.getChildAt(0),mMeasuredScreenWidth,widthMeasureSpecMode,mMeasuredScreenHeight,heightMeasureSpecMode);
-        if (renderingMode.isHorizExpand()) {
-          int measuredWidth=exactMeasure.getFirst();
-          int neededWidth=result.getFirst();
-          if (neededWidth > measuredWidth) {
-            mMeasuredScreenWidth+=neededWidth - measuredWidth;
-          }
-          if (mMeasuredScreenWidth < measuredWidth) {
-            mMeasuredScreenWidth=measuredWidth;
-          }
-        }
-        if (renderingMode.isVertExpand()) {
-          int measuredHeight=exactMeasure.getSecond();
-          int neededHeight=result.getSecond();
-          if (neededHeight > measuredHeight) {
-            mMeasuredScreenHeight+=neededHeight - measuredHeight;
-          }
-          if (mMeasuredScreenHeight < measuredHeight) {
-            mMeasuredScreenHeight=measuredHeight;
-          }
-        }
-      }
-    }
-    measureView(mViewRoot,null,mMeasuredScreenWidth,MeasureSpec.EXACTLY,mMeasuredScreenHeight,MeasureSpec.EXACTLY);
-    mViewRoot.layout(0,0,mMeasuredScreenWidth,mMeasuredScreenHeight);
-    handleScrolling(mViewRoot);
+    Result renderResult=SUCCESS.createResult();
     if (params.isLayoutOnly()) {
       mImage=null;
       mCanvas=null;
     }
  else {
-      AttachInfo_Accessor.dispatchOnPreDraw(mViewRoot);
       boolean newImage=false;
       boolean disableBitmapCaching=Boolean.TRUE.equals(params.getFlag(RenderParamsFlags.FLAG_KEY_DISABLE_BITMAP_CACHING));
-      if (newRenderSize || mCanvas == null || disableBitmapCaching) {
+      if (mNewRenderSize || mCanvas == null || disableBitmapCaching) {
+        mNewRenderSize=false;
         if (params.getImageFactory() != null) {
           mImage=params.getImageFactory().getImage(mMeasuredScreenWidth,mMeasuredScreenHeight);
         }
@@ -82,10 +48,19 @@
         gc.fillRect(0,0,mMeasuredScreenWidth,mMeasuredScreenHeight);
         gc.dispose();
       }
-      mViewRoot.draw(mCanvas);
+      if (mElapsedFrameTimeNanos >= 0) {
+        long initialTime=System_Delegate.nanoTime();
+        if (!mFirstFrameExecuted) {
+          render(getContext(),mViewRoot,NOP_CANVAS,mMeasuredScreenWidth,mMeasuredScreenHeight);
+          Choreographer_Delegate.doFrame(initialTime);
+          mFirstFrameExecuted=true;
+        }
+        Choreographer_Delegate.doFrame(initialTime + mElapsedFrameTimeNanos);
+      }
+      renderResult=render(getContext(),mViewRoot,mCanvas,mMeasuredScreenWidth,mMeasuredScreenHeight);
     }
     mSystemViewInfoList=visitAllChildren(mViewRoot,0,params.getExtendedViewInfoMode(),false);
-    return SUCCESS.createResult();
+    return renderResult;
   }
  catch (  Throwable e) {
     Throwable t=e;

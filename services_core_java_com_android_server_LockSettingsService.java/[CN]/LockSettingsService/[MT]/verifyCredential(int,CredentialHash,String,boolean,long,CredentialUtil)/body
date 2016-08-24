@@ -9,6 +9,9 @@
     byte[] hash=credentialUtil.toHash(credential,userId);
     if (Arrays.equals(hash,storedHash.hash)) {
       unlockKeystore(credentialUtil.adjustForKeystore(credential),userId);
+      Slog.i(TAG,"Unlocking user with fake token: " + userId);
+      final byte[] fakeToken=String.valueOf(userId).getBytes();
+      unlockUser(userId,fakeToken,fakeToken);
       credentialUtil.setCredential(credential,null,userId);
       if (!hasChallenge) {
         return VerifyCredentialResponse.OK;
@@ -20,45 +23,33 @@
   }
   VerifyCredentialResponse response;
   boolean shouldReEnroll=false;
-  ;
-  if (hasChallenge) {
-    byte[] token=null;
-    GateKeeperResponse gateKeeperResponse=getGateKeeperService().verifyChallenge(userId,challenge,storedHash.hash,credential.getBytes());
-    int responseCode=gateKeeperResponse.getResponseCode();
-    if (responseCode == GateKeeperResponse.RESPONSE_RETRY) {
-      response=new VerifyCredentialResponse(gateKeeperResponse.getTimeout());
-    }
- else     if (responseCode == GateKeeperResponse.RESPONSE_OK) {
-      token=gateKeeperResponse.getPayload();
-      if (token == null) {
-        Slog.e(TAG,"verifyChallenge response had no associated payload");
-        response=VerifyCredentialResponse.ERROR;
-      }
- else {
-        shouldReEnroll=gateKeeperResponse.getShouldReEnroll();
-        response=new VerifyCredentialResponse(token);
-      }
-    }
- else {
+  GateKeeperResponse gateKeeperResponse=getGateKeeperService().verifyChallenge(userId,challenge,storedHash.hash,credential.getBytes());
+  int responseCode=gateKeeperResponse.getResponseCode();
+  if (responseCode == GateKeeperResponse.RESPONSE_RETRY) {
+    response=new VerifyCredentialResponse(gateKeeperResponse.getTimeout());
+  }
+ else   if (responseCode == GateKeeperResponse.RESPONSE_OK) {
+    byte[] token=gateKeeperResponse.getPayload();
+    if (token == null) {
+      Slog.e(TAG,"verifyChallenge response had no associated payload");
       response=VerifyCredentialResponse.ERROR;
+    }
+ else {
+      shouldReEnroll=gateKeeperResponse.getShouldReEnroll();
+      response=new VerifyCredentialResponse(token);
     }
   }
  else {
-    GateKeeperResponse gateKeeperResponse=getGateKeeperService().verify(userId,storedHash.hash,credential.getBytes());
-    int responseCode=gateKeeperResponse.getResponseCode();
-    if (responseCode == GateKeeperResponse.RESPONSE_RETRY) {
-      response=new VerifyCredentialResponse(gateKeeperResponse.getTimeout());
-    }
- else     if (responseCode == GateKeeperResponse.RESPONSE_OK) {
-      shouldReEnroll=gateKeeperResponse.getShouldReEnroll();
-      response=VerifyCredentialResponse.OK;
-    }
- else {
-      response=VerifyCredentialResponse.ERROR;
-    }
+    response=VerifyCredentialResponse.ERROR;
   }
   if (response.getResponseCode() == VerifyCredentialResponse.RESPONSE_OK) {
     unlockKeystore(credential,userId);
+    Slog.i(TAG,"Unlocking user " + userId + " with token length "+ response.getPayload().length);
+    unlockUser(userId,response.getPayload(),secretFromCredential(credential));
+    if (isManagedProfileWithSeparatedLock(userId)) {
+      TrustManager trustManager=(TrustManager)mContext.getSystemService(Context.TRUST_SERVICE);
+      trustManager.setDeviceLockedForUser(userId,false);
+    }
     if (shouldReEnroll) {
       credentialUtil.setCredential(credential,credential,userId);
     }

@@ -50,19 +50,14 @@
     }
   }
   if (mActiveUids.size() > 0) {
-    if (needSep) {
-      pw.println();
+    if (dumpUids(pw,dumpPackage,mActiveUids,"UID states:",needSep)) {
+      printedAnything=needSep=true;
     }
-    pw.println("  UID states:");
-    for (int i=0; i < mActiveUids.size(); i++) {
-      UidRecord uidRec=mActiveUids.valueAt(i);
-      pw.print("    UID ");
-      UserHandle.formatUid(pw,uidRec.uid);
-      pw.print(": ");
-      pw.println(uidRec);
+  }
+  if (mValidateUids.size() > 0) {
+    if (dumpUids(pw,dumpPackage,mValidateUids,"UID validation:",needSep)) {
+      printedAnything=needSep=true;
     }
-    needSep=true;
-    printedAnything=true;
   }
   if (mLruProcesses.size() > 0) {
     if (needSep) {
@@ -145,131 +140,14 @@ synchronized (mPidsSelfLocked) {
     dumpProcessList(pw,this,mProcessesOnHold,"    ","OnHold Norm","OnHold PERS",dumpPackage);
   }
   needSep=dumpProcessesToGc(fd,pw,args,opti,needSep,dumpAll,dumpPackage);
-  if (mProcessCrashTimes.getMap().size() > 0) {
-    boolean printed=false;
-    long now=SystemClock.uptimeMillis();
-    final ArrayMap<String,SparseArray<Long>> pmap=mProcessCrashTimes.getMap();
-    final int NP=pmap.size();
-    for (int ip=0; ip < NP; ip++) {
-      String pname=pmap.keyAt(ip);
-      SparseArray<Long> uids=pmap.valueAt(ip);
-      final int N=uids.size();
-      for (int i=0; i < N; i++) {
-        int puid=uids.keyAt(i);
-        ProcessRecord r=mProcessNames.get(pname,puid);
-        if (dumpPackage != null && (r == null || !r.pkgList.containsKey(dumpPackage))) {
-          continue;
-        }
-        if (!printed) {
-          if (needSep)           pw.println();
-          needSep=true;
-          pw.println("  Time since processes crashed:");
-          printed=true;
-          printedAnything=true;
-        }
-        pw.print("    Process ");
-        pw.print(pname);
-        pw.print(" uid ");
-        pw.print(puid);
-        pw.print(": last crashed ");
-        TimeUtils.formatDuration(now - uids.valueAt(i),pw);
-        pw.println(" ago");
-      }
-    }
-  }
-  if (mBadProcesses.getMap().size() > 0) {
-    boolean printed=false;
-    final ArrayMap<String,SparseArray<BadProcessInfo>> pmap=mBadProcesses.getMap();
-    final int NP=pmap.size();
-    for (int ip=0; ip < NP; ip++) {
-      String pname=pmap.keyAt(ip);
-      SparseArray<BadProcessInfo> uids=pmap.valueAt(ip);
-      final int N=uids.size();
-      for (int i=0; i < N; i++) {
-        int puid=uids.keyAt(i);
-        ProcessRecord r=mProcessNames.get(pname,puid);
-        if (dumpPackage != null && (r == null || !r.pkgList.containsKey(dumpPackage))) {
-          continue;
-        }
-        if (!printed) {
-          if (needSep)           pw.println();
-          needSep=true;
-          pw.println("  Bad processes:");
-          printedAnything=true;
-        }
-        BadProcessInfo info=uids.valueAt(i);
-        pw.print("    Bad process ");
-        pw.print(pname);
-        pw.print(" uid ");
-        pw.print(puid);
-        pw.print(": crashed at time ");
-        pw.println(info.time);
-        if (info.shortMsg != null) {
-          pw.print("      Short msg: ");
-          pw.println(info.shortMsg);
-        }
-        if (info.longMsg != null) {
-          pw.print("      Long msg: ");
-          pw.println(info.longMsg);
-        }
-        if (info.stack != null) {
-          pw.println("      Stack:");
-          int lastPos=0;
-          for (int pos=0; pos < info.stack.length(); pos++) {
-            if (info.stack.charAt(pos) == '\n') {
-              pw.print("        ");
-              pw.write(info.stack,lastPos,pos - lastPos);
-              pw.println();
-              lastPos=pos + 1;
-            }
-          }
-          if (lastPos < info.stack.length()) {
-            pw.print("        ");
-            pw.write(info.stack,lastPos,info.stack.length() - lastPos);
-            pw.println();
-          }
-        }
-      }
-    }
+  needSep=mAppErrors.dumpLocked(fd,pw,needSep,dumpPackage);
+  if (needSep) {
+    printedAnything=true;
   }
   if (dumpPackage == null) {
     pw.println();
     needSep=false;
-    pw.println("  mStartedUsers:");
-    for (int i=0; i < mStartedUsers.size(); i++) {
-      UserState uss=mStartedUsers.valueAt(i);
-      pw.print("    User #");
-      pw.print(uss.mHandle.getIdentifier());
-      pw.print(": ");
-      uss.dump("",pw);
-    }
-    pw.print("  mStartedUserArray: [");
-    for (int i=0; i < mStartedUserArray.length; i++) {
-      if (i > 0)       pw.print(", ");
-      pw.print(mStartedUserArray[i]);
-    }
-    pw.println("]");
-    pw.print("  mUserLru: [");
-    for (int i=0; i < mUserLru.size(); i++) {
-      if (i > 0)       pw.print(", ");
-      pw.print(mUserLru.get(i));
-    }
-    pw.println("]");
-    if (dumpAll) {
-      pw.print("  mStartedUserArray: ");
-      pw.println(Arrays.toString(mStartedUserArray));
-    }
-synchronized (mUserProfileGroupIdsSelfLocked) {
-      if (mUserProfileGroupIdsSelfLocked.size() > 0) {
-        pw.println("  mUserProfileGroupIds:");
-        for (int i=0; i < mUserProfileGroupIdsSelfLocked.size(); i++) {
-          pw.print("    User #");
-          pw.print(mUserProfileGroupIdsSelfLocked.keyAt(i));
-          pw.print(" -> profile #");
-          pw.println(mUserProfileGroupIdsSelfLocked.valueAt(i));
-        }
-      }
-    }
+    mUserController.dump(pw,dumpAll);
   }
   if (mHomeProcess != null && (dumpPackage == null || mHomeProcess.pkgList.containsKey(dumpPackage))) {
     if (needSep) {
@@ -377,15 +255,6 @@ synchronized (mUserProfileGroupIdsSelfLocked) {
     pw.print(" mMemWatchDumpUid=");
     pw.println(mMemWatchDumpUid);
   }
-  if (mOpenGlTraceApp != null) {
-    if (dumpPackage == null || dumpPackage.equals(mOpenGlTraceApp)) {
-      if (needSep) {
-        pw.println();
-        needSep=false;
-      }
-      pw.println("  mOpenGlTraceApp=" + mOpenGlTraceApp);
-    }
-  }
   if (mTrackAllocationApp != null) {
     if (dumpPackage == null || dumpPackage.equals(mTrackAllocationApp)) {
       if (needSep) {
@@ -417,8 +286,11 @@ synchronized (mUserProfileGroupIdsSelfLocked) {
     }
   }
   if (dumpPackage == null) {
-    if (mAlwaysFinishActivities || mController != null) {
-      pw.println("  mAlwaysFinishActivities=" + mAlwaysFinishActivities + " mController="+ mController);
+    if (mAlwaysFinishActivities || mLenientBackgroundCheck) {
+      pw.println("  mAlwaysFinishActivities=" + mAlwaysFinishActivities + " mLenientBackgroundCheck="+ mLenientBackgroundCheck);
+    }
+    if (mController != null) {
+      pw.println("  mController=" + mController + " mControllerIsAMonkey="+ mControllerIsAMonkey);
     }
     if (dumpAll) {
       pw.println("  Total persistent processes: " + numPers);
@@ -434,7 +306,7 @@ synchronized (mUserProfileGroupIdsSelfLocked) {
       pw.println("  mLaunchingActivity=" + mStackSupervisor.mLaunchingActivity);
       pw.println("  mAdjSeq=" + mAdjSeq + " mLruSeq="+ mLruSeq);
       pw.println("  mNumNonCachedProcs=" + mNumNonCachedProcs + " ("+ mLruProcesses.size()+ " total)"+ " mNumCachedHiddenProcs="+ mNumCachedHiddenProcs+ " mNumServiceProcs="+ mNumServiceProcs+ " mNewNumServiceProcs="+ mNewNumServiceProcs);
-      pw.println("  mAllowLowerMemLevel=" + mAllowLowerMemLevel + " mLastMemoryLevel"+ mLastMemoryLevel+ " mLastNumProcesses"+ mLastNumProcesses);
+      pw.println("  mAllowLowerMemLevel=" + mAllowLowerMemLevel + " mLastMemoryLevel="+ mLastMemoryLevel+ " mLastNumProcesses="+ mLastNumProcesses);
       long now=SystemClock.uptimeMillis();
       pw.print("  mLastIdleTime=");
       TimeUtils.formatDuration(now,mLastIdleTime,pw);

@@ -1,0 +1,63 @@
+{
+  if (mFirstPassLatch == null) {
+    final Collection<RootInfo> roots=mRoots.getMatchingRootsBlocking(mState);
+    for (    RootInfo root : roots) {
+      if (root.supportsRecents()) {
+        mTasks.put(root,new RecentsTask(root.authority,root.rootId));
+      }
+    }
+    mFirstPassLatch=new CountDownLatch(mTasks.size());
+    for (    RecentsTask task : mTasks.values()) {
+      ProviderExecutor.forAuthority(task.authority).execute(task);
+    }
+    try {
+      mFirstPassLatch.await(MAX_FIRST_PASS_WAIT_MILLIS,TimeUnit.MILLISECONDS);
+      mFirstPassDone=true;
+    }
+ catch (    InterruptedException e) {
+      throw new RuntimeException(e);
+    }
+  }
+  final long rejectBefore=System.currentTimeMillis() - REJECT_OLDER_THAN;
+  boolean allDone=true;
+  List<Cursor> cursors=new ArrayList<>();
+  for (  RecentsTask task : mTasks.values()) {
+    if (task.isDone()) {
+      try {
+        final Cursor cursor=task.get();
+        if (cursor == null)         continue;
+        final FilteringCursorWrapper filtered=new FilteringCursorWrapper(cursor,mState.acceptMimes,RECENT_REJECT_MIMES,rejectBefore){
+          @Override public void close(){
+          }
+        }
+;
+        cursors.add(filtered);
+      }
+ catch (      InterruptedException e) {
+        throw new RuntimeException(e);
+      }
+catch (      ExecutionException e) {
+      }
+    }
+ else {
+      allDone=false;
+    }
+  }
+  if (DEBUG) {
+    Log.d(TAG,"Found " + cursors.size() + " of "+ mTasks.size()+ " recent queries done");
+  }
+  final DirectoryResult result=new DirectoryResult();
+  result.sortOrder=SORT_ORDER_LAST_MODIFIED;
+  final Cursor merged;
+  if (cursors.size() > 0) {
+    merged=new MergeCursor(cursors.toArray(new Cursor[cursors.size()]));
+  }
+ else {
+    merged=new MatrixCursor(new String[0]);
+  }
+  Bundle extras=new Bundle();
+  extras.putBoolean(DocumentsContract.EXTRA_LOADING,!allDone);
+  merged.setExtras(extras);
+  result.cursor=merged;
+  return result;
+}

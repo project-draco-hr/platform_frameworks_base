@@ -1,0 +1,75 @@
+{
+  Slog.v(TAG,"reconcileAppsData for " + volumeUuid + " u"+ userId+ " 0x"+ Integer.toHexString(flags));
+  final File ceDir=Environment.getDataUserCeDirectory(volumeUuid,userId);
+  final File deDir=Environment.getDataUserDeDirectory(volumeUuid,userId);
+  boolean restoreconNeeded=false;
+  if ((flags & StorageManager.FLAG_STORAGE_CE) != 0) {
+    if (StorageManager.isFileEncryptedNativeOrEmulated() && !StorageManager.isUserKeyUnlocked(userId)) {
+      throw new RuntimeException("Yikes, someone asked us to reconcile CE storage while " + userId + " was still locked; this would have caused massive data loss!");
+    }
+    restoreconNeeded|=SELinuxMMAC.isRestoreconNeeded(ceDir);
+    final File[] files=FileUtils.listFilesOrEmpty(ceDir);
+    for (    File file : files) {
+      final String packageName=file.getName();
+      try {
+        assertPackageKnownAndInstalled(volumeUuid,packageName,userId);
+      }
+ catch (      PackageManagerException e) {
+        logCriticalInfo(Log.WARN,"Destroying " + file + " due to: "+ e);
+        try {
+          mInstaller.destroyAppData(volumeUuid,packageName,userId,StorageManager.FLAG_STORAGE_CE,0);
+        }
+ catch (        InstallerException e2) {
+          logCriticalInfo(Log.WARN,"Failed to destroy: " + e2);
+        }
+      }
+    }
+  }
+  if ((flags & StorageManager.FLAG_STORAGE_DE) != 0) {
+    restoreconNeeded|=SELinuxMMAC.isRestoreconNeeded(deDir);
+    final File[] files=FileUtils.listFilesOrEmpty(deDir);
+    for (    File file : files) {
+      final String packageName=file.getName();
+      try {
+        assertPackageKnownAndInstalled(volumeUuid,packageName,userId);
+      }
+ catch (      PackageManagerException e) {
+        logCriticalInfo(Log.WARN,"Destroying " + file + " due to: "+ e);
+        try {
+          mInstaller.destroyAppData(volumeUuid,packageName,userId,StorageManager.FLAG_STORAGE_DE,0);
+        }
+ catch (        InstallerException e2) {
+          logCriticalInfo(Log.WARN,"Failed to destroy: " + e2);
+        }
+      }
+    }
+  }
+  final List<PackageSetting> packages;
+synchronized (mPackages) {
+    packages=mSettings.getVolumePackagesLPr(volumeUuid);
+  }
+  int preparedCount=0;
+  for (  PackageSetting ps : packages) {
+    final String packageName=ps.name;
+    if (ps.pkg == null) {
+      Slog.w(TAG,"Odd, missing scanned package " + packageName);
+      continue;
+    }
+    if (ps.getInstalled(userId)) {
+      prepareAppDataLIF(ps.pkg,userId,flags,restoreconNeeded);
+      if (maybeMigrateAppDataLIF(ps.pkg,userId)) {
+        prepareAppDataLIF(ps.pkg,userId,flags,restoreconNeeded);
+      }
+      preparedCount++;
+    }
+  }
+  if (restoreconNeeded) {
+    if ((flags & StorageManager.FLAG_STORAGE_CE) != 0) {
+      SELinuxMMAC.setRestoreconDone(ceDir);
+    }
+    if ((flags & StorageManager.FLAG_STORAGE_DE) != 0) {
+      SELinuxMMAC.setRestoreconDone(deDir);
+    }
+  }
+  Slog.v(TAG,"reconcileAppsData finished " + preparedCount + " packages; restoreconNeeded was "+ restoreconNeeded);
+}

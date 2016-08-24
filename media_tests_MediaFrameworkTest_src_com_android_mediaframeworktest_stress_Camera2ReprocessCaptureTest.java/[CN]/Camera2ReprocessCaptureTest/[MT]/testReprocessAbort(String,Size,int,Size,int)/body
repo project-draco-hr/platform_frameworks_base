@@ -1,0 +1,54 @@
+{
+  if (VERBOSE) {
+    Log.v(TAG,"testReprocessAbort: cameraId: " + cameraId + " inputSize: "+ inputSize+ " inputFormat: "+ inputFormat+ " reprocessOutputSize: "+ reprocessOutputSize+ " reprocessOutputFormat: "+ reprocessOutputFormat);
+  }
+  try {
+    setupImageReaders(inputSize,inputFormat,reprocessOutputSize,reprocessOutputFormat,NUM_REPROCESS_CAPTURES);
+    setupReprocessableSession(null,NUM_REPROCESS_CAPTURES);
+    boolean submitInBursts[]={false,true};
+    for (    boolean submitInBurst : submitInBursts) {
+      ArrayList<CaptureRequest> reprocessRequests=new ArrayList<>(NUM_REPROCESS_CAPTURES);
+      for (int i=0; i < NUM_REPROCESS_CAPTURES; i++) {
+        TotalCaptureResult result=submitCaptureRequest(mFirstImageReader.getSurface(),null);
+        mImageWriter.queueInputImage(mFirstImageReaderListener.getImage(CAPTURE_TIMEOUT_MS));
+        CaptureRequest.Builder builder=mCamera.createReprocessCaptureRequest(result);
+        builder.addTarget(getReprocessOutputImageReader().getSurface());
+        reprocessRequests.add(builder.build());
+      }
+      SimpleCaptureCallback captureCallback=new SimpleCaptureCallback();
+      if (submitInBurst) {
+        mSession.captureBurst(reprocessRequests,captureCallback,mHandler);
+      }
+ else {
+        for (        CaptureRequest request : reprocessRequests) {
+          mSession.capture(request,captureCallback,mHandler);
+        }
+      }
+      TotalCaptureResult reprocessResult=captureCallback.getTotalCaptureResultForRequest(reprocessRequests.get(0),CAPTURE_TIMEOUT_FRAMES);
+      mSession.abortCaptures();
+      mSessionListener.getStateWaiter().waitForState(BlockingSessionCallback.SESSION_READY,SESSION_CLOSE_TIMEOUT_MS);
+      ArrayList<CaptureFailure> failures=captureCallback.getCaptureFailures(NUM_REPROCESS_CAPTURES - 1);
+      ArrayList<CaptureRequest> failedRequests=new ArrayList<>();
+      for (      CaptureFailure failure : failures) {
+        failedRequests.add(failure.getRequest());
+      }
+      for (int i=1; i < reprocessRequests.size(); i++) {
+        CaptureRequest request=reprocessRequests.get(i);
+        if (!failedRequests.contains(request)) {
+          captureCallback.getTotalCaptureResultForRequest(request,CAPTURE_TIMEOUT_FRAMES);
+        }
+      }
+      mFirstImageReaderListener.drain();
+      if (!mShareOneImageReader) {
+        mSecondImageReaderListener.drain();
+      }
+      for (int i=0; i < NUM_REPROCESS_CAPTURES; i++) {
+        mImageWriterListener.waitForImageReleased(CAPTURE_TIMEOUT_MS);
+      }
+    }
+  }
+  finally {
+    closeReprossibleSession();
+    closeImageReaders();
+  }
+}

@@ -1,0 +1,42 @@
+{
+  Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND);
+  ArrayList<SecurityEvent> logs=new ArrayList<SecurityEvent>();
+  long lastLogTimestampNanos=-1;
+  while (!Thread.currentThread().isInterrupted()) {
+    try {
+      Thread.sleep(POLLING_INTERVAL_MILLISECONDS);
+      if (lastLogTimestampNanos < 0) {
+        if (DEBUG)         Slog.d(TAG,"SecurityLog.readEvents");
+        SecurityLog.readEvents(logs);
+      }
+ else {
+        if (DEBUG)         Slog.d(TAG,"SecurityLog.readEventsSince: " + lastLogTimestampNanos);
+        SecurityLog.readEventsSince(lastLogTimestampNanos + 1,logs);
+      }
+      if (!logs.isEmpty()) {
+        if (DEBUG)         Slog.d(TAG,"processing new logs");
+        mLock.lockInterruptibly();
+        try {
+          mPendingLogs.addAll(logs);
+          if (mPendingLogs.size() > BUFFER_ENTRIES_MAXIMUM_LEVEL) {
+            mPendingLogs=new ArrayList<SecurityEvent>(mPendingLogs.subList(mPendingLogs.size() - (BUFFER_ENTRIES_MAXIMUM_LEVEL / 2),mPendingLogs.size()));
+          }
+        }
+  finally {
+          mLock.unlock();
+        }
+        lastLogTimestampNanos=logs.get(logs.size() - 1).getTimeNanos();
+        logs.clear();
+      }
+      notifyDeviceOwnerIfNeeded();
+    }
+ catch (    IOException e) {
+      Log.e(TAG,"Failed to read security log",e);
+    }
+catch (    InterruptedException e) {
+      Log.i(TAG,"Thread interrupted, exiting.",e);
+      break;
+    }
+  }
+  if (DEBUG)   Slog.d(TAG,"MonitorThread exit.");
+}

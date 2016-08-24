@@ -1,0 +1,68 @@
+{
+synchronized (mLock) {
+    if (mModuleProperties == null) {
+      Slog.w(TAG,"Attempting startRecognition without the capability");
+      return STATUS_ERROR;
+    }
+    if (mModule == null) {
+      mModule=SoundTrigger.attachModule(mModuleProperties.id,this,null);
+      if (mModule == null) {
+        Slog.w(TAG,"startRecognition cannot attach to sound trigger module");
+        return STATUS_ERROR;
+      }
+    }
+    if (!mRecognitionRunning) {
+      initializeTelephonyAndPowerStateListeners();
+    }
+    if (modelData.getSoundModel() != null) {
+      boolean stopModel=false;
+      boolean unloadModel=false;
+      if (modelData.getSoundModel().equals(soundModel) && modelData.isModelStarted()) {
+        stopModel=true;
+        unloadModel=false;
+      }
+ else       if (!modelData.getSoundModel().equals(soundModel)) {
+        stopModel=modelData.isModelStarted();
+        unloadModel=modelData.isModelLoaded();
+      }
+      if (stopModel || unloadModel) {
+        int status=tryStopAndUnloadLocked(modelData,stopModel,unloadModel);
+        if (status != STATUS_OK) {
+          Slog.w(TAG,"Unable to stop or unload previous model: " + modelData.toString());
+          return status;
+        }
+      }
+    }
+    IRecognitionStatusCallback oldCallback=modelData.getCallback();
+    if (oldCallback != null && oldCallback.asBinder() != callback.asBinder()) {
+      Slog.w(TAG,"Canceling previous recognition for model id: " + modelData.getModelId());
+      try {
+        oldCallback.onError(STATUS_ERROR);
+      }
+ catch (      RemoteException e) {
+        Slog.w(TAG,"RemoteException in onDetectionStopped",e);
+      }
+      modelData.clearCallback();
+    }
+    if (!modelData.isModelLoaded()) {
+      int[] handle=new int[]{INVALID_VALUE};
+      int status=mModule.loadSoundModel(soundModel,handle);
+      if (status != SoundTrigger.STATUS_OK) {
+        Slog.w(TAG,"loadSoundModel call failed with " + status);
+        return status;
+      }
+      if (handle[0] == INVALID_VALUE) {
+        Slog.w(TAG,"loadSoundModel call returned invalid sound model handle");
+        return STATUS_ERROR;
+      }
+      modelData.setHandle(handle[0]);
+      modelData.setLoaded();
+      Slog.d(TAG,"Sound model loaded with handle:" + handle[0]);
+    }
+    modelData.setCallback(callback);
+    modelData.setRequested(true);
+    modelData.setRecognitionConfig(recognitionConfig);
+    modelData.setSoundModel(soundModel);
+    return startRecognitionLocked(modelData,false);
+  }
+}

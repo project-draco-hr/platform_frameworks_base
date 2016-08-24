@@ -1,47 +1,71 @@
 {
-  final boolean forWrite=(flags & StorageManager.FLAG_FOR_WRITE) != 0;
-  final ArrayList<StorageVolume> res=new ArrayList<>();
-  boolean foundPrimary=false;
   final int userId=UserHandle.getUserId(uid);
-  final boolean reportUnmounted;
-  final long identity=Binder.clearCallingIdentity();
+  final boolean forWrite=(flags & StorageManager.FLAG_FOR_WRITE) != 0;
+  final boolean realState=(flags & StorageManager.FLAG_REAL_STATE) != 0;
+  final boolean includeInvisible=(flags & StorageManager.FLAG_INCLUDE_INVISIBLE) != 0;
+  final boolean userKeyUnlocked;
+  final boolean storagePermission;
+  final long token=Binder.clearCallingIdentity();
   try {
-    reportUnmounted=!mMountServiceInternal.hasExternalStorage(uid,packageName);
+    userKeyUnlocked=isUserKeyUnlocked(userId);
+    storagePermission=mMountServiceInternal.hasExternalStorage(uid,packageName);
   }
   finally {
-    Binder.restoreCallingIdentity(identity);
+    Binder.restoreCallingIdentity(token);
   }
+  boolean foundPrimary=false;
+  final ArrayList<StorageVolume> res=new ArrayList<>();
 synchronized (mLock) {
     for (int i=0; i < mVolumes.size(); i++) {
       final VolumeInfo vol=mVolumes.valueAt(i);
-      if (forWrite ? vol.isVisibleForWrite(userId) : vol.isVisibleForRead(userId)) {
-        final StorageVolume userVol=vol.buildStorageVolume(mContext,userId,reportUnmounted);
-        if (vol.isPrimary()) {
-          res.add(0,userVol);
-          foundPrimary=true;
-        }
+switch (vol.getType()) {
+case VolumeInfo.TYPE_PUBLIC:
+case VolumeInfo.TYPE_EMULATED:
+        break;
+default :
+      continue;
+  }
+  boolean match=false;
+  if (forWrite) {
+    match=vol.isVisibleForWrite(userId);
+  }
  else {
-          res.add(userVol);
-        }
-      }
-    }
+    match=vol.isVisibleForRead(userId) || (includeInvisible && vol.getPath() != null);
   }
-  if (!foundPrimary) {
-    Log.w(TAG,"No primary storage defined yet; hacking together a stub");
-    final boolean primaryPhysical=SystemProperties.getBoolean(StorageManager.PROP_PRIMARY_PHYSICAL,false);
-    final String id="stub_primary";
-    final File path=Environment.getLegacyExternalStorageDirectory();
-    final String description=mContext.getString(android.R.string.unknownName);
-    final boolean primary=true;
-    final boolean removable=primaryPhysical;
-    final boolean emulated=!primaryPhysical;
-    final long mtpReserveSize=0L;
-    final boolean allowMassStorage=false;
-    final long maxFileSize=0L;
-    final UserHandle owner=new UserHandle(userId);
-    final String uuid=null;
-    final String state=Environment.MEDIA_REMOVED;
-    res.add(0,new StorageVolume(id,StorageVolume.STORAGE_ID_INVALID,path,description,primary,removable,emulated,mtpReserveSize,allowMassStorage,maxFileSize,owner,uuid,state));
+  if (!match)   continue;
+  boolean reportUnmounted=false;
+  if ((vol.getType() == VolumeInfo.TYPE_EMULATED) && !userKeyUnlocked) {
+    reportUnmounted=true;
   }
-  return res.toArray(new StorageVolume[res.size()]);
+ else   if (!storagePermission && !realState) {
+    reportUnmounted=true;
+  }
+  final StorageVolume userVol=vol.buildStorageVolume(mContext,userId,reportUnmounted);
+  if (vol.isPrimary()) {
+    res.add(0,userVol);
+    foundPrimary=true;
+  }
+ else {
+    res.add(userVol);
+  }
+}
+}
+if (!foundPrimary) {
+Log.w(TAG,"No primary storage defined yet; hacking together a stub");
+final boolean primaryPhysical=SystemProperties.getBoolean(StorageManager.PROP_PRIMARY_PHYSICAL,false);
+final String id="stub_primary";
+final File path=Environment.getLegacyExternalStorageDirectory();
+final String description=mContext.getString(android.R.string.unknownName);
+final boolean primary=true;
+final boolean removable=primaryPhysical;
+final boolean emulated=!primaryPhysical;
+final long mtpReserveSize=0L;
+final boolean allowMassStorage=false;
+final long maxFileSize=0L;
+final UserHandle owner=new UserHandle(userId);
+final String uuid=null;
+final String state=Environment.MEDIA_REMOVED;
+res.add(0,new StorageVolume(id,StorageVolume.STORAGE_ID_INVALID,path,description,primary,removable,emulated,mtpReserveSize,allowMassStorage,maxFileSize,owner,uuid,state));
+}
+return res.toArray(new StorageVolume[res.size()]);
 }

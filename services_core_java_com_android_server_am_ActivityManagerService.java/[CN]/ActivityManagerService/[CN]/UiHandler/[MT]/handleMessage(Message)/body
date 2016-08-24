@@ -1,71 +1,18 @@
 {
 switch (msg.what) {
-case SHOW_ERROR_MSG:
+case SHOW_ERROR_UI_MSG:
 {
-      HashMap<String,Object> data=(HashMap<String,Object>)msg.obj;
-      boolean showBackground=Settings.Secure.getInt(mContext.getContentResolver(),Settings.Secure.ANR_SHOW_BACKGROUND,0) != 0;
-synchronized (ActivityManagerService.this) {
-        ProcessRecord proc=(ProcessRecord)data.get("app");
-        AppErrorResult res=(AppErrorResult)data.get("result");
-        if (proc != null && proc.crashDialog != null) {
-          Slog.e(TAG,"App already has crash dialog: " + proc);
-          if (res != null) {
-            res.set(0);
-          }
-          return;
-        }
-        boolean isBackground=(UserHandle.getAppId(proc.uid) >= Process.FIRST_APPLICATION_UID && proc.pid != MY_PID);
-        for (        int userId : mCurrentProfileIds) {
-          isBackground&=(proc.userId != userId);
-        }
-        if (isBackground && !showBackground) {
-          Slog.w(TAG,"Skipping crash dialog of " + proc + ": background");
-          if (res != null) {
-            res.set(0);
-          }
-          return;
-        }
-        if (mShowDialogs && !mSleeping && !mShuttingDown) {
-          Dialog d=new AppErrorDialog(mContext,ActivityManagerService.this,res,proc);
-          d.show();
-          proc.crashDialog=d;
-        }
- else {
-          if (res != null) {
-            res.set(0);
-          }
-        }
-      }
+      mAppErrors.handleShowAppErrorUi(msg);
       ensureBootCompleted();
     }
   break;
-case SHOW_NOT_RESPONDING_MSG:
+case SHOW_NOT_RESPONDING_UI_MSG:
 {
-synchronized (ActivityManagerService.this) {
-    HashMap<String,Object> data=(HashMap<String,Object>)msg.obj;
-    ProcessRecord proc=(ProcessRecord)data.get("app");
-    if (proc != null && proc.anrDialog != null) {
-      Slog.e(TAG,"App already has anr dialog: " + proc);
-      return;
-    }
-    Intent intent=new Intent("android.intent.action.ANR");
-    if (!mProcessesReady) {
-      intent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY | Intent.FLAG_RECEIVER_FOREGROUND);
-    }
-    broadcastIntentLocked(null,null,intent,null,null,0,null,null,null,AppOpsManager.OP_NONE,null,false,false,MY_PID,Process.SYSTEM_UID,0);
-    if (mShowDialogs) {
-      Dialog d=new AppNotRespondingDialog(ActivityManagerService.this,mContext,proc,(ActivityRecord)data.get("activity"),msg.arg1 != 0);
-      d.show();
-      proc.anrDialog=d;
-    }
- else {
-      killAppAtUsersRequest(proc,null);
-    }
-  }
+  mAppErrors.handleShowAnrUi(msg);
   ensureBootCompleted();
 }
 break;
-case SHOW_STRICT_MODE_VIOLATION_MSG:
+case SHOW_STRICT_MODE_VIOLATION_UI_MSG:
 {
 HashMap<String,Object> data=(HashMap<String,Object>)msg.obj;
 synchronized (ActivityManagerService.this) {
@@ -91,14 +38,14 @@ if (mShowDialogs && !mSleeping && !mShuttingDown) {
 ensureBootCompleted();
 }
 break;
-case SHOW_FACTORY_ERROR_MSG:
+case SHOW_FACTORY_ERROR_UI_MSG:
 {
 Dialog d=new FactoryErrorDialog(mContext,msg.getData().getCharSequence("msg"));
 d.show();
 ensureBootCompleted();
 }
 break;
-case WAIT_FOR_DEBUGGER_MSG:
+case WAIT_FOR_DEBUGGER_UI_MSG:
 {
 synchronized (ActivityManagerService.this) {
 ProcessRecord app=(ProcessRecord)msg.obj;
@@ -119,7 +66,7 @@ app.waitDialog=null;
 }
 }
 break;
-case SHOW_UID_ERROR_MSG:
+case SHOW_UID_ERROR_UI_MSG:
 {
 if (mShowDialogs) {
 AlertDialog d=new BaseErrorDialog(mContext);
@@ -127,12 +74,12 @@ d.getWindow().setType(WindowManager.LayoutParams.TYPE_SYSTEM_ERROR);
 d.setCancelable(false);
 d.setTitle(mContext.getText(R.string.android_system_label));
 d.setMessage(mContext.getText(R.string.system_error_wipe_data));
-d.setButton(DialogInterface.BUTTON_POSITIVE,mContext.getText(R.string.ok),obtainMessage(DISMISS_DIALOG_MSG,d));
+d.setButton(DialogInterface.BUTTON_POSITIVE,mContext.getText(R.string.ok),obtainMessage(DISMISS_DIALOG_UI_MSG,d));
 d.show();
 }
 }
 break;
-case SHOW_FINGERPRINT_ERROR_MSG:
+case SHOW_FINGERPRINT_ERROR_UI_MSG:
 {
 if (mShowDialogs) {
 AlertDialog d=new BaseErrorDialog(mContext);
@@ -140,12 +87,12 @@ d.getWindow().setType(WindowManager.LayoutParams.TYPE_SYSTEM_ERROR);
 d.setCancelable(false);
 d.setTitle(mContext.getText(R.string.android_system_label));
 d.setMessage(mContext.getText(R.string.system_error_manufacturer));
-d.setButton(DialogInterface.BUTTON_POSITIVE,mContext.getText(R.string.ok),obtainMessage(DISMISS_DIALOG_MSG,d));
+d.setButton(DialogInterface.BUTTON_POSITIVE,mContext.getText(R.string.ok),obtainMessage(DISMISS_DIALOG_UI_MSG,d));
 d.show();
 }
 }
 break;
-case SHOW_COMPAT_MODE_DIALOG_MSG:
+case SHOW_COMPAT_MODE_DIALOG_UI_MSG:
 {
 synchronized (ActivityManagerService.this) {
 ActivityRecord ar=(ActivityRecord)msg.obj;
@@ -168,30 +115,45 @@ mCompatModeDialog.show();
 }
 break;
 }
-case START_USER_SWITCH_MSG:
+case SHOW_UNSUPPORTED_DISPLAY_SIZE_DIALOG_MSG:
 {
-showUserSwitchDialog(msg.arg1,(String)msg.obj);
+synchronized (ActivityManagerService.this) {
+final ActivityRecord ar=(ActivityRecord)msg.obj;
+if (mUnsupportedDisplaySizeDialog != null) {
+mUnsupportedDisplaySizeDialog.dismiss();
+mUnsupportedDisplaySizeDialog=null;
+}
+if (ar != null && mCompatModePackages.getPackageNotifyUnsupportedZoomLocked(ar.packageName)) {
+mUnsupportedDisplaySizeDialog=new UnsupportedDisplaySizeDialog(ActivityManagerService.this,mContext,ar.info.applicationInfo);
+mUnsupportedDisplaySizeDialog.show();
+}
+}
 break;
 }
-case DISMISS_DIALOG_MSG:
+case START_USER_SWITCH_UI_MSG:
+{
+mUserController.showUserSwitchDialog((Pair<UserInfo,UserInfo>)msg.obj);
+break;
+}
+case DISMISS_DIALOG_UI_MSG:
 {
 final Dialog d=(Dialog)msg.obj;
 d.dismiss();
 break;
 }
-case DISPATCH_PROCESSES_CHANGED:
+case DISPATCH_PROCESSES_CHANGED_UI_MSG:
 {
 dispatchProcessesChanged();
 break;
 }
-case DISPATCH_PROCESS_DIED:
+case DISPATCH_PROCESS_DIED_UI_MSG:
 {
 final int pid=msg.arg1;
 final int uid=msg.arg2;
 dispatchProcessDied(pid,uid);
 break;
 }
-case DISPATCH_UIDS_CHANGED_MSG:
+case DISPATCH_UIDS_CHANGED_UI_MSG:
 {
 dispatchUidsChanged();
 }

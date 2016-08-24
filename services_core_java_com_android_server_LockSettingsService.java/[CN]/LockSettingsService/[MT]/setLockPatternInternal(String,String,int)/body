@@ -1,0 +1,44 @@
+{
+  byte[] currentHandle=getCurrentHandle(userId);
+  if (pattern == null) {
+    clearUserKeyProtection(userId);
+    getGateKeeperService().clearSecureUserId(userId);
+    mStorage.writePatternHash(null,userId);
+    setKeystorePassword(null,userId);
+    fixateNewestUserKeyAuth(userId);
+    onUserLockChanged(userId);
+    return;
+  }
+  if (isManagedProfileWithUnifiedLock(userId)) {
+    try {
+      savedCredential=getDecryptedPasswordForTiedProfile(userId);
+    }
+ catch (    UnrecoverableKeyException|InvalidKeyException|KeyStoreException|NoSuchAlgorithmException|NoSuchPaddingException|InvalidAlgorithmParameterException|IllegalBlockSizeException|BadPaddingException|CertificateException|IOException e) {
+      if (e instanceof FileNotFoundException) {
+        Slog.i(TAG,"Child profile key not found");
+      }
+ else {
+        Slog.e(TAG,"Failed to decrypt child profile key",e);
+      }
+    }
+  }
+ else {
+    if (currentHandle == null) {
+      if (savedCredential != null) {
+        Slog.w(TAG,"Saved credential provided, but none stored");
+      }
+      savedCredential=null;
+    }
+  }
+  byte[] enrolledHandle=enrollCredential(currentHandle,savedCredential,pattern,userId);
+  if (enrolledHandle != null) {
+    CredentialHash willStore=new CredentialHash(enrolledHandle,CredentialHash.VERSION_GATEKEEPER);
+    setUserKeyProtection(userId,pattern,doVerifyPattern(pattern,willStore,true,0,userId));
+    mStorage.writePatternHash(enrolledHandle,userId);
+    fixateNewestUserKeyAuth(userId);
+    onUserLockChanged(userId);
+  }
+ else {
+    throw new RemoteException("Failed to enroll pattern");
+  }
+}

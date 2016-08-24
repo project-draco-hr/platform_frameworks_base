@@ -5,16 +5,24 @@
   mResolvedBaseFile=null;
   mResolvedStagedFiles.clear();
   mResolvedInheritedFiles.clear();
-  final File[] files=mResolvedStageDir.listFiles();
-  if (ArrayUtils.isEmpty(files)) {
+  final File[] removedFiles=mResolvedStageDir.listFiles(sRemovedFilter);
+  final List<String> removeSplitList=new ArrayList<>();
+  if (!ArrayUtils.isEmpty(removedFiles)) {
+    for (    File removedFile : removedFiles) {
+      final String fileName=removedFile.getName();
+      final String splitName=fileName.substring(0,fileName.length() - REMOVE_SPLIT_MARKER_EXTENSION.length());
+      removeSplitList.add(splitName);
+    }
+  }
+  final File[] addedFiles=mResolvedStageDir.listFiles(sAddedFilter);
+  if (ArrayUtils.isEmpty(addedFiles) && removeSplitList.size() == 0) {
     throw new PackageManagerException(INSTALL_FAILED_INVALID_APK,"No packages staged");
   }
   final ArraySet<String> stagedSplits=new ArraySet<>();
-  for (  File file : files) {
-    if (file.isDirectory())     continue;
+  for (  File addedFile : addedFiles) {
     final ApkLite apk;
     try {
-      apk=PackageParser.parseApkLite(file,PackageParser.PARSE_COLLECT_CERTIFICATES);
+      apk=PackageParser.parseApkLite(addedFile,PackageParser.PARSE_COLLECT_CERTIFICATES);
     }
  catch (    PackageParserException e) {
       throw PackageManagerException.from(e);
@@ -28,8 +36,9 @@
     }
     if (mSignatures == null) {
       mSignatures=apk.signatures;
+      mCertificates=apk.certificates;
     }
-    assertApkConsistent(String.valueOf(file),apk);
+    assertApkConsistent(String.valueOf(addedFile),apk);
     final String targetName;
     if (apk.splitName == null) {
       targetName="base.apk";
@@ -41,13 +50,29 @@
       throw new PackageManagerException(INSTALL_FAILED_INVALID_APK,"Invalid filename: " + targetName);
     }
     final File targetFile=new File(mResolvedStageDir,targetName);
-    if (!file.equals(targetFile)) {
-      file.renameTo(targetFile);
+    if (!addedFile.equals(targetFile)) {
+      addedFile.renameTo(targetFile);
     }
     if (apk.splitName == null) {
       mResolvedBaseFile=targetFile;
     }
     mResolvedStagedFiles.add(targetFile);
+  }
+  if (removeSplitList.size() > 0) {
+    final int flags=mSignatures == null ? PackageManager.GET_SIGNATURES : 0;
+    final PackageInfo pkg=mPm.getPackageInfo(params.appPackageName,flags,userId);
+    for (    String splitName : removeSplitList) {
+      if (!ArrayUtils.contains(pkg.splitNames,splitName)) {
+        throw new PackageManagerException(INSTALL_FAILED_INVALID_APK,"Split not found: " + splitName);
+      }
+    }
+    if (mPackageName == null) {
+      mPackageName=pkg.packageName;
+      mVersionCode=pkg.versionCode;
+    }
+    if (mSignatures == null) {
+      mSignatures=pkg.signatures;
+    }
   }
   if (params.mode == SessionParams.MODE_FULL_INSTALL) {
     if (!stagedSplits.contains(null)) {
@@ -77,7 +102,8 @@
       for (int i=0; i < existing.splitNames.length; i++) {
         final String splitName=existing.splitNames[i];
         final File splitFile=new File(existing.splitCodePaths[i]);
-        if (!stagedSplits.contains(splitName)) {
+        final boolean splitRemoved=removeSplitList.contains(splitName);
+        if (!stagedSplits.contains(splitName) && !splitRemoved) {
           mResolvedInheritedFiles.add(splitFile);
         }
       }

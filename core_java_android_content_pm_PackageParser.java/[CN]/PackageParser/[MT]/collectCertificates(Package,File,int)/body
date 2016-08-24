@@ -1,21 +1,65 @@
 {
   final String apkPath=apkFile.getAbsolutePath();
+  boolean verified=false;
+{
+    Certificate[][] allSignersCerts=null;
+    Signature[] signatures=null;
+    try {
+      Trace.traceBegin(TRACE_TAG_PACKAGE_MANAGER,"verifyV2");
+      allSignersCerts=ApkSignatureSchemeV2Verifier.verify(apkPath);
+      signatures=convertToSignatures(allSignersCerts);
+      verified=true;
+    }
+ catch (    ApkSignatureSchemeV2Verifier.SignatureNotFoundException e) {
+    }
+catch (    Exception e) {
+      throw new PackageParserException(INSTALL_PARSE_FAILED_NO_CERTIFICATES,"Failed to collect certificates from " + apkPath + " using APK Signature Scheme v2",e);
+    }
+ finally {
+      Trace.traceEnd(TRACE_TAG_PACKAGE_MANAGER);
+    }
+    if (verified) {
+      if (pkg.mCertificates == null) {
+        pkg.mCertificates=allSignersCerts;
+        pkg.mSignatures=signatures;
+        pkg.mSigningKeys=new ArraySet<>(allSignersCerts.length);
+        for (int i=0; i < allSignersCerts.length; i++) {
+          Certificate[] signerCerts=allSignersCerts[i];
+          Certificate signerCert=signerCerts[0];
+          pkg.mSigningKeys.add(signerCert.getPublicKey());
+        }
+      }
+ else {
+        if (!Signature.areExactMatch(pkg.mSignatures,signatures)) {
+          throw new PackageParserException(INSTALL_PARSE_FAILED_INCONSISTENT_CERTIFICATES,apkPath + " has mismatched certificates");
+        }
+      }
+    }
+  }
   StrictJarFile jarFile=null;
   try {
-    jarFile=new StrictJarFile(apkPath);
+    Trace.traceBegin(TRACE_TAG_PACKAGE_MANAGER,"strictJarFileCtor");
+    boolean signatureSchemeRollbackProtectionsEnforced=(parseFlags & PARSE_IS_SYSTEM_DIR) == 0;
+    jarFile=new StrictJarFile(apkPath,!verified,signatureSchemeRollbackProtectionsEnforced);
+    Trace.traceEnd(TRACE_TAG_PACKAGE_MANAGER);
     final ZipEntry manifestEntry=jarFile.findEntry(ANDROID_MANIFEST_FILENAME);
     if (manifestEntry == null) {
       throw new PackageParserException(INSTALL_PARSE_FAILED_BAD_MANIFEST,"Package " + apkPath + " has no manifest");
     }
+    if (verified) {
+      return;
+    }
+    Trace.traceBegin(TRACE_TAG_PACKAGE_MANAGER,"verifyV1");
     final List<ZipEntry> toVerify=new ArrayList<>();
     toVerify.add(manifestEntry);
-    if ((flags & PARSE_IS_SYSTEM) == 0) {
+    if ((parseFlags & PARSE_IS_SYSTEM_DIR) == 0) {
       final Iterator<ZipEntry> i=jarFile.iterator();
       while (i.hasNext()) {
         final ZipEntry entry=i.next();
         if (entry.isDirectory())         continue;
-        if (entry.getName().startsWith("META-INF/"))         continue;
-        if (entry.getName().equals(ANDROID_MANIFEST_FILENAME))         continue;
+        final String entryName=entry.getName();
+        if (entryName.startsWith("META-INF/"))         continue;
+        if (entryName.equals(ANDROID_MANIFEST_FILENAME))         continue;
         toVerify.add(entry);
       }
     }
@@ -39,6 +83,7 @@
         }
       }
     }
+    Trace.traceEnd(TRACE_TAG_PACKAGE_MANAGER);
   }
  catch (  GeneralSecurityException e) {
     throw new PackageParserException(INSTALL_PARSE_FAILED_CERTIFICATE_ENCODING,"Failed to collect certificates from " + apkPath,e);

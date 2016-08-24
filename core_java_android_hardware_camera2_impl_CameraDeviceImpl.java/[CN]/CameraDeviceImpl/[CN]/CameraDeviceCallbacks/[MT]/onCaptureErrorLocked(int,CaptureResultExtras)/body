@@ -4,25 +4,38 @@
   final long frameNumber=resultExtras.getFrameNumber();
   final CaptureCallbackHolder holder=CameraDeviceImpl.this.mCaptureCallbackMap.get(requestId);
   final CaptureRequest request=holder.getRequest(subsequenceId);
+  Runnable failureDispatch=null;
   if (errorCode == ERROR_CAMERA_BUFFER) {
-    Log.e(TAG,String.format("Lost output buffer reported for frame %d",frameNumber));
-    return;
-  }
-  boolean mayHaveBuffers=(errorCode == ERROR_CAMERA_RESULT);
-  int reason=(mCurrentSession != null && mCurrentSession.isAborting()) ? CaptureFailure.REASON_FLUSHED : CaptureFailure.REASON_ERROR;
-  final CaptureFailure failure=new CaptureFailure(request,reason,mayHaveBuffers,requestId,frameNumber);
-  Runnable failureDispatch=new Runnable(){
-    @Override public void run(){
-      if (!CameraDeviceImpl.this.isClosed()) {
-        holder.getCallback().onCaptureFailed(CameraDeviceImpl.this,request,failure);
+    final Surface outputSurface=mConfiguredOutputs.get(resultExtras.getErrorStreamId()).getSurface();
+    if (DEBUG) {
+      Log.v(TAG,String.format("Lost output buffer reported for frame %d, target %s",frameNumber,outputSurface));
+    }
+    failureDispatch=new Runnable(){
+      @Override public void run(){
+        if (!CameraDeviceImpl.this.isClosed()) {
+          holder.getCallback().onCaptureBufferLost(CameraDeviceImpl.this,request,outputSurface,frameNumber);
+        }
       }
     }
-  }
 ;
-  holder.getHandler().post(failureDispatch);
-  if (DEBUG) {
-    Log.v(TAG,String.format("got error frame %d",frameNumber));
   }
-  mFrameNumberTracker.updateTracker(frameNumber,true,request.isReprocess());
-  checkAndFireSequenceComplete();
+ else {
+    boolean mayHaveBuffers=(errorCode == ERROR_CAMERA_RESULT);
+    int reason=(mCurrentSession != null && mCurrentSession.isAborting()) ? CaptureFailure.REASON_FLUSHED : CaptureFailure.REASON_ERROR;
+    final CaptureFailure failure=new CaptureFailure(request,reason,mayHaveBuffers,requestId,frameNumber);
+    failureDispatch=new Runnable(){
+      @Override public void run(){
+        if (!CameraDeviceImpl.this.isClosed()) {
+          holder.getCallback().onCaptureFailed(CameraDeviceImpl.this,request,failure);
+        }
+      }
+    }
+;
+    if (DEBUG) {
+      Log.v(TAG,String.format("got error frame %d",frameNumber));
+    }
+    mFrameNumberTracker.updateTracker(frameNumber,true,request.isReprocess());
+    checkAndFireSequenceComplete();
+  }
+  holder.getHandler().post(failureDispatch);
 }

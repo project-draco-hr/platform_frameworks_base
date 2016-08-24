@@ -1,0 +1,51 @@
+{
+  AppWindowAnimator openingAppAnimator=(appToken == null) ? null : appToken.mAppAnimator;
+  if (openingAppAnimator == null || openingAppAnimator.animation == null) {
+    return;
+  }
+  final int taskId=appToken.mTask.mTaskId;
+  Bitmap thumbnailHeader=mService.mAppTransition.getAppTransitionThumbnailHeader(taskId);
+  if (thumbnailHeader == null || thumbnailHeader.getConfig() == Bitmap.Config.ALPHA_8) {
+    if (DEBUG_APP_TRANSITIONS)     Slog.d(TAG,"No thumbnail header bitmap for: " + taskId);
+    return;
+  }
+  Rect dirty=new Rect(0,0,thumbnailHeader.getWidth(),thumbnailHeader.getHeight());
+  try {
+    final DisplayContent displayContent=mService.getDefaultDisplayContentLocked();
+    final Display display=displayContent.getDisplay();
+    final DisplayInfo displayInfo=displayContent.getDisplayInfo();
+    SurfaceControl surfaceControl=new SurfaceControl(mService.mFxSession,"thumbnail anim",dirty.width(),dirty.height(),PixelFormat.TRANSLUCENT,SurfaceControl.HIDDEN);
+    surfaceControl.setLayerStack(display.getLayerStack());
+    if (SHOW_TRANSACTIONS) {
+      Slog.i(TAG,"  THUMBNAIL " + surfaceControl + ": CREATE");
+    }
+    Surface drawSurface=new Surface();
+    drawSurface.copyFrom(surfaceControl);
+    Canvas c=drawSurface.lockCanvas(dirty);
+    c.drawBitmap(thumbnailHeader,0,0,null);
+    drawSurface.unlockCanvasAndPost(c);
+    drawSurface.release();
+    Animation anim;
+    if (mService.mAppTransition.isNextThumbnailTransitionAspectScaled()) {
+      WindowState win=appToken.findMainWindow();
+      Rect appRect=win != null ? win.getContentFrameLw() : new Rect(0,0,displayInfo.appWidth,displayInfo.appHeight);
+      Rect insets=win != null ? win.mContentInsets : null;
+      anim=mService.mAppTransition.createThumbnailAspectScaleAnimationLocked(appRect,insets,thumbnailHeader,taskId,mService.mCurConfiguration.uiMode,mService.mCurConfiguration.orientation);
+      openingAppAnimator.thumbnailForceAboveLayer=Math.max(openingLayer,closingLayer);
+      openingAppAnimator.deferThumbnailDestruction=!mService.mAppTransition.isNextThumbnailTransitionScaleUp();
+    }
+ else {
+      anim=mService.mAppTransition.createThumbnailScaleAnimationLocked(displayInfo.appWidth,displayInfo.appHeight,transit,thumbnailHeader);
+    }
+    anim.restrictDuration(MAX_ANIMATION_DURATION);
+    anim.scaleCurrentDuration(mService.getTransitionAnimationScaleLocked());
+    openingAppAnimator.thumbnail=surfaceControl;
+    openingAppAnimator.thumbnailLayer=openingLayer;
+    openingAppAnimator.thumbnailAnimation=anim;
+    mService.mAppTransition.getNextAppTransitionStartRect(taskId,mTmpStartRect);
+  }
+ catch (  Surface.OutOfResourcesException e) {
+    Slog.e(TAG,"Can't allocate thumbnail/Canvas surface w=" + dirty.width() + " h="+ dirty.height(),e);
+    openingAppAnimator.clearThumbnail();
+  }
+}

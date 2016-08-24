@@ -13,6 +13,15 @@
   final StringBuilder sb=new StringBuilder(128);
   final SparseArray<? extends Uid> uidStats=getUidStats();
   final int NU=uidStats.size();
+  final int estimatedBatteryCapacity=getEstimatedBatteryCapacity();
+  if (estimatedBatteryCapacity > 0) {
+    sb.setLength(0);
+    sb.append(prefix);
+    sb.append("  Estimated battery capacity: ");
+    sb.append(BatteryStatsHelper.makemAh(estimatedBatteryCapacity));
+    sb.append(" mAh");
+    pw.println(sb.toString());
+  }
   sb.setLength(0);
   sb.append(prefix);
   sb.append("  Time on battery: ");
@@ -59,13 +68,44 @@
     formatTimeMs(sb,chargeTimeRemaining / 1000);
     pw.println(sb.toString());
   }
+  final LongCounter dischargeCounter=getDischargeCoulombCounter();
+  final long dischargeCount=dischargeCounter.getCountLocked(which);
+  if (dischargeCount >= 0) {
+    sb.setLength(0);
+    sb.append(prefix);
+    sb.append("  Discharge: ");
+    sb.append(BatteryStatsHelper.makemAh(dischargeCount / 1000.0));
+    sb.append(" mAh");
+    pw.println(sb.toString());
+  }
+  final LongCounter dischargeScreenOffCounter=getDischargeScreenOffCoulombCounter();
+  final long dischargeScreenOffCount=dischargeScreenOffCounter.getCountLocked(which);
+  if (dischargeScreenOffCount >= 0) {
+    sb.setLength(0);
+    sb.append(prefix);
+    sb.append("  Screen off discharge: ");
+    sb.append(BatteryStatsHelper.makemAh(dischargeScreenOffCount / 1000.0));
+    sb.append(" mAh");
+    pw.println(sb.toString());
+  }
+  final long dischargeScreenOnCount=dischargeCount - dischargeScreenOffCount;
+  if (dischargeScreenOnCount >= 0) {
+    sb.setLength(0);
+    sb.append(prefix);
+    sb.append("  Screen on discharge: ");
+    sb.append(BatteryStatsHelper.makemAh(dischargeScreenOnCount / 1000.0));
+    sb.append(" mAh");
+    pw.println(sb.toString());
+  }
   pw.print("  Start clock time: ");
   pw.println(DateFormat.format("yyyy-MM-dd-HH-mm-ss",getStartClockTime()).toString());
   final long screenOnTime=getScreenOnTime(rawRealtime,which);
   final long interactiveTime=getInteractiveTime(rawRealtime,which);
   final long powerSaveModeEnabledTime=getPowerSaveModeEnabledTime(rawRealtime,which);
-  final long deviceIdleModeEnabledTime=getDeviceIdleModeEnabledTime(rawRealtime,which);
-  final long deviceIdlingTime=getDeviceIdlingTime(rawRealtime,which);
+  final long deviceIdleModeLightTime=getDeviceIdleModeTime(DEVICE_IDLE_MODE_LIGHT,rawRealtime,which);
+  final long deviceIdleModeFullTime=getDeviceIdleModeTime(DEVICE_IDLE_MODE_DEEP,rawRealtime,which);
+  final long deviceLightIdlingTime=getDeviceIdlingTime(DEVICE_IDLE_MODE_LIGHT,rawRealtime,which);
+  final long deviceIdlingTime=getDeviceIdlingTime(DEVICE_IDLE_MODE_DEEP,rawRealtime,which);
   final long phoneOnTime=getPhoneOnTime(rawRealtime,which);
   final long wifiRunningTime=getGlobalWifiRunningTime(rawRealtime,which);
   final long wifiOnTime=getWifiOnTime(rawRealtime,which);
@@ -114,28 +154,56 @@
     sb.append(")");
     pw.println(sb.toString());
   }
+  if (deviceLightIdlingTime != 0) {
+    sb.setLength(0);
+    sb.append(prefix);
+    sb.append("  Device light idling: ");
+    formatTimeMs(sb,deviceLightIdlingTime / 1000);
+    sb.append("(");
+    sb.append(formatRatioLocked(deviceLightIdlingTime,whichBatteryRealtime));
+    sb.append(") ");
+    sb.append(getDeviceIdlingCount(DEVICE_IDLE_MODE_LIGHT,which));
+    sb.append("x");
+    pw.println(sb.toString());
+  }
+  if (deviceIdleModeLightTime != 0) {
+    sb.setLength(0);
+    sb.append(prefix);
+    sb.append("  Idle mode light time: ");
+    formatTimeMs(sb,deviceIdleModeLightTime / 1000);
+    sb.append("(");
+    sb.append(formatRatioLocked(deviceIdleModeLightTime,whichBatteryRealtime));
+    sb.append(") ");
+    sb.append(getDeviceIdleModeCount(DEVICE_IDLE_MODE_LIGHT,which));
+    sb.append("x");
+    sb.append(" -- longest ");
+    formatTimeMs(sb,getLongestDeviceIdleModeTime(DEVICE_IDLE_MODE_LIGHT));
+    pw.println(sb.toString());
+  }
   if (deviceIdlingTime != 0) {
     sb.setLength(0);
     sb.append(prefix);
-    sb.append("  Device idling: ");
+    sb.append("  Device full idling: ");
     formatTimeMs(sb,deviceIdlingTime / 1000);
     sb.append("(");
     sb.append(formatRatioLocked(deviceIdlingTime,whichBatteryRealtime));
     sb.append(") ");
-    sb.append(getDeviceIdlingCount(which));
+    sb.append(getDeviceIdlingCount(DEVICE_IDLE_MODE_DEEP,which));
     sb.append("x");
     pw.println(sb.toString());
   }
-  if (deviceIdleModeEnabledTime != 0) {
+  if (deviceIdleModeFullTime != 0) {
     sb.setLength(0);
     sb.append(prefix);
-    sb.append("  Idle mode time: ");
-    formatTimeMs(sb,deviceIdleModeEnabledTime / 1000);
+    sb.append("  Idle mode full time: ");
+    formatTimeMs(sb,deviceIdleModeFullTime / 1000);
     sb.append("(");
-    sb.append(formatRatioLocked(deviceIdleModeEnabledTime,whichBatteryRealtime));
+    sb.append(formatRatioLocked(deviceIdleModeFullTime,whichBatteryRealtime));
     sb.append(") ");
-    sb.append(getDeviceIdleModeEnabledCount(which));
+    sb.append(getDeviceIdleModeCount(DEVICE_IDLE_MODE_DEEP,which));
     sb.append("x");
+    sb.append(" -- longest ");
+    formatTimeMs(sb,getLongestDeviceIdleModeTime(DEVICE_IDLE_MODE_DEEP));
     pw.println(sb.toString());
   }
   if (phoneOnTime != 0) {
@@ -187,6 +255,8 @@
   final long mobileTxTotalPackets=getNetworkActivityPackets(NETWORK_MOBILE_TX_DATA,which);
   final long wifiRxTotalPackets=getNetworkActivityPackets(NETWORK_WIFI_RX_DATA,which);
   final long wifiTxTotalPackets=getNetworkActivityPackets(NETWORK_WIFI_TX_DATA,which);
+  final long btRxTotalBytes=getNetworkActivityBytes(NETWORK_BT_RX_DATA,which);
+  final long btTxTotalBytes=getNetworkActivityBytes(NETWORK_BT_TX_DATA,which);
   if (fullWakeLockTimeTotalMicros != 0) {
     sb.setLength(0);
     sb.append(prefix);
@@ -297,6 +367,7 @@
     sb.append(")");
     pw.println(sb.toString());
   }
+  printControllerActivity(pw,sb,prefix,"Radio",getModemControllerActivity(),which);
   pw.print(prefix);
   pw.print("  Wi-Fi total received: ");
   pw.print(formatBytesLocked(wifiRxTotalBytes));
@@ -387,73 +458,19 @@
   }
   if (!didOne)   sb.append(" (no activity)");
   pw.println(sb.toString());
-  final long wifiIdleTimeMs=getWifiControllerActivity(CONTROLLER_IDLE_TIME,which);
-  final long wifiRxTimeMs=getWifiControllerActivity(CONTROLLER_RX_TIME,which);
-  final long wifiTxTimeMs=getWifiControllerActivity(CONTROLLER_TX_TIME,which);
-  final long wifiPowerDrainMaMs=getWifiControllerActivity(CONTROLLER_POWER_DRAIN,which);
-  final long wifiTotalTimeMs=wifiIdleTimeMs + wifiRxTimeMs + wifiTxTimeMs;
+  printControllerActivity(pw,sb,prefix,"WiFi",getWifiControllerActivity(),which);
+  pw.print(prefix);
+  pw.print("  Bluetooth total received: ");
+  pw.print(formatBytesLocked(btRxTotalBytes));
+  pw.print(", sent: ");
+  pw.println(formatBytesLocked(btTxTotalBytes));
+  final long bluetoothScanTimeMs=getBluetoothScanTime(rawRealtime,which) / 1000;
   sb.setLength(0);
   sb.append(prefix);
-  sb.append("  WiFi Idle time: ");
-  formatTimeMs(sb,wifiIdleTimeMs);
-  sb.append("(");
-  sb.append(formatRatioLocked(wifiIdleTimeMs,wifiTotalTimeMs));
-  sb.append(")");
+  sb.append("  Bluetooth scan time: ");
+  formatTimeMs(sb,bluetoothScanTimeMs);
   pw.println(sb.toString());
-  sb.setLength(0);
-  sb.append(prefix);
-  sb.append("  WiFi Rx time:   ");
-  formatTimeMs(sb,wifiRxTimeMs);
-  sb.append("(");
-  sb.append(formatRatioLocked(wifiRxTimeMs,wifiTotalTimeMs));
-  sb.append(")");
-  pw.println(sb.toString());
-  sb.setLength(0);
-  sb.append(prefix);
-  sb.append("  WiFi Tx time:   ");
-  formatTimeMs(sb,wifiTxTimeMs);
-  sb.append("(");
-  sb.append(formatRatioLocked(wifiTxTimeMs,wifiTotalTimeMs));
-  sb.append(")");
-  pw.println(sb.toString());
-  sb.setLength(0);
-  sb.append(prefix);
-  sb.append("  WiFi Power drain: ").append(BatteryStatsHelper.makemAh(wifiPowerDrainMaMs / (double)(1000 * 60 * 60)));
-  sb.append("mAh");
-  pw.println(sb.toString());
-  final long bluetoothIdleTimeMs=getBluetoothControllerActivity(CONTROLLER_IDLE_TIME,which);
-  final long bluetoothRxTimeMs=getBluetoothControllerActivity(CONTROLLER_RX_TIME,which);
-  final long bluetoothTxTimeMs=getBluetoothControllerActivity(CONTROLLER_TX_TIME,which);
-  final long bluetoothTotalTimeMs=bluetoothIdleTimeMs + bluetoothRxTimeMs + bluetoothTxTimeMs;
-  sb.setLength(0);
-  sb.append(prefix);
-  sb.append("  Bluetooth Idle time: ");
-  formatTimeMs(sb,bluetoothIdleTimeMs);
-  sb.append("(");
-  sb.append(formatRatioLocked(bluetoothIdleTimeMs,bluetoothTotalTimeMs));
-  sb.append(")");
-  pw.println(sb.toString());
-  sb.setLength(0);
-  sb.append(prefix);
-  sb.append("  Bluetooth Rx time:   ");
-  formatTimeMs(sb,bluetoothRxTimeMs);
-  sb.append("(");
-  sb.append(formatRatioLocked(bluetoothRxTimeMs,bluetoothTotalTimeMs));
-  sb.append(")");
-  pw.println(sb.toString());
-  sb.setLength(0);
-  sb.append(prefix);
-  sb.append("  Bluetooth Tx time:   ");
-  formatTimeMs(sb,bluetoothTxTimeMs);
-  sb.append("(");
-  sb.append(formatRatioLocked(bluetoothTxTimeMs,bluetoothTotalTimeMs));
-  sb.append(")");
-  pw.println(sb.toString());
-  sb.setLength(0);
-  sb.append(prefix);
-  sb.append("  Bluetooth Power drain: ").append(BatteryStatsHelper.makemAh(getBluetoothControllerActivity(CONTROLLER_POWER_DRAIN,which) / (double)(1000 * 60 * 60)));
-  sb.append("mAh");
-  pw.println(sb.toString());
+  printControllerActivity(pw,sb,prefix,"Bluetooth",getBluetoothControllerActivity(),which);
   pw.println();
   if (which == STATS_SINCE_UNPLUGGED) {
     if (getIsOnBattery()) {
@@ -590,6 +607,10 @@ printmAh(pw,bs.mobileRadioPowerMah);
 if (bs.wifiPowerMah != 0) {
 pw.print(" wifi=");
 printmAh(pw,bs.wifiPowerMah);
+}
+if (bs.bluetoothPowerMah != 0) {
+pw.print(" bt=");
+printmAh(pw,bs.bluetoothPowerMah);
 }
 if (bs.gpsPowerMah != 0) {
 pw.print(" gps=");
@@ -748,12 +769,14 @@ final long mobileRxBytes=u.getNetworkActivityBytes(NETWORK_MOBILE_RX_DATA,which)
 final long mobileTxBytes=u.getNetworkActivityBytes(NETWORK_MOBILE_TX_DATA,which);
 final long wifiRxBytes=u.getNetworkActivityBytes(NETWORK_WIFI_RX_DATA,which);
 final long wifiTxBytes=u.getNetworkActivityBytes(NETWORK_WIFI_TX_DATA,which);
+final long btRxBytes=u.getNetworkActivityBytes(NETWORK_BT_RX_DATA,which);
+final long btTxBytes=u.getNetworkActivityBytes(NETWORK_BT_TX_DATA,which);
 final long mobileRxPackets=u.getNetworkActivityPackets(NETWORK_MOBILE_RX_DATA,which);
 final long mobileTxPackets=u.getNetworkActivityPackets(NETWORK_MOBILE_TX_DATA,which);
-final long uidMobileActiveTime=u.getMobileRadioActiveTime(which);
-final int uidMobileActiveCount=u.getMobileRadioActiveCount(which);
 final long wifiRxPackets=u.getNetworkActivityPackets(NETWORK_WIFI_RX_DATA,which);
 final long wifiTxPackets=u.getNetworkActivityPackets(NETWORK_WIFI_TX_DATA,which);
+final long uidMobileActiveTime=u.getMobileRadioActiveTime(which);
+final int uidMobileActiveCount=u.getMobileRadioActiveCount(which);
 final long fullWifiLockOnTime=u.getFullWifiLockTime(rawRealtime,which);
 final long wifiScanTime=u.getWifiScanTime(rawRealtime,which);
 final int wifiScanCount=u.getWifiScanCount(which);
@@ -789,6 +812,7 @@ sb.append(BatteryStatsHelper.makemAh(uidMobileActiveTime / 1000 / (double)packet
 sb.append(" mspp");
 pw.println(sb.toString());
 }
+printControllerActivityIfInteresting(pw,sb,prefix + "  ","Modem",u.getModemControllerActivity(),which);
 if (wifiRxBytes > 0 || wifiTxBytes > 0 || wifiRxPackets > 0 || wifiTxPackets > 0) {
 pw.print(prefix);
 pw.print("    Wi-Fi network: ");
@@ -825,23 +849,16 @@ sb.append(wifiScanCount);
 sb.append("x");
 pw.println(sb.toString());
 }
-final long uidWifiIdleTimeMs=u.getWifiControllerActivity(CONTROLLER_IDLE_TIME,which);
-final long uidWifiRxTimeMs=u.getWifiControllerActivity(CONTROLLER_RX_TIME,which);
-final long uidWifiTxTimeMs=u.getWifiControllerActivity(CONTROLLER_TX_TIME,which);
-final long uidWifiTotalTimeMs=uidWifiIdleTimeMs + uidWifiRxTimeMs + uidWifiTxTimeMs;
-if (uidWifiTotalTimeMs > 0) {
-sb.setLength(0);
-sb.append(prefix).append("    WiFi Idle time: ");
-formatTimeMs(sb,uidWifiIdleTimeMs);
-sb.append("(").append(formatRatioLocked(uidWifiIdleTimeMs,uidWifiTotalTimeMs)).append(")\n");
-sb.append(prefix).append("    WiFi Rx time:   ");
-formatTimeMs(sb,uidWifiRxTimeMs);
-sb.append("(").append(formatRatioLocked(uidWifiRxTimeMs,uidWifiTotalTimeMs)).append(")\n");
-sb.append(prefix).append("    WiFi Tx time:   ");
-formatTimeMs(sb,uidWifiTxTimeMs);
-sb.append("(").append(formatRatioLocked(uidWifiTxTimeMs,uidWifiTotalTimeMs)).append(")");
-pw.println(sb.toString());
+printControllerActivityIfInteresting(pw,sb,prefix + "  ","WiFi",u.getWifiControllerActivity(),which);
+if (btRxBytes > 0 || btTxBytes > 0) {
+pw.print(prefix);
+pw.print("    Bluetooth network: ");
+pw.print(formatBytesLocked(btRxBytes));
+pw.print(" received, ");
+pw.print(formatBytesLocked(btTxBytes));
+pw.println(" sent");
 }
+uidActivity|=printTimer(pw,sb,u.getBluetoothScanTimer(),rawRealtime,which,prefix,"Bluetooth Scan");
 if (u.hasUserActivity()) {
 boolean hasData=false;
 for (int i=0; i < Uid.NUM_USER_ACTIVITY_TYPES; i++) {
@@ -1023,10 +1040,17 @@ sb.append(prefix);
 sb.append("    ");
 sb.append(Uid.PROCESS_STATE_NAMES[ips]);
 sb.append(" for: ");
-formatTimeMs(sb,(totalStateTime + 500) / 1000);
+formatTimeMs(sb,(time + 500) / 1000);
 pw.println(sb.toString());
 uidActivity=true;
 }
+}
+if (totalStateTime > 0) {
+sb.setLength(0);
+sb.append(prefix);
+sb.append("    Total running: ");
+formatTimeMs(sb,(totalStateTime + 500) / 1000);
+pw.println(sb.toString());
 }
 final long userCpuTimeUs=u.getUserCpuTimeUs(which);
 final long systemCpuTimeUs=u.getSystemCpuTimeUs(which);

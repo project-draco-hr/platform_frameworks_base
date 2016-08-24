@@ -1,33 +1,54 @@
 {
-  if (mParcelledData == null) {
-    if (DEBUG)     Log.d(TAG,"unparcel " + Integer.toHexString(System.identityHashCode(this)) + ": no parcelled data");
-    return;
-  }
-  if (mParcelledData == EMPTY_PARCEL) {
-    if (DEBUG)     Log.d(TAG,"unparcel " + Integer.toHexString(System.identityHashCode(this)) + ": empty");
-    if (mMap == null) {
-      mMap=new ArrayMap<String,Object>(1);
+synchronized (this) {
+    final Parcel parcelledData=mParcelledData;
+    if (parcelledData == null) {
+      if (DEBUG)       Log.d(TAG,"unparcel " + Integer.toHexString(System.identityHashCode(this)) + ": no parcelled data");
+      return;
+    }
+    if (LOG_DEFUSABLE && sShouldDefuse && (mFlags & FLAG_DEFUSABLE) == 0) {
+      Slog.wtf(TAG,"Attempting to unparcel a Bundle while in transit; this may " + "clobber all data inside!",new Throwable());
+    }
+    if (isEmptyParcel()) {
+      if (DEBUG)       Log.d(TAG,"unparcel " + Integer.toHexString(System.identityHashCode(this)) + ": empty");
+      if (mMap == null) {
+        mMap=new ArrayMap<>(1);
+      }
+ else {
+        mMap.erase();
+      }
+      mParcelledData=null;
+      return;
+    }
+    int N=parcelledData.readInt();
+    if (DEBUG)     Log.d(TAG,"unparcel " + Integer.toHexString(System.identityHashCode(this)) + ": reading "+ N+ " maps");
+    if (N < 0) {
+      return;
+    }
+    ArrayMap<String,Object> map=mMap;
+    if (map == null) {
+      map=new ArrayMap<>(N);
     }
  else {
-      mMap.erase();
+      map.erase();
+      map.ensureCapacity(N);
     }
-    mParcelledData=null;
-    return;
-  }
-  int N=mParcelledData.readInt();
-  if (DEBUG)   Log.d(TAG,"unparcel " + Integer.toHexString(System.identityHashCode(this)) + ": reading "+ N+ " maps");
-  if (N < 0) {
-    return;
-  }
-  if (mMap == null) {
-    mMap=new ArrayMap<String,Object>(N);
-  }
+    try {
+      parcelledData.readArrayMapInternal(map,N,mClassLoader);
+    }
+ catch (    BadParcelableException e) {
+      if (sShouldDefuse) {
+        Log.w(TAG,"Failed to parse Bundle, but defusing quietly",e);
+        map.erase();
+      }
  else {
-    mMap.erase();
-    mMap.ensureCapacity(N);
+        throw e;
+      }
+    }
+ finally {
+      mMap=map;
+      parcelledData.recycle();
+      mParcelledData=null;
+    }
+    if (DEBUG)     Log.d(TAG,"unparcel " + Integer.toHexString(System.identityHashCode(this)) + " final map: "+ mMap);
   }
-  mParcelledData.readArrayMapInternal(mMap,N,mClassLoader);
-  mParcelledData.recycle();
-  mParcelledData=null;
-  if (DEBUG)   Log.d(TAG,"unparcel " + Integer.toHexString(System.identityHashCode(this)) + " final map: "+ mMap);
 }

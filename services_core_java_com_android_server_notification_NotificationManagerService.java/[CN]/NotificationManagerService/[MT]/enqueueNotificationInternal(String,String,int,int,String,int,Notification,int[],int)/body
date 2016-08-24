@@ -7,8 +7,27 @@
   final boolean isNotificationFromListener=mListeners.isListenerPackage(pkg);
   final int userId=ActivityManager.handleIncomingUser(callingPid,callingUid,incomingUserId,true,false,"enqueueNotification",pkg);
   final UserHandle user=new UserHandle(userId);
+  try {
+    final ApplicationInfo ai=getContext().getPackageManager().getApplicationInfoAsUser(pkg,PackageManager.MATCH_DEBUG_TRIAGED_MISSING,(userId == UserHandle.USER_ALL) ? UserHandle.USER_SYSTEM : userId);
+    Notification.addFieldsFromContext(ai,userId,notification);
+  }
+ catch (  NameNotFoundException e) {
+    Slog.e(TAG,"Cannot create a context for sending app",e);
+    return;
+  }
+  mUsageStats.registerEnqueuedByApp(pkg);
   if (!isSystemNotification && !isNotificationFromListener) {
 synchronized (mNotificationList) {
+      final float appEnqueueRate=mUsageStats.getAppEnqueueRate(pkg);
+      if (appEnqueueRate > mMaxPackageEnqueueRate) {
+        mUsageStats.registerOverRateQuota(pkg);
+        final long now=SystemClock.elapsedRealtime();
+        if ((now - mLastOverRateLogTime) > MIN_PACKAGE_OVERRATE_LOG_INTERVAL) {
+          Slog.e(TAG,"Package enqueue rate is " + appEnqueueRate + ". Shedding events. package="+ pkg);
+          mLastOverRateLogTime=now;
+        }
+        return;
+      }
       int count=0;
       final int N=mNotificationList.size();
       for (int i=0; i < N; i++) {
@@ -19,6 +38,7 @@ synchronized (mNotificationList) {
           }
           count++;
           if (count >= MAX_PACKAGE_NOTIFICATIONS) {
+            mUsageStats.registerOverCountQuota(pkg);
             Slog.e(TAG,"Package has already posted " + count + " notifications.  Not showing more.  package="+ pkg);
             return;
           }
@@ -29,97 +49,10 @@ synchronized (mNotificationList) {
   if (pkg == null || notification == null) {
     throw new IllegalArgumentException("null not allowed: pkg=" + pkg + " id="+ id+ " notification="+ notification);
   }
-  if (notification.getSmallIcon() != null) {
-    if (!notification.isValid()) {
-      throw new IllegalArgumentException("Invalid notification (): pkg=" + pkg + " id="+ id+ " notification="+ notification);
-    }
-  }
-  mHandler.post(new Runnable(){
-    @Override public void run(){
-synchronized (mNotificationList) {
-        notification.priority=clamp(notification.priority,Notification.PRIORITY_MIN,Notification.PRIORITY_MAX);
-        if (0 != (notification.flags & Notification.FLAG_HIGH_PRIORITY)) {
-          if (notification.priority < Notification.PRIORITY_MAX) {
-            notification.priority=Notification.PRIORITY_MAX;
-          }
-        }
- else         if (SCORE_ONGOING_HIGHER && 0 != (notification.flags & Notification.FLAG_ONGOING_EVENT)) {
-          if (notification.priority < Notification.PRIORITY_HIGH) {
-            notification.priority=Notification.PRIORITY_HIGH;
-          }
-        }
-        if (!mRankingHelper.getPackagePeekable(pkg,callingUid)) {
-          if (notification.extras == null) {
-            notification.extras=new Bundle();
-          }
-          notification.extras.putInt(Notification.EXTRA_AS_HEADS_UP,Notification.HEADS_UP_NEVER);
-        }
-        final int score=notification.priority * NOTIFICATION_PRIORITY_MULTIPLIER;
-        final StatusBarNotification n=new StatusBarNotification(pkg,opPkg,id,tag,callingUid,callingPid,score,notification,user);
-        NotificationRecord r=new NotificationRecord(n,score);
-        NotificationRecord old=mNotificationsByKey.get(n.getKey());
-        if (old != null) {
-          r.copyRankingInformation(old);
-        }
-        handleGroupedNotificationLocked(r,old,callingUid,callingPid);
-        boolean ignoreNotification=removeUnusedGroupedNotificationLocked(r,old,callingUid,callingPid);
-        if (!pkg.equals("com.android.providers.downloads") || Log.isLoggable("DownloadManager",Log.VERBOSE)) {
-          int enqueueStatus=EVENTLOG_ENQUEUE_STATUS_NEW;
-          if (ignoreNotification) {
-            enqueueStatus=EVENTLOG_ENQUEUE_STATUS_IGNORED;
-          }
- else           if (old != null) {
-            enqueueStatus=EVENTLOG_ENQUEUE_STATUS_UPDATE;
-          }
-          EventLogTags.writeNotificationEnqueue(callingUid,callingPid,pkg,id,tag,userId,notification.toString(),enqueueStatus);
-        }
-        if (ignoreNotification) {
-          return;
-        }
-        mRankingHelper.extractSignals(r);
-        if (ENABLE_BLOCKED_NOTIFICATIONS && !noteNotificationOp(pkg,callingUid)) {
-          if (!isSystemNotification) {
-            r.score=JUNK_SCORE;
-            Slog.e(TAG,"Suppressing notification from package " + pkg + " by user request.");
-            mUsageStats.registerBlocked(r);
-          }
-        }
-        if (r.score < SCORE_DISPLAY_THRESHOLD) {
-          return;
-        }
-        int index=indexOfNotificationLocked(n.getKey());
-        if (index < 0) {
-          mNotificationList.add(r);
-          mUsageStats.registerPostedByApp(r);
-        }
- else {
-          old=mNotificationList.get(index);
-          mNotificationList.set(index,r);
-          mUsageStats.registerUpdatedByApp(r,old);
-          notification.flags|=old.getNotification().flags & Notification.FLAG_FOREGROUND_SERVICE;
-          r.isUpdate=true;
-        }
-        mNotificationsByKey.put(n.getKey(),r);
-        if ((notification.flags & Notification.FLAG_FOREGROUND_SERVICE) != 0) {
-          notification.flags|=Notification.FLAG_ONGOING_EVENT | Notification.FLAG_NO_CLEAR;
-        }
-        applyZenModeLocked(r);
-        mRankingHelper.sort(mNotificationList);
-        if (notification.getSmallIcon() != null) {
-          StatusBarNotification oldSbn=(old != null) ? old.sbn : null;
-          mListeners.notifyPostedLocked(n,oldSbn);
-        }
- else {
-          Slog.e(TAG,"Not posting notification without small icon: " + notification);
-          if (old != null && !old.isCanceled) {
-            mListeners.notifyRemovedLocked(n);
-          }
-          Slog.e(TAG,"WARNING: In a future release this will crash the app: " + n.getPackageName());
-        }
-        buzzBeepBlinkLocked(r);
-      }
-    }
-  }
-);
+  markAsSentFromNotification(notification);
+  notification.priority=clamp(notification.priority,Notification.PRIORITY_MIN,Notification.PRIORITY_MAX);
+  final StatusBarNotification n=new StatusBarNotification(pkg,opPkg,id,tag,callingUid,callingPid,0,notification,user);
+  final NotificationRecord r=new NotificationRecord(getContext(),n);
+  mHandler.post(new EnqueueNotificationRunnable(userId,r));
   idOut[0]=id;
 }

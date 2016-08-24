@@ -1,9 +1,10 @@
 {
   row.inflateGuts();
   final StatusBarNotification sbn=row.getStatusBarNotification();
-  PackageManager pmUser=getPackageManagerForUser(sbn.getUser().getIdentifier());
+  PackageManager pmUser=getPackageManagerForUser(mContext,sbn.getUser().getIdentifier());
   row.setTag(sbn.getPackageName());
-  final View guts=row.getGuts();
+  final NotificationGuts guts=row.getGuts();
+  guts.setClosedListener(this);
   final String pkg=sbn.getPackageName();
   String appname=pkg;
   Drawable pkgicon=null;
@@ -19,40 +20,43 @@
  catch (  NameNotFoundException e) {
     pkgicon=pmUser.getDefaultActivityIcon();
   }
-  ((ImageView)row.findViewById(android.R.id.icon)).setImageDrawable(pkgicon);
-  ((DateTimeView)row.findViewById(R.id.timestamp)).setTime(sbn.getPostTime());
-  ((TextView)row.findViewById(R.id.pkgname)).setText(appname);
-  final View settingsButton=guts.findViewById(R.id.notification_inspect_item);
-  final View appSettingsButton=guts.findViewById(R.id.notification_inspect_app_provided_settings);
+  ((ImageView)guts.findViewById(R.id.app_icon)).setImageDrawable(pkgicon);
+  ((TextView)guts.findViewById(R.id.pkgname)).setText(appname);
+  final TextView settingsButton=(TextView)guts.findViewById(R.id.more_settings);
   if (appUid >= 0) {
     final int appUidF=appUid;
     settingsButton.setOnClickListener(new View.OnClickListener(){
       public void onClick(      View v){
-        MetricsLogger.action(mContext,MetricsLogger.ACTION_NOTE_INFO);
+        MetricsLogger.action(mContext,MetricsEvent.ACTION_NOTE_INFO);
+        guts.resetFalsingCheck();
         startAppNotificationSettingsActivity(pkg,appUidF);
       }
     }
 );
-    final Intent appSettingsQueryIntent=new Intent(Intent.ACTION_MAIN).addCategory(Notification.INTENT_CATEGORY_NOTIFICATION_PREFERENCES).setPackage(pkg);
-    List<ResolveInfo> infos=pmUser.queryIntentActivities(appSettingsQueryIntent,0);
-    if (infos.size() > 0) {
-      appSettingsButton.setVisibility(View.VISIBLE);
-      appSettingsButton.setContentDescription(mContext.getResources().getString(R.string.status_bar_notification_app_settings_title,appname));
-      final Intent appSettingsLaunchIntent=new Intent(appSettingsQueryIntent).setClassName(pkg,infos.get(0).activityInfo.name);
-      appSettingsButton.setOnClickListener(new View.OnClickListener(){
-        public void onClick(        View v){
-          MetricsLogger.action(mContext,MetricsLogger.ACTION_APP_NOTE_SETTINGS);
-          startAppOwnNotificationSettingsActivity(appSettingsLaunchIntent,sbn.getId(),sbn.getTag(),appUidF);
-        }
-      }
-);
-    }
- else {
-      appSettingsButton.setVisibility(View.GONE);
-    }
+    settingsButton.setText(R.string.notification_more_settings);
   }
  else {
     settingsButton.setVisibility(View.GONE);
-    appSettingsButton.setVisibility(View.GONE);
   }
+  guts.bindImportance(pmUser,sbn,mNotificationData.getImportance(sbn.getKey()));
+  final TextView doneButton=(TextView)guts.findViewById(R.id.done);
+  doneButton.setText(R.string.notification_done);
+  doneButton.setOnClickListener(new View.OnClickListener(){
+    @Override public void onClick(    View v){
+      if (guts.hasImportanceChanged() && isLockscreenPublicMode() && (mState == StatusBarState.KEYGUARD || mState == StatusBarState.SHADE_LOCKED)) {
+        OnDismissAction dismissAction=new OnDismissAction(){
+          @Override public boolean onDismiss(){
+            saveImportanceCloseControls(sbn,row,guts,v);
+            return true;
+          }
+        }
+;
+        onLockedNotificationImportanceChange(dismissAction);
+      }
+ else {
+        saveImportanceCloseControls(sbn,row,guts,v);
+      }
+    }
+  }
+);
 }

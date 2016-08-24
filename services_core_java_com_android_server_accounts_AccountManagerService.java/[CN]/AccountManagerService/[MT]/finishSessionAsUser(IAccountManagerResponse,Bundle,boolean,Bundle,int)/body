@@ -1,0 +1,75 @@
+{
+  Bundle.setDefusable(sessionBundle,true);
+  int callingUid=Binder.getCallingUid();
+  if (Log.isLoggable(TAG,Log.VERBOSE)) {
+    Log.v(TAG,"finishSession: response " + response + ", expectActivityLaunch "+ expectActivityLaunch+ ", caller's uid "+ callingUid+ ", caller's user id "+ UserHandle.getCallingUserId()+ ", pid "+ Binder.getCallingPid()+ ", for user id "+ userId);
+  }
+  if (response == null) {
+    throw new IllegalArgumentException("response is null");
+  }
+  if (sessionBundle == null || sessionBundle.size() == 0) {
+    throw new IllegalArgumentException("sessionBundle is empty");
+  }
+  if (isCrossUser(callingUid,userId)) {
+    throw new SecurityException(String.format("User %s trying to finish session for %s without cross user permission",UserHandle.getCallingUserId(),userId));
+  }
+  if (!isSystemUid(callingUid)) {
+    String msg=String.format("uid %s cannot finish session because it's not system uid.",callingUid);
+    throw new SecurityException(msg);
+  }
+  if (!canUserModifyAccounts(userId,callingUid)) {
+    sendErrorResponse(response,AccountManager.ERROR_CODE_USER_RESTRICTED,"User is not allowed to add an account!");
+    showCantAddAccount(AccountManager.ERROR_CODE_USER_RESTRICTED,userId);
+    return;
+  }
+  final int pid=Binder.getCallingPid();
+  final Bundle decryptedBundle;
+  final String accountType;
+  try {
+    CryptoHelper cryptoHelper=CryptoHelper.getInstance();
+    decryptedBundle=cryptoHelper.decryptBundle(sessionBundle);
+    if (decryptedBundle == null) {
+      sendErrorResponse(response,AccountManager.ERROR_CODE_BAD_REQUEST,"failed to decrypt session bundle");
+      return;
+    }
+    accountType=decryptedBundle.getString(AccountManager.KEY_ACCOUNT_TYPE);
+    if (TextUtils.isEmpty(accountType)) {
+      sendErrorResponse(response,AccountManager.ERROR_CODE_BAD_ARGUMENTS,"accountType is empty");
+      return;
+    }
+    if (appInfo != null) {
+      decryptedBundle.putAll(appInfo);
+    }
+    decryptedBundle.putInt(AccountManager.KEY_CALLER_UID,callingUid);
+    decryptedBundle.putInt(AccountManager.KEY_CALLER_PID,pid);
+  }
+ catch (  GeneralSecurityException e) {
+    if (Log.isLoggable(TAG,Log.DEBUG)) {
+      Log.v(TAG,"Failed to decrypt session bundle!",e);
+    }
+    sendErrorResponse(response,AccountManager.ERROR_CODE_BAD_REQUEST,"failed to decrypt session bundle");
+    return;
+  }
+  if (!canUserModifyAccountsForType(userId,accountType,callingUid)) {
+    sendErrorResponse(response,AccountManager.ERROR_CODE_MANAGEMENT_DISABLED_FOR_ACCOUNT_TYPE,"User cannot modify accounts of this type (policy).");
+    showCantAddAccount(AccountManager.ERROR_CODE_MANAGEMENT_DISABLED_FOR_ACCOUNT_TYPE,userId);
+    return;
+  }
+  long identityToken=clearCallingIdentity();
+  try {
+    UserAccounts accounts=getUserAccounts(userId);
+    logRecordWithUid(accounts,DebugDbHelper.ACTION_CALLED_ACCOUNT_SESSION_FINISH,TABLE_ACCOUNTS,callingUid);
+    new Session(accounts,response,accountType,expectActivityLaunch,true,null,false,true){
+      @Override public void run() throws RemoteException {
+        mAuthenticator.finishSession(this,mAccountType,decryptedBundle);
+      }
+      @Override protected String toDebugString(      long now){
+        return super.toDebugString(now) + ", finishSession" + ", accountType "+ accountType;
+      }
+    }
+.bind();
+  }
+  finally {
+    restoreCallingIdentity(identityToken);
+  }
+}

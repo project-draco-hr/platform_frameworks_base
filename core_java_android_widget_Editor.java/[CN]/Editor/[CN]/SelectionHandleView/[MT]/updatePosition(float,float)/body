@@ -1,0 +1,117 @@
+{
+  final Layout layout=mTextView.getLayout();
+  if (layout == null) {
+    positionAndAdjustForCrossingHandles(mTextView.getOffsetForPosition(x,y));
+    return;
+  }
+  if (mPreviousLineTouched == UNSET_LINE) {
+    mPreviousLineTouched=mTextView.getLineAtCoordinate(y);
+  }
+  boolean positionCursor=false;
+  final int anotherHandleOffset=isStartHandle() ? mTextView.getSelectionEnd() : mTextView.getSelectionStart();
+  int currLine=getCurrentLineAdjustedForSlop(layout,mPreviousLineTouched,y);
+  int initialOffset=getOffsetAtCoordinate(layout,currLine,x);
+  if (isStartHandle() && initialOffset >= anotherHandleOffset || !isStartHandle() && initialOffset <= anotherHandleOffset) {
+    currLine=layout.getLineForOffset(anotherHandleOffset);
+    initialOffset=getOffsetAtCoordinate(layout,currLine,x);
+  }
+  int offset=initialOffset;
+  final int wordEnd=getWordEnd(offset);
+  final int wordStart=getWordStart(offset);
+  if (mPrevX == UNSET_X_VALUE) {
+    mPrevX=x;
+  }
+  final int currentOffset=getCurrentCursorOffset();
+  final boolean rtlAtCurrentOffset=isAtRtlRun(layout,currentOffset);
+  final boolean atRtl=isAtRtlRun(layout,offset);
+  final boolean isLvlBoundary=layout.isLevelBoundary(offset);
+  if (isLvlBoundary || (rtlAtCurrentOffset && !atRtl) || (!rtlAtCurrentOffset && atRtl)) {
+    mLanguageDirectionChanged=true;
+    mTouchWordDelta=0.0f;
+    positionAndAdjustForCrossingHandles(offset);
+    return;
+  }
+ else   if (mLanguageDirectionChanged && !isLvlBoundary) {
+    positionAndAdjustForCrossingHandles(offset);
+    mTouchWordDelta=0.0f;
+    mLanguageDirectionChanged=false;
+    return;
+  }
+  boolean isExpanding;
+  final float xDiff=x - mPrevX;
+  if (isStartHandle()) {
+    isExpanding=currLine < mPreviousLineTouched;
+  }
+ else {
+    isExpanding=currLine > mPreviousLineTouched;
+  }
+  if (atRtl == isStartHandle()) {
+    isExpanding|=xDiff > 0;
+  }
+ else {
+    isExpanding|=xDiff < 0;
+  }
+  if (mTextView.getHorizontallyScrolling()) {
+    if (positionNearEdgeOfScrollingView(x,atRtl) && ((isStartHandle() && mTextView.getScrollX() != 0) || (!isStartHandle() && mTextView.canScrollHorizontally(atRtl ? -1 : 1))) && ((isExpanding && ((isStartHandle() && offset < currentOffset) || (!isStartHandle() && offset > currentOffset))) || !isExpanding)) {
+      mTouchWordDelta=0.0f;
+      final int nextOffset=(atRtl == isStartHandle()) ? layout.getOffsetToRightOf(mPreviousOffset) : layout.getOffsetToLeftOf(mPreviousOffset);
+      positionAndAdjustForCrossingHandles(nextOffset);
+      return;
+    }
+  }
+  if (isExpanding) {
+    int wordBoundary=isStartHandle() ? wordStart : wordEnd;
+    final boolean snapToWord=(!mInWord || (isStartHandle() ? currLine < mPrevLine : currLine > mPrevLine)) && atRtl == isAtRtlRun(layout,wordBoundary);
+    if (snapToWord) {
+      if (layout.getLineForOffset(wordBoundary) != currLine) {
+        wordBoundary=isStartHandle() ? layout.getLineStart(currLine) : layout.getLineEnd(currLine);
+      }
+      final int offsetThresholdToSnap=isStartHandle() ? wordEnd - ((wordEnd - wordBoundary) / 2) : wordStart + ((wordBoundary - wordStart) / 2);
+      if (isStartHandle() && (offset <= offsetThresholdToSnap || currLine < mPrevLine)) {
+        offset=wordStart;
+      }
+ else       if (!isStartHandle() && (offset >= offsetThresholdToSnap || currLine > mPrevLine)) {
+        offset=wordEnd;
+      }
+ else {
+        offset=mPreviousOffset;
+      }
+    }
+    if ((isStartHandle() && offset < initialOffset) || (!isStartHandle() && offset > initialOffset)) {
+      final float adjustedX=getHorizontal(layout,offset);
+      mTouchWordDelta=mTextView.convertToLocalHorizontalCoordinate(x) - adjustedX;
+    }
+ else {
+      mTouchWordDelta=0.0f;
+    }
+    positionCursor=true;
+  }
+ else {
+    final int adjustedOffset=getOffsetAtCoordinate(layout,currLine,x - mTouchWordDelta);
+    final boolean shrinking=isStartHandle() ? adjustedOffset > mPreviousOffset || currLine > mPrevLine : adjustedOffset < mPreviousOffset || currLine < mPrevLine;
+    if (shrinking) {
+      if (currLine != mPrevLine) {
+        offset=isStartHandle() ? wordStart : wordEnd;
+        if ((isStartHandle() && offset < initialOffset) || (!isStartHandle() && offset > initialOffset)) {
+          final float adjustedX=getHorizontal(layout,offset);
+          mTouchWordDelta=mTextView.convertToLocalHorizontalCoordinate(x) - adjustedX;
+        }
+ else {
+          mTouchWordDelta=0.0f;
+        }
+      }
+ else {
+        offset=adjustedOffset;
+      }
+      positionCursor=true;
+    }
+ else     if ((isStartHandle() && adjustedOffset < mPreviousOffset) || (!isStartHandle() && adjustedOffset > mPreviousOffset)) {
+      mTouchWordDelta=mTextView.convertToLocalHorizontalCoordinate(x) - getHorizontal(layout,mPreviousOffset);
+    }
+  }
+  if (positionCursor) {
+    mPreviousLineTouched=currLine;
+    positionAndAdjustForCrossingHandles(offset);
+  }
+  mPrevX=x;
+}

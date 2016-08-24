@@ -1,70 +1,21 @@
 {
-  if (packageName == null) {
-    Slog.w(TAG,"Attempt to get size of null packageName.");
-    return false;
-  }
-  PackageParser.Package p;
-  boolean dataOnly=false;
-  String libDirRoot=null;
-  String asecPath=null;
-  PackageSetting ps=null;
+  final PackageSetting ps;
 synchronized (mPackages) {
-    p=mPackages.get(packageName);
     ps=mSettings.mPackages.get(packageName);
-    if (p == null) {
-      dataOnly=true;
-      if ((ps == null) || (ps.pkg == null)) {
-        Slog.w(TAG,"Package named '" + packageName + "' doesn't exist.");
-        return false;
-      }
-      p=ps.pkg;
-    }
-    if (ps != null) {
-      libDirRoot=ps.legacyNativeLibraryPathString;
-    }
-    if (p != null && (p.isForwardLocked() || p.applicationInfo.isExternalAsec())) {
-      final long token=Binder.clearCallingIdentity();
-      try {
-        String secureContainerId=cidFromCodePath(p.applicationInfo.getBaseCodePath());
-        if (secureContainerId != null) {
-          asecPath=PackageHelper.getSdFilesystem(secureContainerId);
-        }
-      }
-  finally {
-        Binder.restoreCallingIdentity(token);
-      }
-    }
-  }
-  String publicSrcDir=null;
-  if (!dataOnly) {
-    final ApplicationInfo applicationInfo=p.applicationInfo;
-    if (applicationInfo == null) {
-      Slog.w(TAG,"Package " + packageName + " has no applicationInfo.");
+    if (ps == null) {
+      Slog.w(TAG,"Failed to find settings for " + packageName);
       return false;
     }
-    if (p.isForwardLocked()) {
-      publicSrcDir=applicationInfo.getBaseResourcePath();
-    }
   }
-  String[] dexCodeInstructionSets=getDexCodeInstructionSets(getAppDexInstructionSets(ps));
-  String apkPath;
-  File packageDir=new File(p.codePath);
-  if (packageDir.isDirectory() && p.canHaveOatDir()) {
-    apkPath=packageDir.getAbsolutePath();
-    if (libDirRoot != null && libDirRoot.startsWith(apkPath)) {
-      libDirRoot=null;
-    }
+  try {
+    mInstaller.getAppSize(ps.volumeUuid,packageName,userId,StorageManager.FLAG_STORAGE_DE | StorageManager.FLAG_STORAGE_CE,ps.getCeDataInode(userId),ps.codePathString,stats);
   }
- else {
-    apkPath=p.baseCodePath;
-  }
-  int res=mInstaller.getSizeInfo(p.volumeUuid,packageName,userHandle,apkPath,libDirRoot,publicSrcDir,asecPath,dexCodeInstructionSets,pStats);
-  if (res < 0) {
+ catch (  InstallerException e) {
+    Slog.w(TAG,String.valueOf(e));
     return false;
   }
-  if (!isExternal(p)) {
-    pStats.codeSize+=pStats.externalCodeSize;
-    pStats.externalCodeSize=0L;
+  if (isSystemApp(ps) && !isUpdatedSystemApp(ps)) {
+    stats.codeSize=0;
   }
   return true;
 }

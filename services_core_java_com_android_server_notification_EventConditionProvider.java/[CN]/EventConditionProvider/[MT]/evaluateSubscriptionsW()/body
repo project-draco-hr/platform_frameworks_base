@@ -5,50 +5,58 @@
     return;
   }
   final long now=System.currentTimeMillis();
-  for (int i=0; i < mTrackers.size(); i++) {
-    mTrackers.valueAt(i).setCallback(mSubscriptions.isEmpty() ? null : mTrackerCallback);
-  }
-  setRegistered(!mSubscriptions.isEmpty());
-  long reevaluateAt=0;
-  for (  Uri conditionId : mSubscriptions) {
-    final EventInfo event=ZenModeConfig.tryParseEventConditionId(conditionId);
-    if (event == null) {
-      notifyCondition(conditionId,Condition.STATE_FALSE,"badConditionId");
-      continue;
+  List<Condition> conditionsToNotify=new ArrayList<>();
+synchronized (mSubscriptions) {
+    for (int i=0; i < mTrackers.size(); i++) {
+      mTrackers.valueAt(i).setCallback(mSubscriptions.isEmpty() ? null : mTrackerCallback);
     }
-    CheckEventResult result=null;
-    if (event.calendar == null) {
-      for (int i=0; i < mTrackers.size(); i++) {
-        final CalendarTracker tracker=mTrackers.valueAt(i);
-        final CheckEventResult r=tracker.checkEvent(event,now);
-        if (result == null) {
-          result=r;
-        }
- else {
-          result.inEvent|=r.inEvent;
-          result.recheckAt=Math.min(result.recheckAt,r.recheckAt);
-        }
-      }
-    }
- else {
-      final int userId=EventInfo.resolveUserId(event.userId);
-      final CalendarTracker tracker=mTrackers.get(userId);
-      if (tracker == null) {
-        Slog.w(TAG,"No calendar tracker found for user " + userId);
-        notifyCondition(conditionId,Condition.STATE_FALSE,"badUserId");
+    setRegistered(!mSubscriptions.isEmpty());
+    long reevaluateAt=0;
+    for (    Uri conditionId : mSubscriptions) {
+      final EventInfo event=ZenModeConfig.tryParseEventConditionId(conditionId);
+      if (event == null) {
+        conditionsToNotify.add(createCondition(conditionId,Condition.STATE_FALSE));
         continue;
       }
-      result=tracker.checkEvent(event,now);
+      CheckEventResult result=null;
+      if (event.calendar == null) {
+        for (int i=0; i < mTrackers.size(); i++) {
+          final CalendarTracker tracker=mTrackers.valueAt(i);
+          final CheckEventResult r=tracker.checkEvent(event,now);
+          if (result == null) {
+            result=r;
+          }
+ else {
+            result.inEvent|=r.inEvent;
+            result.recheckAt=Math.min(result.recheckAt,r.recheckAt);
+          }
+        }
+      }
+ else {
+        final int userId=EventInfo.resolveUserId(event.userId);
+        final CalendarTracker tracker=mTrackers.get(userId);
+        if (tracker == null) {
+          Slog.w(TAG,"No calendar tracker found for user " + userId);
+          conditionsToNotify.add(createCondition(conditionId,Condition.STATE_FALSE));
+          continue;
+        }
+        result=tracker.checkEvent(event,now);
+      }
+      if (result.recheckAt != 0 && (reevaluateAt == 0 || result.recheckAt < reevaluateAt)) {
+        reevaluateAt=result.recheckAt;
+      }
+      if (!result.inEvent) {
+        conditionsToNotify.add(createCondition(conditionId,Condition.STATE_FALSE));
+        continue;
+      }
+      conditionsToNotify.add(createCondition(conditionId,Condition.STATE_TRUE));
     }
-    if (result.recheckAt != 0 && (reevaluateAt == 0 || result.recheckAt < reevaluateAt)) {
-      reevaluateAt=result.recheckAt;
-    }
-    if (!result.inEvent) {
-      notifyCondition(conditionId,Condition.STATE_FALSE,"!inEventNow");
-      continue;
-    }
-    notifyCondition(conditionId,Condition.STATE_TRUE,"inEventNow");
+    rescheduleAlarm(now,reevaluateAt);
   }
-  rescheduleAlarm(now,reevaluateAt);
+  for (  Condition condition : conditionsToNotify) {
+    if (condition != null) {
+      notifyCondition(condition);
+    }
+  }
   if (DEBUG)   Slog.d(TAG,"evaluateSubscriptions took " + (System.currentTimeMillis() - now));
 }

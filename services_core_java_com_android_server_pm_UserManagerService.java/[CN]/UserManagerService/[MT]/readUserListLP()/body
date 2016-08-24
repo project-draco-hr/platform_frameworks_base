@@ -1,0 +1,82 @@
+{
+  if (!mUserListFile.exists()) {
+    fallbackToSingleUserLP();
+    return;
+  }
+  FileInputStream fis=null;
+  AtomicFile userListFile=new AtomicFile(mUserListFile);
+  try {
+    fis=userListFile.openRead();
+    XmlPullParser parser=Xml.newPullParser();
+    parser.setInput(fis,StandardCharsets.UTF_8.name());
+    int type;
+    while ((type=parser.next()) != XmlPullParser.START_TAG && type != XmlPullParser.END_DOCUMENT) {
+    }
+    if (type != XmlPullParser.START_TAG) {
+      Slog.e(LOG_TAG,"Unable to read user list");
+      fallbackToSingleUserLP();
+      return;
+    }
+    mNextSerialNumber=-1;
+    if (parser.getName().equals(TAG_USERS)) {
+      String lastSerialNumber=parser.getAttributeValue(null,ATTR_NEXT_SERIAL_NO);
+      if (lastSerialNumber != null) {
+        mNextSerialNumber=Integer.parseInt(lastSerialNumber);
+      }
+      String versionNumber=parser.getAttributeValue(null,ATTR_USER_VERSION);
+      if (versionNumber != null) {
+        mUserVersion=Integer.parseInt(versionNumber);
+      }
+    }
+    final Bundle newDevicePolicyGlobalUserRestrictions=new Bundle();
+    while ((type=parser.next()) != XmlPullParser.END_DOCUMENT) {
+      if (type == XmlPullParser.START_TAG) {
+        final String name=parser.getName();
+        if (name.equals(TAG_USER)) {
+          String id=parser.getAttributeValue(null,ATTR_ID);
+          UserData userData=readUserLP(Integer.parseInt(id));
+          if (userData != null) {
+synchronized (mUsersLock) {
+              mUsers.put(userData.info.id,userData);
+              if (mNextSerialNumber < 0 || mNextSerialNumber <= userData.info.id) {
+                mNextSerialNumber=userData.info.id + 1;
+              }
+            }
+          }
+        }
+ else         if (name.equals(TAG_GUEST_RESTRICTIONS)) {
+          while ((type=parser.next()) != XmlPullParser.END_DOCUMENT && type != XmlPullParser.END_TAG) {
+            if (type == XmlPullParser.START_TAG) {
+              if (parser.getName().equals(TAG_RESTRICTIONS)) {
+synchronized (mGuestRestrictions) {
+                  UserRestrictionsUtils.readRestrictions(parser,mGuestRestrictions);
+                }
+              }
+ else               if (parser.getName().equals(TAG_DEVICE_POLICY_RESTRICTIONS)) {
+                UserRestrictionsUtils.readRestrictions(parser,newDevicePolicyGlobalUserRestrictions);
+              }
+              break;
+            }
+          }
+        }
+ else         if (name.equals(TAG_GLOBAL_RESTRICTION_OWNER_ID)) {
+          String ownerUserId=parser.getAttributeValue(null,ATTR_ID);
+          if (ownerUserId != null) {
+            mGlobalRestrictionOwnerUserId=Integer.parseInt(ownerUserId);
+          }
+        }
+      }
+    }
+synchronized (mRestrictionsLock) {
+      mDevicePolicyGlobalUserRestrictions=newDevicePolicyGlobalUserRestrictions;
+    }
+    updateUserIds();
+    upgradeIfNecessaryLP();
+  }
+ catch (  IOException|XmlPullParserException e) {
+    fallbackToSingleUserLP();
+  }
+ finally {
+    IoUtils.closeQuietly(fis);
+  }
+}

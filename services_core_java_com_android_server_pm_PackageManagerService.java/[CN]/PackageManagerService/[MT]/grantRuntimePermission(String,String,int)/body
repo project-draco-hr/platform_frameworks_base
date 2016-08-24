@@ -4,7 +4,7 @@
     return;
   }
   mContext.enforceCallingOrSelfPermission(android.Manifest.permission.GRANT_RUNTIME_PERMISSIONS,"grantRuntimePermission");
-  enforceCrossUserPermission(Binder.getCallingUid(),userId,true,false,"grantRuntimePermission");
+  enforceCrossUserPermission(Binder.getCallingUid(),userId,true,true,"grantRuntimePermission");
   final int uid;
   final SettingBase sb;
 synchronized (mPackages) {
@@ -17,6 +17,9 @@ synchronized (mPackages) {
       throw new IllegalArgumentException("Unknown permission: " + name);
     }
     enforceDeclaredAsUsedAndRuntimeOrDevelopmentPermission(pkg,bp);
+    if (Build.PERMISSIONS_REVIEW_REQUIRED && pkg.applicationInfo.targetSdkVersion < Build.VERSION_CODES.M && bp.isRuntime()) {
+      return;
+    }
     uid=UserHandle.getUid(userId,pkg.applicationInfo.uid);
     sb=(SettingBase)pkg.mExtras;
     if (sb == null) {
@@ -25,12 +28,16 @@ synchronized (mPackages) {
     final PermissionsState permissionsState=sb.getPermissionsState();
     final int flags=permissionsState.getPermissionFlags(name,userId);
     if ((flags & PackageManager.FLAG_PERMISSION_SYSTEM_FIXED) != 0) {
-      throw new SecurityException("Cannot grant system fixed permission: " + name + " for package: "+ packageName);
+      throw new SecurityException("Cannot grant system fixed permission " + name + " for package "+ packageName);
     }
     if (bp.isDevelopment()) {
       if (permissionsState.grantInstallPermission(bp) != PermissionsState.PERMISSION_OPERATION_FAILURE) {
         scheduleWriteSettingsLocked();
       }
+      return;
+    }
+    if (pkg.applicationInfo.targetSdkVersion < Build.VERSION_CODES.M) {
+      Slog.w(TAG,"Cannot grant runtime permission to a legacy app");
       return;
     }
     final int result=permissionsState.grantRuntimePermission(bp,userId);

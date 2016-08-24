@@ -1,0 +1,43 @@
+{
+  final int callingUid=Binder.getCallingUid();
+  final int resolvedUserId=resolveCallingUserId(Binder.getCallingPid(),callingUid,userId,"createSession");
+  final long identity=Binder.clearCallingIdentity();
+  try {
+synchronized (mLock) {
+      if (userId != mCurrentUserId && !isRecordingSession) {
+        sendSessionTokenToClientLocked(client,inputId,null,null,seq);
+        return;
+      }
+      UserState userState=getOrCreateUserStateLocked(resolvedUserId);
+      TvInputState inputState=userState.inputMap.get(inputId);
+      if (inputState == null) {
+        Slog.w(TAG,"Failed to find input state for inputId=" + inputId);
+        sendSessionTokenToClientLocked(client,inputId,null,null,seq);
+        return;
+      }
+      TvInputInfo info=inputState.info;
+      ServiceState serviceState=userState.serviceStateMap.get(info.getComponent());
+      if (serviceState == null) {
+        serviceState=new ServiceState(info.getComponent(),resolvedUserId);
+        userState.serviceStateMap.put(info.getComponent(),serviceState);
+      }
+      if (serviceState.reconnecting) {
+        sendSessionTokenToClientLocked(client,inputId,null,null,seq);
+        return;
+      }
+      IBinder sessionToken=new Binder();
+      SessionState sessionState=new SessionState(sessionToken,info.getId(),info.getComponent(),isRecordingSession,client,seq,callingUid,resolvedUserId);
+      userState.sessionStateMap.put(sessionToken,sessionState);
+      serviceState.sessionTokens.add(sessionToken);
+      if (serviceState.service != null) {
+        createSessionInternalLocked(serviceState.service,sessionToken,resolvedUserId);
+      }
+ else {
+        updateServiceConnectionLocked(info.getComponent(),resolvedUserId);
+      }
+    }
+  }
+  finally {
+    Binder.restoreCallingIdentity(identity);
+  }
+}

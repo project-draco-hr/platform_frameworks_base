@@ -9,6 +9,7 @@ synchronized (mDaemonLock) {
       mOutputStream=socket.getOutputStream();
     }
     mCallbacks.onDaemonConnected();
+    FileDescriptor[] fdList=null;
     byte[] buffer=new byte[BUFFER_SIZE];
     int start=0;
     while (true) {
@@ -17,6 +18,7 @@ synchronized (mDaemonLock) {
         loge("got " + count + " reading with start = "+ start);
         break;
       }
+      fdList=socket.getAncillaryFileDescriptors();
       count+=start;
       start=0;
       for (int i=0; i < count; i++) {
@@ -24,14 +26,15 @@ synchronized (mDaemonLock) {
           final String rawEvent=new String(buffer,start,i - start,StandardCharsets.UTF_8);
           boolean releaseWl=false;
           try {
-            final NativeDaemonEvent event=NativeDaemonEvent.parseRawEvent(rawEvent);
+            final NativeDaemonEvent event=NativeDaemonEvent.parseRawEvent(rawEvent,fdList);
             log("RCV <- {" + event + "}");
             if (event.isClassUnsolicited()) {
               if (mCallbacks.onCheckHoldWakeLock(event.getCode()) && mWakeLock != null) {
                 mWakeLock.acquire();
                 releaseWl=true;
               }
-              if (mCallbackHandler.sendMessage(mCallbackHandler.obtainMessage(event.getCode(),event.getRawEvent()))) {
+              Message msg=mCallbackHandler.obtainMessage(event.getCode(),uptimeMillisInt(),0,event.getRawEvent());
+              if (mCallbackHandler.sendMessage(msg)) {
                 releaseWl=false;
               }
             }
@@ -44,7 +47,7 @@ synchronized (mDaemonLock) {
           }
  finally {
             if (releaseWl) {
-              mWakeLock.acquire();
+              mWakeLock.release();
             }
           }
           start=i + 1;

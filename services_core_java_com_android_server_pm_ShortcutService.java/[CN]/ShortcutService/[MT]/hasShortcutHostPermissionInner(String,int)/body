@@ -1,0 +1,52 @@
+{
+synchronized (mLock) {
+    final long start=System.currentTimeMillis();
+    final ShortcutUser user=getUserShortcutsLocked(userId);
+    final List<ResolveInfo> allHomeCandidates=new ArrayList<>();
+    final long startGetHomeActivitiesAsUser=System.currentTimeMillis();
+    final ComponentName defaultLauncher=injectPackageManagerInternal().getHomeActivitiesAsUser(allHomeCandidates,userId);
+    logDurationStat(Stats.GET_DEFAULT_HOME,startGetHomeActivitiesAsUser);
+    ComponentName detected;
+    if (defaultLauncher != null) {
+      detected=defaultLauncher;
+      if (DEBUG) {
+        Slog.v(TAG,"Default launcher from PM: " + detected);
+      }
+    }
+ else {
+      detected=user.getLauncherComponent();
+      if (DEBUG) {
+        Slog.v(TAG,"Cached launcher: " + detected);
+      }
+    }
+    if (detected == null) {
+      final int size=allHomeCandidates.size();
+      int lastPriority=Integer.MIN_VALUE;
+      for (int i=0; i < size; i++) {
+        final ResolveInfo ri=allHomeCandidates.get(i);
+        if (!ri.activityInfo.applicationInfo.isSystemApp()) {
+          continue;
+        }
+        if (DEBUG) {
+          Slog.d(TAG,String.format("hasShortcutPermissionInner: pkg=%s prio=%d",ri.activityInfo.getComponentName(),ri.priority));
+        }
+        if (ri.priority < lastPriority) {
+          continue;
+        }
+        detected=ri.activityInfo.getComponentName();
+        lastPriority=ri.priority;
+      }
+    }
+    logDurationStat(Stats.LAUNCHER_PERMISSION_CHECK,start);
+    if (detected != null) {
+      if (DEBUG) {
+        Slog.v(TAG,"Detected launcher: " + detected);
+      }
+      user.setLauncherComponent(this,detected);
+      return detected.getPackageName().equals(callingPackage);
+    }
+ else {
+      return false;
+    }
+  }
+}

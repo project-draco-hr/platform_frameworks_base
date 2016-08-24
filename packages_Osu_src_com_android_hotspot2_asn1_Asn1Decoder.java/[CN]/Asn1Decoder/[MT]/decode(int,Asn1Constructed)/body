@@ -1,0 +1,32 @@
+{
+  ByteBuffer data=parent.getPayload();
+  while (data.hasRemaining()) {
+    int tagPosition=data.position();
+    int propMask=data.get(tagPosition) & ByteMask;
+    if (propMask == 0 && parent.isIndefiniteLength() && data.get(tagPosition + 1) == 0) {
+      parent.setEndOfData(tagPosition);
+      return;
+    }
+    Asn1Class asn1Class=Asn1Class.values()[(propMask >> ClassShift) & ClassMask];
+    boolean constructed=(propMask & ConstructedBit) != 0;
+    int tag=decodeTag(data);
+    int length=decodeLength(data);
+    if (constructed) {
+      ByteBuffer payload=peelOff(data,length);
+      Asn1Constructed root=new Asn1Constructed(tag,asn1Class,length,payload,tagPosition);
+      decode(level + 1,root);
+      if (length == IndefiniteLength) {
+        data.position(root.getEndOfData() + 2);
+      }
+      parent.addChild(root);
+    }
+ else {
+      if (asn1Class != Asn1Class.Universal) {
+        parent.addChild(new Asn1Octets(tag,asn1Class,length,data));
+      }
+ else {
+        parent.addChild(buildScalar(tag,asn1Class,length,data));
+      }
+    }
+  }
+}

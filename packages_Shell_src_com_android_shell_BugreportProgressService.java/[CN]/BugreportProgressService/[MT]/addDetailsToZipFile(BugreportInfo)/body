@@ -1,0 +1,47 @@
+{
+  if (info.bugreportFile == null) {
+    Log.wtf(TAG,"addDetailsToZipFile(): no bugreportFile on " + info);
+    return;
+  }
+  if (TextUtils.isEmpty(info.title) && TextUtils.isEmpty(info.description)) {
+    Log.d(TAG,"Not touching zip file since neither title nor description are set");
+    return;
+  }
+  if (info.addedDetailsToZip || info.addingDetailsToZip) {
+    Log.d(TAG,"Already added details to zip file for " + info);
+    return;
+  }
+  info.addingDetailsToZip=true;
+  sendBugreportBeingUpdatedNotification(mContext,info.id);
+  final File dir=info.bugreportFile.getParentFile();
+  final File tmpZip=new File(dir,"tmp-" + info.bugreportFile.getName());
+  Log.d(TAG,"Writing temporary zip file (" + tmpZip + ") with title and/or description");
+  try (ZipFile oldZip=new ZipFile(info.bugreportFile);ZipOutputStream zos=new ZipOutputStream(new FileOutputStream(tmpZip))){
+    Enumeration<? extends ZipEntry> entries=oldZip.entries();
+    while (entries.hasMoreElements()) {
+      final ZipEntry entry=entries.nextElement();
+      final String entryName=entry.getName();
+      if (!entry.isDirectory()) {
+        addEntry(zos,entryName,entry.getTime(),oldZip.getInputStream(entry));
+      }
+ else {
+        Log.w(TAG,"skipping directory entry: " + entryName);
+      }
+    }
+    addEntry(zos,"title.txt",info.title);
+    addEntry(zos,"description.txt",info.description);
+  }
+ catch (  IOException e) {
+    Log.e(TAG,"exception zipping file " + tmpZip,e);
+    Toast.makeText(mContext,R.string.bugreport_add_details_to_zip_failed,Toast.LENGTH_LONG).show();
+    return;
+  }
+ finally {
+    info.addedDetailsToZip=true;
+    info.addingDetailsToZip=false;
+    stopForegroundWhenDone(info.id);
+  }
+  if (!tmpZip.renameTo(info.bugreportFile)) {
+    Log.e(TAG,"Could not rename " + tmpZip + " to "+ info.bugreportFile);
+  }
+}

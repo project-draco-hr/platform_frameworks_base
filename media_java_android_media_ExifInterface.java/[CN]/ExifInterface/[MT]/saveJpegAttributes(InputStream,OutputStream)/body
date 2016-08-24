@@ -1,0 +1,85 @@
+{
+  if (DEBUG) {
+    Log.d(TAG,"saveJpegAttributes starting with (inputStream: " + inputStream + ", outputStream: "+ outputStream+ ")");
+  }
+  DataInputStream dataInputStream=new DataInputStream(inputStream);
+  ByteOrderAwarenessDataOutputStream dataOutputStream=new ByteOrderAwarenessDataOutputStream(outputStream,ByteOrder.BIG_ENDIAN);
+  if (dataInputStream.readByte() != MARKER) {
+    throw new IOException("Invalid marker");
+  }
+  dataOutputStream.writeByte(MARKER);
+  if (dataInputStream.readByte() != MARKER_SOI) {
+    throw new IOException("Invalid marker");
+  }
+  dataOutputStream.writeByte(MARKER_SOI);
+  dataOutputStream.writeByte(MARKER);
+  dataOutputStream.writeByte(MARKER_APP1);
+  writeExifSegment(dataOutputStream,6);
+  byte[] bytes=new byte[4096];
+  while (true) {
+    byte marker=dataInputStream.readByte();
+    if (marker != MARKER) {
+      throw new IOException("Invalid marker");
+    }
+    marker=dataInputStream.readByte();
+switch (marker) {
+case MARKER_APP1:
+{
+        int length=dataInputStream.readUnsignedShort() - 2;
+        if (length < 0) {
+          throw new IOException("Invalid length");
+        }
+        byte[] identifier=new byte[6];
+        if (length >= 6) {
+          if (dataInputStream.read(identifier) != 6) {
+            throw new IOException("Invalid exif");
+          }
+          if (Arrays.equals(identifier,IDENTIFIER_EXIF_APP1)) {
+            if (dataInputStream.skip(length - 6) != length - 6) {
+              throw new IOException("Invalid length");
+            }
+            break;
+          }
+        }
+        dataOutputStream.writeByte(MARKER);
+        dataOutputStream.writeByte(marker);
+        dataOutputStream.writeUnsignedShort(length + 2);
+        if (length >= 6) {
+          length-=6;
+          dataOutputStream.write(identifier);
+        }
+        int read;
+        while (length > 0 && (read=dataInputStream.read(bytes,0,Math.min(length,bytes.length))) >= 0) {
+          dataOutputStream.write(bytes,0,read);
+          length-=read;
+        }
+        break;
+      }
+case MARKER_EOI:
+case MARKER_SOS:
+{
+      dataOutputStream.writeByte(MARKER);
+      dataOutputStream.writeByte(marker);
+      Streams.copy(dataInputStream,dataOutputStream);
+      return;
+    }
+default :
+{
+    dataOutputStream.writeByte(MARKER);
+    dataOutputStream.writeByte(marker);
+    int length=dataInputStream.readUnsignedShort();
+    dataOutputStream.writeUnsignedShort(length);
+    length-=2;
+    if (length < 0) {
+      throw new IOException("Invalid length");
+    }
+    int read;
+    while (length > 0 && (read=dataInputStream.read(bytes,0,Math.min(length,bytes.length))) >= 0) {
+      dataOutputStream.write(bytes,0,read);
+      length-=read;
+    }
+    break;
+  }
+}
+}
+}

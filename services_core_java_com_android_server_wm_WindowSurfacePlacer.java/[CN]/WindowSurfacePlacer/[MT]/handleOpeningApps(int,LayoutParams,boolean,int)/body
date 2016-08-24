@@ -1,0 +1,56 @@
+{
+  AppWindowToken topOpeningApp=null;
+  final int appsCount=mService.mOpeningApps.size();
+  for (int i=0; i < appsCount; i++) {
+    AppWindowToken wtoken=mService.mOpeningApps.valueAt(i);
+    final AppWindowAnimator appAnimator=wtoken.mAppAnimator;
+    if (DEBUG_APP_TRANSITIONS)     Slog.v(TAG,"Now opening app" + wtoken);
+    if (!appAnimator.usingTransferredAnimation) {
+      appAnimator.clearThumbnail();
+      appAnimator.setNullAnimation();
+    }
+    wtoken.inPendingTransaction=false;
+    if (!mService.setTokenVisibilityLocked(wtoken,animLp,true,transit,false,voiceInteraction)) {
+      mService.mNoAnimationNotifyOnTransitionFinished.add(wtoken.token);
+    }
+    wtoken.updateReportedVisibilityLocked();
+    wtoken.waitingToShow=false;
+    appAnimator.mAllAppWinAnimators.clear();
+    final int windowsCount=wtoken.allAppWindows.size();
+    for (int j=0; j < windowsCount; j++) {
+      appAnimator.mAllAppWinAnimators.add(wtoken.allAppWindows.get(j).mWinAnimator);
+    }
+    if (SHOW_LIGHT_TRANSACTIONS)     Slog.i(TAG,">>> OPEN TRANSACTION handleAppTransitionReadyLocked()");
+    SurfaceControl.openTransaction();
+    try {
+      mService.mAnimator.orAnimating(appAnimator.showAllWindowsLocked());
+    }
+  finally {
+      SurfaceControl.closeTransaction();
+      if (SHOW_LIGHT_TRANSACTIONS)       Slog.i(TAG,"<<< CLOSE TRANSACTION handleAppTransitionReadyLocked()");
+    }
+    mService.mAnimator.mAppWindowAnimating|=appAnimator.isAnimating();
+    int topOpeningLayer=0;
+    if (animLp != null) {
+      int layer=-1;
+      for (int j=0; j < wtoken.allAppWindows.size(); j++) {
+        final WindowState win=wtoken.allAppWindows.get(j);
+        if (!win.mWillReplaceWindow && !win.mRemoveOnExit) {
+          win.mAnimatingExit=false;
+          win.mWinAnimator.mAnimating=false;
+        }
+        if (win.mWinAnimator.mAnimLayer > layer) {
+          layer=win.mWinAnimator.mAnimLayer;
+        }
+      }
+      if (topOpeningApp == null || layer > topOpeningLayer) {
+        topOpeningApp=wtoken;
+        topOpeningLayer=layer;
+      }
+    }
+    if (mService.mAppTransition.isNextAppTransitionThumbnailUp()) {
+      createThumbnailAppAnimator(transit,wtoken,topOpeningLayer,topClosingLayer);
+    }
+  }
+  return topOpeningApp;
+}

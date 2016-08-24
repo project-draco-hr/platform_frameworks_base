@@ -6,9 +6,14 @@ case INIT_COPY:
       int idx=mPendingInstalls.size();
       if (DEBUG_INSTALL)       Slog.i(TAG,"init_copy idx=" + idx + ": "+ params);
       if (!mBound) {
+        Trace.asyncTraceBegin(TRACE_TAG_PACKAGE_MANAGER,"bindingMCS",System.identityHashCode(mHandler));
         if (!connectToService()) {
           Slog.e(TAG,"Failed to bind to media container service");
           params.serviceError();
+          Trace.asyncTraceEnd(TRACE_TAG_PACKAGE_MANAGER,"bindingMCS",System.identityHashCode(mHandler));
+          if (params.traceMethod != null) {
+            Trace.asyncTraceEnd(TRACE_TAG_PACKAGE_MANAGER,params.traceMethod,params.traceCookie);
+          }
           return;
         }
  else {
@@ -28,12 +33,18 @@ case MCS_BOUND:
     if (DEBUG_INSTALL)     Slog.i(TAG,"mcs_bound");
     if (msg.obj != null) {
       mContainerService=(IMediaContainerService)msg.obj;
+      Trace.asyncTraceEnd(TRACE_TAG_PACKAGE_MANAGER,"bindingMCS",System.identityHashCode(mHandler));
     }
     if (mContainerService == null) {
       if (!mBound) {
         Slog.e(TAG,"Cannot bind to media container service");
         for (        HandlerParams params : mPendingInstalls) {
           params.serviceError();
+          Trace.asyncTraceEnd(TRACE_TAG_PACKAGE_MANAGER,"queueInstall",System.identityHashCode(params));
+          if (params.traceMethod != null) {
+            Trace.asyncTraceEnd(TRACE_TAG_PACKAGE_MANAGER,params.traceMethod,params.traceCookie);
+          }
+          return;
         }
         mPendingInstalls.clear();
       }
@@ -44,6 +55,8 @@ case MCS_BOUND:
  else     if (mPendingInstalls.size() > 0) {
       HandlerParams params=mPendingInstalls.get(0);
       if (params != null) {
+        Trace.asyncTraceEnd(TRACE_TAG_PACKAGE_MANAGER,"queueInstall",System.identityHashCode(params));
+        Trace.traceBegin(TRACE_TAG_PACKAGE_MANAGER,"startCopy");
         if (params.startCopy()) {
           if (DEBUG_SD_INSTALL)           Log.i(TAG,"Checking for more work or unbind...");
           if (mPendingInstalls.size() > 0) {
@@ -62,6 +75,7 @@ case MCS_BOUND:
             mHandler.sendEmptyMessage(MCS_BOUND);
           }
         }
+        Trace.traceEnd(TRACE_TAG_PACKAGE_MANAGER);
       }
     }
  else {
@@ -80,6 +94,7 @@ case MCS_RECONNECT:
       Slog.e(TAG,"Failed to bind to media container service");
       for (      HandlerParams params : mPendingInstalls) {
         params.serviceError();
+        Trace.asyncTraceEnd(TRACE_TAG_PACKAGE_MANAGER,"queueInstall",System.identityHashCode(params));
       }
       mPendingInstalls.clear();
     }
@@ -103,7 +118,8 @@ break;
 case MCS_GIVE_UP:
 {
 if (DEBUG_INSTALL) Slog.i(TAG,"mcs_giveup too many retries");
-mPendingInstalls.remove(0);
+HandlerParams params=mPendingInstalls.remove(0);
+Trace.asyncTraceEnd(TRACE_TAG_PACKAGE_MANAGER,"queueInstall",System.identityHashCode(params));
 break;
 }
 case SEND_PENDING_BROADCAST:
@@ -171,101 +187,28 @@ case POST_INSTALL:
 {
 if (DEBUG_INSTALL) Log.v(TAG,"Handling post-install for " + msg.arg1);
 PostInstallData data=mRunningInstalls.get(msg.arg1);
+final boolean didRestore=(msg.arg2 != 0);
 mRunningInstalls.delete(msg.arg1);
-boolean deleteOld=false;
 if (data != null) {
 InstallArgs args=data.args;
-PackageInstalledInfo res=data.res;
-if (res.returnCode == PackageManager.INSTALL_SUCCEEDED) {
-final String packageName=res.pkg.applicationInfo.packageName;
-res.removedInfo.sendBroadcast(false,true,false);
-Bundle extras=new Bundle(1);
-extras.putInt(Intent.EXTRA_UID,res.uid);
-if ((args.installFlags & PackageManager.INSTALL_GRANT_RUNTIME_PERMISSIONS) != 0) {
-grantRequestedRuntimePermissions(res.pkg,args.user.getIdentifier(),args.installGrantPermissions);
+PackageInstalledInfo parentRes=data.res;
+final boolean grantPermissions=(args.installFlags & PackageManager.INSTALL_GRANT_RUNTIME_PERMISSIONS) != 0;
+final boolean killApp=(args.installFlags & PackageManager.INSTALL_DONT_KILL_APP) == 0;
+final String[] grantedPermissions=args.installGrantPermissions;
+handlePackagePostInstall(parentRes,grantPermissions,killApp,grantedPermissions,didRestore,args.installerPackageName,args.observer);
+final int childCount=(parentRes.addedChildPackages != null) ? parentRes.addedChildPackages.size() : 0;
+for (int i=0; i < childCount; i++) {
+PackageInstalledInfo childRes=parentRes.addedChildPackages.valueAt(i);
+handlePackagePostInstall(childRes,grantPermissions,killApp,grantedPermissions,false,args.installerPackageName,args.observer);
 }
-int[] firstUsers;
-int[] updateUsers=new int[0];
-if (res.origUsers == null || res.origUsers.length == 0) {
-firstUsers=res.newUsers;
-}
- else {
-firstUsers=new int[0];
-for (int i=0; i < res.newUsers.length; i++) {
-int user=res.newUsers[i];
-boolean isNew=true;
-for (int j=0; j < res.origUsers.length; j++) {
-if (res.origUsers[j] == user) {
-  isNew=false;
-  break;
-}
-}
-if (isNew) {
-int[] newFirst=new int[firstUsers.length + 1];
-System.arraycopy(firstUsers,0,newFirst,0,firstUsers.length);
-newFirst[firstUsers.length]=user;
-firstUsers=newFirst;
-}
- else {
-int[] newUpdate=new int[updateUsers.length + 1];
-System.arraycopy(updateUsers,0,newUpdate,0,updateUsers.length);
-newUpdate[updateUsers.length]=user;
-updateUsers=newUpdate;
-}
-}
-}
-sendPackageBroadcast(Intent.ACTION_PACKAGE_ADDED,packageName,extras,null,null,firstUsers);
-final boolean update=res.removedInfo.removedPackage != null;
-if (update) {
-extras.putBoolean(Intent.EXTRA_REPLACING,true);
-}
-sendPackageBroadcast(Intent.ACTION_PACKAGE_ADDED,packageName,extras,null,null,updateUsers);
-if (update) {
-sendPackageBroadcast(Intent.ACTION_PACKAGE_REPLACED,packageName,extras,null,null,updateUsers);
-sendPackageBroadcast(Intent.ACTION_MY_PACKAGE_REPLACED,null,null,packageName,null,updateUsers);
-if (res.pkg.isForwardLocked() || isExternal(res.pkg)) {
-if (DEBUG_INSTALL) {
-Slog.i(TAG,"upgrading pkg " + res.pkg + " is ASEC-hosted -> AVAILABLE");
-}
-int[] uidArray=new int[]{res.pkg.applicationInfo.uid};
-ArrayList<String> pkgList=new ArrayList<String>(1);
-pkgList.add(packageName);
-sendResourcesChangedBroadcast(true,true,pkgList,uidArray,null);
-}
-}
-if (res.removedInfo.args != null) {
-deleteOld=true;
-}
-if (firstUsers.length > 0) {
-if (packageIsBrowser(packageName,firstUsers[0])) {
-synchronized (mPackages) {
-for (int userId : firstUsers) {
-  mSettings.setDefaultBrowserPackageNameLPw(null,userId);
-}
-}
-}
-}
-EventLog.writeEvent(EventLogTags.UNKNOWN_SOURCES_ENABLED,getUnknownSourcesSettings());
-}
-Runtime.getRuntime().gc();
-if (deleteOld) {
-synchronized (mInstallLock) {
-res.removedInfo.args.doPostDeleteLI(true);
-}
-}
-if (args.observer != null) {
-try {
-Bundle extras=extrasForInstallResult(res);
-args.observer.onPackageInstalled(res.name,res.returnCode,res.returnMsg,extras);
-}
- catch (RemoteException e) {
-Slog.i(TAG,"Observer no longer exists.");
-}
+if (args.traceMethod != null) {
+Trace.asyncTraceEnd(TRACE_TAG_PACKAGE_MANAGER,args.traceMethod,args.traceCookie);
 }
 }
  else {
 Slog.e(TAG,"Bogus post-install token " + msg.arg1);
 }
+Trace.asyncTraceEnd(TRACE_TAG_PACKAGE_MANAGER,"postInstall",msg.arg1);
 }
 break;
 case UPDATED_MEDIA_STATUS:
@@ -318,6 +261,16 @@ mDirtyUsers.clear();
 Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND);
 }
 break;
+case WRITE_PACKAGE_LIST:
+{
+Process.setThreadPriority(Process.THREAD_PRIORITY_DEFAULT);
+synchronized (mPackages) {
+removeMessages(WRITE_PACKAGE_LIST);
+mSettings.writePackageListLPr(msg.arg1);
+}
+Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND);
+}
+break;
 case CHECK_PENDING_VERIFICATION:
 {
 final int verificationId=msg.arg1;
@@ -342,6 +295,7 @@ Slog.e(TAG,"Could not contact the ContainerService");
  else {
 broadcastPackageVerified(verificationId,originUri,PackageManager.VERIFICATION_REJECT,state.getInstallArgs().getUser());
 }
+Trace.asyncTraceEnd(TRACE_TAG_PACKAGE_MANAGER,"verification",verificationId);
 processPendingInstall(args,ret);
 mHandler.sendEmptyMessage(MCS_UNBIND);
 }
@@ -375,6 +329,7 @@ Slog.e(TAG,"Could not contact the ContainerService");
  else {
 ret=PackageManager.INSTALL_FAILED_VERIFICATION_FAILURE;
 }
+Trace.asyncTraceEnd(TRACE_TAG_PACKAGE_MANAGER,"verification",verificationId);
 processPendingInstall(args,ret);
 mHandler.sendEmptyMessage(MCS_UNBIND);
 }

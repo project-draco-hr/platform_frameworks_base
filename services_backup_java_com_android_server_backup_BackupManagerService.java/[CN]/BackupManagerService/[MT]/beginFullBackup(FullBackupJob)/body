@@ -21,31 +21,64 @@ synchronized (mQueueLock) {
       Slog.e(TAG,"Backup triggered but one already/still running!");
       return false;
     }
-    if (mFullBackupQueue.size() == 0) {
-      if (DEBUG) {
-        Slog.i(TAG,"Backup queue empty; doing nothing");
-      }
-      return false;
-    }
     boolean runBackup=true;
-    if (!fullBackupAllowable(getTransport(mCurrentTransport))) {
-      if (MORE_DEBUG) {
-        Slog.i(TAG,"Preconditions not met; not running full backup");
-      }
-      runBackup=false;
-      latency=KeyValueBackupJob.BATCH_INTERVAL;
-    }
-    if (runBackup) {
-      entry=mFullBackupQueue.get(0);
-      long timeSinceRun=now - entry.lastBackup;
-      runBackup=(timeSinceRun >= MIN_FULL_BACKUP_INTERVAL);
-      if (!runBackup) {
-        if (MORE_DEBUG) {
-          Slog.i(TAG,"Device ready but too early to back up next app");
+    boolean headBusy;
+    do {
+      if (mFullBackupQueue.size() == 0) {
+        if (DEBUG) {
+          Slog.i(TAG,"Backup queue empty; doing nothing");
         }
-        latency=MIN_FULL_BACKUP_INTERVAL - timeSinceRun;
+        runBackup=false;
+        break;
+      }
+      headBusy=false;
+      if (!fullBackupAllowable(getTransport(mCurrentTransport))) {
+        if (MORE_DEBUG) {
+          Slog.i(TAG,"Preconditions not met; not running full backup");
+        }
+        runBackup=false;
+        latency=KeyValueBackupJob.BATCH_INTERVAL;
+      }
+      if (runBackup) {
+        entry=mFullBackupQueue.get(0);
+        long timeSinceRun=now - entry.lastBackup;
+        runBackup=(timeSinceRun >= MIN_FULL_BACKUP_INTERVAL);
+        if (!runBackup) {
+          if (MORE_DEBUG) {
+            Slog.i(TAG,"Device ready but too early to back up next app");
+          }
+          latency=MIN_FULL_BACKUP_INTERVAL - timeSinceRun;
+          break;
+        }
+        try {
+          PackageInfo appInfo=mPackageManager.getPackageInfo(entry.packageName,0);
+          if (!appGetsFullBackup(appInfo)) {
+            if (MORE_DEBUG) {
+              Slog.i(TAG,"Culling package " + entry.packageName + " in full-backup queue but not eligible");
+            }
+            mFullBackupQueue.remove(0);
+            headBusy=true;
+            continue;
+          }
+          final int privFlags=appInfo.applicationInfo.privateFlags;
+          headBusy=(privFlags & PRIVATE_FLAG_BACKUP_IN_FOREGROUND) == 0 && mActivityManager.isAppForeground(appInfo.applicationInfo.uid);
+          if (headBusy) {
+            final long nextEligible=System.currentTimeMillis() + BUSY_BACKOFF_MIN_MILLIS + mTokenGenerator.nextInt(BUSY_BACKOFF_FUZZ);
+            if (DEBUG_SCHEDULING) {
+              SimpleDateFormat sdf=new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+              Slog.i(TAG,"Full backup time but " + entry.packageName + " is busy; deferring to "+ sdf.format(new Date(nextEligible)));
+            }
+            enqueueFullBackup(entry.packageName,nextEligible - MIN_FULL_BACKUP_INTERVAL);
+          }
+        }
+ catch (        NameNotFoundException nnf) {
+          runBackup=(mFullBackupQueue.size() > 1);
+        }
+catch (        RemoteException e) {
+        }
       }
     }
+ while (headBusy);
     if (!runBackup) {
       if (DEBUG_SCHEDULING) {
         Slog.i(TAG,"Nothing pending full backup; rescheduling +" + latency);
@@ -62,7 +95,8 @@ synchronized (mQueueLock) {
     mFullBackupQueue.remove(0);
     CountDownLatch latch=new CountDownLatch(1);
     String[] pkg=new String[]{entry.packageName};
-    mRunningFullBackupTask=new PerformFullTransportBackupTask(null,pkg,true,scheduledJob,latch);
+    mRunningFullBackupTask=new PerformFullTransportBackupTask(null,pkg,true,scheduledJob,latch,null,false);
+    mWakelock.acquire();
     (new Thread(mRunningFullBackupTask)).start();
   }
   return true;

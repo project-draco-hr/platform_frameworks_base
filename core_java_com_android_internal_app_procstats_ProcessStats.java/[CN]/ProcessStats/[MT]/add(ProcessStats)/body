@@ -1,0 +1,74 @@
+{
+  ArrayMap<String,SparseArray<SparseArray<PackageState>>> pkgMap=other.mPackages.getMap();
+  for (int ip=0; ip < pkgMap.size(); ip++) {
+    final String pkgName=pkgMap.keyAt(ip);
+    final SparseArray<SparseArray<PackageState>> uids=pkgMap.valueAt(ip);
+    for (int iu=0; iu < uids.size(); iu++) {
+      final int uid=uids.keyAt(iu);
+      final SparseArray<PackageState> versions=uids.valueAt(iu);
+      for (int iv=0; iv < versions.size(); iv++) {
+        final int vers=versions.keyAt(iv);
+        final PackageState otherState=versions.valueAt(iv);
+        final int NPROCS=otherState.mProcesses.size();
+        final int NSRVS=otherState.mServices.size();
+        for (int iproc=0; iproc < NPROCS; iproc++) {
+          ProcessState otherProc=otherState.mProcesses.valueAt(iproc);
+          if (otherProc.getCommonProcess() != otherProc) {
+            if (DEBUG)             Slog.d(TAG,"Adding pkg " + pkgName + " uid "+ uid+ " vers "+ vers+ " proc "+ otherProc.getName());
+            ProcessState thisProc=getProcessStateLocked(pkgName,uid,vers,otherProc.getName());
+            if (thisProc.getCommonProcess() == thisProc) {
+              if (DEBUG)               Slog.d(TAG,"Existing process is single-package, splitting");
+              thisProc.setMultiPackage(true);
+              long now=SystemClock.uptimeMillis();
+              final PackageState pkgState=getPackageStateLocked(pkgName,uid,vers);
+              thisProc=thisProc.clone(now);
+              pkgState.mProcesses.put(thisProc.getName(),thisProc);
+            }
+            thisProc.add(otherProc);
+          }
+        }
+        for (int isvc=0; isvc < NSRVS; isvc++) {
+          ServiceState otherSvc=otherState.mServices.valueAt(isvc);
+          if (DEBUG)           Slog.d(TAG,"Adding pkg " + pkgName + " uid "+ uid+ " service "+ otherSvc.getName());
+          ServiceState thisSvc=getServiceStateLocked(pkgName,uid,vers,otherSvc.getProcessName(),otherSvc.getName());
+          thisSvc.add(otherSvc);
+        }
+      }
+    }
+  }
+  ArrayMap<String,SparseArray<ProcessState>> procMap=other.mProcesses.getMap();
+  for (int ip=0; ip < procMap.size(); ip++) {
+    SparseArray<ProcessState> uids=procMap.valueAt(ip);
+    for (int iu=0; iu < uids.size(); iu++) {
+      int uid=uids.keyAt(iu);
+      ProcessState otherProc=uids.valueAt(iu);
+      final String name=otherProc.getName();
+      final String pkg=otherProc.getPackage();
+      final int vers=otherProc.getVersion();
+      ProcessState thisProc=mProcesses.get(name,uid);
+      if (DEBUG)       Slog.d(TAG,"Adding uid " + uid + " proc "+ name);
+      if (thisProc == null) {
+        if (DEBUG)         Slog.d(TAG,"Creating new process!");
+        thisProc=new ProcessState(this,pkg,uid,vers,name);
+        mProcesses.put(name,uid,thisProc);
+        PackageState thisState=getPackageStateLocked(pkg,uid,vers);
+        if (!thisState.mProcesses.containsKey(name)) {
+          thisState.mProcesses.put(name,thisProc);
+        }
+      }
+      thisProc.add(otherProc);
+    }
+  }
+  for (int i=0; i < ADJ_COUNT; i++) {
+    if (DEBUG)     Slog.d(TAG,"Total duration #" + i + " inc by "+ other.mMemFactorDurations[i]+ " from "+ mMemFactorDurations[i]);
+    mMemFactorDurations[i]+=other.mMemFactorDurations[i];
+  }
+  mSysMemUsage.mergeStats(other.mSysMemUsage);
+  if (other.mTimePeriodStartClock < mTimePeriodStartClock) {
+    mTimePeriodStartClock=other.mTimePeriodStartClock;
+    mTimePeriodStartClockStr=other.mTimePeriodStartClockStr;
+  }
+  mTimePeriodEndRealtime+=other.mTimePeriodEndRealtime - other.mTimePeriodStartRealtime;
+  mTimePeriodEndUptime+=other.mTimePeriodEndUptime - other.mTimePeriodStartUptime;
+  mHasSwappedOutPss|=other.mHasSwappedOutPss;
+}

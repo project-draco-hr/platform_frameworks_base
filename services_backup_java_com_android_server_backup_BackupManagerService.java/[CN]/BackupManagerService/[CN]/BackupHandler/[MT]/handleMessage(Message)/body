@@ -28,7 +28,7 @@ synchronized (mQueueLock) {
       if (queue.size() > 0) {
         try {
           String dirName=transport.transportDirName();
-          PerformBackupTask pbt=new PerformBackupTask(transport,dirName,queue,oldJournal);
+          PerformBackupTask pbt=new PerformBackupTask(transport,dirName,queue,oldJournal,null,null,false);
           Message pbtMessage=obtainMessage(MSG_BACKUP_RESTORE_STEP,pbt);
           sendMessage(pbtMessage);
         }
@@ -64,8 +64,8 @@ case MSG_BACKUP_RESTORE_STEP:
 case MSG_OP_COMPLETE:
 {
   try {
-    BackupRestoreTask task=(BackupRestoreTask)msg.obj;
-    task.operationComplete(msg.arg1);
+    Pair<BackupRestoreTask,Long> taskWithResult=(Pair<BackupRestoreTask,Long>)msg.obj;
+    taskWithResult.first.operationComplete(taskWithResult.second);
   }
  catch (  ClassCastException e) {
     Slog.e(TAG,"Invalid completion in flight, obj=" + msg.obj);
@@ -204,7 +204,24 @@ break;
 case MSG_WIDGET_BROADCAST:
 {
 final Intent intent=(Intent)msg.obj;
-mContext.sendBroadcastAsUser(intent,UserHandle.OWNER);
+mContext.sendBroadcastAsUser(intent,UserHandle.SYSTEM);
+break;
+}
+case MSG_REQUEST_BACKUP:
+{
+BackupParams params=(BackupParams)msg.obj;
+if (MORE_DEBUG) {
+Slog.d(TAG,"MSG_REQUEST_BACKUP observer=" + params.observer);
+}
+ArrayList<BackupRequest> kvQueue=new ArrayList<>();
+for (String packageName : params.kvPackages) {
+kvQueue.add(new BackupRequest(packageName));
+}
+mBackupRunning=true;
+mWakelock.acquire();
+PerformBackupTask pbt=new PerformBackupTask(params.transport,params.dirName,kvQueue,null,params.observer,params.fullPackages,true);
+Message pbtMessage=obtainMessage(MSG_BACKUP_RESTORE_STEP,pbt);
+sendMessage(pbtMessage);
 break;
 }
 }

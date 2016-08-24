@@ -1,0 +1,155 @@
+{
+  if (offset <= 1) {
+    return 0;
+  }
+  final int STATE_START=0;
+  final int STATE_LF=1;
+  final int STATE_BEFORE_KEYCAP=2;
+  final int STATE_BEFORE_VS_AND_KEYCAP=3;
+  final int STATE_BEFORE_EMOJI_MODIFIER=4;
+  final int STATE_BEFORE_VS_AND_EMOJI_MODIFIER=5;
+  final int STATE_BEFORE_VS=6;
+  final int STATE_BEFORE_ZWJ_EMOJI=7;
+  final int STATE_BEFORE_ZWJ=8;
+  final int STATE_BEFORE_VS_AND_ZWJ=9;
+  final int STATE_ODD_NUMBERED_RIS=10;
+  final int STATE_EVEN_NUMBERED_RIS=11;
+  final int STATE_FINISHED=12;
+  int deleteCharCount=0;
+  int lastSeenVSCharCount=0;
+  int state=STATE_START;
+  int tmpOffset=offset;
+  do {
+    final int codePoint=Character.codePointBefore(text,tmpOffset);
+    tmpOffset-=Character.charCount(codePoint);
+switch (state) {
+case STATE_START:
+      deleteCharCount=Character.charCount(codePoint);
+    if (codePoint == LINE_FEED) {
+      state=STATE_LF;
+    }
+ else     if (isVariationSelector(codePoint)) {
+      state=STATE_BEFORE_VS;
+    }
+ else     if (Emoji.isRegionalIndicatorSymbol(codePoint)) {
+      state=STATE_ODD_NUMBERED_RIS;
+    }
+ else     if (Emoji.isEmojiModifier(codePoint)) {
+      state=STATE_BEFORE_EMOJI_MODIFIER;
+    }
+ else     if (codePoint == Emoji.COMBINING_ENCLOSING_KEYCAP) {
+      state=STATE_BEFORE_KEYCAP;
+    }
+ else     if (Emoji.isEmoji(codePoint)) {
+      state=STATE_BEFORE_ZWJ_EMOJI;
+    }
+ else {
+      state=STATE_FINISHED;
+    }
+  break;
+case STATE_LF:
+if (codePoint == CARRIAGE_RETURN) {
+  ++deleteCharCount;
+}
+state=STATE_FINISHED;
+case STATE_ODD_NUMBERED_RIS:
+if (Emoji.isRegionalIndicatorSymbol(codePoint)) {
+deleteCharCount+=2;
+state=STATE_EVEN_NUMBERED_RIS;
+}
+ else {
+state=STATE_FINISHED;
+}
+break;
+case STATE_EVEN_NUMBERED_RIS:
+if (Emoji.isRegionalIndicatorSymbol(codePoint)) {
+deleteCharCount-=2;
+state=STATE_ODD_NUMBERED_RIS;
+}
+ else {
+state=STATE_FINISHED;
+}
+break;
+case STATE_BEFORE_KEYCAP:
+if (isVariationSelector(codePoint)) {
+lastSeenVSCharCount=Character.charCount(codePoint);
+state=STATE_BEFORE_VS_AND_KEYCAP;
+break;
+}
+if (Emoji.isKeycapBase(codePoint)) {
+deleteCharCount+=Character.charCount(codePoint);
+}
+state=STATE_FINISHED;
+break;
+case STATE_BEFORE_VS_AND_KEYCAP:
+if (Emoji.isKeycapBase(codePoint)) {
+deleteCharCount+=lastSeenVSCharCount + Character.charCount(codePoint);
+}
+state=STATE_FINISHED;
+break;
+case STATE_BEFORE_EMOJI_MODIFIER:
+if (isVariationSelector(codePoint)) {
+lastSeenVSCharCount=Character.charCount(codePoint);
+state=STATE_BEFORE_VS_AND_EMOJI_MODIFIER;
+break;
+}
+ else if (Emoji.isEmojiModifierBase(codePoint)) {
+deleteCharCount+=Character.charCount(codePoint);
+}
+state=STATE_FINISHED;
+break;
+case STATE_BEFORE_VS_AND_EMOJI_MODIFIER:
+if (Emoji.isEmojiModifierBase(codePoint)) {
+deleteCharCount+=lastSeenVSCharCount + Character.charCount(codePoint);
+}
+state=STATE_FINISHED;
+break;
+case STATE_BEFORE_VS:
+if (Emoji.isEmoji(codePoint)) {
+deleteCharCount+=Character.charCount(codePoint);
+state=STATE_BEFORE_ZWJ_EMOJI;
+break;
+}
+if (!isVariationSelector(codePoint) && UCharacter.getCombiningClass(codePoint) == 0) {
+deleteCharCount+=Character.charCount(codePoint);
+}
+state=STATE_FINISHED;
+break;
+case STATE_BEFORE_ZWJ_EMOJI:
+if (codePoint == Emoji.ZERO_WIDTH_JOINER) {
+state=STATE_BEFORE_ZWJ;
+}
+ else {
+state=STATE_FINISHED;
+}
+break;
+case STATE_BEFORE_ZWJ:
+if (Emoji.isEmoji(codePoint)) {
+deleteCharCount+=Character.charCount(codePoint) + 1;
+state=STATE_BEFORE_ZWJ_EMOJI;
+}
+ else if (isVariationSelector(codePoint)) {
+lastSeenVSCharCount=Character.charCount(codePoint);
+state=STATE_BEFORE_VS_AND_ZWJ;
+}
+ else {
+state=STATE_FINISHED;
+}
+break;
+case STATE_BEFORE_VS_AND_ZWJ:
+if (Emoji.isEmoji(codePoint)) {
+deleteCharCount+=lastSeenVSCharCount + 1 + Character.charCount(codePoint);
+lastSeenVSCharCount=0;
+state=STATE_BEFORE_ZWJ_EMOJI;
+}
+ else {
+state=STATE_FINISHED;
+}
+break;
+default :
+throw new IllegalArgumentException("state " + state + " is unknown");
+}
+}
+ while (tmpOffset > 0 && state != STATE_FINISHED);
+return adjustReplacementSpan(text,offset - deleteCharCount,true);
+}

@@ -1,7 +1,15 @@
 {
-  WindowState transWin=isStatusBarKeyguard() && !mHideLockScreen ? mStatusBar : mTopFullscreenOpaqueWindowState;
-  vis=mStatusBarController.applyTranslucentFlagLw(transWin,vis,oldVis);
-  vis=mNavigationBarController.applyTranslucentFlagLw(transWin,vis,oldVis);
+  final boolean dockedStackVisible=mWindowManagerInternal.isStackVisible(DOCKED_STACK_ID);
+  final boolean freeformStackVisible=mWindowManagerInternal.isStackVisible(FREEFORM_WORKSPACE_STACK_ID);
+  final boolean resizing=mWindowManagerInternal.isDockedDividerResizing();
+  mForceShowSystemBars=dockedStackVisible || freeformStackVisible || resizing;
+  final boolean forceOpaqueStatusBar=mForceShowSystemBars && !mForceStatusBarFromKeyguard;
+  WindowState fullscreenTransWin=isStatusBarKeyguard() && !mHideLockScreen ? mStatusBar : mTopFullscreenOpaqueWindowState;
+  vis=mStatusBarController.applyTranslucentFlagLw(fullscreenTransWin,vis,oldVis);
+  vis=mNavigationBarController.applyTranslucentFlagLw(fullscreenTransWin,vis,oldVis);
+  final int dockedVis=mStatusBarController.applyTranslucentFlagLw(mTopDockedOpaqueWindowState,0,0);
+  final boolean fullscreenDrawsStatusBarBackground=(drawsSystemBarBackground(mTopFullscreenOpaqueWindowState) && (vis & View.STATUS_BAR_TRANSLUCENT) == 0) || forcesDrawStatusBarBackground(mTopFullscreenOpaqueWindowState);
+  final boolean dockedDrawsStatusBarBackground=(drawsSystemBarBackground(mTopDockedOpaqueWindowState) && (dockedVis & View.STATUS_BAR_TRANSLUCENT) == 0) || forcesDrawStatusBarBackground(mTopDockedOpaqueWindowState);
   int type=win.getAttrs().type;
   boolean statusBarHasFocus=type == TYPE_STATUS_BAR;
   if (statusBarHasFocus && !isStatusBarKeyguard()) {
@@ -11,15 +19,20 @@
     }
     vis=(vis & ~flags) | (oldVis & flags);
   }
-  if (!areTranslucentBarsAllowed() && transWin != mStatusBar) {
-    vis&=~(View.NAVIGATION_BAR_TRANSLUCENT | View.STATUS_BAR_TRANSLUCENT | View.SYSTEM_UI_TRANSPARENT);
+  if (fullscreenDrawsStatusBarBackground && dockedDrawsStatusBarBackground) {
+    vis|=View.STATUS_BAR_TRANSPARENT;
+    vis&=~View.STATUS_BAR_TRANSLUCENT;
   }
+ else   if ((!areTranslucentBarsAllowed() && fullscreenTransWin != mStatusBar) || forceOpaqueStatusBar) {
+    vis&=~(View.STATUS_BAR_TRANSLUCENT | View.STATUS_BAR_TRANSPARENT);
+  }
+  vis=configureNavBarOpacity(vis,dockedStackVisible,freeformStackVisible,resizing);
   boolean immersiveSticky=(vis & View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY) != 0;
-  boolean hideStatusBarWM=mTopFullscreenOpaqueWindowState != null && (PolicyControl.getWindowFlags(mTopFullscreenOpaqueWindowState,null) & WindowManager.LayoutParams.FLAG_FULLSCREEN) != 0;
-  boolean hideStatusBarSysui=(vis & View.SYSTEM_UI_FLAG_FULLSCREEN) != 0;
-  boolean hideNavBarSysui=(vis & View.SYSTEM_UI_FLAG_HIDE_NAVIGATION) != 0;
-  boolean transientStatusBarAllowed=mStatusBar != null && (hideStatusBarWM || (hideStatusBarSysui && immersiveSticky) || statusBarHasFocus);
-  boolean transientNavBarAllowed=mNavigationBar != null && hideNavBarSysui && immersiveSticky;
+  final boolean hideStatusBarWM=mTopFullscreenOpaqueWindowState != null && (PolicyControl.getWindowFlags(mTopFullscreenOpaqueWindowState,null) & WindowManager.LayoutParams.FLAG_FULLSCREEN) != 0;
+  final boolean hideStatusBarSysui=(vis & View.SYSTEM_UI_FLAG_FULLSCREEN) != 0;
+  final boolean hideNavBarSysui=(vis & View.SYSTEM_UI_FLAG_HIDE_NAVIGATION) != 0;
+  final boolean transientStatusBarAllowed=mStatusBar != null && (statusBarHasFocus || (!mForceShowSystemBars && (hideStatusBarWM || (hideStatusBarSysui && immersiveSticky))));
+  final boolean transientNavBarAllowed=mNavigationBar != null && !mForceShowSystemBars && hideNavBarSysui && immersiveSticky;
   final long now=SystemClock.uptimeMillis();
   final boolean pendingPanic=mPendingPanicGestureUptime != 0 && now - mPendingPanicGestureUptime <= PANIC_GESTURE_EXPIRATION;
   if (pendingPanic && hideNavBarSysui && !isStatusBarKeyguard()&& mKeyguardDrawComplete) {
@@ -27,9 +40,9 @@
     mStatusBarController.showTransient();
     mNavigationBarController.showTransient();
   }
-  boolean denyTransientStatus=mStatusBarController.isTransientShowRequested() && !transientStatusBarAllowed && hideStatusBarSysui;
-  boolean denyTransientNav=mNavigationBarController.isTransientShowRequested() && !transientNavBarAllowed;
-  if (denyTransientStatus || denyTransientNav) {
+  final boolean denyTransientStatus=mStatusBarController.isTransientShowRequested() && !transientStatusBarAllowed && hideStatusBarSysui;
+  final boolean denyTransientNav=mNavigationBarController.isTransientShowRequested() && !transientNavBarAllowed;
+  if (denyTransientStatus || denyTransientNav || mForceShowSystemBars) {
     clearClearableFlagsLw();
     vis&=~View.SYSTEM_UI_CLEARABLE_FLAGS;
   }
@@ -44,7 +57,7 @@
   boolean newImmersiveMode=isImmersiveMode(vis);
   if (win != null && oldImmersiveMode != newImmersiveMode) {
     final String pkg=win.getOwningPackage();
-    mImmersiveModeConfirmation.immersiveModeChanged(pkg,newImmersiveMode,isUserSetupComplete());
+    mImmersiveModeConfirmation.immersiveModeChangedLw(pkg,newImmersiveMode,isUserSetupComplete());
   }
   vis=mNavigationBarController.updateVisibilityLw(transientNavBarAllowed,oldVis,vis);
   return vis;

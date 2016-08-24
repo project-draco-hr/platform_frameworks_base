@@ -1,11 +1,48 @@
 {
   enforcePermission(android.Manifest.permission.MOUNT_UNMOUNT_FILESYSTEMS);
   waitForReady();
-synchronized (mLock) {
-    if ((mask & StorageManager.DEBUG_FORCE_ADOPTABLE) != 0) {
-      mForceAdoptable=(flags & StorageManager.DEBUG_FORCE_ADOPTABLE) != 0;
+  if ((mask & StorageManager.DEBUG_EMULATE_FBE) != 0) {
+    if (StorageManager.isFileEncryptedNativeOnly()) {
+      throw new IllegalStateException("Emulation not available on device with native FBE");
     }
-    writeSettingsLocked();
-    resetIfReadyAndConnectedLocked();
+    if (mLockPatternUtils.isCredentialRequiredToDecrypt(false)) {
+      throw new IllegalStateException("Emulation requires disabling 'Secure start-up' in Settings > Security");
+    }
+    final long token=Binder.clearCallingIdentity();
+    try {
+      final boolean emulateFbe=(flags & StorageManager.DEBUG_EMULATE_FBE) != 0;
+      SystemProperties.set(StorageManager.PROP_EMULATE_FBE,Boolean.toString(emulateFbe));
+      mContext.getSystemService(PowerManager.class).reboot(null);
+    }
+  finally {
+      Binder.restoreCallingIdentity(token);
+    }
+  }
+  if ((mask & StorageManager.DEBUG_FORCE_ADOPTABLE) != 0) {
+synchronized (mLock) {
+      mForceAdoptable=(flags & StorageManager.DEBUG_FORCE_ADOPTABLE) != 0;
+      writeSettingsLocked();
+      mHandler.obtainMessage(H_RESET).sendToTarget();
+    }
+  }
+  if ((mask & (StorageManager.DEBUG_SDCARDFS_FORCE_ON | StorageManager.DEBUG_SDCARDFS_FORCE_OFF)) != 0) {
+    final String value;
+    if ((flags & StorageManager.DEBUG_SDCARDFS_FORCE_ON) != 0) {
+      value="force_on";
+    }
+ else     if ((flags & StorageManager.DEBUG_SDCARDFS_FORCE_OFF) != 0) {
+      value="force_off";
+    }
+ else {
+      value="";
+    }
+    final long token=Binder.clearCallingIdentity();
+    try {
+      SystemProperties.set(StorageManager.PROP_SDCARDFS,value);
+      mHandler.obtainMessage(H_RESET).sendToTarget();
+    }
+  finally {
+      Binder.restoreCallingIdentity(token);
+    }
   }
 }

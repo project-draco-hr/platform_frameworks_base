@@ -9,7 +9,12 @@
     Log.e(TAG,"NotificationClicker called on an unclickable notification,");
     return;
   }
-  final PendingIntent intent=sbn.getNotification().contentIntent;
+  if (row.getSettingsRow() != null && row.getSettingsRow().isVisible()) {
+    row.animateTranslateNotification(0);
+    return;
+  }
+  Notification notification=sbn.getNotification();
+  final PendingIntent intent=notification.contentIntent != null ? notification.contentIntent : notification.fullScreenIntent;
   final String notificationKey=sbn.getKey();
   row.setJustClicked(true);
   DejankUtils.postAfterTraversal(new Runnable(){
@@ -18,17 +23,24 @@
     }
   }
 );
-  if (NOTIFICATION_CLICK_DEBUG) {
-    Log.d(TAG,"Clicked on content of " + notificationKey);
-  }
   final boolean keyguardShowing=mStatusBarKeyguardViewManager.isShowing();
   final boolean afterKeyguardGone=intent.isActivity() && PreviewInflater.wouldLaunchResolverActivity(mContext,intent.getIntent(),mCurrentUserId);
   dismissKeyguardThenExecute(new OnDismissAction(){
     public boolean onDismiss(){
       if (mHeadsUpManager != null && mHeadsUpManager.isHeadsUp(notificationKey)) {
-        HeadsUpManager.setIsClickedNotification(row,true);
+        if (isPanelFullyCollapsed()) {
+          HeadsUpManager.setIsClickedNotification(row,true);
+        }
         mHeadsUpManager.releaseImmediately(notificationKey);
       }
+      StatusBarNotification parentToCancel=null;
+      if (shouldAutoCancel(sbn) && mGroupManager.isOnlyChildInGroup(sbn)) {
+        StatusBarNotification summarySbn=mGroupManager.getLogicalGroupSummary(sbn).getStatusBarNotification();
+        if (shouldAutoCancel(summarySbn)) {
+          parentToCancel=summarySbn;
+        }
+      }
+      final StatusBarNotification parentToCancelFinal=parentToCancel;
       new Thread(){
         @Override public void run(){
           try {
@@ -40,8 +52,16 @@
  catch (          RemoteException e) {
           }
           if (intent != null) {
+            if (intent.isActivity()) {
+              final int userId=intent.getCreatorUserHandle().getIdentifier();
+              if (mLockPatternUtils.isSeparateProfileChallengeEnabled(userId) && mKeyguardManager.isDeviceLocked(userId)) {
+                if (startWorkChallengeIfNecessary(userId,intent.getIntentSender(),notificationKey)) {
+                  return;
+                }
+              }
+            }
             try {
-              intent.send();
+              intent.send(null,0,null,null,null,null,getActivityOptions());
             }
  catch (            PendingIntent.CanceledException e) {
               Log.w(TAG,"Sending contentIntent failed: " + e);
@@ -55,6 +75,25 @@
             mBarService.onNotificationClick(notificationKey);
           }
  catch (          RemoteException ex) {
+          }
+          if (parentToCancelFinal != null) {
+            mHandler.post(new Runnable(){
+              @Override public void run(){
+                Runnable removeRunnable=new Runnable(){
+                  @Override public void run(){
+                    performRemoveNotification(parentToCancelFinal,true);
+                  }
+                }
+;
+                if (isCollapsing()) {
+                  addPostCollapseAction(removeRunnable);
+                }
+ else {
+                  removeRunnable.run();
+                }
+              }
+            }
+);
           }
         }
       }

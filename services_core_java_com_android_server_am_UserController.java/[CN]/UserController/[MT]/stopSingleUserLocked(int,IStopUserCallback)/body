@@ -1,0 +1,50 @@
+{
+  if (DEBUG_MU)   Slog.i(TAG,"stopSingleUserLocked userId=" + userId);
+  final UserState uss=mStartedUsers.get(userId);
+  if (uss == null) {
+    if (callback != null) {
+      mHandler.post(new Runnable(){
+        @Override public void run(){
+          try {
+            callback.userStopped(userId);
+          }
+ catch (          RemoteException e) {
+          }
+        }
+      }
+);
+    }
+    return;
+  }
+  if (callback != null) {
+    uss.mStopCallbacks.add(callback);
+  }
+  if (uss.state != UserState.STATE_STOPPING && uss.state != UserState.STATE_SHUTDOWN) {
+    uss.setState(UserState.STATE_STOPPING);
+    getUserManagerInternal().setUserState(userId,uss.state);
+    updateStartedUserArrayLocked();
+    long ident=Binder.clearCallingIdentity();
+    try {
+      final Intent stoppingIntent=new Intent(Intent.ACTION_USER_STOPPING);
+      stoppingIntent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY);
+      stoppingIntent.putExtra(Intent.EXTRA_USER_HANDLE,userId);
+      stoppingIntent.putExtra(Intent.EXTRA_SHUTDOWN_USERSPACE_ONLY,true);
+      final IIntentReceiver stoppingReceiver=new IIntentReceiver.Stub(){
+        @Override public void performReceive(        Intent intent,        int resultCode,        String data,        Bundle extras,        boolean ordered,        boolean sticky,        int sendingUser){
+          mHandler.post(new Runnable(){
+            @Override public void run(){
+              finishUserStopping(userId,uss);
+            }
+          }
+);
+        }
+      }
+;
+      mService.clearBroadcastQueueForUserLocked(userId);
+      mService.broadcastIntentLocked(null,null,stoppingIntent,null,stoppingReceiver,0,null,null,new String[]{INTERACT_ACROSS_USERS},AppOpsManager.OP_NONE,null,true,false,MY_PID,SYSTEM_UID,UserHandle.USER_ALL);
+    }
+  finally {
+      Binder.restoreCallingIdentity(ident);
+    }
+  }
+}

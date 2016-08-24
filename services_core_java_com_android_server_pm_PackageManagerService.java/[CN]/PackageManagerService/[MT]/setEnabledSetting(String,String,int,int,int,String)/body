@@ -4,7 +4,13 @@
   }
   PackageSetting pkgSetting;
   final int uid=Binder.getCallingUid();
-  final int permission=mContext.checkCallingOrSelfPermission(android.Manifest.permission.CHANGE_COMPONENT_ENABLED_STATE);
+  final int permission;
+  if (uid == Process.SYSTEM_UID) {
+    permission=PackageManager.PERMISSION_GRANTED;
+  }
+ else {
+    permission=mContext.checkCallingOrSelfPermission(android.Manifest.permission.CHANGE_COMPONENT_ENABLED_STATE);
+  }
   enforceCrossUserPermission(uid,userId,false,true,"set enabled");
   final boolean allowedByPermission=(permission == PackageManager.PERMISSION_GRANTED);
   boolean sendNow=false;
@@ -20,8 +26,23 @@ synchronized (mPackages) {
       }
       throw new IllegalArgumentException("Unknown component: " + packageName + "/"+ className);
     }
-    if (!allowedByPermission && !UserHandle.isSameApp(uid,pkgSetting.appId)) {
+  }
+  if (!UserHandle.isSameApp(uid,pkgSetting.appId)) {
+    if (!allowedByPermission) {
       throw new SecurityException("Permission Denial: attempt to change component state from pid=" + Binder.getCallingPid() + ", uid="+ uid+ ", package uid="+ pkgSetting.appId);
+    }
+    if (mProtectedPackages.canPackageStateBeChanged(userId,packageName)) {
+      throw new SecurityException("Cannot disable a device owner or a profile owner");
+    }
+  }
+synchronized (mPackages) {
+    if (uid == Process.SHELL_UID) {
+      int oldState=pkgSetting.getEnabled(userId);
+      if (className == null && (oldState == COMPONENT_ENABLED_STATE_DISABLED_USER || oldState == COMPONENT_ENABLED_STATE_DEFAULT || oldState == COMPONENT_ENABLED_STATE_ENABLED) && (newState == COMPONENT_ENABLED_STATE_DISABLED_USER || newState == COMPONENT_ENABLED_STATE_DEFAULT || newState == COMPONENT_ENABLED_STATE_ENABLED)) {
+      }
+ else {
+        throw new SecurityException("Shell cannot change component state for " + packageName + "/"+ className+ " to "+ newState);
+      }
     }
     if (className == null) {
       if (pkgSetting.getEnabled(userId) == newState) {
@@ -35,7 +56,7 @@ synchronized (mPackages) {
  else {
       PackageParser.Package pkg=pkgSetting.pkg;
       if (pkg == null || !pkg.hasComponentClassName(className)) {
-        if (pkg.applicationInfo.targetSdkVersion >= Build.VERSION_CODES.JELLY_BEAN) {
+        if (pkg != null && pkg.applicationInfo.targetSdkVersion >= Build.VERSION_CODES.JELLY_BEAN) {
           throw new IllegalArgumentException("Component class " + className + " does not exist in "+ packageName);
         }
  else {

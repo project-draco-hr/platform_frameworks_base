@@ -1,0 +1,51 @@
+{
+  final int userId=UserHandle.getCallingUserId();
+  final long origId=Binder.clearCallingIdentity();
+  try {
+    ServiceRecord r=findServiceLocked(className,token,userId);
+    if (r != null) {
+      if (id != 0) {
+        if (notification == null) {
+          throw new IllegalArgumentException("null notification");
+        }
+        if (r.foregroundId != id) {
+          r.cancelNotification();
+          r.foregroundId=id;
+        }
+        notification.flags|=Notification.FLAG_FOREGROUND_SERVICE;
+        r.foregroundNoti=notification;
+        r.isForeground=true;
+        r.postNotification();
+        if (r.app != null) {
+          updateServiceForegroundLocked(r.app,true);
+        }
+        getServiceMap(r.userId).ensureNotStartingBackground(r);
+        mAm.notifyPackageUse(r.serviceInfo.packageName,PackageManager.NOTIFY_PACKAGE_USE_FOREGROUND_SERVICE);
+      }
+ else {
+        if (r.isForeground) {
+          r.isForeground=false;
+          if (r.app != null) {
+            mAm.updateLruProcessLocked(r.app,false,null);
+            updateServiceForegroundLocked(r.app,true);
+          }
+        }
+        if ((flags & Service.STOP_FOREGROUND_REMOVE) != 0) {
+          r.cancelNotification();
+          r.foregroundId=0;
+          r.foregroundNoti=null;
+        }
+ else         if (r.appInfo.targetSdkVersion >= Build.VERSION_CODES.LOLLIPOP) {
+          r.stripForegroundServiceFlagFromNotification();
+          if ((flags & Service.STOP_FOREGROUND_DETACH) != 0) {
+            r.foregroundId=0;
+            r.foregroundNoti=null;
+          }
+        }
+      }
+    }
+  }
+  finally {
+    Binder.restoreCallingIdentity(origId);
+  }
+}

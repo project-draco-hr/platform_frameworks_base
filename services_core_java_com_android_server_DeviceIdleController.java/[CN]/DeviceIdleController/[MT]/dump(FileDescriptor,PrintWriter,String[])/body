@@ -4,7 +4,7 @@
     return;
   }
   if (args != null) {
-    int userId=UserHandle.USER_OWNER;
+    int userId=UserHandle.USER_SYSTEM;
     for (int i=0; i < args.length; i++) {
       String arg=args[i];
       if ("-h".equals(arg)) {
@@ -20,296 +20,209 @@
       }
  else       if ("-a".equals(arg)) {
       }
- else       if ("step".equals(arg)) {
-synchronized (this) {
-          long token=Binder.clearCallingIdentity();
-          try {
-            exitForceIdleLocked();
-            stepIdleStateLocked();
-            pw.print("Stepped to: ");
-            pw.println(stateToString(mState));
-          }
-  finally {
-            Binder.restoreCallingIdentity(token);
-          }
-        }
-        return;
-      }
- else       if ("force-idle".equals(arg)) {
-synchronized (this) {
-          long token=Binder.clearCallingIdentity();
-          try {
-            if (!mEnabled) {
-              pw.println("Unable to go idle; not enabled");
-              return;
-            }
-            mForceIdle=true;
-            becomeInactiveIfAppropriateLocked();
-            int curState=mState;
-            while (curState != STATE_IDLE) {
-              stepIdleStateLocked();
-              if (curState == mState) {
-                pw.print("Unable to go idle; stopped at ");
-                pw.println(stateToString(mState));
-                exitForceIdleLocked();
-                return;
-              }
-              curState=mState;
-            }
-            pw.println("Now forced in to idle mode");
-          }
-  finally {
-            Binder.restoreCallingIdentity(token);
-          }
-        }
-        return;
-      }
- else       if ("disable".equals(arg)) {
-synchronized (this) {
-          long token=Binder.clearCallingIdentity();
-          try {
-            if (mEnabled) {
-              mEnabled=false;
-              becomeActiveLocked("disabled",Process.myUid());
-              pw.println("Idle mode disabled");
-            }
-          }
-  finally {
-            Binder.restoreCallingIdentity(token);
-          }
-        }
-        return;
-      }
- else       if ("enable".equals(arg)) {
-synchronized (this) {
-          long token=Binder.clearCallingIdentity();
-          try {
-            exitForceIdleLocked();
-            if (!mEnabled) {
-              mEnabled=true;
-              becomeInactiveIfAppropriateLocked();
-              pw.println("Idle mode enabled");
-            }
-          }
-  finally {
-            Binder.restoreCallingIdentity(token);
-          }
-        }
-        return;
-      }
- else       if ("enabled".equals(arg)) {
-synchronized (this) {
-          pw.println(mEnabled ? "1" : " 0");
-        }
-        return;
-      }
- else       if ("whitelist".equals(arg)) {
-        long token=Binder.clearCallingIdentity();
-        try {
-          i++;
-          if (i < args.length) {
-            while (i < args.length) {
-              arg=args[i];
-              i++;
-              if (arg.length() < 1 || (arg.charAt(0) != '-' && arg.charAt(0) != '+')) {
-                pw.println("Package must be prefixed with + or -: " + arg);
-                return;
-              }
-              char op=arg.charAt(0);
-              String pkg=arg.substring(1);
-              if (op == '+') {
-                if (addPowerSaveWhitelistAppInternal(pkg)) {
-                  pw.println("Added: " + pkg);
-                }
- else {
-                  pw.println("Unknown package: " + pkg);
-                }
-              }
- else {
-                if (removePowerSaveWhitelistAppInternal(pkg)) {
-                  pw.println("Removed: " + pkg);
-                }
-              }
-            }
-          }
- else {
-synchronized (this) {
-              for (int j=0; j < mPowerSaveWhitelistAppsExceptIdle.size(); j++) {
-                pw.print("system-excidle,");
-                pw.print(mPowerSaveWhitelistAppsExceptIdle.keyAt(j));
-                pw.print(",");
-                pw.println(mPowerSaveWhitelistAppsExceptIdle.valueAt(j));
-              }
-              for (int j=0; j < mPowerSaveWhitelistApps.size(); j++) {
-                pw.print("system,");
-                pw.print(mPowerSaveWhitelistApps.keyAt(j));
-                pw.print(",");
-                pw.println(mPowerSaveWhitelistApps.valueAt(j));
-              }
-              for (int j=0; j < mPowerSaveWhitelistUserApps.size(); j++) {
-                pw.print("user,");
-                pw.print(mPowerSaveWhitelistUserApps.keyAt(j));
-                pw.print(",");
-                pw.println(mPowerSaveWhitelistUserApps.valueAt(j));
-              }
-            }
-          }
-        }
-  finally {
-          Binder.restoreCallingIdentity(token);
-        }
-        return;
-      }
- else       if ("tempwhitelist".equals(arg)) {
-        long token=Binder.clearCallingIdentity();
-        try {
-          i++;
-          if (i >= args.length) {
-            pw.println("At least one package name must be specified");
-            return;
-          }
-          while (i < args.length) {
-            arg=args[i];
-            i++;
-            addPowerSaveTempWhitelistAppInternal(0,arg,10000L,userId,true,"shell");
-            pw.println("Added: " + arg);
-          }
-        }
-  finally {
-          Binder.restoreCallingIdentity(token);
-        }
-        return;
-      }
  else       if (arg.length() > 0 && arg.charAt(0) == '-') {
         pw.println("Unknown option: " + arg);
         return;
       }
  else {
-        pw.println("Unknown command: " + arg);
+        Shell shell=new Shell();
+        shell.userId=userId;
+        String[] newArgs=new String[args.length - i];
+        System.arraycopy(args,i,newArgs,0,args.length - i);
+        shell.exec(mBinderService,null,fd,null,newArgs,new ResultReceiver(null));
         return;
       }
     }
   }
 synchronized (this) {
     mConstants.dump(pw);
-    int size=mPowerSaveWhitelistAppsExceptIdle.size();
-    if (size > 0) {
-      pw.println("  Whitelist (except idle) system apps:");
-      for (int i=0; i < size; i++) {
-        pw.print("    ");
-        pw.println(mPowerSaveWhitelistAppsExceptIdle.keyAt(i));
-      }
-    }
-    size=mPowerSaveWhitelistApps.size();
-    if (size > 0) {
-      pw.println("  Whitelist system apps:");
-      for (int i=0; i < size; i++) {
-        pw.print("    ");
-        pw.println(mPowerSaveWhitelistApps.keyAt(i));
-      }
-    }
-    size=mPowerSaveWhitelistUserApps.size();
-    if (size > 0) {
-      pw.println("  Whitelist user apps:");
-      for (int i=0; i < size; i++) {
-        pw.print("    ");
-        pw.println(mPowerSaveWhitelistUserApps.keyAt(i));
-      }
-    }
-    size=mPowerSaveWhitelistExceptIdleAppIds.size();
-    if (size > 0) {
-      pw.println("  Whitelist (except idle) all app ids:");
-      for (int i=0; i < size; i++) {
-        pw.print("    ");
-        pw.print(mPowerSaveWhitelistExceptIdleAppIds.keyAt(i));
-        pw.println();
-      }
-    }
-    size=mPowerSaveWhitelistAllAppIds.size();
-    if (size > 0) {
-      pw.println("  Whitelist all app ids:");
-      for (int i=0; i < size; i++) {
-        pw.print("    ");
-        pw.print(mPowerSaveWhitelistAllAppIds.keyAt(i));
-        pw.println();
-      }
-    }
-    size=mTempWhitelistAppIdEndTimes.size();
-    if (size > 0) {
-      pw.println("  Temp whitelist schedule:");
-      final long timeNow=SystemClock.elapsedRealtime();
-      for (int i=0; i < size; i++) {
-        pw.print("    UID=");
-        pw.print(mTempWhitelistAppIdEndTimes.keyAt(i));
-        pw.print(": ");
-        Pair<MutableLong,String> entry=mTempWhitelistAppIdEndTimes.valueAt(i);
-        TimeUtils.formatDuration(entry.first.value,timeNow,pw);
-        pw.print(" - ");
-        pw.println(entry.second);
-      }
-    }
-    size=mTempWhitelistAppIdArray != null ? mTempWhitelistAppIdArray.length : 0;
-    if (size > 0) {
-      pw.println("  Temp whitelist app ids:");
-      for (int i=0; i < size; i++) {
-        pw.print("    ");
-        pw.print(mTempWhitelistAppIdArray[i]);
-        pw.println();
-      }
-    }
-    pw.print("  mEnabled=");
-    pw.println(mEnabled);
-    pw.print("  mForceIdle=");
-    pw.println(mForceIdle);
-    pw.print("  mMotionSensor=");
-    pw.println(mMotionSensor);
-    pw.print("  mCurDisplay=");
-    pw.println(mCurDisplay);
-    pw.print("  mScreenOn=");
-    pw.println(mScreenOn);
-    pw.print("  mCharging=");
-    pw.println(mCharging);
-    pw.print("  mMotionActive=");
-    pw.println(mMotionListener.active);
-    pw.print("  mSensing=");
-    pw.print(mSensing);
-    pw.print(" mNotMoving=");
-    pw.println(mNotMoving);
-    pw.print("  mLocating=");
-    pw.print(mLocating);
-    pw.print(" mHasGps=");
-    pw.print(mHasGps);
-    pw.print(" mHasNetwork=");
-    pw.print(mHasNetworkLocation);
-    pw.print(" mLocated=");
-    pw.println(mLocated);
-    if (mLastGenericLocation != null) {
-      pw.print("  mLastGenericLocation=");
-      pw.println(mLastGenericLocation);
-    }
-    if (mLastGpsLocation != null) {
-      pw.print("  mLastGpsLocation=");
-      pw.println(mLastGpsLocation);
-    }
-    pw.print("  mState=");
-    pw.println(stateToString(mState));
-    pw.print("  mInactiveTimeout=");
-    TimeUtils.formatDuration(mInactiveTimeout,pw);
-    pw.println();
-    if (mNextAlarmTime != 0) {
-      pw.print("  mNextAlarmTime=");
-      TimeUtils.formatDuration(mNextAlarmTime,SystemClock.elapsedRealtime(),pw);
-      pw.println();
-    }
-    if (mNextIdlePendingDelay != 0) {
-      pw.print("  mNextIdlePendingDelay=");
-      TimeUtils.formatDuration(mNextIdlePendingDelay,pw);
-      pw.println();
-    }
-    if (mNextIdleDelay != 0) {
-      pw.print("  mNextIdleDelay=");
-      TimeUtils.formatDuration(mNextIdleDelay,pw);
-      pw.println();
-    }
-  }
+    if (mEventCmds[0] != EVENT_NULL) {
+      pw.println("  Idling history:");
+      long now=SystemClock.elapsedRealtime();
+      for (int i=EVENT_BUFFER_SIZE - 1; i >= 0; i--) {
+        int cmd=mEventCmds[i];
+        if (cmd == EVENT_NULL) {
+          continue;
+        }
+        String label;
+switch (mEventCmds[i]) {
+case EVENT_NORMAL:
+          label="     normal";
+        break;
+case EVENT_LIGHT_IDLE:
+      label=" light-idle";
+    break;
+case EVENT_LIGHT_MAINTENANCE:
+  label="light-maint";
+break;
+case EVENT_DEEP_IDLE:
+label="  deep-idle";
+break;
+case EVENT_DEEP_MAINTENANCE:
+label=" deep-maint";
+break;
+default :
+label="         ??";
+break;
+}
+pw.print("    ");
+pw.print(label);
+pw.print(": ");
+TimeUtils.formatDuration(mEventTimes[i],now,pw);
+;
+pw.println();
+}
+}
+int size=mPowerSaveWhitelistAppsExceptIdle.size();
+if (size > 0) {
+pw.println("  Whitelist (except idle) system apps:");
+for (int i=0; i < size; i++) {
+pw.print("    ");
+pw.println(mPowerSaveWhitelistAppsExceptIdle.keyAt(i));
+}
+}
+size=mPowerSaveWhitelistApps.size();
+if (size > 0) {
+pw.println("  Whitelist system apps:");
+for (int i=0; i < size; i++) {
+pw.print("    ");
+pw.println(mPowerSaveWhitelistApps.keyAt(i));
+}
+}
+size=mPowerSaveWhitelistUserApps.size();
+if (size > 0) {
+pw.println("  Whitelist user apps:");
+for (int i=0; i < size; i++) {
+pw.print("    ");
+pw.println(mPowerSaveWhitelistUserApps.keyAt(i));
+}
+}
+size=mPowerSaveWhitelistExceptIdleAppIds.size();
+if (size > 0) {
+pw.println("  Whitelist (except idle) all app ids:");
+for (int i=0; i < size; i++) {
+pw.print("    ");
+pw.print(mPowerSaveWhitelistExceptIdleAppIds.keyAt(i));
+pw.println();
+}
+}
+size=mPowerSaveWhitelistUserAppIds.size();
+if (size > 0) {
+pw.println("  Whitelist user app ids:");
+for (int i=0; i < size; i++) {
+pw.print("    ");
+pw.print(mPowerSaveWhitelistUserAppIds.keyAt(i));
+pw.println();
+}
+}
+size=mPowerSaveWhitelistAllAppIds.size();
+if (size > 0) {
+pw.println("  Whitelist all app ids:");
+for (int i=0; i < size; i++) {
+pw.print("    ");
+pw.print(mPowerSaveWhitelistAllAppIds.keyAt(i));
+pw.println();
+}
+}
+dumpTempWhitelistSchedule(pw,true);
+size=mTempWhitelistAppIdArray != null ? mTempWhitelistAppIdArray.length : 0;
+if (size > 0) {
+pw.println("  Temp whitelist app ids:");
+for (int i=0; i < size; i++) {
+pw.print("    ");
+pw.print(mTempWhitelistAppIdArray[i]);
+pw.println();
+}
+}
+pw.print("  mLightEnabled=");
+pw.print(mLightEnabled);
+pw.print("  mDeepEnabled=");
+pw.println(mDeepEnabled);
+pw.print("  mForceIdle=");
+pw.println(mForceIdle);
+pw.print("  mMotionSensor=");
+pw.println(mMotionSensor);
+pw.print("  mCurDisplay=");
+pw.println(mCurDisplay);
+pw.print("  mScreenOn=");
+pw.println(mScreenOn);
+pw.print("  mNetworkConnected=");
+pw.println(mNetworkConnected);
+pw.print("  mCharging=");
+pw.println(mCharging);
+pw.print("  mMotionActive=");
+pw.println(mMotionListener.active);
+pw.print("  mNotMoving=");
+pw.println(mNotMoving);
+pw.print("  mLocating=");
+pw.print(mLocating);
+pw.print(" mHasGps=");
+pw.print(mHasGps);
+pw.print(" mHasNetwork=");
+pw.print(mHasNetworkLocation);
+pw.print(" mLocated=");
+pw.println(mLocated);
+if (mLastGenericLocation != null) {
+pw.print("  mLastGenericLocation=");
+pw.println(mLastGenericLocation);
+}
+if (mLastGpsLocation != null) {
+pw.print("  mLastGpsLocation=");
+pw.println(mLastGpsLocation);
+}
+pw.print("  mState=");
+pw.print(stateToString(mState));
+pw.print(" mLightState=");
+pw.println(lightStateToString(mLightState));
+pw.print("  mInactiveTimeout=");
+TimeUtils.formatDuration(mInactiveTimeout,pw);
+pw.println();
+if (mActiveIdleOpCount != 0) {
+pw.print("  mActiveIdleOpCount=");
+pw.println(mActiveIdleOpCount);
+}
+if (mNextAlarmTime != 0) {
+pw.print("  mNextAlarmTime=");
+TimeUtils.formatDuration(mNextAlarmTime,SystemClock.elapsedRealtime(),pw);
+pw.println();
+}
+if (mNextIdlePendingDelay != 0) {
+pw.print("  mNextIdlePendingDelay=");
+TimeUtils.formatDuration(mNextIdlePendingDelay,pw);
+pw.println();
+}
+if (mNextIdleDelay != 0) {
+pw.print("  mNextIdleDelay=");
+TimeUtils.formatDuration(mNextIdleDelay,pw);
+pw.println();
+}
+if (mNextLightIdleDelay != 0) {
+pw.print("  mNextIdleDelay=");
+TimeUtils.formatDuration(mNextLightIdleDelay,pw);
+pw.println();
+}
+if (mNextLightAlarmTime != 0) {
+pw.print("  mNextLightAlarmTime=");
+TimeUtils.formatDuration(mNextLightAlarmTime,SystemClock.elapsedRealtime(),pw);
+pw.println();
+}
+if (mCurIdleBudget != 0) {
+pw.print("  mCurIdleBudget=");
+TimeUtils.formatDuration(mCurIdleBudget,pw);
+pw.println();
+}
+if (mMaintenanceStartTime != 0) {
+pw.print("  mMaintenanceStartTime=");
+TimeUtils.formatDuration(mMaintenanceStartTime,SystemClock.elapsedRealtime(),pw);
+pw.println();
+}
+if (mJobsActive) {
+pw.print("  mJobsActive=");
+pw.println(mJobsActive);
+}
+if (mAlarmsActive) {
+pw.print("  mAlarmsActive=");
+pw.println(mAlarmsActive);
+}
+}
 }

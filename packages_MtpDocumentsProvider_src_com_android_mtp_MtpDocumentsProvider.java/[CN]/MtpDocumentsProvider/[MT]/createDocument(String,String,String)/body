@@ -1,0 +1,66 @@
+{
+  if (DEBUG) {
+    Log.d(TAG,"createDocument: " + displayName);
+  }
+  final Identifier parentId;
+  final MtpDeviceRecord record;
+  final ParcelFileDescriptor[] pipe;
+  try {
+    parentId=mDatabase.createIdentifier(parentDocumentId);
+    openDevice(parentId.mDeviceId);
+    record=getDeviceToolkit(parentId.mDeviceId).mDeviceRecord;
+    if (!MtpDeviceRecord.isWritingSupported(record.operationsSupported)) {
+      throw new UnsupportedOperationException("Writing operation is not supported by the device.");
+    }
+    pipe=ParcelFileDescriptor.createReliablePipe();
+    int objectHandle=-1;
+    MtpObjectInfo info=null;
+    try {
+      pipe[0].close();
+      final int formatCode=Document.MIME_TYPE_DIR.equals(mimeType) ? MtpConstants.FORMAT_ASSOCIATION : MediaFile.getFormatCode(displayName,mimeType);
+      info=new MtpObjectInfo.Builder().setStorageId(parentId.mStorageId).setParent(parentId.mObjectHandle).setFormat(formatCode).setName(displayName).build();
+      final String[] parts=FileUtils.splitFileName(mimeType,displayName);
+      final String baseName=parts[0];
+      final String extension=parts[1];
+      for (int i=0; i <= 32; i++) {
+        final MtpObjectInfo infoUniqueName;
+        if (i == 0) {
+          infoUniqueName=info;
+        }
+ else {
+          String suffixedName=baseName + " (" + i+ " )";
+          if (!extension.isEmpty()) {
+            suffixedName+="." + extension;
+          }
+          infoUniqueName=new MtpObjectInfo.Builder(info).setName(suffixedName).build();
+        }
+        try {
+          objectHandle=mMtpManager.createDocument(parentId.mDeviceId,infoUniqueName,pipe[1]);
+          break;
+        }
+ catch (        SendObjectInfoFailure exp) {
+          continue;
+        }
+      }
+    }
+  finally {
+      pipe[1].close();
+    }
+    if (objectHandle == -1) {
+      throw new IllegalArgumentException("The file name \"" + displayName + "\" is conflicted with existing files "+ "and the provider failed to find unique name.");
+    }
+    final MtpObjectInfo infoWithHandle=new MtpObjectInfo.Builder(info).setObjectHandle(objectHandle).build();
+    final String documentId=mDatabase.putNewDocument(parentId.mDeviceId,parentDocumentId,record.operationsSupported,infoWithHandle,0l);
+    getDocumentLoader(parentId).cancelTask(parentId);
+    notifyChildDocumentsChange(parentDocumentId);
+    return documentId;
+  }
+ catch (  FileNotFoundException|RuntimeException error) {
+    Log.e(TAG,"createDocument",error);
+    throw error;
+  }
+catch (  IOException error) {
+    Log.e(TAG,"createDocument",error);
+    throw new IllegalStateException(error);
+  }
+}

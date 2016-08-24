@@ -1,0 +1,60 @@
+{
+  try {
+    Trace.traceBegin(Trace.TRACE_TAG_RESOURCES,"ResourcesManager#updateResourcesForActivity");
+synchronized (this) {
+      final ActivityResources activityResources=getOrCreateActivityResourcesStructLocked(activityToken);
+      if (Objects.equals(activityResources.overrideConfig,overrideConfig)) {
+        return;
+      }
+      final Configuration oldConfig=new Configuration(activityResources.overrideConfig);
+      if (overrideConfig != null) {
+        activityResources.overrideConfig.setTo(overrideConfig);
+      }
+ else {
+        activityResources.overrideConfig.setToDefaults();
+      }
+      if (DEBUG) {
+        Throwable here=new Throwable();
+        here.fillInStackTrace();
+        Slog.d(TAG,"updating resources override for activity=" + activityToken + " from oldConfig="+ Configuration.resourceQualifierString(oldConfig)+ " to newConfig="+ Configuration.resourceQualifierString(activityResources.overrideConfig),here);
+      }
+      final boolean activityHasOverrideConfig=!activityResources.overrideConfig.equals(Configuration.EMPTY);
+      final int refCount=activityResources.activityResources.size();
+      for (int i=0; i < refCount; i++) {
+        WeakReference<Resources> weakResRef=activityResources.activityResources.get(i);
+        Resources resources=weakResRef.get();
+        if (resources == null) {
+          continue;
+        }
+        final ResourcesKey oldKey=findKeyForResourceImplLocked(resources.getImpl());
+        if (oldKey == null) {
+          Slog.e(TAG,"can't find ResourcesKey for resources impl=" + resources.getImpl());
+          continue;
+        }
+        final Configuration rebasedOverrideConfig=new Configuration();
+        if (overrideConfig != null) {
+          rebasedOverrideConfig.setTo(overrideConfig);
+        }
+        if (activityHasOverrideConfig && oldKey.hasOverrideConfiguration()) {
+          Configuration overrideOverrideConfig=Configuration.generateDelta(oldConfig,oldKey.mOverrideConfiguration);
+          rebasedOverrideConfig.updateFrom(overrideOverrideConfig);
+        }
+        final ResourcesKey newKey=new ResourcesKey(oldKey.mResDir,oldKey.mSplitResDirs,oldKey.mOverlayDirs,oldKey.mLibDirs,oldKey.mDisplayId,rebasedOverrideConfig,oldKey.mCompatInfo);
+        if (DEBUG) {
+          Slog.d(TAG,"rebasing ref=" + resources + " from oldKey="+ oldKey+ " to newKey="+ newKey);
+        }
+        ResourcesImpl resourcesImpl=findResourcesImplForKeyLocked(newKey);
+        if (resourcesImpl == null) {
+          resourcesImpl=createResourcesImpl(newKey);
+          mResourceImpls.put(newKey,new WeakReference<>(resourcesImpl));
+        }
+        if (resourcesImpl != resources.getImpl()) {
+          resources.setImpl(resourcesImpl);
+        }
+      }
+    }
+  }
+  finally {
+    Trace.traceEnd(Trace.TRACE_TAG_RESOURCES);
+  }
+}

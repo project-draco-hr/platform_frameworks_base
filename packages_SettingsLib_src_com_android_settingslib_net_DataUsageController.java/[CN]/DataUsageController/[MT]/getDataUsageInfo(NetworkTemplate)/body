@@ -1,0 +1,58 @@
+{
+  final INetworkStatsSession session=getSession();
+  if (session == null) {
+    return warn("no stats session");
+  }
+  final NetworkPolicy policy=findNetworkPolicy(template);
+  try {
+    final NetworkStatsHistory history=session.getHistoryForNetwork(template,FIELDS);
+    final long now=System.currentTimeMillis();
+    final long start, end;
+    if (policy != null && policy.cycleDay > 0) {
+      if (DEBUG)       Log.d(TAG,"Cycle day=" + policy.cycleDay + " tz="+ policy.cycleTimezone);
+      final Time nowTime=new Time(policy.cycleTimezone);
+      nowTime.setToNow();
+      final Time policyTime=new Time(nowTime);
+      policyTime.set(policy.cycleDay,policyTime.month,policyTime.year);
+      policyTime.normalize(false);
+      if (nowTime.after(policyTime)) {
+        start=policyTime.toMillis(false);
+        end=addMonth(policyTime,1).toMillis(false);
+      }
+ else {
+        start=addMonth(policyTime,-1).toMillis(false);
+        end=policyTime.toMillis(false);
+      }
+    }
+ else {
+      end=now;
+      start=now - DateUtils.WEEK_IN_MILLIS * 4;
+    }
+    final long callStart=System.currentTimeMillis();
+    final NetworkStatsHistory.Entry entry=history.getValues(start,end,now,null);
+    final long callEnd=System.currentTimeMillis();
+    if (DEBUG)     Log.d(TAG,String.format("history call from %s to %s now=%s took %sms: %s",new Date(start),new Date(end),new Date(now),callEnd - callStart,historyEntryToString(entry)));
+    if (entry == null) {
+      return warn("no entry data");
+    }
+    final long totalBytes=entry.rxBytes + entry.txBytes;
+    final DataUsageInfo usage=new DataUsageInfo();
+    usage.startDate=start;
+    usage.usageLevel=totalBytes;
+    usage.period=formatDateRange(start,end);
+    if (policy != null) {
+      usage.limitLevel=policy.limitBytes > 0 ? policy.limitBytes : 0;
+      usage.warningLevel=policy.warningBytes > 0 ? policy.warningBytes : 0;
+    }
+ else {
+      usage.warningLevel=DEFAULT_WARNING_LEVEL;
+    }
+    if (usage != null && mNetworkController != null) {
+      usage.carrier=mNetworkController.getMobileDataNetworkName();
+    }
+    return usage;
+  }
+ catch (  RemoteException e) {
+    return warn("remote call failed");
+  }
+}

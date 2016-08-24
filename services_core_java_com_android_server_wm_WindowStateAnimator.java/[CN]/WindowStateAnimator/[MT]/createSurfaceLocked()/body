@@ -1,123 +1,72 @@
 {
   final WindowState w=mWin;
-  if (mSurfaceControl == null) {
-    if (DEBUG_ANIM || DEBUG_ORIENTATION)     Slog.i(TAG,"createSurface " + this + ": mDrawState=DRAW_PENDING");
-    mDrawState=DRAW_PENDING;
-    if (w.mAppToken != null) {
-      if (w.mAppToken.mAppAnimator.animation == null) {
-        w.mAppToken.allDrawn=false;
-        w.mAppToken.deferClearAllDrawn=false;
-      }
- else {
-        w.mAppToken.deferClearAllDrawn=true;
-      }
-    }
-    mService.makeWindowFreezingScreenIfNeededLocked(w);
-    int flags=SurfaceControl.HIDDEN;
-    final WindowManager.LayoutParams attrs=w.mAttrs;
-    if (mService.isSecureLocked(w)) {
-      flags|=SurfaceControl.SECURE;
-    }
-    int width;
-    int height;
-    if ((attrs.flags & LayoutParams.FLAG_SCALED) != 0) {
-      width=w.mRequestedWidth;
-      height=w.mRequestedHeight;
-    }
- else {
-      width=w.mCompatFrame.width();
-      height=w.mCompatFrame.height();
-    }
-    if (width <= 0) {
-      width=1;
-    }
-    if (height <= 0) {
-      height=1;
-    }
-    float left=w.mFrame.left + w.mXOffset;
-    float top=w.mFrame.top + w.mYOffset;
-    width+=attrs.surfaceInsets.left + attrs.surfaceInsets.right;
-    height+=attrs.surfaceInsets.top + attrs.surfaceInsets.bottom;
-    left-=attrs.surfaceInsets.left;
-    top-=attrs.surfaceInsets.top;
-    if (DEBUG_VISIBILITY) {
-      Slog.v(TAG,"Creating surface in session " + mSession.mSurfaceSession + " window "+ this+ " w="+ width+ " h="+ height+ " x="+ left+ " y="+ top+ " format="+ attrs.format+ " flags="+ flags);
-    }
-    mSurfaceShown=false;
-    mSurfaceLayer=0;
-    mSurfaceAlpha=0;
-    mSurfaceX=0;
-    mSurfaceY=0;
-    w.mLastSystemDecorRect.set(0,0,0,0);
-    mHasClipRect=false;
-    mClipRect.set(0,0,0,0);
-    mLastClipRect.set(0,0,0,0);
-    try {
-      mSurfaceW=width;
-      mSurfaceH=height;
-      final boolean isHwAccelerated=(attrs.flags & WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED) != 0;
-      final int format=isHwAccelerated ? PixelFormat.TRANSLUCENT : attrs.format;
-      if (!PixelFormat.formatHasAlpha(attrs.format) && attrs.surfaceInsets.left == 0 && attrs.surfaceInsets.top == 0 && attrs.surfaceInsets.right == 0 && attrs.surfaceInsets.bottom == 0) {
-        flags|=SurfaceControl.OPAQUE;
-      }
-      mSurfaceFormat=format;
-      if (DEBUG_SURFACE_TRACE) {
-        mSurfaceControl=new SurfaceTrace(mSession.mSurfaceSession,attrs.getTitle().toString(),width,height,format,flags);
-      }
- else {
-        mSurfaceControl=new SurfaceControl(mSession.mSurfaceSession,attrs.getTitle().toString(),width,height,format,flags);
-      }
-      w.mHasSurface=true;
-      if (SHOW_TRANSACTIONS || SHOW_SURFACE_ALLOC) {
-        Slog.i(TAG,"  CREATE SURFACE " + mSurfaceControl + " IN SESSION "+ mSession.mSurfaceSession+ ": pid="+ mSession.mPid+ " format="+ attrs.format+ " flags=0x"+ Integer.toHexString(flags)+ " / "+ this);
-      }
-    }
- catch (    OutOfResourcesException e) {
-      w.mHasSurface=false;
-      Slog.w(TAG,"OutOfResourcesException creating surface");
-      mService.reclaimSomeSurfaceMemoryLocked(this,"create",true);
-      mDrawState=NO_SURFACE;
-      return null;
-    }
-catch (    Exception e) {
-      w.mHasSurface=false;
-      Slog.e(TAG,"Exception creating surface",e);
-      mDrawState=NO_SURFACE;
-      return null;
-    }
-    if (WindowManagerService.localLOGV) {
-      Slog.v(TAG,"Got surface: " + mSurfaceControl + ", set left="+ w.mFrame.left+ " top="+ w.mFrame.top+ ", animLayer="+ mAnimLayer);
-    }
-    if (SHOW_LIGHT_TRANSACTIONS) {
-      Slog.i(TAG,">>> OPEN TRANSACTION createSurfaceLocked");
-      WindowManagerService.logSurface(w,"CREATE pos=(" + w.mFrame.left + ","+ w.mFrame.top+ ") ("+ w.mCompatFrame.width()+ "x"+ w.mCompatFrame.height()+ "), layer="+ mAnimLayer+ " HIDE",null);
-    }
-    SurfaceControl.openTransaction();
-    try {
-      mSurfaceX=left;
-      mSurfaceY=top;
-      try {
-        mSurfaceControl.setPosition(left,top);
-        mSurfaceLayer=mAnimLayer;
-        final DisplayContent displayContent=w.getDisplayContent();
-        if (displayContent != null) {
-          mSurfaceControl.setLayerStack(displayContent.getDisplay().getLayerStack());
-        }
-        mSurfaceControl.setLayer(mAnimLayer);
-        mSurfaceControl.setAlpha(0);
-        mSurfaceShown=false;
-      }
- catch (      RuntimeException e) {
-        Slog.w(TAG,"Error creating surface in " + w,e);
-        mService.reclaimSomeSurfaceMemoryLocked(this,"create-init",true);
-      }
-      mLastHidden=true;
-    }
-  finally {
-      SurfaceControl.closeTransaction();
-      if (SHOW_LIGHT_TRANSACTIONS)       Slog.i(TAG,"<<< CLOSE TRANSACTION createSurfaceLocked");
-    }
-    if (WindowManagerService.localLOGV)     Slog.v(TAG,"Created surface " + this);
+  if (w.hasSavedSurface()) {
+    if (DEBUG_ANIM)     Slog.i(TAG,"createSurface: " + this + ": called when we had a saved surface");
+    w.restoreSavedSurface();
+    return mSurfaceController;
   }
-  return mSurfaceControl;
+  if (mSurfaceController != null) {
+    return mSurfaceController;
+  }
+  w.setHasSurface(false);
+  if (DEBUG_ANIM || DEBUG_ORIENTATION)   Slog.i(TAG,"createSurface " + this + ": mDrawState=DRAW_PENDING");
+  mDrawState=DRAW_PENDING;
+  if (w.mAppToken != null) {
+    if (w.mAppToken.mAppAnimator.animation == null) {
+      w.mAppToken.clearAllDrawn();
+    }
+ else {
+      w.mAppToken.deferClearAllDrawn=true;
+    }
+  }
+  mService.makeWindowFreezingScreenIfNeededLocked(w);
+  int flags=SurfaceControl.HIDDEN;
+  final WindowManager.LayoutParams attrs=w.mAttrs;
+  if (mService.isSecureLocked(w)) {
+    flags|=SurfaceControl.SECURE;
+  }
+  mTmpSize.set(w.mFrame.left + w.mXOffset,w.mFrame.top + w.mYOffset,0,0);
+  calculateSurfaceBounds(w,attrs);
+  final int width=mTmpSize.width();
+  final int height=mTmpSize.height();
+  if (DEBUG_VISIBILITY) {
+    Slog.v(TAG,"Creating surface in session " + mSession.mSurfaceSession + " window "+ this+ " w="+ width+ " h="+ height+ " x="+ mTmpSize.left+ " y="+ mTmpSize.top+ " format="+ attrs.format+ " flags="+ flags);
+  }
+  mLastSystemDecorRect.set(0,0,0,0);
+  mHasClipRect=false;
+  mClipRect.set(0,0,0,0);
+  mLastClipRect.set(0,0,0,0);
+  try {
+    final boolean isHwAccelerated=(attrs.flags & FLAG_HARDWARE_ACCELERATED) != 0;
+    final int format=isHwAccelerated ? PixelFormat.TRANSLUCENT : attrs.format;
+    if (!PixelFormat.formatHasAlpha(attrs.format) && attrs.surfaceInsets.left == 0 && attrs.surfaceInsets.top == 0 && attrs.surfaceInsets.right == 0 && attrs.surfaceInsets.bottom == 0 && !w.isDragResizing()) {
+      flags|=SurfaceControl.OPAQUE;
+    }
+    mSurfaceController=new WindowSurfaceController(mSession.mSurfaceSession,attrs.getTitle().toString(),width,height,format,flags,this);
+    w.setHasSurface(true);
+    if (SHOW_TRANSACTIONS || SHOW_SURFACE_ALLOC) {
+      Slog.i(TAG,"  CREATE SURFACE " + mSurfaceController + " IN SESSION "+ mSession.mSurfaceSession+ ": pid="+ mSession.mPid+ " format="+ attrs.format+ " flags=0x"+ Integer.toHexString(flags)+ " / "+ this);
+    }
+  }
+ catch (  OutOfResourcesException e) {
+    Slog.w(TAG,"OutOfResourcesException creating surface");
+    mService.reclaimSomeSurfaceMemoryLocked(this,"create",true);
+    mDrawState=NO_SURFACE;
+    return null;
+  }
+catch (  Exception e) {
+    Slog.e(TAG,"Exception creating surface",e);
+    mDrawState=NO_SURFACE;
+    return null;
+  }
+  if (WindowManagerService.localLOGV)   Slog.v(TAG,"Got surface: " + mSurfaceController + ", set left="+ w.mFrame.left+ " top="+ w.mFrame.top+ ", animLayer="+ mAnimLayer);
+  if (SHOW_LIGHT_TRANSACTIONS) {
+    Slog.i(TAG,">>> OPEN TRANSACTION createSurfaceLocked");
+    WindowManagerService.logSurface(w,"CREATE pos=(" + w.mFrame.left + ","+ w.mFrame.top+ ") ("+ width+ "x"+ height+ "), layer="+ mAnimLayer+ " HIDE",false);
+  }
+  final int layerStack=w.getDisplayContent().getDisplay().getLayerStack();
+  mSurfaceController.setPositionAndLayer(mTmpSize.left,mTmpSize.top,layerStack,mAnimLayer);
+  mLastHidden=true;
+  if (WindowManagerService.localLOGV)   Slog.v(TAG,"Created surface " + this);
+  return mSurfaceController;
 }

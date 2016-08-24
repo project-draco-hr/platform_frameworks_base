@@ -1,0 +1,28 @@
+{
+  JobStatus jobStatus=JobStatus.createFromJobInfo(job,uId,packageName,userId,tag);
+  try {
+    if (ActivityManagerNative.getDefault().getAppStartMode(uId,job.getService().getPackageName()) == ActivityManager.APP_START_MODE_DISABLED) {
+      Slog.w(TAG,"Not scheduling job " + uId + ":"+ job.toString()+ " -- package not allowed to start");
+      return JobScheduler.RESULT_FAILURE;
+    }
+  }
+ catch (  RemoteException e) {
+  }
+  if (DEBUG)   Slog.d(TAG,"SCHEDULE: " + jobStatus.toShortString());
+  JobStatus toCancel;
+synchronized (mLock) {
+    if (ENFORCE_MAX_JOBS && packageName == null) {
+      if (mJobs.countJobsForUid(uId) > MAX_JOBS_PER_APP) {
+        Slog.w(TAG,"Too many jobs for uid " + uId);
+        throw new IllegalStateException("Apps may not schedule more than " + MAX_JOBS_PER_APP + " distinct jobs");
+      }
+    }
+    toCancel=mJobs.getJobByUidAndJobId(uId,job.getId());
+    if (toCancel != null) {
+      cancelJobImpl(toCancel,jobStatus);
+    }
+    startTrackingJob(jobStatus,toCancel);
+  }
+  mHandler.obtainMessage(MSG_CHECK_JOB).sendToTarget();
+  return JobScheduler.RESULT_SUCCESS;
+}

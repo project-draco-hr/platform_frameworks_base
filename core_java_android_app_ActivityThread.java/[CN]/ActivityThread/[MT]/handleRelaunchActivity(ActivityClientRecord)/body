@@ -27,6 +27,12 @@ synchronized (mResourcesManager) {
       mPendingConfiguration=null;
     }
   }
+  if (tmp.lastProcessedSeq > tmp.relaunchSeq) {
+    Slog.wtf(TAG,"For some reason target: " + tmp + " has lower sequence: "+ tmp.relaunchSeq+ " than current sequence: "+ tmp.lastProcessedSeq);
+  }
+ else {
+    tmp.lastProcessedSeq=tmp.relaunchSeq;
+  }
   if (tmp.createdConfig != null) {
     if (mConfiguration == null || (tmp.createdConfig.isOtherSeqNewer(mConfiguration) && mConfiguration.diff(tmp.createdConfig) != 0)) {
       if (changedConfig == null || tmp.createdConfig.isOtherSeqNewer(changedConfig)) {
@@ -43,14 +49,33 @@ synchronized (mResourcesManager) {
   ActivityClientRecord r=mActivities.get(tmp.token);
   if (DEBUG_CONFIGURATION)   Slog.v(TAG,"Handling relaunch of " + r);
   if (r == null) {
+    if (!tmp.onlyLocalRequest) {
+      try {
+        ActivityManagerNative.getDefault().activityRelaunched(tmp.token);
+      }
+ catch (      RemoteException e) {
+        throw e.rethrowFromSystemServer();
+      }
+    }
     return;
   }
   r.activity.mConfigChangeFlags|=configChanges;
   r.onlyLocalRequest=tmp.onlyLocalRequest;
+  r.mPreserveWindow=tmp.mPreserveWindow;
+  r.lastProcessedSeq=tmp.lastProcessedSeq;
+  r.relaunchSeq=tmp.relaunchSeq;
   Intent currentIntent=r.activity.mIntent;
   r.activity.mChangingConfigurations=true;
+  try {
+    if (r.mPreserveWindow || r.onlyLocalRequest) {
+      WindowManagerGlobal.getWindowSession().prepareToReplaceWindows(r.token,!r.onlyLocalRequest);
+    }
+  }
+ catch (  RemoteException e) {
+    throw e.rethrowFromSystemServer();
+  }
   if (!r.paused) {
-    performPauseActivity(r.token,false,r.isPreHoneycomb());
+    performPauseActivity(r.token,false,r.isPreHoneycomb(),"handleRelaunchActivity");
   }
   if (r.state == null && !r.stopped && !r.isPreHoneycomb()) {
     callCallActivityOnSaveInstanceState(r);
@@ -78,5 +103,16 @@ synchronized (mResourcesManager) {
   }
   r.startsNotResumed=tmp.startsNotResumed;
   r.overrideConfig=tmp.overrideConfig;
-  handleLaunchActivity(r,currentIntent);
+  handleLaunchActivity(r,currentIntent,"handleRelaunchActivity");
+  if (!tmp.onlyLocalRequest) {
+    try {
+      ActivityManagerNative.getDefault().activityRelaunched(r.token);
+      if (r.window != null) {
+        r.window.reportActivityRelaunched();
+      }
+    }
+ catch (    RemoteException e) {
+      throw e.rethrowFromSystemServer();
+    }
+  }
 }

@@ -1,0 +1,68 @@
+{
+  if (mLightState == LIGHT_STATE_OVERRIDE) {
+    return;
+  }
+  if (DEBUG)   Slog.d(TAG,"stepLightIdleStateLocked: mLightState=" + mLightState);
+  EventLogTags.writeDeviceIdleLightStep();
+switch (mLightState) {
+case LIGHT_STATE_INACTIVE:
+    mCurIdleBudget=mConstants.LIGHT_IDLE_MAINTENANCE_MIN_BUDGET;
+  mNextLightIdleDelay=mConstants.LIGHT_IDLE_TIMEOUT;
+mMaintenanceStartTime=0;
+if (!isOpsInactiveLocked()) {
+mLightState=LIGHT_STATE_PRE_IDLE;
+EventLogTags.writeDeviceIdleLight(mLightState,reason);
+scheduleLightAlarmLocked(mConstants.LIGHT_PRE_IDLE_TIMEOUT);
+break;
+}
+case LIGHT_STATE_PRE_IDLE:
+case LIGHT_STATE_IDLE_MAINTENANCE:
+if (mMaintenanceStartTime != 0) {
+long duration=SystemClock.elapsedRealtime() - mMaintenanceStartTime;
+if (duration < mConstants.LIGHT_IDLE_MAINTENANCE_MIN_BUDGET) {
+mCurIdleBudget+=(mConstants.LIGHT_IDLE_MAINTENANCE_MIN_BUDGET - duration);
+}
+ else {
+mCurIdleBudget-=(duration - mConstants.LIGHT_IDLE_MAINTENANCE_MIN_BUDGET);
+}
+}
+mMaintenanceStartTime=0;
+scheduleLightAlarmLocked(mNextLightIdleDelay);
+mNextLightIdleDelay=Math.min(mConstants.LIGHT_MAX_IDLE_TIMEOUT,(long)(mNextLightIdleDelay * mConstants.LIGHT_IDLE_FACTOR));
+if (mNextLightIdleDelay < mConstants.LIGHT_IDLE_TIMEOUT) {
+mNextLightIdleDelay=mConstants.LIGHT_IDLE_TIMEOUT;
+}
+if (DEBUG) Slog.d(TAG,"Moved to LIGHT_STATE_IDLE.");
+mLightState=LIGHT_STATE_IDLE;
+EventLogTags.writeDeviceIdleLight(mLightState,reason);
+addEvent(EVENT_LIGHT_IDLE);
+mHandler.sendEmptyMessage(MSG_REPORT_IDLE_ON_LIGHT);
+break;
+case LIGHT_STATE_IDLE:
+case LIGHT_STATE_WAITING_FOR_NETWORK:
+if (mNetworkConnected || mLightState == LIGHT_STATE_WAITING_FOR_NETWORK) {
+mActiveIdleOpCount=1;
+mActiveIdleWakeLock.acquire();
+mMaintenanceStartTime=SystemClock.elapsedRealtime();
+if (mCurIdleBudget < mConstants.LIGHT_IDLE_MAINTENANCE_MIN_BUDGET) {
+mCurIdleBudget=mConstants.LIGHT_IDLE_MAINTENANCE_MIN_BUDGET;
+}
+ else if (mCurIdleBudget > mConstants.LIGHT_IDLE_MAINTENANCE_MAX_BUDGET) {
+mCurIdleBudget=mConstants.LIGHT_IDLE_MAINTENANCE_MAX_BUDGET;
+}
+scheduleLightAlarmLocked(mCurIdleBudget);
+if (DEBUG) Slog.d(TAG,"Moved from LIGHT_STATE_IDLE to LIGHT_STATE_IDLE_MAINTENANCE.");
+mLightState=LIGHT_STATE_IDLE_MAINTENANCE;
+EventLogTags.writeDeviceIdleLight(mLightState,reason);
+addEvent(EVENT_LIGHT_MAINTENANCE);
+mHandler.sendEmptyMessage(MSG_REPORT_IDLE_OFF);
+}
+ else {
+scheduleLightAlarmLocked(mNextLightIdleDelay);
+if (DEBUG) Slog.d(TAG,"Moved to LIGHT_WAITING_FOR_NETWORK.");
+mLightState=LIGHT_STATE_WAITING_FOR_NETWORK;
+EventLogTags.writeDeviceIdleLight(mLightState,reason);
+}
+break;
+}
+}

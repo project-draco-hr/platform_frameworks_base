@@ -1,123 +1,34 @@
 {
-  if (tryEnqueueMessageUntilReadyToRun(msg)) {
-    return;
-  }
-  long earliestFuturePollTime=Long.MAX_VALUE;
-  long nextPendingSyncTime=Long.MAX_VALUE;
   try {
-    mDataConnectionIsConnected=readDataConnectionState();
     mSyncManagerWakeLock.acquire();
-    earliestFuturePollTime=scheduleReadyPeriodicSyncs();
-switch (msg.what) {
-case SyncHandler.MESSAGE_ACCOUNTS_UPDATED:
+    if (msg.what == MESSAGE_JOBSERVICE_OBJECT) {
+      Slog.i(TAG,"Got SyncJobService instance.");
+      mSyncJobService=(SyncJobService)msg.obj;
+      mJobServiceReady=true;
+      checkIfDeviceReady();
+    }
+ else     if (msg.what == SyncHandler.MESSAGE_ACCOUNTS_UPDATED) {
       if (Log.isLoggable(TAG,Log.VERBOSE)) {
-        Log.v(TAG,"handleSyncHandlerMessage: MESSAGE_ACCOUNTS_UPDATED");
+        Slog.v(TAG,"handleSyncHandlerMessage: MESSAGE_ACCOUNTS_UPDATED");
       }
-    updateRunningAccountsH();
-  break;
-case SyncHandler.MESSAGE_CANCEL:
-SyncStorageEngine.EndPoint endpoint=(SyncStorageEngine.EndPoint)msg.obj;
-Bundle extras=msg.peekData();
-if (Log.isLoggable(TAG,Log.DEBUG)) {
-Log.d(TAG,"handleSyncHandlerMessage: MESSAGE_CANCEL: " + endpoint + " bundle: "+ extras);
-}
-cancelActiveSyncH(endpoint,extras);
-nextPendingSyncTime=maybeStartNextSyncH();
-break;
-case SyncHandler.MESSAGE_SYNC_FINISHED:
-if (Log.isLoggable(TAG,Log.VERBOSE)) {
-Log.v(TAG,"handleSyncHandlerMessage: MESSAGE_SYNC_FINISHED");
-}
-SyncHandlerMessagePayload payload=(SyncHandlerMessagePayload)msg.obj;
-if (!isSyncStillActiveH(payload.activeSyncContext)) {
-Log.d(TAG,"handleSyncHandlerMessage: dropping since the " + "sync is no longer active: " + payload.activeSyncContext);
-break;
-}
-runSyncFinishedOrCanceledH(payload.syncResult,payload.activeSyncContext);
-nextPendingSyncTime=maybeStartNextSyncH();
-break;
-case SyncHandler.MESSAGE_SERVICE_CONNECTED:
-{
-ServiceConnectionData msgData=(ServiceConnectionData)msg.obj;
-if (Log.isLoggable(TAG,Log.VERBOSE)) {
-Log.d(TAG,"handleSyncHandlerMessage: MESSAGE_SERVICE_CONNECTED: " + msgData.activeSyncContext);
-}
-if (isSyncStillActiveH(msgData.activeSyncContext)) {
-runBoundToAdapter(msgData.activeSyncContext,msgData.adapter);
-}
-break;
-}
-case SyncHandler.MESSAGE_SERVICE_DISCONNECTED:
-{
-final ActiveSyncContext currentSyncContext=((ServiceConnectionData)msg.obj).activeSyncContext;
-if (Log.isLoggable(TAG,Log.VERBOSE)) {
-Log.d(TAG,"handleSyncHandlerMessage: MESSAGE_SERVICE_DISCONNECTED: " + currentSyncContext);
-}
-if (isSyncStillActiveH(currentSyncContext)) {
-try {
-if (currentSyncContext.mSyncAdapter != null) {
-currentSyncContext.mSyncAdapter.cancelSync(currentSyncContext);
-}
- else if (currentSyncContext.mSyncServiceAdapter != null) {
-currentSyncContext.mSyncServiceAdapter.cancelSync(currentSyncContext);
-}
-}
- catch (RemoteException e) {
-}
-SyncResult syncResult=new SyncResult();
-syncResult.stats.numIoExceptions++;
-runSyncFinishedOrCanceledH(syncResult,currentSyncContext);
-nextPendingSyncTime=maybeStartNextSyncH();
-}
-break;
-}
-case SyncHandler.MESSAGE_SYNC_ALARM:
-{
-boolean isLoggable=Log.isLoggable(TAG,Log.VERBOSE);
-if (isLoggable) {
-Log.v(TAG,"handleSyncHandlerMessage: MESSAGE_SYNC_ALARM");
-}
-mAlarmScheduleTime=null;
-try {
-nextPendingSyncTime=maybeStartNextSyncH();
-}
-  finally {
-mHandleAlarmWakeLock.release();
-}
-break;
-}
-case SyncHandler.MESSAGE_CHECK_ALARMS:
-if (Log.isLoggable(TAG,Log.VERBOSE)) {
-Log.v(TAG,"handleSyncHandlerMessage: MESSAGE_CHECK_ALARMS");
-}
-nextPendingSyncTime=maybeStartNextSyncH();
-break;
-case SyncHandler.MESSAGE_SYNC_EXPIRED:
-ActiveSyncContext expiredContext=(ActiveSyncContext)msg.obj;
-if (Log.isLoggable(TAG,Log.DEBUG)) {
-Log.d(TAG,"handleSyncHandlerMessage: MESSAGE_SYNC_EXPIRED:" + " cancelling " + expiredContext);
-}
-runSyncFinishedOrCanceledH(null,expiredContext);
-nextPendingSyncTime=maybeStartNextSyncH();
-break;
-case SyncHandler.MESSAGE_MONITOR_SYNC:
-ActiveSyncContext monitoredSyncContext=(ActiveSyncContext)msg.obj;
-if (Log.isLoggable(TAG,Log.DEBUG)) {
-Log.d(TAG,"handleSyncHandlerMessage: MESSAGE_MONITOR_SYNC: " + monitoredSyncContext.mSyncOperation.target);
-}
-if (isSyncNotUsingNetworkH(monitoredSyncContext)) {
-Log.w(TAG,String.format("Detected sync making no progress for %s. cancelling.",monitoredSyncContext));
-runSyncFinishedOrCanceledH(null,monitoredSyncContext);
-}
+      EndPoint targets=(EndPoint)msg.obj;
+      updateRunningAccountsH(targets);
+    }
+ else     if (msg.what == MESSAGE_RELEASE_MESSAGES_FROM_QUEUE) {
+      if (mUnreadyQueue != null) {
+        for (        Message m : mUnreadyQueue) {
+          handleSyncMessage(m);
+        }
+        mUnreadyQueue=null;
+      }
+    }
+ else     if (tryEnqueueMessageUntilReadyToRun(msg)) {
+    }
  else {
-postMonitorSyncProgressMessage(monitoredSyncContext);
-}
-break;
-}
-}
+      handleSyncMessage(msg);
+    }
+  }
   finally {
-manageSyncAlarmLocked(earliestFuturePollTime,nextPendingSyncTime);
-mSyncTimeTracker.update();
-mSyncManagerWakeLock.release();
-}
+    mSyncManagerWakeLock.release();
+  }
 }

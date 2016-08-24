@@ -1,0 +1,148 @@
+{
+  PackageSetting ps=null;
+  PackageSetting updatedPkg;
+synchronized (mPackages) {
+    String oldName=mSettings.mRenamedPackages.get(pkg.packageName);
+    if (pkg.mOriginalPackages != null && pkg.mOriginalPackages.contains(oldName)) {
+      ps=mSettings.peekPackageLPr(oldName);
+    }
+    if (ps == null) {
+      ps=mSettings.peekPackageLPr(pkg.packageName);
+    }
+    updatedPkg=mSettings.getDisabledSystemPkgLPr(ps != null ? ps.name : pkg.packageName);
+    if (DEBUG_INSTALL && updatedPkg != null)     Slog.d(TAG,"updatedPkg = " + updatedPkg);
+    if ((policyFlags & PackageParser.PARSE_IS_SYSTEM) != 0) {
+      PackageSetting disabledPs=mSettings.getDisabledSystemPkgLPr(pkg.packageName);
+      if (disabledPs != null) {
+        final int scannedChildCount=(pkg.childPackages != null) ? pkg.childPackages.size() : 0;
+        final int disabledChildCount=disabledPs.childPackageNames != null ? disabledPs.childPackageNames.size() : 0;
+        for (int i=0; i < disabledChildCount; i++) {
+          String disabledChildPackageName=disabledPs.childPackageNames.get(i);
+          boolean disabledPackageAvailable=false;
+          for (int j=0; j < scannedChildCount; j++) {
+            PackageParser.Package childPkg=pkg.childPackages.get(j);
+            if (childPkg.packageName.equals(disabledChildPackageName)) {
+              disabledPackageAvailable=true;
+              break;
+            }
+          }
+          if (!disabledPackageAvailable) {
+            mSettings.removeDisabledSystemPackageLPw(disabledChildPackageName);
+          }
+        }
+      }
+    }
+  }
+  boolean updatedPkgBetter=false;
+  if (updatedPkg != null && (policyFlags & PackageParser.PARSE_IS_SYSTEM) != 0) {
+    if (locationIsPrivileged(scanFile)) {
+      updatedPkg.pkgPrivateFlags|=ApplicationInfo.PRIVATE_FLAG_PRIVILEGED;
+    }
+ else {
+      updatedPkg.pkgPrivateFlags&=~ApplicationInfo.PRIVATE_FLAG_PRIVILEGED;
+    }
+    if (ps != null && !ps.codePath.equals(scanFile)) {
+      if (DEBUG_INSTALL)       Slog.d(TAG,"Path changing from " + ps.codePath);
+      if (pkg.mVersionCode <= ps.versionCode) {
+        if (DEBUG_INSTALL)         Slog.i(TAG,"Package " + ps.name + " at "+ scanFile+ " ignored: updated version "+ ps.versionCode+ " better than this "+ pkg.mVersionCode);
+        if (!updatedPkg.codePath.equals(scanFile)) {
+          Slog.w(PackageManagerService.TAG,"Code path for hidden system pkg " + ps.name + " changing from "+ updatedPkg.codePathString+ " to "+ scanFile);
+          updatedPkg.codePath=scanFile;
+          updatedPkg.codePathString=scanFile.toString();
+          updatedPkg.resourcePath=scanFile;
+          updatedPkg.resourcePathString=scanFile.toString();
+        }
+        updatedPkg.pkg=pkg;
+        updatedPkg.versionCode=pkg.mVersionCode;
+        final int childCount=updatedPkg.childPackageNames != null ? updatedPkg.childPackageNames.size() : 0;
+        for (int i=0; i < childCount; i++) {
+          String childPackageName=updatedPkg.childPackageNames.get(i);
+          PackageSetting updatedChildPkg=mSettings.getDisabledSystemPkgLPr(childPackageName);
+          if (updatedChildPkg != null) {
+            updatedChildPkg.pkg=pkg;
+            updatedChildPkg.versionCode=pkg.mVersionCode;
+          }
+        }
+        throw new PackageManagerException(Log.WARN,"Package " + ps.name + " at "+ scanFile+ " ignored: updated version "+ ps.versionCode+ " better than this "+ pkg.mVersionCode);
+      }
+ else {
+synchronized (mPackages) {
+          mPackages.remove(ps.name);
+        }
+        logCriticalInfo(Log.WARN,"Package " + ps.name + " at "+ scanFile+ " reverting from "+ ps.codePathString+ ": new version "+ pkg.mVersionCode+ " better than installed "+ ps.versionCode);
+        InstallArgs args=createInstallArgsForExisting(packageFlagsToInstallFlags(ps),ps.codePathString,ps.resourcePathString,getAppDexInstructionSets(ps));
+synchronized (mInstallLock) {
+          args.cleanUpResourcesLI();
+        }
+synchronized (mPackages) {
+          mSettings.enableSystemPackageLPw(ps.name);
+        }
+        updatedPkgBetter=true;
+      }
+    }
+  }
+  if (updatedPkg != null) {
+    policyFlags|=PackageParser.PARSE_IS_SYSTEM;
+    if ((updatedPkg.pkgPrivateFlags & ApplicationInfo.PRIVATE_FLAG_PRIVILEGED) != 0) {
+      policyFlags|=PackageParser.PARSE_IS_PRIVILEGED;
+    }
+  }
+  collectCertificatesLI(ps,pkg,scanFile,policyFlags);
+  boolean shouldHideSystemApp=false;
+  if (updatedPkg == null && ps != null && (policyFlags & PackageParser.PARSE_IS_SYSTEM_DIR) != 0 && !isSystemApp(ps)) {
+    if (compareSignatures(ps.signatures.mSignatures,pkg.mSignatures) != PackageManager.SIGNATURE_MATCH) {
+      logCriticalInfo(Log.WARN,"Package " + ps.name + " appeared on system, but"+ " signatures don't match existing userdata copy; removing");
+      try (PackageFreezer freezer=freezePackage(pkg.packageName,"scanPackageInternalLI")){
+        deletePackageLIF(pkg.packageName,null,true,null,0,null,false,null);
+      }
+       ps=null;
+    }
+ else {
+      if (pkg.mVersionCode <= ps.versionCode) {
+        shouldHideSystemApp=true;
+        logCriticalInfo(Log.INFO,"Package " + ps.name + " appeared at "+ scanFile+ " but new version "+ pkg.mVersionCode+ " better than installed "+ ps.versionCode+ "; hiding system");
+      }
+ else {
+        logCriticalInfo(Log.WARN,"Package " + ps.name + " at "+ scanFile+ " reverting from "+ ps.codePathString+ ": new version "+ pkg.mVersionCode+ " better than installed "+ ps.versionCode);
+        InstallArgs args=createInstallArgsForExisting(packageFlagsToInstallFlags(ps),ps.codePathString,ps.resourcePathString,getAppDexInstructionSets(ps));
+synchronized (mInstallLock) {
+          args.cleanUpResourcesLI();
+        }
+      }
+    }
+  }
+  if ((policyFlags & PackageParser.PARSE_IS_SYSTEM_DIR) == 0) {
+    if (ps != null && !ps.codePath.equals(ps.resourcePath)) {
+      policyFlags|=PackageParser.PARSE_FORWARD_LOCK;
+    }
+  }
+  String resourcePath=null;
+  String baseResourcePath=null;
+  if ((policyFlags & PackageParser.PARSE_FORWARD_LOCK) != 0 && !updatedPkgBetter) {
+    if (ps != null && ps.resourcePathString != null) {
+      resourcePath=ps.resourcePathString;
+      baseResourcePath=ps.resourcePathString;
+    }
+ else {
+      Slog.e(TAG,"Resource path not set for package " + pkg.packageName);
+    }
+  }
+ else {
+    resourcePath=pkg.codePath;
+    baseResourcePath=pkg.baseCodePath;
+  }
+  pkg.setApplicationVolumeUuid(pkg.volumeUuid);
+  pkg.setApplicationInfoCodePath(pkg.codePath);
+  pkg.setApplicationInfoBaseCodePath(pkg.baseCodePath);
+  pkg.setApplicationInfoSplitCodePaths(pkg.splitCodePaths);
+  pkg.setApplicationInfoResourcePath(resourcePath);
+  pkg.setApplicationInfoBaseResourcePath(baseResourcePath);
+  pkg.setApplicationInfoSplitResourcePaths(pkg.splitCodePaths);
+  PackageParser.Package scannedPkg=scanPackageLI(pkg,policyFlags,scanFlags | SCAN_UPDATE_SIGNATURE,currentTime,user);
+  if (shouldHideSystemApp) {
+synchronized (mPackages) {
+      mSettings.disableSystemPackageLPw(pkg.packageName,true);
+    }
+  }
+  return scannedPkg;
+}

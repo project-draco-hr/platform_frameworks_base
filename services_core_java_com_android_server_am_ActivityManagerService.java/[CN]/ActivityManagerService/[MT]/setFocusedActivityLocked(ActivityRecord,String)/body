@@ -1,46 +1,59 @@
 {
-  if (r != null && mFocusedActivity != r) {
-    if (DEBUG_FOCUS)     Slog.d(TAG_FOCUS,"setFocusedActivityLocked: r=" + r);
-    ActivityRecord last=mFocusedActivity;
-    mFocusedActivity=r;
-    if (r.task.taskType != ActivityRecord.HOME_ACTIVITY_TYPE && r.task.taskType != ActivityRecord.RECENTS_ACTIVITY_TYPE) {
-      if (mCurAppTimeTracker != r.appTimeTracker) {
-        if (mCurAppTimeTracker != null) {
-          mCurAppTimeTracker.stop();
-          mHandler.obtainMessage(REPORT_TIME_TRACKER_MSG,mCurAppTimeTracker).sendToTarget();
-          mStackSupervisor.clearOtherAppTimeTrackers(r.appTimeTracker);
-          mCurAppTimeTracker=null;
-        }
-        if (r.appTimeTracker != null) {
-          mCurAppTimeTracker=r.appTimeTracker;
-          startTimeTrackingFocusedActivityLocked();
-        }
+  if (r == null || mFocusedActivity == r) {
+    return false;
+  }
+  if (!r.isFocusable()) {
+    if (DEBUG_FOCUS)     Slog.d(TAG_FOCUS,"setFocusedActivityLocked: unfocusable r=" + r);
+    return false;
+  }
+  if (DEBUG_FOCUS)   Slog.d(TAG_FOCUS,"setFocusedActivityLocked: r=" + r);
+  final boolean wasDoingSetFocusedActivity=mDoingSetFocusedActivity;
+  if (wasDoingSetFocusedActivity)   Slog.w(TAG,"setFocusedActivityLocked: called recursively, r=" + r + ", reason="+ reason);
+  mDoingSetFocusedActivity=true;
+  final ActivityRecord last=mFocusedActivity;
+  mFocusedActivity=r;
+  if (r.task.isApplicationTask()) {
+    if (mCurAppTimeTracker != r.appTimeTracker) {
+      if (mCurAppTimeTracker != null) {
+        mCurAppTimeTracker.stop();
+        mHandler.obtainMessage(REPORT_TIME_TRACKER_MSG,mCurAppTimeTracker).sendToTarget();
+        mStackSupervisor.clearOtherAppTimeTrackers(r.appTimeTracker);
+        mCurAppTimeTracker=null;
       }
- else {
+      if (r.appTimeTracker != null) {
+        mCurAppTimeTracker=r.appTimeTracker;
         startTimeTrackingFocusedActivityLocked();
       }
     }
  else {
-      r.appTimeTracker=null;
-    }
-    if (r.task != null && r.task.voiceInteractor != null) {
-      startRunningVoiceLocked(r.task.voiceSession,r.info.applicationInfo.uid);
-    }
- else {
-      finishRunningVoiceLocked();
-      if (last != null && last.task.voiceSession != null) {
-        finishVoiceTask(last.task.voiceSession);
-      }
-    }
-    if (mStackSupervisor.setFocusedStack(r,reason + " setFocusedActivity")) {
-      mWindowManager.setFocusedApp(r.appToken,true);
-    }
-    applyUpdateLockStateLocked(r);
-    if (mFocusedActivity.userId != mLastFocusedUserId) {
-      mHandler.removeMessages(FOREGROUND_PROFILE_CHANGED_MSG);
-      mHandler.sendMessage(mHandler.obtainMessage(FOREGROUND_PROFILE_CHANGED_MSG,mFocusedActivity.userId,0));
-      mLastFocusedUserId=mFocusedActivity.userId;
+      startTimeTrackingFocusedActivityLocked();
     }
   }
-  EventLog.writeEvent(EventLogTags.AM_FOCUSED_ACTIVITY,mFocusedActivity == null ? -1 : mFocusedActivity.userId,mFocusedActivity == null ? "NULL" : mFocusedActivity.shortComponentName);
+ else {
+    r.appTimeTracker=null;
+  }
+  if (r.task.voiceInteractor != null) {
+    startRunningVoiceLocked(r.task.voiceSession,r.info.applicationInfo.uid);
+  }
+ else {
+    finishRunningVoiceLocked();
+    IVoiceInteractionSession session;
+    if (last != null && ((session=last.task.voiceSession) != null || (session=last.voiceSession) != null)) {
+      finishVoiceTask(session);
+    }
+  }
+  if (mStackSupervisor.moveActivityStackToFront(r,reason + " setFocusedActivity")) {
+    mWindowManager.setFocusedApp(r.appToken,true);
+  }
+  applyUpdateLockStateLocked(r);
+  applyUpdateVrModeLocked(r);
+  if (mFocusedActivity.userId != mLastFocusedUserId) {
+    mHandler.removeMessages(FOREGROUND_PROFILE_CHANGED_MSG);
+    mHandler.obtainMessage(FOREGROUND_PROFILE_CHANGED_MSG,mFocusedActivity.userId,0).sendToTarget();
+    mLastFocusedUserId=mFocusedActivity.userId;
+  }
+  if (mFocusedActivity != r)   Slog.w(TAG,"setFocusedActivityLocked: r=" + r + " but focused to "+ mFocusedActivity);
+  mDoingSetFocusedActivity=wasDoingSetFocusedActivity;
+  EventLogTags.writeAmFocusedActivity(mFocusedActivity == null ? -1 : mFocusedActivity.userId,mFocusedActivity == null ? "NULL" : mFocusedActivity.shortComponentName,reason);
+  return true;
 }

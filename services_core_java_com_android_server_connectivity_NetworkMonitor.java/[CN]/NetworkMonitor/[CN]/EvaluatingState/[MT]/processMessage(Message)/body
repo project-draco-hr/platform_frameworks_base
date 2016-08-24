@@ -3,21 +3,24 @@ switch (message.what) {
 case CMD_REEVALUATE:
     if (message.arg1 != mReevaluateToken || mUserDoesNotWant)     return HANDLED;
   if (!mDefaultRequest.networkCapabilities.satisfiedByNetworkCapabilities(mNetworkAgentInfo.networkCapabilities)) {
+    validationLog("Network would not satisfy default request, not validating");
     transitionTo(mValidatedState);
     return HANDLED;
   }
 mAttempts++;
-int httpResponseCode=isCaptivePortal();
-if (httpResponseCode == 204) {
+CaptivePortalProbeResult probeResult=isCaptivePortal();
+if (probeResult.isSuccessful()) {
 transitionTo(mValidatedState);
 }
- else if (httpResponseCode >= 200 && httpResponseCode <= 399) {
+ else if (probeResult.isPortal()) {
+mConnectivityServiceHandler.sendMessage(obtainMessage(EVENT_NETWORK_TESTED,NETWORK_TEST_RESULT_INVALID,mNetId,probeResult.mRedirectUrl));
 transitionTo(mCaptivePortalState);
 }
  else {
 final Message msg=obtainMessage(CMD_REEVALUATE,++mReevaluateToken,0);
 sendMessageDelayed(msg,mReevaluateDelayMs);
-mConnectivityServiceHandler.sendMessage(obtainMessage(EVENT_NETWORK_TESTED,NETWORK_TEST_RESULT_INVALID,0,mNetworkAgentInfo));
+NetworkEvent.logEvent(mNetId,NetworkEvent.NETWORK_VALIDATION_FAILED);
+mConnectivityServiceHandler.sendMessage(obtainMessage(EVENT_NETWORK_TESTED,NETWORK_TEST_RESULT_INVALID,mNetId,probeResult.mRedirectUrl));
 if (mAttempts >= BLAME_FOR_EVALUATION_ATTEMPTS) {
 TrafficStats.clearThreadStatsUid();
 }
@@ -28,7 +31,7 @@ mReevaluateDelayMs=MAX_REEVALUATE_DELAY_MS;
 }
 return HANDLED;
 case CMD_FORCE_REEVALUATION:
-return mAttempts < IGNORE_REEVALUATE_ATTEMPTS ? HANDLED : NOT_HANDLED;
+return (mAttempts < IGNORE_REEVALUATE_ATTEMPTS) ? HANDLED : NOT_HANDLED;
 default :
 return NOT_HANDLED;
 }

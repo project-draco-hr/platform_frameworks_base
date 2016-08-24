@@ -1,8 +1,9 @@
 {
   Intent intent=null;
   Intent affinityIntent=null;
-  ArrayList<ActivityRecord> activities=new ArrayList<ActivityRecord>();
+  ArrayList<ActivityRecord> activities=new ArrayList<>();
   ComponentName realActivity=null;
+  boolean realActivitySuspended=false;
   ComponentName origActivity=null;
   String affinity=null;
   String rootAffinity=null;
@@ -12,6 +13,7 @@
   boolean askedCompatMode=false;
   int taskType=ActivityRecord.APPLICATION_ACTIVITY_TYPE;
   int userId=0;
+  boolean userSetupComplete=true;
   int effectiveUid=-1;
   String lastDescription=null;
   long firstActiveTime=-1;
@@ -21,14 +23,18 @@
   int taskId=INVALID_TASK_ID;
   final int outerDepth=in.getDepth();
   TaskDescription taskDescription=new TaskDescription();
+  TaskThumbnailInfo thumbnailInfo=new TaskThumbnailInfo();
   int taskAffiliation=INVALID_TASK_ID;
   int taskAffiliationColor=0;
   int prevTaskId=INVALID_TASK_ID;
   int nextTaskId=INVALID_TASK_ID;
   int callingUid=-1;
   String callingPackage="";
-  boolean resizeable=false;
+  int resizeMode=RESIZE_MODE_FORCE_RESIZEABLE;
   boolean privileged=false;
+  Rect bounds=null;
+  int minWidth=INVALID_MIN_SIZE;
+  int minHeight=INVALID_MIN_SIZE;
   for (int attrNdx=in.getAttributeCount() - 1; attrNdx >= 0; --attrNdx) {
     final String attrName=in.getAttributeName(attrNdx);
     final String attrValue=in.getAttributeValue(attrNdx);
@@ -38,6 +44,9 @@
     }
  else     if (ATTR_REALACTIVITY.equals(attrName)) {
       realActivity=ComponentName.unflattenFromString(attrValue);
+    }
+ else     if (ATTR_REALACTIVITY_SUSPENDED.equals(attrName)) {
+      realActivitySuspended=Boolean.valueOf(attrValue);
     }
  else     if (ATTR_ORIGACTIVITY.equals(attrName)) {
       origActivity=ComponentName.unflattenFromString(attrValue);
@@ -61,6 +70,9 @@
  else     if (ATTR_USERID.equals(attrName)) {
       userId=Integer.parseInt(attrValue);
     }
+ else     if (ATTR_USER_SETUP_COMPLETE.equals(attrName)) {
+      userSetupComplete=Boolean.parseBoolean(attrValue);
+    }
  else     if (ATTR_EFFECTIVE_UID.equals(attrName)) {
       effectiveUid=Integer.parseInt(attrValue);
     }
@@ -81,6 +93,9 @@
     }
  else     if (ATTR_NEVERRELINQUISH.equals(attrName)) {
       neverRelinquishIdentity=Boolean.parseBoolean(attrValue);
+    }
+ else     if (attrName.startsWith(TaskThumbnailInfo.ATTR_TASK_THUMBNAILINFO_PREFIX)) {
+      thumbnailInfo.restoreFromXml(attrName,attrValue);
     }
  else     if (attrName.startsWith(TaskDescription.ATTR_TASKDESCRIPTION_PREFIX)) {
       taskDescription.restoreFromXml(attrName,attrValue);
@@ -103,18 +118,28 @@
  else     if (ATTR_CALLING_PACKAGE.equals(attrName)) {
       callingPackage=attrValue;
     }
- else     if (ATTR_RESIZEABLE.equals(attrName)) {
-      resizeable=Boolean.parseBoolean(attrValue);
+ else     if (ATTR_RESIZE_MODE.equals(attrName)) {
+      resizeMode=Integer.parseInt(attrValue);
+      resizeMode=(resizeMode == RESIZE_MODE_CROP_WINDOWS) ? RESIZE_MODE_FORCE_RESIZEABLE : resizeMode;
     }
  else     if (ATTR_PRIVILEGED.equals(attrName)) {
       privileged=Boolean.parseBoolean(attrValue);
+    }
+ else     if (ATTR_NON_FULLSCREEN_BOUNDS.equals(attrName)) {
+      bounds=Rect.unflattenFromString(attrValue);
+    }
+ else     if (ATTR_MIN_WIDTH.equals(attrName)) {
+      minWidth=Integer.parseInt(attrValue);
+    }
+ else     if (ATTR_MIN_HEIGHT.equals(attrName)) {
+      minHeight=Integer.parseInt(attrValue);
     }
  else {
       Slog.w(TAG,"TaskRecord: Unknown attribute=" + attrName);
     }
   }
   int event;
-  while (((event=in.next()) != XmlPullParser.END_DOCUMENT) && (event != XmlPullParser.END_TAG || in.getDepth() < outerDepth)) {
+  while (((event=in.next()) != XmlPullParser.END_DOCUMENT) && (event != XmlPullParser.END_TAG || in.getDepth() >= outerDepth)) {
     if (event == XmlPullParser.START_TAG) {
       final String name=in.getName();
       if (TaskPersister.DEBUG)       Slog.d(TaskPersister.TAG,"TaskRecord: START_TAG name=" + name);
@@ -159,7 +184,8 @@
     }
     Slog.w(TAG,"Updating task #" + taskId + " for "+ checkIntent+ ": effectiveUid="+ effectiveUid);
   }
-  final TaskRecord task=new TaskRecord(stackSupervisor.mService,taskId,intent,affinityIntent,affinity,rootAffinity,realActivity,origActivity,rootHasReset,autoRemoveRecents,askedCompatMode,taskType,userId,effectiveUid,lastDescription,activities,firstActiveTime,lastActiveTime,lastTimeOnTop,neverRelinquishIdentity,taskDescription,taskAffiliation,prevTaskId,nextTaskId,taskAffiliationColor,callingUid,callingPackage,resizeable,privileged);
+  final TaskRecord task=new TaskRecord(stackSupervisor.mService,taskId,intent,affinityIntent,affinity,rootAffinity,realActivity,origActivity,rootHasReset,autoRemoveRecents,askedCompatMode,taskType,userId,effectiveUid,lastDescription,activities,firstActiveTime,lastActiveTime,lastTimeOnTop,neverRelinquishIdentity,taskDescription,thumbnailInfo,taskAffiliation,prevTaskId,nextTaskId,taskAffiliationColor,callingUid,callingPackage,resizeMode,privileged,realActivitySuspended,userSetupComplete,minWidth,minHeight);
+  task.updateOverrideConfiguration(bounds);
   for (int activityNdx=activities.size() - 1; activityNdx >= 0; --activityNdx) {
     activities.get(activityNdx).task=task;
   }

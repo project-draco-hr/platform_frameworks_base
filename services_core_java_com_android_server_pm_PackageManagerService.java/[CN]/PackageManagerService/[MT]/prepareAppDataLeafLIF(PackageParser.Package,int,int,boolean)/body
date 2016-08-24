@@ -1,0 +1,52 @@
+{
+  if (DEBUG_APP_DATA) {
+    Slog.v(TAG,"prepareAppData for " + pkg.packageName + " u"+ userId+ " 0x"+ Integer.toHexString(flags)+ (restoreconNeeded ? " restoreconNeeded" : ""));
+  }
+  final String volumeUuid=pkg.volumeUuid;
+  final String packageName=pkg.packageName;
+  final ApplicationInfo app=pkg.applicationInfo;
+  final int appId=UserHandle.getAppId(app.uid);
+  Preconditions.checkNotNull(app.seinfo);
+  try {
+    mInstaller.createAppData(volumeUuid,packageName,userId,flags,appId,app.seinfo,app.targetSdkVersion);
+  }
+ catch (  InstallerException e) {
+    if (app.isSystemApp()) {
+      logCriticalInfo(Log.ERROR,"Failed to create app data for " + packageName + ", but trying to recover: "+ e);
+      destroyAppDataLeafLIF(pkg,userId,flags);
+      try {
+        mInstaller.createAppData(volumeUuid,packageName,userId,flags,appId,app.seinfo,app.targetSdkVersion);
+        logCriticalInfo(Log.DEBUG,"Recovery succeeded!");
+      }
+ catch (      InstallerException e2) {
+        logCriticalInfo(Log.DEBUG,"Recovery failed!");
+      }
+    }
+ else {
+      Slog.e(TAG,"Failed to create app data for " + packageName + ": "+ e);
+    }
+  }
+  if (restoreconNeeded) {
+    try {
+      mInstaller.restoreconAppData(volumeUuid,packageName,userId,flags,appId,app.seinfo);
+    }
+ catch (    InstallerException e) {
+      Slog.e(TAG,"Failed to restorecon for " + packageName + ": "+ e);
+    }
+  }
+  if ((flags & StorageManager.FLAG_STORAGE_CE) != 0) {
+    try {
+      final long ceDataInode=mInstaller.getAppDataInode(volumeUuid,packageName,userId,StorageManager.FLAG_STORAGE_CE);
+synchronized (mPackages) {
+        final PackageSetting ps=mSettings.mPackages.get(packageName);
+        if (ps != null) {
+          ps.setCeDataInode(ceDataInode,userId);
+        }
+      }
+    }
+ catch (    InstallerException e) {
+      Slog.e(TAG,"Failed to find inode for " + packageName + ": "+ e);
+    }
+  }
+  prepareAppDataContentsLeafLIF(pkg,userId,flags);
+}

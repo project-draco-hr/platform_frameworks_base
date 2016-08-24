@@ -1,8 +1,8 @@
 {
   pullPendingStateUpdatesLocked();
   long startClockTime=getStartClockTime();
-  final long NOW_SYS=SystemClock.uptimeMillis() * 1000;
-  final long NOWREAL_SYS=SystemClock.elapsedRealtime() * 1000;
+  final long NOW_SYS=mClocks.uptimeMillis() * 1000;
+  final long NOWREAL_SYS=mClocks.elapsedRealtime() * 1000;
   out.writeInt(VERSION);
   writeHistory(out,inclHistory,true);
   out.writeInt(mStartCount);
@@ -17,6 +17,7 @@
   out.writeInt(mDischargePlugLevel);
   out.writeInt(mDischargeCurrentLevel);
   out.writeInt(mCurrentBatteryLevel);
+  out.writeInt(mEstimatedBatteryCapacity);
   out.writeInt(getLowDischargeAmountSinceCharge());
   out.writeInt(getHighDischargeAmountSinceCharge());
   out.writeInt(getDischargeAmountScreenOnSinceCharge());
@@ -25,6 +26,8 @@
   mChargeStepTracker.writeToParcel(out);
   mDailyDischargeStepTracker.writeToParcel(out);
   mDailyChargeStepTracker.writeToParcel(out);
+  mDischargeCounter.writeSummaryFromParcelLocked(out);
+  mDischargeScreenOffCounter.writeSummaryFromParcelLocked(out);
   if (mDailyPackageChanges != null) {
     final int NPKG=mDailyPackageChanges.size();
     out.writeInt(NPKG);
@@ -47,7 +50,11 @@
   }
   mInteractiveTimer.writeSummaryFromParcelLocked(out,NOWREAL_SYS);
   mPowerSaveModeEnabledTimer.writeSummaryFromParcelLocked(out,NOWREAL_SYS);
-  mDeviceIdleModeEnabledTimer.writeSummaryFromParcelLocked(out,NOWREAL_SYS);
+  out.writeLong(mLongestLightIdleTime);
+  out.writeLong(mLongestFullIdleTime);
+  mDeviceIdleModeLightTimer.writeSummaryFromParcelLocked(out,NOWREAL_SYS);
+  mDeviceIdleModeFullTimer.writeSummaryFromParcelLocked(out,NOWREAL_SYS);
+  mDeviceLightIdlingTimer.writeSummaryFromParcelLocked(out,NOWREAL_SYS);
   mDeviceIdlingTimer.writeSummaryFromParcelLocked(out,NOWREAL_SYS);
   mPhoneOnTimer.writeSummaryFromParcelLocked(out,NOWREAL_SYS);
   for (int i=0; i < SignalStrength.NUM_SIGNAL_STRENGTH_BINS; i++) {
@@ -77,15 +84,16 @@
   for (int i=0; i < NUM_WIFI_SIGNAL_STRENGTH_BINS; i++) {
     mWifiSignalStrengthsTimer[i].writeSummaryFromParcelLocked(out,NOWREAL_SYS);
   }
-  for (int i=0; i < NUM_CONTROLLER_ACTIVITY_TYPES; i++) {
-    mBluetoothActivityCounters[i].writeSummaryFromParcelLocked(out);
-  }
-  for (int i=0; i < NUM_CONTROLLER_ACTIVITY_TYPES; i++) {
-    mWifiActivityCounters[i].writeSummaryFromParcelLocked(out);
-  }
+  mWifiActivity.writeSummaryToParcel(out);
+  mBluetoothActivity.writeSummaryToParcel(out);
+  mModemActivity.writeSummaryToParcel(out);
+  out.writeInt(mHasWifiReporting ? 1 : 0);
+  out.writeInt(mHasBluetoothReporting ? 1 : 0);
+  out.writeInt(mHasModemReporting ? 1 : 0);
   out.writeInt(mNumConnectivityChange);
   mFlashlightOnTimer.writeSummaryFromParcelLocked(out,NOWREAL_SYS);
   mCameraOnTimer.writeSummaryFromParcelLocked(out,NOWREAL_SYS);
+  mBluetoothScanTimer.writeSummaryFromParcelLocked(out,NOWREAL_SYS);
   out.writeInt(mKernelWakelockStats.size());
   for (  Map.Entry<String,SamplingTimer> ent : mKernelWakelockStats.entrySet()) {
     Timer kwlt=ent.getValue();
@@ -183,6 +191,13 @@
     if (u.mForegroundActivityTimer != null) {
       out.writeInt(1);
       u.mForegroundActivityTimer.writeSummaryFromParcelLocked(out,NOWREAL_SYS);
+    }
+ else {
+      out.writeInt(0);
+    }
+    if (u.mBluetoothScanTimer != null) {
+      out.writeInt(1);
+      u.mBluetoothScanTimer.writeSummaryFromParcelLocked(out,NOWREAL_SYS);
     }
  else {
       out.writeInt(0);

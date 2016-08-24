@@ -1,36 +1,38 @@
 {
-  int maxKeyguardNotifications=getMaxKeyguardNotifications();
   mKeyguardIconOverflowContainer.getIconsView().removeAllViews();
   ArrayList<Entry> activeNotifications=mNotificationData.getActiveNotifications();
   final int N=activeNotifications.size();
   int visibleNotifications=0;
   boolean onKeyguard=mState == StatusBarState.KEYGUARD;
+  int maxNotifications=0;
+  if (onKeyguard) {
+    maxNotifications=getMaxKeyguardNotifications(true);
+  }
   for (int i=0; i < N; i++) {
     NotificationData.Entry entry=activeNotifications.get(i);
+    boolean childNotification=mGroupManager.isChildInGroupWithSummary(entry.notification);
     if (onKeyguard) {
-      entry.row.setExpansionDisabled(true);
+      entry.row.setOnKeyguard(true);
     }
  else {
-      entry.row.setExpansionDisabled(false);
-      if (!entry.row.isUserLocked()) {
-        boolean top=(i == 0);
-        entry.row.setSystemExpanded(top);
-      }
+      entry.row.setOnKeyguard(false);
+      entry.row.setSystemExpanded(visibleNotifications == 0 && !childNotification);
     }
-    boolean isInvisibleChild=!mGroupManager.isVisible(entry.notification);
+    boolean suppressedSummary=mGroupManager.isSummaryOfSuppressedGroup(entry.notification) && !entry.row.isRemoved();
+    boolean childWithVisibleSummary=childNotification && mGroupManager.getGroupSummary(entry.notification).getVisibility() == View.VISIBLE;
     boolean showOnKeyguard=shouldShowOnKeyguard(entry.notification);
-    if ((isLockscreenPublicMode() && !mShowLockscreenNotifications) || (onKeyguard && (visibleNotifications >= maxKeyguardNotifications || !showOnKeyguard || isInvisibleChild))) {
+    if (suppressedSummary || (isLockscreenPublicMode() && !mShowLockscreenNotifications) || (onKeyguard && !childWithVisibleSummary && (visibleNotifications >= maxNotifications || !showOnKeyguard))) {
       entry.row.setVisibility(View.GONE);
-      if (onKeyguard && showOnKeyguard && !isInvisibleChild) {
+      if (onKeyguard && showOnKeyguard && !childNotification&& !suppressedSummary) {
         mKeyguardIconOverflowContainer.getIconsView().addNotification(entry);
       }
     }
  else {
       boolean wasGone=entry.row.getVisibility() == View.GONE;
       entry.row.setVisibility(View.VISIBLE);
-      if (!isInvisibleChild) {
+      if (!childNotification && !entry.row.isRemoved()) {
         if (wasGone) {
-          mStackScroller.generateAddAnimation(entry.row,true);
+          mStackScroller.generateAddAnimation(entry.row,!showOnKeyguard);
         }
         visibleNotifications++;
       }

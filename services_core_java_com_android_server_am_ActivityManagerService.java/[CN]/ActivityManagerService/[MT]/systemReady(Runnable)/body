@@ -7,32 +7,8 @@ synchronized (this) {
       return;
     }
     mLocalDeviceIdleController=LocalServices.getService(DeviceIdleController.LocalService.class);
-    updateCurrentProfileIdsLocked();
-    mRecentTasks.clear();
-    mRecentTasks.addAll(mTaskPersister.restoreTasksLocked());
-    mRecentTasks.cleanupLocked(UserHandle.USER_ALL);
-    mTaskPersister.startPersisting();
-    if (!mDidUpdate) {
-      if (mWaitingUpdate) {
-        return;
-      }
-      final ArrayList<ComponentName> doneReceivers=new ArrayList<ComponentName>();
-      mWaitingUpdate=deliverPreBootCompleted(new Runnable(){
-        public void run(){
-synchronized (ActivityManagerService.this) {
-            mDidUpdate=true;
-          }
-          showBootMessage(mContext.getText(R.string.android_upgrading_complete),false);
-          writeLastDonePreBootReceivers(doneReceivers);
-          systemReady(goingCallback);
-        }
-      }
-,doneReceivers,UserHandle.USER_OWNER);
-      if (mWaitingUpdate) {
-        return;
-      }
-      mDidUpdate=true;
-    }
+    mUserController.onSystemReady();
+    mRecentTasks.onSystemReadyLocked();
     mAppOpsService.systemReady();
     mSystemReady=true;
   }
@@ -84,62 +60,56 @@ synchronized (this) {
         mTopData=null;
         mTopComponent=null;
         Message msg=Message.obtain();
-        msg.what=SHOW_FACTORY_ERROR_MSG;
+        msg.what=SHOW_FACTORY_ERROR_UI_MSG;
         msg.getData().putCharSequence("msg",errorMsg);
         mUiHandler.sendMessage(msg);
       }
     }
   }
   retrieveSettings();
-  loadResourcesOnSystemReady();
+  final int currentUserId;
 synchronized (this) {
+    currentUserId=mUserController.getCurrentUserIdLocked();
     readGrantedUriPermissionsLocked();
   }
   if (goingCallback != null)   goingCallback.run();
-  mBatteryStatsService.noteEvent(BatteryStats.HistoryItem.EVENT_USER_RUNNING_START,Integer.toString(mCurrentUserId),mCurrentUserId);
-  mBatteryStatsService.noteEvent(BatteryStats.HistoryItem.EVENT_USER_FOREGROUND_START,Integer.toString(mCurrentUserId),mCurrentUserId);
-  mSystemServiceManager.startUser(mCurrentUserId);
+  mBatteryStatsService.noteEvent(BatteryStats.HistoryItem.EVENT_USER_RUNNING_START,Integer.toString(currentUserId),currentUserId);
+  mBatteryStatsService.noteEvent(BatteryStats.HistoryItem.EVENT_USER_FOREGROUND_START,Integer.toString(currentUserId),currentUserId);
+  mSystemServiceManager.startUser(currentUserId);
 synchronized (this) {
-    if (mFactoryTest != FactoryTest.FACTORY_TEST_LOW_LEVEL) {
+    startPersistentApps(PackageManager.MATCH_DIRECT_BOOT_AWARE);
+    mBooting=true;
+    if (UserManager.isSplitSystemUser()) {
+      ComponentName cName=new ComponentName(mContext,SystemUserHomeActivity.class);
       try {
-        List apps=AppGlobals.getPackageManager().getPersistentApplications(STOCK_PM_FLAGS);
-        if (apps != null) {
-          int N=apps.size();
-          int i;
-          for (i=0; i < N; i++) {
-            ApplicationInfo info=(ApplicationInfo)apps.get(i);
-            if (info != null && !info.packageName.equals("android")) {
-              addAppLocked(info,false,null);
-            }
-          }
-        }
+        AppGlobals.getPackageManager().setComponentEnabledSetting(cName,PackageManager.COMPONENT_ENABLED_STATE_ENABLED,0,UserHandle.USER_SYSTEM);
       }
- catch (      RemoteException ex) {
+ catch (      RemoteException e) {
+        throw e.rethrowAsRuntimeException();
       }
     }
-    mBooting=true;
-    startHomeActivityLocked(mCurrentUserId,"systemReady");
+    startHomeActivityLocked(currentUserId,"systemReady");
     try {
       if (AppGlobals.getPackageManager().hasSystemUidErrors()) {
         Slog.e(TAG,"UIDs on the system are inconsistent, you need to wipe your" + " data partition or your device will be unstable.");
-        mUiHandler.obtainMessage(SHOW_UID_ERROR_MSG).sendToTarget();
+        mUiHandler.obtainMessage(SHOW_UID_ERROR_UI_MSG).sendToTarget();
       }
     }
  catch (    RemoteException e) {
     }
     if (!Build.isBuildConsistent()) {
       Slog.e(TAG,"Build fingerprint is not consistent, warning user");
-      mUiHandler.obtainMessage(SHOW_FINGERPRINT_ERROR_MSG).sendToTarget();
+      mUiHandler.obtainMessage(SHOW_FINGERPRINT_ERROR_UI_MSG).sendToTarget();
     }
     long ident=Binder.clearCallingIdentity();
     try {
       Intent intent=new Intent(Intent.ACTION_USER_STARTED);
       intent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY | Intent.FLAG_RECEIVER_FOREGROUND);
-      intent.putExtra(Intent.EXTRA_USER_HANDLE,mCurrentUserId);
-      broadcastIntentLocked(null,null,intent,null,null,0,null,null,null,AppOpsManager.OP_NONE,null,false,false,MY_PID,Process.SYSTEM_UID,mCurrentUserId);
+      intent.putExtra(Intent.EXTRA_USER_HANDLE,currentUserId);
+      broadcastIntentLocked(null,null,intent,null,null,0,null,null,null,AppOpsManager.OP_NONE,null,false,false,MY_PID,Process.SYSTEM_UID,currentUserId);
       intent=new Intent(Intent.ACTION_USER_STARTING);
       intent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY);
-      intent.putExtra(Intent.EXTRA_USER_HANDLE,mCurrentUserId);
+      intent.putExtra(Intent.EXTRA_USER_HANDLE,currentUserId);
       broadcastIntentLocked(null,null,intent,null,new IIntentReceiver.Stub(){
         @Override public void performReceive(        Intent intent,        int resultCode,        String data,        Bundle extras,        boolean ordered,        boolean sticky,        int sendingUser) throws RemoteException {
         }
@@ -152,7 +122,7 @@ synchronized (this) {
  finally {
       Binder.restoreCallingIdentity(ident);
     }
-    mStackSupervisor.resumeTopActivitiesLocked();
-    sendUserSwitchBroadcastsLocked(-1,mCurrentUserId);
+    mStackSupervisor.resumeFocusedStackTopActivityLocked();
+    mUserController.sendUserSwitchBroadcastsLocked(-1,currentUserId);
   }
 }

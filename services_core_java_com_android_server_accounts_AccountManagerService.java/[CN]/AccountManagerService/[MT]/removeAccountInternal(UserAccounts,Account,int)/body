@@ -1,0 +1,42 @@
+{
+  int deleted;
+  boolean userUnlocked=isLocalUnlockedUser(accounts.userId);
+  if (!userUnlocked) {
+    Slog.i(TAG,"Removing account " + account + " while user "+ accounts.userId+ " is still locked. CE data will be removed later");
+  }
+synchronized (accounts.cacheLock) {
+    final SQLiteDatabase db=userUnlocked ? accounts.openHelper.getWritableDatabaseUserIsUnlocked() : accounts.openHelper.getWritableDatabase();
+    final long accountId=getAccountIdLocked(db,account);
+    db.beginTransaction();
+    try {
+      deleted=db.delete(TABLE_ACCOUNTS,ACCOUNTS_NAME + "=? AND " + ACCOUNTS_TYPE+ "=?",new String[]{account.name,account.type});
+      if (userUnlocked) {
+        deleted=db.delete(CE_TABLE_ACCOUNTS,ACCOUNTS_NAME + "=? AND " + ACCOUNTS_TYPE+ "=?",new String[]{account.name,account.type});
+      }
+      db.setTransactionSuccessful();
+    }
+  finally {
+      db.endTransaction();
+    }
+    removeAccountFromCacheLocked(accounts,account);
+    sendAccountsChangedBroadcast(accounts.userId);
+    String action=userUnlocked ? DebugDbHelper.ACTION_ACCOUNT_REMOVE : DebugDbHelper.ACTION_ACCOUNT_REMOVE_DE;
+    logRecord(db,action,TABLE_ACCOUNTS,accountId,accounts);
+  }
+  long id=Binder.clearCallingIdentity();
+  try {
+    int parentUserId=accounts.userId;
+    if (canHaveProfile(parentUserId)) {
+      List<UserInfo> users=getUserManager().getUsers(true);
+      for (      UserInfo user : users) {
+        if (user.isRestricted() && parentUserId == (user.restrictedProfileParentId)) {
+          removeSharedAccountAsUser(account,user.id,callingUid);
+        }
+      }
+    }
+  }
+  finally {
+    Binder.restoreCallingIdentity(id);
+  }
+  return (deleted > 0);
+}

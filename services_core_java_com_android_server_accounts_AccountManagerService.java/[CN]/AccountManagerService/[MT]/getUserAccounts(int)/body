@@ -1,11 +1,27 @@
 {
 synchronized (mUsers) {
     UserAccounts accounts=mUsers.get(userId);
+    boolean validateAccounts=false;
     if (accounts == null) {
-      accounts=new UserAccounts(mContext,userId);
+      File preNDbFile=new File(getPreNDatabaseName(userId));
+      File deDbFile=new File(getDeDatabaseName(userId));
+      accounts=new UserAccounts(mContext,userId,preNDbFile,deDbFile);
       initializeDebugDbSizeAndCompileSqlStatementForLogging(accounts.openHelper.getWritableDatabase(),accounts);
       mUsers.append(userId,accounts);
       purgeOldGrants(accounts);
+      validateAccounts=true;
+    }
+    if (!accounts.openHelper.isCeDatabaseAttached() && mLocalUnlockedUsers.get(userId)) {
+      Log.i(TAG,"User " + userId + " is unlocked - opening CE database");
+synchronized (accounts.cacheLock) {
+        File preNDatabaseFile=new File(getPreNDatabaseName(userId));
+        File ceDatabaseFile=new File(getCeDatabaseName(userId));
+        CeDatabaseHelper.create(mContext,userId,preNDatabaseFile,ceDatabaseFile);
+        accounts.openHelper.attachCeDatabase(ceDatabaseFile);
+      }
+      syncDeCeAccountsLocked(accounts);
+    }
+    if (validateAccounts) {
       validateAccountsInternal(accounts,true);
     }
     return accounts;

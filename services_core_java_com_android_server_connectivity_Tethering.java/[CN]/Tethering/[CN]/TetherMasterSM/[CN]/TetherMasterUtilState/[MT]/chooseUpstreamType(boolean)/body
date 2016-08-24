@@ -18,65 +18,44 @@ synchronized (mPublicSync) {
     }
   }
   if (DBG) {
-    Log.d(TAG,"chooseUpstreamType(" + tryCell + "), preferredApn ="+ mPreferredUpstreamMobileApn+ ", got type="+ upType);
+    Log.d(TAG,"chooseUpstreamType(" + tryCell + "),"+ " preferredApn="+ ConnectivityManager.getNetworkTypeName(mPreferredUpstreamMobileApn)+ ", got type="+ ConnectivityManager.getNetworkTypeName(upType));
   }
-  if (upType == ConnectivityManager.TYPE_MOBILE_DUN || upType == ConnectivityManager.TYPE_MOBILE_HIPRI) {
+switch (upType) {
+case ConnectivityManager.TYPE_MOBILE_DUN:
+case ConnectivityManager.TYPE_MOBILE_HIPRI:
     turnOnUpstreamMobileConnection(upType);
-  }
- else   if (upType != ConnectivityManager.TYPE_NONE) {
-    turnOffUpstreamMobileConnection();
-  }
-  if (upType == ConnectivityManager.TYPE_NONE) {
-    boolean tryAgainLater=true;
-    if ((tryCell == TRY_TO_SETUP_MOBILE_CONNECTION) && (turnOnUpstreamMobileConnection(mPreferredUpstreamMobileApn) == true)) {
-      tryAgainLater=false;
-    }
-    if (tryAgainLater) {
-      sendMessageDelayed(CMD_RETRY_UPSTREAM,UPSTREAM_SETTLE_TIME_MS);
-    }
-  }
+  break;
+case ConnectivityManager.TYPE_NONE:
+if (tryCell && turnOnUpstreamMobileConnection(mPreferredUpstreamMobileApn)) {
+}
  else {
-    LinkProperties linkProperties=getConnectivityManager().getLinkProperties(upType);
-    if (linkProperties != null) {
-      Log.i(TAG,"Finding IPv4 upstream interface on: " + linkProperties);
-      RouteInfo ipv4Default=RouteInfo.selectBestRoute(linkProperties.getAllRoutes(),Inet4Address.ANY);
-      if (ipv4Default != null) {
-        iface=ipv4Default.getInterface();
-        Log.i(TAG,"Found interface " + ipv4Default.getInterface());
-      }
+  sendMessageDelayed(CMD_RETRY_UPSTREAM,UPSTREAM_SETTLE_TIME_MS);
+}
+break;
+default :
+turnOffUpstreamMobileConnection();
+break;
+}
+if (upType != ConnectivityManager.TYPE_NONE) {
+LinkProperties linkProperties=getConnectivityManager().getLinkProperties(upType);
+if (linkProperties != null) {
+Log.i(TAG,"Finding IPv4 upstream interface on: " + linkProperties);
+RouteInfo ipv4Default=RouteInfo.selectBestRoute(linkProperties.getAllRoutes(),Inet4Address.ANY);
+if (ipv4Default != null) {
+iface=ipv4Default.getInterface();
+Log.i(TAG,"Found interface " + ipv4Default.getInterface());
+}
  else {
-        Log.i(TAG,"No IPv4 upstream interface, giving up.");
-      }
-    }
-    if (iface != null) {
-      String[] dnsServers=mDefaultDnsServers;
-      Collection<InetAddress> dnses=linkProperties.getDnsServers();
-      if (dnses != null) {
-        ArrayList<InetAddress> v4Dnses=new ArrayList<InetAddress>(dnses.size());
-        for (        InetAddress dnsAddress : dnses) {
-          if (dnsAddress instanceof Inet4Address) {
-            v4Dnses.add(dnsAddress);
-          }
-        }
-        if (v4Dnses.size() > 0) {
-          dnsServers=NetworkUtils.makeStrings(v4Dnses);
-        }
-      }
-      try {
-        Network network=getConnectivityManager().getNetworkForType(upType);
-        if (network == null) {
-          Log.e(TAG,"No Network for upstream type " + upType + "!");
-        }
-        if (VDBG) {
-          Log.d(TAG,"Setting DNS forwarders: Network=" + network + ", dnsServers="+ Arrays.toString(dnsServers));
-        }
-        mNMService.setDnsForwarders(network,dnsServers);
-      }
- catch (      Exception e) {
-        Log.e(TAG,"Setting DNS forwarders failed!");
-        transitionTo(mSetDnsForwardersErrorState);
-      }
-    }
-  }
-  notifyTetheredOfNewUpstreamIface(iface);
+Log.i(TAG,"No IPv4 upstream interface, giving up.");
+}
+}
+if (iface != null) {
+Network network=getConnectivityManager().getNetworkForType(upType);
+if (network == null) {
+Log.e(TAG,"No Network for upstream type " + upType + "!");
+}
+setDnsForwarders(network,linkProperties);
+}
+}
+notifyTetheredOfNewUpstreamIface(iface);
 }

@@ -14,12 +14,10 @@
   }
   int clientLabel=0;
   PendingIntent clientIntent=null;
-  if (callerApp.info.uid == Process.SYSTEM_UID) {
-    try {
-      clientIntent=service.getParcelableExtra(Intent.EXTRA_CLIENT_INTENT);
-    }
- catch (    RuntimeException e) {
-    }
+  final boolean isCallerSystem=callerApp.info.uid == Process.SYSTEM_UID;
+  if (isCallerSystem) {
+    service.setDefusable(true);
+    clientIntent=service.getParcelableExtra(Intent.EXTRA_CLIENT_INTENT);
     if (clientIntent != null) {
       clientLabel=service.getIntExtra(Intent.EXTRA_CLIENT_LABEL,0);
       if (clientLabel != 0) {
@@ -30,8 +28,12 @@
   if ((flags & Context.BIND_TREAT_LIKE_ACTIVITY) != 0) {
     mAm.enforceCallingPermission(android.Manifest.permission.MANAGE_ACTIVITY_STACKS,"BIND_TREAT_LIKE_ACTIVITY");
   }
-  final boolean callerFg=callerApp.setSchedGroup != Process.THREAD_GROUP_BG_NONINTERACTIVE;
-  ServiceLookupResult res=retrieveServiceLocked(service,resolvedType,callingPackage,Binder.getCallingPid(),Binder.getCallingUid(),userId,true,callerFg);
+  if ((flags & Context.BIND_ALLOW_WHITELIST_MANAGEMENT) != 0 && !isCallerSystem) {
+    throw new SecurityException("Non-system caller " + caller + " (pid="+ Binder.getCallingPid()+ ") set BIND_ALLOW_WHITELIST_MANAGEMENT when binding service "+ service);
+  }
+  final boolean callerFg=callerApp.setSchedGroup != ProcessList.SCHED_GROUP_BACKGROUND;
+  final boolean isBindExternal=(flags & Context.BIND_EXTERNAL_SERVICE) != 0;
+  ServiceLookupResult res=retrieveServiceLocked(service,resolvedType,callingPackage,Binder.getCallingPid(),Binder.getCallingUid(),userId,true,callerFg,isBindExternal);
   if (res == null) {
     return 0;
   }
@@ -39,6 +41,57 @@
     return -1;
   }
   ServiceRecord s=res.record;
+  boolean permissionsReviewRequired=false;
+  if (Build.PERMISSIONS_REVIEW_REQUIRED) {
+    if (mAm.getPackageManagerInternalLocked().isPermissionsReviewRequired(s.packageName,s.userId)) {
+      permissionsReviewRequired=true;
+      if (!callerFg) {
+        Slog.w(TAG,"u" + s.userId + " Binding to a service in package"+ s.packageName+ " requires a permissions review");
+        return 0;
+      }
+      final ServiceRecord serviceRecord=s;
+      final Intent serviceIntent=service;
+      RemoteCallback callback=new RemoteCallback(new RemoteCallback.OnResultListener(){
+        @Override public void onResult(        Bundle result){
+synchronized (mAm) {
+            final long identity=Binder.clearCallingIdentity();
+            try {
+              if (!mPendingServices.contains(serviceRecord)) {
+                return;
+              }
+              if (!mAm.getPackageManagerInternalLocked().isPermissionsReviewRequired(serviceRecord.packageName,serviceRecord.userId)) {
+                try {
+                  bringUpServiceLocked(serviceRecord,serviceIntent.getFlags(),callerFg,false,false);
+                }
+ catch (                RemoteException e) {
+                }
+              }
+ else {
+                unbindServiceLocked(connection);
+              }
+            }
+  finally {
+              Binder.restoreCallingIdentity(identity);
+            }
+          }
+        }
+      }
+);
+      final Intent intent=new Intent(Intent.ACTION_REVIEW_PERMISSIONS);
+      intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS);
+      intent.putExtra(Intent.EXTRA_PACKAGE_NAME,s.packageName);
+      intent.putExtra(Intent.EXTRA_REMOTE_CALLBACK,callback);
+      if (DEBUG_PERMISSIONS_REVIEW) {
+        Slog.i(TAG,"u" + s.userId + " Launching permission review for package "+ s.packageName);
+      }
+      mAm.mHandler.post(new Runnable(){
+        @Override public void run(){
+          mAm.mContext.startActivityAsUser(intent,new UserHandle(userId));
+        }
+      }
+);
+    }
+  }
   final long origId=Binder.clearCallingIdentity();
   try {
     if (unscheduleServiceRestartLocked(s,callerApp.info.uid,false)) {
@@ -47,13 +100,13 @@
     if ((flags & Context.BIND_AUTO_CREATE) != 0) {
       s.lastActivity=SystemClock.uptimeMillis();
       if (!s.hasAutoCreateConnections()) {
-        ProcessStats.ServiceState stracker=s.getTracker();
+        ServiceState stracker=s.getTracker();
         if (stracker != null) {
           stracker.setBound(true,mAm.mProcessStats.getMemFactorLocked(),s.lastActivity);
         }
       }
     }
-    mAm.startAssociationLocked(callerApp.uid,callerApp.processName,s.appInfo.uid,s.name,s.processName);
+    mAm.startAssociationLocked(callerApp.uid,callerApp.processName,callerApp.curProcState,s.appInfo.uid,s.name,s.processName);
     AppBindRecord b=s.retrieveAppBindingLocked(service,callerApp);
     ConnectionRecord c=new ConnectionRecord(b,activity,connection,flags,clientLabel,clientIntent);
     IBinder binder=connection.asBinder();
@@ -74,6 +127,9 @@
     if ((c.flags & Context.BIND_ABOVE_CLIENT) != 0) {
       b.client.hasAboveClient=true;
     }
+    if ((c.flags & Context.BIND_ALLOW_WHITELIST_MANAGEMENT) != 0) {
+      s.whitelistManager=true;
+    }
     if (s.app != null) {
       updateServiceClientActivitiesLocked(s.app,c,true);
     }
@@ -85,13 +141,16 @@
     clist.add(c);
     if ((flags & Context.BIND_AUTO_CREATE) != 0) {
       s.lastActivity=SystemClock.uptimeMillis();
-      if (bringUpServiceLocked(s,service.getFlags(),callerFg,false) != null) {
+      if (bringUpServiceLocked(s,service.getFlags(),callerFg,false,permissionsReviewRequired) != null) {
         return 0;
       }
     }
     if (s.app != null) {
       if ((flags & Context.BIND_TREAT_LIKE_ACTIVITY) != 0) {
         s.app.treatLikeActivity=true;
+      }
+      if (s.whitelistManager) {
+        s.app.whitelistManager=true;
       }
       mAm.updateLruProcessLocked(s.app,s.app.hasClientActivities || s.app.treatLikeActivity,b.client);
       mAm.updateOomAdjLocked(s.app);

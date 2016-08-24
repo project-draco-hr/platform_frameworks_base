@@ -1,0 +1,95 @@
+{
+  final boolean isLoggable=Log.isLoggable(TAG,Log.VERBOSE);
+  if (syncOperation == null) {
+    Slog.e(TAG,"Can't schedule null sync operation.");
+    return;
+  }
+  if (!syncOperation.ignoreBackoff()) {
+    Pair<Long,Long> backoff=mSyncStorageEngine.getBackoff(syncOperation.target);
+    if (backoff == null) {
+      Slog.e(TAG,"Couldn't find backoff values for " + syncOperation.target);
+      backoff=new Pair<Long,Long>(SyncStorageEngine.NOT_IN_BACKOFF_MODE,SyncStorageEngine.NOT_IN_BACKOFF_MODE);
+    }
+    long now=SystemClock.elapsedRealtime();
+    long backoffDelay=backoff.first == SyncStorageEngine.NOT_IN_BACKOFF_MODE ? 0 : backoff.first - now;
+    long delayUntil=mSyncStorageEngine.getDelayUntilTime(syncOperation.target);
+    long delayUntilDelay=delayUntil > now ? delayUntil - now : 0;
+    if (isLoggable) {
+      Slog.v(TAG,"backoff delay:" + backoffDelay + " delayUntil delay:"+ delayUntilDelay);
+    }
+    minDelay=Math.max(minDelay,Math.max(backoffDelay,delayUntilDelay));
+  }
+  if (minDelay < 0) {
+    minDelay=0;
+  }
+  if (!syncOperation.isPeriodic) {
+    for (    ActiveSyncContext asc : mActiveSyncContexts) {
+      if (asc.mSyncOperation.key.equals(syncOperation.key)) {
+        if (isLoggable) {
+          Log.v(TAG,"Duplicate sync is already running. Not scheduling " + syncOperation);
+        }
+        return;
+      }
+    }
+    int duplicatesCount=0;
+    long now=SystemClock.elapsedRealtime();
+    syncOperation.expectedRuntime=now + minDelay;
+    List<SyncOperation> pending=getAllPendingSyncs();
+    SyncOperation opWithLeastExpectedRuntime=syncOperation;
+    for (    SyncOperation op : pending) {
+      if (op.isPeriodic) {
+        continue;
+      }
+      if (op.key.equals(syncOperation.key)) {
+        if (opWithLeastExpectedRuntime.expectedRuntime > op.expectedRuntime) {
+          opWithLeastExpectedRuntime=op;
+        }
+        duplicatesCount++;
+      }
+    }
+    if (duplicatesCount > 1) {
+      Slog.e(TAG,"FATAL ERROR! File a bug if you see this.");
+    }
+    for (    SyncOperation op : pending) {
+      if (op.isPeriodic) {
+        continue;
+      }
+      if (op.key.equals(syncOperation.key)) {
+        if (op != opWithLeastExpectedRuntime) {
+          if (isLoggable) {
+            Slog.v(TAG,"Cancelling duplicate sync " + op);
+          }
+          getJobScheduler().cancel(op.jobId);
+        }
+      }
+    }
+    if (opWithLeastExpectedRuntime != syncOperation) {
+      if (isLoggable) {
+        Slog.v(TAG,"Not scheduling because a duplicate exists.");
+      }
+      return;
+    }
+  }
+  if (syncOperation.jobId == SyncOperation.NO_JOB_ID) {
+    syncOperation.jobId=getUnusedJobIdH();
+  }
+  if (isLoggable) {
+    Slog.v(TAG,"scheduling sync operation " + syncOperation.toString());
+  }
+  int priority=syncOperation.findPriority();
+  final int networkType=syncOperation.isNotAllowedOnMetered() ? JobInfo.NETWORK_TYPE_UNMETERED : JobInfo.NETWORK_TYPE_ANY;
+  JobInfo.Builder b=new JobInfo.Builder(syncOperation.jobId,new ComponentName(mContext,SyncJobService.class)).setExtras(syncOperation.toJobInfoExtras()).setRequiredNetworkType(networkType).setPersisted(true).setPriority(priority);
+  if (syncOperation.isPeriodic) {
+    b.setPeriodic(syncOperation.periodMillis,syncOperation.flexMillis);
+  }
+ else {
+    if (minDelay > 0) {
+      b.setMinimumLatency(minDelay);
+    }
+    getSyncStorageEngine().markPending(syncOperation.target,true);
+  }
+  if (syncOperation.extras.getBoolean(ContentResolver.SYNC_EXTRAS_REQUIRE_CHARGING)) {
+    b.setRequiresCharging(true);
+  }
+  getJobScheduler().scheduleAsPackage(b.build(),syncOperation.owningPackage,syncOperation.target.userId,syncOperation.wakeLockName());
+}

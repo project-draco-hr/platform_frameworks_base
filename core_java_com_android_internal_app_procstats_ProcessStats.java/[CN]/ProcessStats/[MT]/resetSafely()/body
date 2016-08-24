@@ -1,0 +1,77 @@
+{
+  if (DEBUG)   Slog.d(TAG,"Safely resetting state of " + mTimePeriodStartClockStr);
+  resetCommon();
+  final long now=SystemClock.uptimeMillis();
+  final ArrayMap<String,SparseArray<ProcessState>> procMap=mProcesses.getMap();
+  for (int ip=procMap.size() - 1; ip >= 0; ip--) {
+    final SparseArray<ProcessState> uids=procMap.valueAt(ip);
+    for (int iu=uids.size() - 1; iu >= 0; iu--) {
+      uids.valueAt(iu).tmpNumInUse=0;
+    }
+  }
+  final ArrayMap<String,SparseArray<SparseArray<PackageState>>> pkgMap=mPackages.getMap();
+  for (int ip=pkgMap.size() - 1; ip >= 0; ip--) {
+    final SparseArray<SparseArray<PackageState>> uids=pkgMap.valueAt(ip);
+    for (int iu=uids.size() - 1; iu >= 0; iu--) {
+      final SparseArray<PackageState> vpkgs=uids.valueAt(iu);
+      for (int iv=vpkgs.size() - 1; iv >= 0; iv--) {
+        final PackageState pkgState=vpkgs.valueAt(iv);
+        for (int iproc=pkgState.mProcesses.size() - 1; iproc >= 0; iproc--) {
+          final ProcessState ps=pkgState.mProcesses.valueAt(iproc);
+          if (ps.isInUse()) {
+            ps.resetSafely(now);
+            ps.getCommonProcess().tmpNumInUse++;
+            ps.getCommonProcess().tmpFoundSubProc=ps;
+          }
+ else {
+            pkgState.mProcesses.valueAt(iproc).makeDead();
+            pkgState.mProcesses.removeAt(iproc);
+          }
+        }
+        for (int isvc=pkgState.mServices.size() - 1; isvc >= 0; isvc--) {
+          final ServiceState ss=pkgState.mServices.valueAt(isvc);
+          if (ss.isInUse()) {
+            ss.resetSafely(now);
+          }
+ else {
+            pkgState.mServices.removeAt(isvc);
+          }
+        }
+        if (pkgState.mProcesses.size() <= 0 && pkgState.mServices.size() <= 0) {
+          vpkgs.removeAt(iv);
+        }
+      }
+      if (vpkgs.size() <= 0) {
+        uids.removeAt(iu);
+      }
+    }
+    if (uids.size() <= 0) {
+      pkgMap.removeAt(ip);
+    }
+  }
+  for (int ip=procMap.size() - 1; ip >= 0; ip--) {
+    final SparseArray<ProcessState> uids=procMap.valueAt(ip);
+    for (int iu=uids.size() - 1; iu >= 0; iu--) {
+      ProcessState ps=uids.valueAt(iu);
+      if (ps.isInUse() || ps.tmpNumInUse > 0) {
+        if (!ps.isActive() && ps.isMultiPackage() && ps.tmpNumInUse == 1) {
+          ps=ps.tmpFoundSubProc;
+          ps.makeStandalone();
+          uids.setValueAt(iu,ps);
+        }
+ else {
+          ps.resetSafely(now);
+        }
+      }
+ else {
+        ps.makeDead();
+        uids.removeAt(iu);
+      }
+    }
+    if (uids.size() <= 0) {
+      procMap.removeAt(ip);
+    }
+  }
+  mStartTime=now;
+  if (DEBUG)   Slog.d(TAG,"State reset; now " + mTimePeriodStartClockStr);
+}

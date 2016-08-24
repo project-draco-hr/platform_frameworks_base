@@ -1,0 +1,80 @@
+{
+  if (!SHOW_STARTING_ANIMATIONS) {
+    return null;
+  }
+  if (packageName == null) {
+    return null;
+  }
+  WindowManager wm=null;
+  View view=null;
+  try {
+    Context context=mContext;
+    if (DEBUG_STARTING_WINDOW)     Slog.d(TAG,"addStartingWindow " + packageName + ": nonLocalizedLabel="+ nonLocalizedLabel+ " theme="+ Integer.toHexString(theme));
+    if (theme != context.getThemeResId() || labelRes != 0) {
+      try {
+        context=context.createPackageContext(packageName,0);
+        context.setTheme(theme);
+      }
+ catch (      PackageManager.NameNotFoundException e) {
+      }
+    }
+    if (overrideConfig != null && overrideConfig != EMPTY) {
+      if (DEBUG_STARTING_WINDOW)       Slog.d(TAG,"addStartingWindow: creating context based" + " on overrideConfig" + overrideConfig + " for starting window");
+      final Context overrideContext=context.createConfigurationContext(overrideConfig);
+      overrideContext.setTheme(theme);
+      final TypedArray typedArray=overrideContext.obtainStyledAttributes(com.android.internal.R.styleable.Window);
+      final int resId=typedArray.getResourceId(R.styleable.Window_windowBackground,0);
+      if (resId != 0 && overrideContext.getDrawable(resId) != null) {
+        if (DEBUG_STARTING_WINDOW)         Slog.d(TAG,"addStartingWindow: apply overrideConfig" + overrideConfig + " to starting window resId="+ resId);
+        context=overrideContext;
+      }
+    }
+    final PhoneWindow win=new PhoneWindow(context);
+    win.setIsStartingWindow(true);
+    CharSequence label=context.getResources().getText(labelRes,null);
+    if (label != null) {
+      win.setTitle(label,true);
+    }
+ else {
+      win.setTitle(nonLocalizedLabel,false);
+    }
+    win.setType(WindowManager.LayoutParams.TYPE_APPLICATION_STARTING);
+synchronized (mWindowManagerFuncs.getWindowManagerLock()) {
+      if (mKeyguardHidden) {
+        windowFlags|=FLAG_SHOW_WHEN_LOCKED;
+      }
+    }
+    win.setFlags(windowFlags | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE| WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM,windowFlags | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE| WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM);
+    win.setDefaultIcon(icon);
+    win.setDefaultLogo(logo);
+    win.setLayout(WindowManager.LayoutParams.MATCH_PARENT,WindowManager.LayoutParams.MATCH_PARENT);
+    final WindowManager.LayoutParams params=win.getAttributes();
+    params.token=appToken;
+    params.packageName=packageName;
+    params.windowAnimations=win.getWindowStyle().getResourceId(com.android.internal.R.styleable.Window_windowAnimationStyle,0);
+    params.privateFlags|=WindowManager.LayoutParams.PRIVATE_FLAG_FAKE_HARDWARE_ACCELERATED;
+    params.privateFlags|=WindowManager.LayoutParams.PRIVATE_FLAG_SHOW_FOR_ALL_USERS;
+    if (!compatInfo.supportsScreen()) {
+      params.privateFlags|=WindowManager.LayoutParams.PRIVATE_FLAG_COMPATIBLE_WINDOW;
+    }
+    params.setTitle("Starting " + packageName);
+    wm=(WindowManager)context.getSystemService(Context.WINDOW_SERVICE);
+    view=win.getDecorView();
+    if (DEBUG_STARTING_WINDOW)     Slog.d(TAG,"Adding starting window for " + packageName + " / "+ appToken+ ": "+ (view.getParent() != null ? view : null));
+    wm.addView(view,params);
+    return view.getParent() != null ? view : null;
+  }
+ catch (  WindowManager.BadTokenException e) {
+    Log.w(TAG,appToken + " already running, starting window not displayed. " + e.getMessage());
+  }
+catch (  RuntimeException e) {
+    Log.w(TAG,appToken + " failed creating starting window",e);
+  }
+ finally {
+    if (view != null && view.getParent() == null) {
+      Log.w(TAG,"view not successfully added to wm, removing view");
+      wm.removeViewImmediate(view);
+    }
+  }
+  return null;
+}

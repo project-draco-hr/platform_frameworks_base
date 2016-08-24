@@ -1,9 +1,11 @@
 {
   Resources resources=getContext().getResources();
+  mMaxPackageEnqueueRate=Settings.Global.getFloat(getContext().getContentResolver(),Settings.Global.MAX_NOTIFICATION_ENQUEUE_RATE,DEFAULT_MAX_NOTIFICATION_ENQUEUE_RATE);
   mAm=ActivityManagerNative.getDefault();
   mAppOps=(AppOpsManager)getContext().getSystemService(Context.APP_OPS_SERVICE);
   mVibrator=(Vibrator)getContext().getSystemService(Context.VIBRATOR_SERVICE);
   mAppUsageStats=LocalServices.getService(UsageStatsManagerInternal.class);
+  mRankerServicePackageName=getContext().getPackageManager().getServicesSystemSharedLibraryPackageName();
   mHandler=new WorkerHandler();
   mRankingThread.start();
   String[] extractorNames;
@@ -14,7 +16,8 @@
     extractorNames=new String[0];
   }
   mUsageStats=new NotificationUsageStats(getContext());
-  mRankingHelper=new RankingHelper(getContext(),new RankingWorkerHandler(mRankingThread.getLooper()),mUsageStats,extractorNames);
+  mRankingHandler=new RankingHandlerWorker(mRankingThread.getLooper());
+  mRankingHelper=new RankingHelper(getContext(),mRankingHandler,mUsageStats,extractorNames);
   mConditionProviders=new ConditionProviders(getContext(),mHandler,mUserProfiles);
   mZenModeHelper=new ZenModeHelper(getContext(),mHandler.getLooper(),mConditionProviders);
   mZenModeHelper.addCallback(new ZenModeHelper.Callback(){
@@ -23,6 +26,7 @@
     }
     @Override void onZenModeChanged(){
       sendRegisteredOnlyBroadcast(NotificationManager.ACTION_INTERRUPTION_FILTER_CHANGED);
+      getContext().sendBroadcastAsUser(new Intent(NotificationManager.ACTION_INTERRUPTION_FILTER_CHANGED_INTERNAL).addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY_BEFORE_BOOT),UserHandle.ALL,android.Manifest.permission.MANAGE_NOTIFICATIONS);
 synchronized (mNotificationList) {
         updateInterruptionFilterLocked();
       }
@@ -34,10 +38,14 @@ synchronized (mNotificationList) {
 );
   final File systemDir=new File(Environment.getDataDirectory(),"system");
   mPolicyFile=new AtomicFile(new File(systemDir,"notification_policy.xml"));
-  importOldBlockDb();
+  syncBlockDb();
   mListeners=new NotificationListeners();
+  mRankerServices=new NotificationRankers();
+  mRankerServices.registerRanker();
   mStatusBar=getLocalService(StatusBarManagerInternal.class);
-  mStatusBar.setNotificationDelegate(mNotificationDelegate);
+  if (mStatusBar != null) {
+    mStatusBar.setNotificationDelegate(mNotificationDelegate);
+  }
   final LightsManager lights=getLocalService(LightsManager.class);
   mNotificationLight=lights.getLight(LightsManager.LIGHT_ID_NOTIFICATIONS);
   mAttentionLight=lights.getLight(LightsManager.LIGHT_ID_ATTENTION);
@@ -63,6 +71,8 @@ synchronized (mNotificationList) {
   filter.addAction(Intent.ACTION_USER_SWITCHED);
   filter.addAction(Intent.ACTION_USER_ADDED);
   filter.addAction(Intent.ACTION_USER_REMOVED);
+  filter.addAction(Intent.ACTION_USER_UNLOCKED);
+  filter.addAction(Intent.ACTION_MANAGED_PROFILE_UNAVAILABLE);
   getContext().registerReceiver(mIntentReceiver,filter);
   IntentFilter pkgFilter=new IntentFilter();
   pkgFilter.addAction(Intent.ACTION_PACKAGE_ADDED);
@@ -72,6 +82,9 @@ synchronized (mNotificationList) {
   pkgFilter.addAction(Intent.ACTION_QUERY_PACKAGE_RESTART);
   pkgFilter.addDataScheme("package");
   getContext().registerReceiverAsUser(mPackageIntentReceiver,UserHandle.ALL,pkgFilter,null,null);
+  IntentFilter suspendedPkgFilter=new IntentFilter();
+  suspendedPkgFilter.addAction(Intent.ACTION_PACKAGES_SUSPENDED);
+  getContext().registerReceiverAsUser(mPackageIntentReceiver,UserHandle.ALL,suspendedPkgFilter,null,null);
   IntentFilter sdFilter=new IntentFilter(Intent.ACTION_EXTERNAL_APPLICATIONS_UNAVAILABLE);
   getContext().registerReceiverAsUser(mPackageIntentReceiver,UserHandle.ALL,sdFilter,null,null);
   mSettingsObserver=new SettingsObserver(mHandler);

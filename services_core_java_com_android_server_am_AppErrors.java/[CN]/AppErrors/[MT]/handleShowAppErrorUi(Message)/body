@@ -1,0 +1,38 @@
+{
+  AppErrorDialog.Data data=(AppErrorDialog.Data)msg.obj;
+  boolean showBackground=Settings.Secure.getInt(mContext.getContentResolver(),Settings.Secure.ANR_SHOW_BACKGROUND,0) != 0;
+synchronized (mService) {
+    ProcessRecord proc=data.proc;
+    AppErrorResult res=data.result;
+    if (proc != null && proc.crashDialog != null) {
+      Slog.e(TAG,"App already has crash dialog: " + proc);
+      if (res != null) {
+        res.set(AppErrorDialog.ALREADY_SHOWING);
+      }
+      return;
+    }
+    boolean isBackground=(UserHandle.getAppId(proc.uid) >= Process.FIRST_APPLICATION_UID && proc.pid != MY_PID);
+    for (    int userId : mService.mUserController.getCurrentProfileIdsLocked()) {
+      isBackground&=(proc.userId != userId);
+    }
+    if (isBackground && !showBackground) {
+      Slog.w(TAG,"Skipping crash dialog of " + proc + ": background");
+      if (res != null) {
+        res.set(AppErrorDialog.BACKGROUND_USER);
+      }
+      return;
+    }
+    final boolean crashSilenced=mAppsNotReportingCrashes != null && mAppsNotReportingCrashes.contains(proc.info.packageName);
+    if (mService.canShowErrorDialogs() && !crashSilenced) {
+      proc.crashDialog=new AppErrorDialog(mContext,mService,data);
+    }
+ else {
+      if (res != null) {
+        res.set(AppErrorDialog.CANT_SHOW);
+      }
+    }
+  }
+  if (data.proc.crashDialog != null) {
+    data.proc.crashDialog.show();
+  }
+}

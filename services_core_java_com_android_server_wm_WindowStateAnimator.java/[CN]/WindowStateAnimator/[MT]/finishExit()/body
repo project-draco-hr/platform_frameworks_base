@@ -1,39 +1,51 @@
 {
-  if (WindowManagerService.DEBUG_ANIM)   Slog.v(TAG,"finishExit in " + this + ": exiting="+ mWin.mExiting+ " remove="+ mWin.mRemoveOnExit+ " windowAnimating="+ isWindowAnimating());
-  final int N=mWin.mChildWindows.size();
-  for (int i=0; i < N; i++) {
-    mWin.mChildWindows.get(i).mWinAnimator.finishExit();
-  }
-  if (mEnteringAnimation && mWin.mAppToken == null) {
-    try {
-      mEnteringAnimation=false;
-      mWin.mClient.dispatchWindowShown();
-    }
- catch (    RemoteException e) {
+  if (DEBUG_ANIM)   Slog.v(TAG,"finishExit in " + this + ": exiting="+ mWin.mAnimatingExit+ " remove="+ mWin.mRemoveOnExit+ " windowAnimating="+ isWindowAnimationSet());
+  if (!mWin.mChildWindows.isEmpty()) {
+    final WindowList childWindows=new WindowList(mWin.mChildWindows);
+    for (int i=childWindows.size() - 1; i >= 0; i--) {
+      childWindows.get(i).mWinAnimator.finishExit();
     }
   }
-  if (!isWindowAnimating()) {
-    if (mService.mAccessibilityController != null && mWin.getDisplayId() == Display.DEFAULT_DISPLAY) {
+  if (mEnteringAnimation) {
+    mEnteringAnimation=false;
+    mService.requestTraversal();
+    if (mWin.mAppToken == null) {
+      try {
+        mWin.mClient.dispatchWindowShown();
+      }
+ catch (      RemoteException e) {
+      }
+    }
+  }
+  if (!isWindowAnimationSet()) {
+    if (mService.mAccessibilityController != null && mWin.getDisplayId() == DEFAULT_DISPLAY) {
       mService.mAccessibilityController.onSomeWindowResizedOrMovedLocked();
     }
   }
-  if (!mWin.mExiting) {
+  if (!mWin.mAnimatingExit) {
     return;
   }
-  if (isWindowAnimating()) {
+  if (isWindowAnimationSet()) {
     return;
   }
-  if (WindowManagerService.localLOGV)   Slog.v(TAG,"Exit animation finished in " + this + ": remove="+ mWin.mRemoveOnExit);
-  if (mSurfaceControl != null) {
-    mService.mDestroySurface.add(mWin);
-    mWin.mDestroying=true;
-    if (SHOW_TRANSACTIONS)     WindowManagerService.logSurface(mWin,"HIDE (finishExit)",null);
-    hide();
+  if (WindowManagerService.localLOGV || DEBUG_ADD_REMOVE)   Slog.v(TAG,"Exit animation finished in " + this + ": remove="+ mWin.mRemoveOnExit);
+  mWin.mDestroying=true;
+  final boolean hasSurface=hasSurface();
+  if (hasSurface) {
+    hide("finishExit");
   }
-  mWin.mExiting=false;
-  if (mWin.mRemoveOnExit) {
-    mService.mPendingRemove.add(mWin);
-    mWin.mRemoveOnExit=false;
+  if (mWin.mAppToken != null) {
+    mWin.mAppToken.destroySurfaces();
   }
-  mService.hideWallpapersLocked(mWin);
+ else {
+    if (hasSurface) {
+      mService.mDestroySurface.add(mWin);
+    }
+    if (mWin.mRemoveOnExit) {
+      mService.mPendingRemove.add(mWin);
+      mWin.mRemoveOnExit=false;
+    }
+  }
+  mWin.mAnimatingExit=false;
+  mWallpaperControllerLocked.hideWallpapers(mWin);
 }

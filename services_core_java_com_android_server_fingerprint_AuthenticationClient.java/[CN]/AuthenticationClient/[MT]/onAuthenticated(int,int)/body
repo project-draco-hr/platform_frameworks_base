@@ -1,0 +1,51 @@
+{
+  boolean result=false;
+  boolean authenticated=fingerId != 0;
+  IFingerprintServiceReceiver receiver=getReceiver();
+  if (receiver != null) {
+    try {
+      MetricsLogger.action(getContext(),MetricsEvent.ACTION_FINGERPRINT_AUTH,authenticated);
+      if (!authenticated) {
+        receiver.onAuthenticationFailed(getHalDeviceId());
+      }
+ else {
+        if (DEBUG) {
+          Slog.v(TAG,"onAuthenticated(owner=" + getOwnerString() + ", id="+ fingerId+ ", gp="+ groupId+ ")");
+        }
+        Fingerprint fp=!getIsRestricted() ? new Fingerprint("",groupId,fingerId,getHalDeviceId()) : null;
+        receiver.onAuthenticationSucceeded(getHalDeviceId(),fp);
+      }
+    }
+ catch (    RemoteException e) {
+      Slog.w(TAG,"Failed to notify Authenticated:",e);
+      result=true;
+    }
+  }
+ else {
+    result=true;
+  }
+  if (!authenticated) {
+    if (receiver != null) {
+      FingerprintUtils.vibrateFingerprintError(getContext());
+    }
+    boolean inLockoutMode=handleFailedAttempt();
+    if (inLockoutMode) {
+      try {
+        Slog.w(TAG,"Forcing lockout (fp driver code should do this!)");
+        receiver.onError(getHalDeviceId(),FingerprintManager.FINGERPRINT_ERROR_LOCKOUT);
+      }
+ catch (      RemoteException e) {
+        Slog.w(TAG,"Failed to notify lockout:",e);
+      }
+    }
+    result|=inLockoutMode;
+  }
+ else {
+    if (receiver != null) {
+      FingerprintUtils.vibrateFingerprintSuccess(getContext());
+    }
+    result|=true;
+    resetFailedAttempts();
+  }
+  return result;
+}

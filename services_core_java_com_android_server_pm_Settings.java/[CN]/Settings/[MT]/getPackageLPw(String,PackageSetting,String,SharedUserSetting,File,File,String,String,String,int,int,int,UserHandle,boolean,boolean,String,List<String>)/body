@@ -1,0 +1,122 @@
+{
+  PackageSetting p=mPackages.get(name);
+  UserManagerService userManager=UserManagerService.getInstance();
+  if (p != null) {
+    p.primaryCpuAbiString=primaryCpuAbiString;
+    p.secondaryCpuAbiString=secondaryCpuAbiString;
+    if (childPackageNames != null) {
+      p.childPackageNames=new ArrayList<>(childPackageNames);
+    }
+    if (!p.codePath.equals(codePath)) {
+      if ((p.pkgFlags & ApplicationInfo.FLAG_SYSTEM) != 0) {
+        Slog.w(PackageManagerService.TAG,"Trying to update system app code path from " + p.codePathString + " to "+ codePath.toString());
+      }
+ else {
+        Slog.i(PackageManagerService.TAG,"Package " + name + " codePath changed from "+ p.codePath+ " to "+ codePath+ "; Retaining data and using new");
+        if ((pkgFlags & ApplicationInfo.FLAG_SYSTEM) != 0 && getDisabledSystemPkgLPr(name) == null) {
+          List<UserInfo> allUserInfos=getAllUsers();
+          if (allUserInfos != null) {
+            for (            UserInfo userInfo : allUserInfos) {
+              p.setInstalled(true,userInfo.id);
+            }
+          }
+        }
+        p.legacyNativeLibraryPathString=legacyNativeLibraryPathString;
+      }
+    }
+    if (p.sharedUser != sharedUser) {
+      PackageManagerService.reportSettingsProblem(Log.WARN,"Package " + name + " shared user changed from "+ (p.sharedUser != null ? p.sharedUser.name : "<nothing>")+ " to "+ (sharedUser != null ? sharedUser.name : "<nothing>")+ "; replacing with new");
+      p=null;
+    }
+ else {
+      p.pkgFlags|=pkgFlags & ApplicationInfo.FLAG_SYSTEM;
+      p.pkgPrivateFlags|=pkgPrivateFlags & ApplicationInfo.PRIVATE_FLAG_PRIVILEGED;
+    }
+  }
+  if (p == null) {
+    if (origPackage != null) {
+      p=new PackageSetting(origPackage.name,name,codePath,resourcePath,legacyNativeLibraryPathString,primaryCpuAbiString,secondaryCpuAbiString,null,vc,pkgFlags,pkgPrivateFlags,parentPackage,childPackageNames);
+      if (PackageManagerService.DEBUG_UPGRADE)       Log.v(PackageManagerService.TAG,"Package " + name + " is adopting original package "+ origPackage.name);
+      PackageSignatures s=p.signatures;
+      p.copyFrom(origPackage);
+      p.signatures=s;
+      p.sharedUser=origPackage.sharedUser;
+      p.appId=origPackage.appId;
+      p.origPackage=origPackage;
+      p.getPermissionsState().copyFrom(origPackage.getPermissionsState());
+      mRenamedPackages.put(name,origPackage.name);
+      name=origPackage.name;
+      p.setTimeStamp(codePath.lastModified());
+    }
+ else {
+      p=new PackageSetting(name,realName,codePath,resourcePath,legacyNativeLibraryPathString,primaryCpuAbiString,secondaryCpuAbiString,null,vc,pkgFlags,pkgPrivateFlags,parentPackage,childPackageNames);
+      p.setTimeStamp(codePath.lastModified());
+      p.sharedUser=sharedUser;
+      if ((pkgFlags & ApplicationInfo.FLAG_SYSTEM) == 0) {
+        if (DEBUG_STOPPED) {
+          RuntimeException e=new RuntimeException("here");
+          e.fillInStackTrace();
+          Slog.i(PackageManagerService.TAG,"Stopping package " + name,e);
+        }
+        List<UserInfo> users=getAllUsers();
+        final int installUserId=installUser != null ? installUser.getIdentifier() : 0;
+        if (users != null && allowInstall) {
+          for (          UserInfo user : users) {
+            final boolean installed=installUser == null || (installUserId == UserHandle.USER_ALL && !isAdbInstallDisallowed(userManager,user.id)) || installUserId == user.id;
+            p.setUserState(user.id,0,COMPONENT_ENABLED_STATE_DEFAULT,installed,true,true,false,false,null,null,null,false,INTENT_FILTER_DOMAIN_VERIFICATION_STATUS_UNDEFINED,0);
+            writePackageRestrictionsLPr(user.id);
+          }
+        }
+      }
+      if (sharedUser != null) {
+        p.appId=sharedUser.userId;
+      }
+ else {
+        PackageSetting dis=mDisabledSysPackages.get(name);
+        if (dis != null) {
+          if (dis.signatures.mSignatures != null) {
+            p.signatures.mSignatures=dis.signatures.mSignatures.clone();
+          }
+          p.appId=dis.appId;
+          p.getPermissionsState().copyFrom(dis.getPermissionsState());
+          List<UserInfo> users=getAllUsers();
+          if (users != null) {
+            for (            UserInfo user : users) {
+              int userId=user.id;
+              p.setDisabledComponentsCopy(dis.getDisabledComponents(userId),userId);
+              p.setEnabledComponentsCopy(dis.getEnabledComponents(userId),userId);
+            }
+          }
+          addUserIdLPw(p.appId,p,name);
+        }
+ else {
+          p.appId=newUserIdLPw(p);
+        }
+      }
+    }
+    if (p.appId < 0) {
+      PackageManagerService.reportSettingsProblem(Log.WARN,"Package " + name + " could not be assigned a valid uid");
+      return null;
+    }
+    if (add) {
+      addPackageSettingLPw(p,name,sharedUser);
+    }
+  }
+ else {
+    if (installUser != null && allowInstall) {
+      List<UserInfo> users=getAllUsers();
+      if (users != null) {
+        for (        UserInfo user : users) {
+          if ((installUser.getIdentifier() == UserHandle.USER_ALL && !isAdbInstallDisallowed(userManager,user.id)) || installUser.getIdentifier() == user.id) {
+            boolean installed=p.getInstalled(user.id);
+            if (!installed) {
+              p.setInstalled(true,user.id);
+              writePackageRestrictionsLPr(user.id);
+            }
+          }
+        }
+      }
+    }
+  }
+  return p;
+}

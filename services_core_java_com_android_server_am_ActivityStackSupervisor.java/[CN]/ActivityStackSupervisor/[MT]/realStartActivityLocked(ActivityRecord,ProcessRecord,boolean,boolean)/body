@@ -1,4 +1,8 @@
 {
+  if (!allPausedActivitiesComplete()) {
+    if (DEBUG_SWITCH || DEBUG_PAUSE || DEBUG_STATES)     Slog.v(TAG_PAUSE,"realStartActivityLocked: Skipping start of r=" + r + " some activities pausing...");
+    return false;
+  }
   if (andResume) {
     r.startFreezingScreenLocked(app,0);
     mWindowManager.setAppVisibility(r.appToken,true);
@@ -6,7 +10,7 @@
   }
   if (checkConfig) {
     Configuration config=mWindowManager.updateOrientationFromAppTokens(mService.mConfiguration,r.mayFreezeScreenLocked(app) ? r.appToken : null);
-    mService.updateConfigurationLocked(config,r,false,false);
+    mService.updateConfigurationLocked(config,r,false);
   }
   r.app=app;
   app.waitingToKill=null;
@@ -38,12 +42,13 @@
     if (andResume) {
       EventLog.writeEvent(EventLogTags.AM_RESTART_ACTIVITY,r.userId,System.identityHashCode(r),task.taskId,r.shortComponentName);
     }
-    if (r.isHomeActivity() && r.isNotResolverActivity()) {
+    if (r.isHomeActivity()) {
       mService.mHomeProcess=task.mActivities.get(0).app;
     }
-    mService.ensurePackageDexOpt(r.intent.getComponent().getPackageName());
+    mService.notifyPackageUse(r.intent.getComponent().getPackageName(),PackageManager.NOTIFY_PACKAGE_USE_ACTIVITY);
     r.sleeping=false;
     r.forceNewConfig=false;
+    mService.showUnsupportedZoomDialogIfNeededLocked(r);
     mService.showAskCompatModeDialogLocked(r);
     r.compat=mService.compatibilityInfoForPackageLocked(r.info.applicationInfo);
     ProfilerInfo profilerInfo=null;
@@ -77,7 +82,7 @@
       app.pendingUiClean=true;
     }
     app.forceProcessStateUpTo(mService.mTopProcessState);
-    app.thread.scheduleLaunchActivity(new Intent(r.intent),r.appToken,System.identityHashCode(r),r.info,new Configuration(mService.mConfiguration),new Configuration(stack.mOverrideConfig),r.compat,r.launchedFromPackage,task.voiceInteractor,app.repProcState,r.icicle,r.persistentState,results,newIntents,!andResume,mService.isNextTransitionForward(),profilerInfo);
+    app.thread.scheduleLaunchActivity(new Intent(r.intent),r.appToken,System.identityHashCode(r),r.info,new Configuration(mService.mConfiguration),new Configuration(task.mOverrideConfig),r.compat,r.launchedFromPackage,task.voiceInteractor,app.repProcState,r.icicle,r.persistentState,results,newIntents,!andResume,mService.isNextTransitionForward(),profilerInfo);
     if ((app.info.privateFlags & ApplicationInfo.PRIVATE_FLAG_CANT_SAVE_STATE) != 0) {
       if (app.processName.equals(app.info.packageName)) {
         if (mService.mHeavyWeightProcess != null && mService.mHeavyWeightProcess != app) {
@@ -108,13 +113,14 @@
     stack.minimalResumeActivityLocked(r);
   }
  else {
-    if (DEBUG_STATES)     Slog.v(TAG_STATES,"Moving to STOPPED: " + r + " (starting in stopped state)");
-    r.state=STOPPED;
-    r.stopped=true;
+    if (DEBUG_STATES)     Slog.v(TAG_STATES,"Moving to PAUSED: " + r + " (starting in paused state)");
+    r.state=PAUSED;
   }
-  if (isFrontStack(stack)) {
+  if (isFocusedStack(stack)) {
     mService.startSetupActivityLocked();
   }
-  mService.mServices.updateServiceConnectionActivitiesLocked(r.app);
+  if (r.app != null) {
+    mService.mServices.updateServiceConnectionActivitiesLocked(r.app);
+  }
   return true;
 }

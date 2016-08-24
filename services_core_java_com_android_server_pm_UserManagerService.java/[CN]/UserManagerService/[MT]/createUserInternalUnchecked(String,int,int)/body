@@ -1,0 +1,120 @@
+{
+  if (ActivityManager.isLowRamDeviceStatic()) {
+    return null;
+  }
+  final boolean isGuest=(flags & UserInfo.FLAG_GUEST) != 0;
+  final boolean isManagedProfile=(flags & UserInfo.FLAG_MANAGED_PROFILE) != 0;
+  final boolean isRestricted=(flags & UserInfo.FLAG_RESTRICTED) != 0;
+  final long ident=Binder.clearCallingIdentity();
+  UserInfo userInfo;
+  UserData userData;
+  final int userId;
+  try {
+synchronized (mPackagesLock) {
+      UserData parent=null;
+      if (parentId != UserHandle.USER_NULL) {
+synchronized (mUsersLock) {
+          parent=getUserDataLU(parentId);
+        }
+        if (parent == null)         return null;
+      }
+      if (isManagedProfile && !canAddMoreManagedProfiles(parentId,false)) {
+        Log.e(LOG_TAG,"Cannot add more managed profiles for user " + parentId);
+        return null;
+      }
+      if (!isGuest && !isManagedProfile && isUserLimitReached()) {
+        return null;
+      }
+      if (isGuest && findCurrentGuestUser() != null) {
+        return null;
+      }
+      if (isRestricted && !UserManager.isSplitSystemUser() && (parentId != UserHandle.USER_SYSTEM)) {
+        Log.w(LOG_TAG,"Cannot add restricted profile - parent user must be owner");
+        return null;
+      }
+      if (isRestricted && UserManager.isSplitSystemUser()) {
+        if (parent == null) {
+          Log.w(LOG_TAG,"Cannot add restricted profile - parent user must be " + "specified");
+          return null;
+        }
+        if (!parent.info.canHaveProfile()) {
+          Log.w(LOG_TAG,"Cannot add restricted profile - profiles cannot be " + "created for the specified parent user id " + parentId);
+          return null;
+        }
+      }
+      if (!UserManager.isSplitSystemUser() && (flags & UserInfo.FLAG_EPHEMERAL) != 0) {
+        Log.e(LOG_TAG,"Ephemeral users are supported on split-system-user systems only.");
+        return null;
+      }
+      if (UserManager.isSplitSystemUser() && !isGuest && !isManagedProfile&& getPrimaryUser() == null) {
+        flags|=UserInfo.FLAG_PRIMARY;
+synchronized (mUsersLock) {
+          if (!mIsDeviceManaged) {
+            flags|=UserInfo.FLAG_ADMIN;
+          }
+        }
+      }
+      userId=getNextAvailableId();
+      Environment.getUserSystemDirectory(userId).mkdirs();
+      boolean ephemeralGuests=Resources.getSystem().getBoolean(com.android.internal.R.bool.config_guestUserEphemeral);
+synchronized (mUsersLock) {
+        if ((isGuest && ephemeralGuests) || mForceEphemeralUsers || (parent != null && parent.info.isEphemeral())) {
+          flags|=UserInfo.FLAG_EPHEMERAL;
+        }
+        userInfo=new UserInfo(userId,name,null,flags);
+        userInfo.serialNumber=mNextSerialNumber++;
+        long now=System.currentTimeMillis();
+        userInfo.creationTime=(now > EPOCH_PLUS_30_YEARS) ? now : 0;
+        userInfo.partial=true;
+        userInfo.lastLoggedInFingerprint=Build.FINGERPRINT;
+        userData=new UserData();
+        userData.info=userInfo;
+        mUsers.put(userId,userData);
+      }
+      writeUserLP(userData);
+      writeUserListLP();
+      if (parent != null) {
+        if (isManagedProfile) {
+          if (parent.info.profileGroupId == UserInfo.NO_PROFILE_GROUP_ID) {
+            parent.info.profileGroupId=parent.info.id;
+            writeUserLP(parent);
+          }
+          userInfo.profileGroupId=parent.info.profileGroupId;
+        }
+ else         if (isRestricted) {
+          if (parent.info.restrictedProfileParentId == UserInfo.NO_PROFILE_GROUP_ID) {
+            parent.info.restrictedProfileParentId=parent.info.id;
+            writeUserLP(parent);
+          }
+          userInfo.restrictedProfileParentId=parent.info.restrictedProfileParentId;
+        }
+      }
+    }
+    final StorageManager storage=mContext.getSystemService(StorageManager.class);
+    storage.createUserKey(userId,userInfo.serialNumber,userInfo.isEphemeral());
+    mPm.prepareUserData(userId,userInfo.serialNumber,StorageManager.FLAG_STORAGE_DE | StorageManager.FLAG_STORAGE_CE);
+    mPm.createNewUser(userId);
+    userInfo.partial=false;
+synchronized (mPackagesLock) {
+      writeUserLP(userData);
+    }
+    updateUserIds();
+    Bundle restrictions=new Bundle();
+    if (isGuest) {
+synchronized (mGuestRestrictions) {
+        restrictions.putAll(mGuestRestrictions);
+      }
+    }
+synchronized (mRestrictionsLock) {
+      mBaseUserRestrictions.append(userId,restrictions);
+    }
+    Intent addedIntent=new Intent(Intent.ACTION_USER_ADDED);
+    addedIntent.putExtra(Intent.EXTRA_USER_HANDLE,userId);
+    mContext.sendBroadcastAsUser(addedIntent,UserHandle.ALL,android.Manifest.permission.MANAGE_USERS);
+    MetricsLogger.count(mContext,isGuest ? TRON_GUEST_CREATED : TRON_USER_CREATED,1);
+  }
+  finally {
+    Binder.restoreCallingIdentity(ident);
+  }
+  return userInfo;
+}

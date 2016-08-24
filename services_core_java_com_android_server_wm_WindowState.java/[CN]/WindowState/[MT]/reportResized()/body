@@ -1,13 +1,8 @@
 {
+  Trace.traceBegin(TRACE_TAG_WINDOW_MANAGER,"wm.reportResized_" + getWindowTag());
   try {
     if (DEBUG_RESIZE || DEBUG_ORIENTATION)     Slog.v(TAG,"Reporting new frame to " + this + ": "+ mCompatFrame);
-    boolean configChanged=isConfigChanged();
-    final TaskStack stack=getStack();
-    final Configuration overrideConfig=(stack != null) ? stack.mOverrideConfig : Configuration.EMPTY;
-    if ((DEBUG_RESIZE || DEBUG_ORIENTATION || DEBUG_CONFIGURATION) && configChanged) {
-      Slog.i(TAG,"Sending new config to window " + this + ": "+ mWinAnimator.mSurfaceW+ "x"+ mWinAnimator.mSurfaceH+ " / config="+ mService.mCurConfiguration+ " overrideConfig="+ overrideConfig);
-    }
-    setConfiguration(mService.mCurConfiguration,overrideConfig);
+    final Configuration newConfig=isConfigChanged() ? updateConfiguration() : null;
     if (DEBUG_ORIENTATION && mWinAnimator.mDrawState == WindowStateAnimator.DRAW_PENDING)     Slog.i(TAG,"Resizing " + this + " WITH DRAW PENDING");
     final Rect frame=mFrame;
     final Rect overscanInsets=mLastOverscanInsets;
@@ -16,12 +11,11 @@
     final Rect stableInsets=mLastStableInsets;
     final Rect outsets=mLastOutsets;
     final boolean reportDraw=mWinAnimator.mDrawState == WindowStateAnimator.DRAW_PENDING;
-    final Configuration newConfig=configChanged ? mConfiguration : null;
     if (mAttrs.type != WindowManager.LayoutParams.TYPE_APPLICATION_STARTING && mClient instanceof IWindow.Stub) {
       mService.mH.post(new Runnable(){
         @Override public void run(){
           try {
-            mClient.resized(frame,overscanInsets,contentInsets,visibleInsets,stableInsets,outsets,reportDraw,newConfig);
+            dispatchResized(frame,overscanInsets,contentInsets,visibleInsets,stableInsets,outsets,reportDraw,newConfig);
           }
  catch (          RemoteException e) {
           }
@@ -30,7 +24,7 @@
 );
     }
  else {
-      mClient.resized(frame,overscanInsets,contentInsets,visibleInsets,stableInsets,outsets,reportDraw,newConfig);
+      dispatchResized(frame,overscanInsets,contentInsets,visibleInsets,stableInsets,outsets,reportDraw,newConfig);
     }
     if (mService.mAccessibilityController != null && getDisplayId() == Display.DEFAULT_DISPLAY) {
       mService.mAccessibilityController.onSomeWindowResizedOrMovedLocked();
@@ -40,6 +34,7 @@
     mVisibleInsetsChanged=false;
     mStableInsetsChanged=false;
     mOutsetsChanged=false;
+    mResizedWhileNotDragResizingReported=true;
     mWinAnimator.mSurfaceResized=false;
   }
  catch (  RemoteException e) {
@@ -47,6 +42,7 @@
     mLastFreezeDuration=(int)(SystemClock.elapsedRealtime() - mService.mDisplayFreezeTime);
     Slog.w(TAG,"Failed to report 'resized' to the client of " + this + ", removing this window.");
     mService.mPendingRemove.add(this);
-    mService.requestTraversalLocked();
+    mService.mWindowPlacerLocked.requestTraversal();
   }
+  Trace.traceEnd(TRACE_TAG_WINDOW_MANAGER);
 }

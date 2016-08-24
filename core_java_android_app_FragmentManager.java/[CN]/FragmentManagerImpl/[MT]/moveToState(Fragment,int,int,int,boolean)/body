@@ -45,8 +45,15 @@ throw new SuperNotCalledException("Fragment " + f + " did not call through to su
 if (f.mParentFragment == null) {
 mHost.onAttachFragment(f);
 }
+ else {
+f.mParentFragment.onAttachFragment(f);
+}
 if (!f.mRetaining) {
 f.performCreate(f.mSavedFragmentState);
+}
+ else {
+f.restoreChildFragmentState(f.mSavedFragmentState,true);
+f.mState=Fragment.CREATED;
 }
 f.mRetaining=false;
 if (f.mFromLayout) {
@@ -63,9 +70,19 @@ if (DEBUG) Log.v(TAG,"moveto ACTIVITY_CREATED: " + f);
 if (!f.mFromLayout) {
 ViewGroup container=null;
 if (f.mContainerId != 0) {
+if (f.mContainerId == View.NO_ID) {
+throwException(new IllegalArgumentException("Cannot create fragment " + f + " for a container view with no id"));
+}
 container=(ViewGroup)mContainer.onFindViewById(f.mContainerId);
 if (container == null && !f.mRestored) {
-throwException(new IllegalArgumentException("No view found for id 0x" + Integer.toHexString(f.mContainerId) + " ("+ f.getResources().getResourceName(f.mContainerId)+ ") for fragment "+ f));
+String resName;
+try {
+resName=f.getResources().getResourceName(f.mContainerId);
+}
+ catch (NotFoundException e) {
+resName="unknown";
+}
+throwException(new IllegalArgumentException("No view found for id 0x" + Integer.toHexString(f.mContainerId) + " ("+ resName+ ") for fragment "+ f));
 }
 }
 f.mContainer=container;
@@ -92,6 +109,9 @@ f.restoreViewState(f.mSavedFragmentState);
 f.mSavedFragmentState=null;
 }
 case Fragment.ACTIVITY_CREATED:
+if (newState > Fragment.ACTIVITY_CREATED) {
+f.mState=Fragment.STOPPED;
+}
 case Fragment.STOPPED:
 if (newState > Fragment.STOPPED) {
 if (DEBUG) Log.v(TAG,"moveto STARTED: " + f);
@@ -100,7 +120,6 @@ f.performStart();
 case Fragment.STARTED:
 if (newState > Fragment.STARTED) {
 if (DEBUG) Log.v(TAG,"moveto RESUMED: " + f);
-f.mResumed=true;
 f.performResume();
 f.mSavedFragmentState=null;
 f.mSavedViewState=null;
@@ -113,7 +132,6 @@ case Fragment.RESUMED:
 if (newState < Fragment.RESUMED) {
 if (DEBUG) Log.v(TAG,"movefrom RESUMED: " + f);
 f.performPause();
-f.mResumed=false;
 }
 case Fragment.STARTED:
 if (newState < Fragment.STARTED) {
@@ -179,11 +197,10 @@ if (DEBUG) Log.v(TAG,"movefrom CREATED: " + f);
 if (!f.mRetaining) {
 f.performDestroy();
 }
-f.mCalled=false;
-f.onDetach();
-if (!f.mCalled) {
-throw new SuperNotCalledException("Fragment " + f + " did not call through to super.onDetach()");
+ else {
+f.mState=Fragment.INITIALIZING;
 }
+f.performDetach();
 if (!keepActive) {
 if (!f.mRetaining) {
 makeInactive(f);
@@ -192,12 +209,14 @@ makeInactive(f);
 f.mHost=null;
 f.mParentFragment=null;
 f.mFragmentManager=null;
-f.mChildFragmentManager=null;
 }
 }
 }
 }
 }
 }
+if (f.mState != newState) {
+Log.w(TAG,"moveToState: Fragment state for " + f + " not updated inline; "+ "expected state "+ newState+ " found "+ f.mState);
 f.mState=newState;
+}
 }

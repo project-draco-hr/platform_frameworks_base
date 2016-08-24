@@ -9,16 +9,21 @@
     in.setInput(fis,StandardCharsets.UTF_8.name());
     int type;
     int version=VERSION_INIT;
+    boolean insideWhitelist=false;
     while ((type=in.next()) != END_DOCUMENT) {
       final String tag=in.getName();
       if (type == START_TAG) {
         if (TAG_POLICY_LIST.equals(tag)) {
+          final boolean oldValue=mRestrictBackground;
           version=readIntAttribute(in,ATTR_VERSION);
           if (version >= VERSION_ADDED_RESTRICT_BACKGROUND) {
             mRestrictBackground=readBooleanAttribute(in,ATTR_RESTRICT_BACKGROUND);
           }
  else {
             mRestrictBackground=false;
+          }
+          if (mRestrictBackground != oldValue) {
+            mHandler.obtainMessage(MSG_RESTRICT_BACKGROUND_CHANGED,mRestrictBackground ? 1 : 0,0).sendToTarget();
           }
         }
  else         if (TAG_NETWORK_POLICY.equals(tag)) {
@@ -81,7 +86,9 @@ default :
       inferred=false;
     }
     final NetworkTemplate template=new NetworkTemplate(networkTemplate,subscriberId,networkId);
-    mNetworkPolicy.put(template,new NetworkPolicy(template,cycleDay,cycleTimezone,warningBytes,limitBytes,lastWarningSnooze,lastLimitSnooze,metered,inferred));
+    if (template.isPersistable()) {
+      mNetworkPolicy.put(template,new NetworkPolicy(template,cycleDay,cycleTimezone,warningBytes,limitBytes,lastWarningSnooze,lastLimitSnooze,metered,inferred));
+    }
   }
  else   if (TAG_UID_POLICY.equals(tag)) {
     final int uid=readIntAttribute(in,ATTR_UID);
@@ -96,13 +103,29 @@ default :
  else   if (TAG_APP_POLICY.equals(tag)) {
     final int appId=readIntAttribute(in,ATTR_APP_ID);
     final int policy=readIntAttribute(in,ATTR_POLICY);
-    final int uid=UserHandle.getUid(UserHandle.USER_OWNER,appId);
+    final int uid=UserHandle.getUid(UserHandle.USER_SYSTEM,appId);
     if (UserHandle.isApp(uid)) {
       setUidPolicyUncheckedLocked(uid,policy,false);
     }
  else {
       Slog.w(TAG,"unable to apply policy to UID " + uid + "; ignoring");
     }
+  }
+ else   if (TAG_WHITELIST.equals(tag)) {
+    insideWhitelist=true;
+  }
+ else   if (TAG_RESTRICT_BACKGROUND.equals(tag) && insideWhitelist) {
+    final int uid=readIntAttribute(in,ATTR_UID);
+    mRestrictBackgroundWhitelistUids.put(uid,true);
+  }
+ else   if (TAG_REVOKED_RESTRICT_BACKGROUND.equals(tag) && insideWhitelist) {
+    final int uid=readIntAttribute(in,ATTR_UID);
+    mRestrictBackgroundWhitelistRevokedUids.put(uid,true);
+  }
+}
+ else if (type == END_TAG) {
+  if (TAG_WHITELIST.equals(tag)) {
+    insideWhitelist=false;
   }
 }
 }

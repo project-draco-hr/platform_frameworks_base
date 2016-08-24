@@ -1,9 +1,10 @@
 {
+  boolean clearRanges=false;
   if (spinner == mDestinationSpinner) {
     if (position == AdapterView.INVALID_POSITION) {
       return;
     }
-    if (id == DEST_ADAPTER_ITEM_ID_ALL_PRINTERS) {
+    if (id == DEST_ADAPTER_ITEM_ID_MORE) {
       startSelectPrinterActivity();
       return;
     }
@@ -12,11 +13,21 @@
     if (mCurrentPrinter == currentPrinter) {
       return;
     }
+    PrinterId oldId=null;
+    if (mCurrentPrinter != null) {
+      oldId=mCurrentPrinter.getId();
+    }
     mCurrentPrinter=currentPrinter;
+    if (oldId != null) {
+      boolean printerRemoved=mDestinationSpinnerAdapter.pruneRemovedPrinter(oldId);
+      if (printerRemoved) {
+        mDestinationSpinnerAdapter.notifyDataSetChanged();
+        return;
+      }
+    }
     PrinterHolder printerHolder=mDestinationSpinnerAdapter.getPrinterHolder(currentPrinter.getId());
     if (!printerHolder.removed) {
       setState(STATE_CONFIGURING);
-      mDestinationSpinnerAdapter.pruneRemovedPrinters();
       ensurePreviewUiShown();
     }
     mPrintJob.setPrinterId(currentPrinter.getId());
@@ -27,15 +38,21 @@
       updatePrintAttributesFromCapabilities(capabilities);
     }
     mPrinterAvailabilityDetector.updatePrinter(currentPrinter);
+    getLoaderManager().getLoader(LOADER_ID_ENABLED_PRINT_SERVICES).forceLoad();
   }
  else   if (spinner == mMediaSizeSpinner) {
     SpinnerItem<MediaSize> mediaItem=mMediaSizeSpinnerAdapter.getItem(position);
     PrintAttributes attributes=mPrintJob.getAttributes();
+    MediaSize newMediaSize;
     if (mOrientationSpinner.getSelectedItemPosition() == 0) {
-      attributes.setMediaSize(mediaItem.value.asPortrait());
+      newMediaSize=mediaItem.value.asPortrait();
     }
  else {
-      attributes.setMediaSize(mediaItem.value.asLandscape());
+      newMediaSize=mediaItem.value.asLandscape();
+    }
+    if (newMediaSize != attributes.getMediaSize()) {
+      clearRanges=true;
+      attributes.setMediaSize(newMediaSize);
     }
   }
  else   if (spinner == mColorModeSpinner) {
@@ -50,24 +67,32 @@
     SpinnerItem<Integer> orientationItem=mOrientationSpinnerAdapter.getItem(position);
     PrintAttributes attributes=mPrintJob.getAttributes();
     if (mMediaSizeSpinner.getSelectedItem() != null) {
-      if (orientationItem.value == ORIENTATION_PORTRAIT) {
-        attributes.copyFrom(attributes.asPortrait());
-      }
+      boolean isPortrait=attributes.isPortrait();
+      if (isPortrait != (orientationItem.value == ORIENTATION_PORTRAIT)) {
+        clearRanges=true;
+        if (orientationItem.value == ORIENTATION_PORTRAIT) {
+          attributes.copyFrom(attributes.asPortrait());
+        }
  else {
-        attributes.copyFrom(attributes.asLandscape());
+          attributes.copyFrom(attributes.asLandscape());
+        }
       }
     }
   }
  else   if (spinner == mRangeOptionsSpinner) {
     if (mRangeOptionsSpinner.getSelectedItemPosition() == 0) {
+      clearRanges=true;
       mPageRangeEditText.setText("");
     }
  else     if (TextUtils.isEmpty(mPageRangeEditText.getText())) {
       mPageRangeEditText.setError("");
     }
   }
+  if (clearRanges) {
+    clearPageRanges();
+  }
+  updateOptionsUi();
   if (canUpdateDocument()) {
     updateDocument(false);
   }
-  updateOptionsUi();
 }

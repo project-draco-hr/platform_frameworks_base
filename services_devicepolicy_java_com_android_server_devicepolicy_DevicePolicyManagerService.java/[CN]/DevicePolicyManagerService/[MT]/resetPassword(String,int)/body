@@ -2,13 +2,67 @@
   if (!mHasFeature) {
     return false;
   }
-  final int userHandle=UserHandle.getCallingUserId();
-  enforceNotManagedProfile(userHandle,"reset the password");
+  final int callingUid=mInjector.binderGetCallingUid();
+  final int userHandle=mInjector.userHandleGetCallingUserId();
   String password=passwordOrNull != null ? passwordOrNull : "";
+  if (TextUtils.isEmpty(password)) {
+    enforceNotManagedProfile(userHandle,"clear the active password");
+  }
   int quality;
 synchronized (this) {
-    getActiveAdminForCallerLocked(null,DeviceAdminInfo.USES_POLICY_RESET_PASSWORD);
-    quality=getPasswordQuality(null,userHandle);
+    ActiveAdmin admin=getActiveAdminWithPolicyForUidLocked(null,DeviceAdminInfo.USES_POLICY_PROFILE_OWNER,callingUid);
+    final boolean preN;
+    if (admin != null) {
+      preN=getTargetSdk(admin.info.getPackageName(),userHandle) <= android.os.Build.VERSION_CODES.M;
+    }
+ else {
+      admin=getActiveAdminForCallerLocked(null,DeviceAdminInfo.USES_POLICY_RESET_PASSWORD);
+      preN=getTargetSdk(admin.info.getPackageName(),userHandle) <= android.os.Build.VERSION_CODES.M;
+      if (TextUtils.isEmpty(password)) {
+        if (!preN) {
+          throw new SecurityException("Cannot call with null password");
+        }
+ else {
+          Slog.e(LOG_TAG,"Cannot call with null password");
+          return false;
+        }
+      }
+      if (isLockScreenSecureUnchecked(userHandle)) {
+        if (!preN) {
+          throw new SecurityException("Admin cannot change current password");
+        }
+ else {
+          Slog.e(LOG_TAG,"Admin cannot change current password");
+          return false;
+        }
+      }
+    }
+    if (!isManagedProfile(userHandle)) {
+      for (      UserInfo userInfo : mUserManager.getProfiles(userHandle)) {
+        if (userInfo.isManagedProfile()) {
+          if (!preN) {
+            throw new IllegalStateException("Cannot reset password on user has managed profile");
+          }
+ else {
+            Slog.e(LOG_TAG,"Cannot reset password on user has managed profile");
+            return false;
+          }
+        }
+      }
+    }
+    if (!mUserManager.isUserUnlocked(userHandle)) {
+      if (!preN) {
+        throw new IllegalStateException("Cannot reset password when user is locked");
+      }
+ else {
+        Slog.e(LOG_TAG,"Cannot reset password when user is locked");
+        return false;
+      }
+    }
+    quality=getPasswordQuality(null,userHandle,false);
+    if (quality == DevicePolicyManager.PASSWORD_QUALITY_MANAGED) {
+      quality=DevicePolicyManager.PASSWORD_QUALITY_UNSPECIFIED;
+    }
     if (quality != DevicePolicyManager.PASSWORD_QUALITY_UNSPECIFIED) {
       int realQuality=LockPatternUtils.computePasswordQuality(password);
       if (realQuality < quality && quality != DevicePolicyManager.PASSWORD_QUALITY_COMPLEX) {
@@ -17,7 +71,7 @@ synchronized (this) {
       }
       quality=Math.max(realQuality,quality);
     }
-    int length=getPasswordMinimumLength(null,userHandle);
+    int length=getPasswordMinimumLength(null,userHandle,false);
     if (password.length() < length) {
       Slog.w(LOG_TAG,"resetPassword: password length " + password.length() + " does not meet required length "+ length);
       return false;
@@ -48,61 +102,59 @@ synchronized (this) {
           nonletter++;
         }
       }
-      int neededLetters=getPasswordMinimumLetters(null,userHandle);
+      int neededLetters=getPasswordMinimumLetters(null,userHandle,false);
       if (letters < neededLetters) {
         Slog.w(LOG_TAG,"resetPassword: number of letters " + letters + " does not meet required number of letters "+ neededLetters);
         return false;
       }
-      int neededNumbers=getPasswordMinimumNumeric(null,userHandle);
+      int neededNumbers=getPasswordMinimumNumeric(null,userHandle,false);
       if (numbers < neededNumbers) {
         Slog.w(LOG_TAG,"resetPassword: number of numerical digits " + numbers + " does not meet required number of numerical digits "+ neededNumbers);
         return false;
       }
-      int neededLowerCase=getPasswordMinimumLowerCase(null,userHandle);
+      int neededLowerCase=getPasswordMinimumLowerCase(null,userHandle,false);
       if (lowercase < neededLowerCase) {
         Slog.w(LOG_TAG,"resetPassword: number of lowercase letters " + lowercase + " does not meet required number of lowercase letters "+ neededLowerCase);
         return false;
       }
-      int neededUpperCase=getPasswordMinimumUpperCase(null,userHandle);
+      int neededUpperCase=getPasswordMinimumUpperCase(null,userHandle,false);
       if (uppercase < neededUpperCase) {
         Slog.w(LOG_TAG,"resetPassword: number of uppercase letters " + uppercase + " does not meet required number of uppercase letters "+ neededUpperCase);
         return false;
       }
-      int neededSymbols=getPasswordMinimumSymbols(null,userHandle);
+      int neededSymbols=getPasswordMinimumSymbols(null,userHandle,false);
       if (symbols < neededSymbols) {
         Slog.w(LOG_TAG,"resetPassword: number of special symbols " + symbols + " does not meet required number of special symbols "+ neededSymbols);
         return false;
       }
-      int neededNonLetter=getPasswordMinimumNonLetter(null,userHandle);
+      int neededNonLetter=getPasswordMinimumNonLetter(null,userHandle,false);
       if (nonletter < neededNonLetter) {
         Slog.w(LOG_TAG,"resetPassword: number of non-letter characters " + nonletter + " does not meet required number of non-letter characters "+ neededNonLetter);
         return false;
       }
     }
   }
-  int callingUid=Binder.getCallingUid();
   DevicePolicyData policy=getUserData(userHandle);
   if (policy.mPasswordOwner >= 0 && policy.mPasswordOwner != callingUid) {
     Slog.w(LOG_TAG,"resetPassword: already set by another uid and not entered by user");
     return false;
   }
-  boolean callerIsDeviceOwnerAdmin=isCallerDeviceOwnerOrInitializer(callingUid);
+  boolean callerIsDeviceOwnerAdmin=isCallerDeviceOwner(callingUid);
   boolean doNotAskCredentialsOnBoot=(flags & DevicePolicyManager.RESET_PASSWORD_DO_NOT_ASK_CREDENTIALS_ON_BOOT) != 0;
   if (callerIsDeviceOwnerAdmin && doNotAskCredentialsOnBoot) {
     setDoNotAskCredentialsOnBoot();
   }
-  long ident=Binder.clearCallingIdentity();
+  final long ident=mInjector.binderClearCallingIdentity();
   try {
-    LockPatternUtils utils=new LockPatternUtils(mContext);
     if (!TextUtils.isEmpty(password)) {
-      utils.saveLockPassword(password,null,quality,userHandle);
+      mLockPatternUtils.saveLockPassword(password,null,quality,userHandle);
     }
  else {
-      utils.clearLock(userHandle);
+      mLockPatternUtils.clearLock(userHandle);
     }
     boolean requireEntry=(flags & DevicePolicyManager.RESET_PASSWORD_REQUIRE_ENTRY) != 0;
     if (requireEntry) {
-      utils.requireStrongAuth(STRONG_AUTH_REQUIRED_AFTER_DPM_LOCK_NOW,UserHandle.USER_ALL);
+      mLockPatternUtils.requireStrongAuth(STRONG_AUTH_REQUIRED_AFTER_DPM_LOCK_NOW,UserHandle.USER_ALL);
     }
 synchronized (this) {
       int newOwner=requireEntry ? callingUid : -1;
@@ -113,7 +165,7 @@ synchronized (this) {
     }
   }
   finally {
-    Binder.restoreCallingIdentity(ident);
+    mInjector.binderRestoreCallingIdentity(ident);
   }
   return true;
 }

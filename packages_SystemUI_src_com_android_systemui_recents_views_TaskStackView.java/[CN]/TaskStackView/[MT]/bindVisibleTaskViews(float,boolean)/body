@@ -1,0 +1,72 @@
+{
+  ArrayList<Task> tasks=mStack.getStackTasks();
+  int[] visibleTaskRange=computeVisibleTaskTransforms(mCurrentTaskTransforms,tasks,mStackScroller.getStackScroll(),targetStackScroll,mIgnoreTasks,ignoreTaskOverrides);
+  mTmpTaskViewMap.clear();
+  List<TaskView> taskViews=getTaskViews();
+  int lastFocusedTaskIndex=-1;
+  int taskViewCount=taskViews.size();
+  for (int i=taskViewCount - 1; i >= 0; i--) {
+    TaskView tv=taskViews.get(i);
+    Task task=tv.getTask();
+    if (mIgnoreTasks.contains(task.key)) {
+      continue;
+    }
+    int taskIndex=mStack.indexOfStackTask(task);
+    TaskViewTransform transform=null;
+    if (taskIndex != -1) {
+      transform=mCurrentTaskTransforms.get(taskIndex);
+    }
+    if (task.isFreeformTask() || (transform != null && transform.visible)) {
+      mTmpTaskViewMap.put(task.key,tv);
+    }
+ else {
+      if (mTouchExplorationEnabled && Utilities.isDescendentAccessibilityFocused(tv)) {
+        lastFocusedTaskIndex=taskIndex;
+        resetFocusedTask(task);
+      }
+      mViewPool.returnViewToPool(tv);
+    }
+  }
+  for (int i=tasks.size() - 1; i >= 0; i--) {
+    Task task=tasks.get(i);
+    TaskViewTransform transform=mCurrentTaskTransforms.get(i);
+    if (mIgnoreTasks.contains(task.key)) {
+      continue;
+    }
+    if (!task.isFreeformTask() && !transform.visible) {
+      continue;
+    }
+    TaskView tv=mTmpTaskViewMap.get(task.key);
+    if (tv == null) {
+      tv=mViewPool.pickUpViewFromPool(task,task);
+      if (task.isFreeformTask()) {
+        updateTaskViewToTransform(tv,transform,AnimationProps.IMMEDIATE);
+      }
+ else {
+        if (transform.rect.top <= mLayoutAlgorithm.mStackRect.top) {
+          updateTaskViewToTransform(tv,mLayoutAlgorithm.getBackOfStackTransform(),AnimationProps.IMMEDIATE);
+        }
+ else {
+          updateTaskViewToTransform(tv,mLayoutAlgorithm.getFrontOfStackTransform(),AnimationProps.IMMEDIATE);
+        }
+      }
+    }
+ else {
+      final int taskIndex=mStack.indexOfStackTask(task);
+      final int insertIndex=findTaskViewInsertIndex(task,taskIndex);
+      if (insertIndex != getTaskViews().indexOf(tv)) {
+        detachViewFromParent(tv);
+        attachViewToParent(tv,insertIndex,tv.getLayoutParams());
+        updateTaskViewsList();
+      }
+    }
+  }
+  if (lastFocusedTaskIndex != -1) {
+    int newFocusedTaskIndex=(lastFocusedTaskIndex < visibleTaskRange[1]) ? visibleTaskRange[1] : visibleTaskRange[0];
+    setFocusedTask(newFocusedTaskIndex,false,true);
+    TaskView focusedTaskView=getChildViewForTask(mFocusedTask);
+    if (focusedTaskView != null) {
+      focusedTaskView.requestAccessibilityFocus();
+    }
+  }
+}

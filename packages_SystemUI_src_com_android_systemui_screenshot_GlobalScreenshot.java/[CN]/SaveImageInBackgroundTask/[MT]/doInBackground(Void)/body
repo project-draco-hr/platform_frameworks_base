@@ -1,0 +1,55 @@
+{
+  if (isCancelled()) {
+    return null;
+  }
+  Process.setThreadPriority(Process.THREAD_PRIORITY_FOREGROUND);
+  Context context=mParams.context;
+  Bitmap image=mParams.image;
+  Resources r=context.getResources();
+  try {
+    mScreenshotDir.mkdirs();
+    long dateSeconds=mImageTime / 1000;
+    OutputStream out=new FileOutputStream(mImageFilePath);
+    image.compress(Bitmap.CompressFormat.PNG,100,out);
+    out.flush();
+    out.close();
+    ContentValues values=new ContentValues();
+    ContentResolver resolver=context.getContentResolver();
+    values.put(MediaStore.Images.ImageColumns.DATA,mImageFilePath);
+    values.put(MediaStore.Images.ImageColumns.TITLE,mImageFileName);
+    values.put(MediaStore.Images.ImageColumns.DISPLAY_NAME,mImageFileName);
+    values.put(MediaStore.Images.ImageColumns.DATE_TAKEN,mImageTime);
+    values.put(MediaStore.Images.ImageColumns.DATE_ADDED,dateSeconds);
+    values.put(MediaStore.Images.ImageColumns.DATE_MODIFIED,dateSeconds);
+    values.put(MediaStore.Images.ImageColumns.MIME_TYPE,"image/png");
+    values.put(MediaStore.Images.ImageColumns.WIDTH,mImageWidth);
+    values.put(MediaStore.Images.ImageColumns.HEIGHT,mImageHeight);
+    values.put(MediaStore.Images.ImageColumns.SIZE,new File(mImageFilePath).length());
+    Uri uri=resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,values);
+    String subjectDate=DateFormat.getDateTimeInstance().format(new Date(mImageTime));
+    String subject=String.format(SCREENSHOT_SHARE_SUBJECT_TEMPLATE,subjectDate);
+    Intent sharingIntent=new Intent(Intent.ACTION_SEND);
+    sharingIntent.setType("image/png");
+    sharingIntent.putExtra(Intent.EXTRA_STREAM,uri);
+    sharingIntent.putExtra(Intent.EXTRA_SUBJECT,subject);
+    PendingIntent chooseAction=PendingIntent.getBroadcast(context,0,new Intent(context,GlobalScreenshot.TargetChosenReceiver.class),PendingIntent.FLAG_CANCEL_CURRENT | PendingIntent.FLAG_ONE_SHOT);
+    Intent chooserIntent=Intent.createChooser(sharingIntent,null,chooseAction.getIntentSender()).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK | Intent.FLAG_ACTIVITY_NEW_TASK);
+    PendingIntent shareAction=PendingIntent.getActivity(context,0,chooserIntent,PendingIntent.FLAG_CANCEL_CURRENT);
+    Notification.Action.Builder shareActionBuilder=new Notification.Action.Builder(R.drawable.ic_screenshot_share,r.getString(com.android.internal.R.string.share),shareAction);
+    mNotificationBuilder.addAction(shareActionBuilder.build());
+    PendingIntent deleteAction=PendingIntent.getBroadcast(context,0,new Intent(context,GlobalScreenshot.DeleteScreenshotReceiver.class).putExtra(GlobalScreenshot.SCREENSHOT_URI_ID,uri.toString()),PendingIntent.FLAG_CANCEL_CURRENT | PendingIntent.FLAG_ONE_SHOT);
+    Notification.Action.Builder deleteActionBuilder=new Notification.Action.Builder(R.drawable.ic_screenshot_delete,r.getString(com.android.internal.R.string.delete),deleteAction);
+    mNotificationBuilder.addAction(deleteActionBuilder.build());
+    mParams.imageUri=uri;
+    mParams.image=null;
+    mParams.errorMsgResId=0;
+  }
+ catch (  Exception e) {
+    mParams.clearImage();
+    mParams.errorMsgResId=R.string.screenshot_failed_to_save_text;
+  }
+  if (image != null) {
+    image.recycle();
+  }
+  return null;
+}

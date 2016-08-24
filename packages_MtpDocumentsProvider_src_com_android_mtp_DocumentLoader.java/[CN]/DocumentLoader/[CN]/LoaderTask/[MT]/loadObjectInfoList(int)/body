@@ -1,0 +1,69 @@
+{
+synchronized (this) {
+    if (mState != STATE_LOADING) {
+      return;
+    }
+    if (mPosition == 0) {
+      try {
+        mDatabase.getMapper().startAddingDocuments(mIdentifier.mDocumentId);
+      }
+ catch (      FileNotFoundException error) {
+        mError=error;
+        mState=STATE_ERROR;
+        return;
+      }
+    }
+  }
+  final ArrayList<MtpObjectInfo> infoList=new ArrayList<>();
+  for (int chunkEnd=mPosition + count; mPosition < mObjectHandles.length && mPosition < chunkEnd; mPosition++) {
+    try {
+      infoList.add(mManager.getObjectInfo(mIdentifier.mDeviceId,mObjectHandles[mPosition]));
+    }
+ catch (    IOException error) {
+      Log.e(MtpDocumentsProvider.TAG,"Failed to load object info",error);
+    }
+  }
+  final long[] objectSizeList=new long[infoList.size()];
+  for (int i=0; i < infoList.size(); i++) {
+    final MtpObjectInfo info=infoList.get(i);
+    if (info.getCompressedSizeLong() != 0xffffffffl) {
+      objectSizeList[i]=info.getCompressedSizeLong();
+      continue;
+    }
+    if (!MtpDeviceRecord.isSupported(mOperationsSupported,MtpConstants.OPERATION_GET_OBJECT_PROP_DESC) || !MtpDeviceRecord.isSupported(mOperationsSupported,MtpConstants.OPERATION_GET_OBJECT_PROP_VALUE)) {
+      objectSizeList[i]=-1;
+      continue;
+    }
+    try {
+      objectSizeList[i]=mManager.getObjectSizeLong(mIdentifier.mDeviceId,info.getObjectHandle(),info.getFormat());
+    }
+ catch (    IOException error) {
+      Log.e(MtpDocumentsProvider.TAG,"Failed to get object size property.",error);
+      objectSizeList[i]=-1;
+    }
+  }
+synchronized (this) {
+    if (mState != STATE_LOADING) {
+      return;
+    }
+    try {
+      mDatabase.getMapper().putChildDocuments(mIdentifier.mDeviceId,mIdentifier.mDocumentId,mOperationsSupported,infoList.toArray(new MtpObjectInfo[infoList.size()]),objectSizeList);
+    }
+ catch (    FileNotFoundException error) {
+      mError=error;
+      mState=STATE_ERROR;
+      return;
+    }
+    if (mPosition >= mObjectHandles.length) {
+      try {
+        mDatabase.getMapper().stopAddingDocuments(mIdentifier.mDocumentId);
+        mState=STATE_COMPLETED;
+      }
+ catch (      FileNotFoundException error) {
+        mError=error;
+        mState=STATE_ERROR;
+        return;
+      }
+    }
+  }
+}

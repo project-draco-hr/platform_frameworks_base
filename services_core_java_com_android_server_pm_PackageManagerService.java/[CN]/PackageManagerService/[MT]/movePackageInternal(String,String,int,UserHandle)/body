@@ -1,0 +1,169 @@
+{
+  final StorageManager storage=mContext.getSystemService(StorageManager.class);
+  final PackageManager pm=mContext.getPackageManager();
+  final boolean currentAsec;
+  final String currentVolumeUuid;
+  final File codeFile;
+  final String installerPackageName;
+  final String packageAbiOverride;
+  final int appId;
+  final String seinfo;
+  final String label;
+  final int targetSdkVersion;
+  final PackageFreezer freezer;
+  final int[] installedUserIds;
+synchronized (mPackages) {
+    final PackageParser.Package pkg=mPackages.get(packageName);
+    final PackageSetting ps=mSettings.mPackages.get(packageName);
+    if (pkg == null || ps == null) {
+      throw new PackageManagerException(MOVE_FAILED_DOESNT_EXIST,"Missing package");
+    }
+    if (pkg.applicationInfo.isSystemApp()) {
+      throw new PackageManagerException(MOVE_FAILED_SYSTEM_PACKAGE,"Cannot move system application");
+    }
+    if (pkg.applicationInfo.isExternalAsec()) {
+      currentAsec=true;
+      currentVolumeUuid=StorageManager.UUID_PRIMARY_PHYSICAL;
+    }
+ else     if (pkg.applicationInfo.isForwardLocked()) {
+      currentAsec=true;
+      currentVolumeUuid="forward_locked";
+    }
+ else {
+      currentAsec=false;
+      currentVolumeUuid=ps.volumeUuid;
+      final File probe=new File(pkg.codePath);
+      final File probeOat=new File(probe,"oat");
+      if (!probe.isDirectory() || !probeOat.isDirectory()) {
+        throw new PackageManagerException(MOVE_FAILED_INTERNAL_ERROR,"Move only supported for modern cluster style installs");
+      }
+    }
+    if (Objects.equals(currentVolumeUuid,volumeUuid)) {
+      throw new PackageManagerException(MOVE_FAILED_INTERNAL_ERROR,"Package already moved to " + volumeUuid);
+    }
+    if (pkg.applicationInfo.isInternal() && isPackageDeviceAdminOnAnyUser(packageName)) {
+      throw new PackageManagerException(MOVE_FAILED_DEVICE_ADMIN,"Device admin cannot be moved");
+    }
+    if (mFrozenPackages.contains(packageName)) {
+      throw new PackageManagerException(MOVE_FAILED_OPERATION_PENDING,"Failed to move already frozen package");
+    }
+    codeFile=new File(pkg.codePath);
+    installerPackageName=ps.installerPackageName;
+    packageAbiOverride=ps.cpuAbiOverrideString;
+    appId=UserHandle.getAppId(pkg.applicationInfo.uid);
+    seinfo=pkg.applicationInfo.seinfo;
+    label=String.valueOf(pm.getApplicationLabel(pkg.applicationInfo));
+    targetSdkVersion=pkg.applicationInfo.targetSdkVersion;
+    freezer=freezePackage(packageName,"movePackageInternal");
+    installedUserIds=ps.queryInstalledUsers(sUserManager.getUserIds(),true);
+  }
+  final Bundle extras=new Bundle();
+  extras.putString(Intent.EXTRA_PACKAGE_NAME,packageName);
+  extras.putString(Intent.EXTRA_TITLE,label);
+  mMoveCallbacks.notifyCreated(moveId,extras);
+  int installFlags;
+  final boolean moveCompleteApp;
+  final File measurePath;
+  if (Objects.equals(StorageManager.UUID_PRIVATE_INTERNAL,volumeUuid)) {
+    installFlags=INSTALL_INTERNAL;
+    moveCompleteApp=!currentAsec;
+    measurePath=Environment.getDataAppDirectory(volumeUuid);
+  }
+ else   if (Objects.equals(StorageManager.UUID_PRIMARY_PHYSICAL,volumeUuid)) {
+    installFlags=INSTALL_EXTERNAL;
+    moveCompleteApp=false;
+    measurePath=storage.getPrimaryPhysicalVolume().getPath();
+  }
+ else {
+    final VolumeInfo volume=storage.findVolumeByUuid(volumeUuid);
+    if (volume == null || volume.getType() != VolumeInfo.TYPE_PRIVATE || !volume.isMountedWritable()) {
+      freezer.close();
+      throw new PackageManagerException(MOVE_FAILED_INTERNAL_ERROR,"Move location not mounted private volume");
+    }
+    Preconditions.checkState(!currentAsec);
+    installFlags=INSTALL_INTERNAL;
+    moveCompleteApp=true;
+    measurePath=Environment.getDataAppDirectory(volumeUuid);
+  }
+  final PackageStats stats=new PackageStats(null,-1);
+synchronized (mInstaller) {
+    for (    int userId : installedUserIds) {
+      if (!getPackageSizeInfoLI(packageName,userId,stats)) {
+        freezer.close();
+        throw new PackageManagerException(MOVE_FAILED_INTERNAL_ERROR,"Failed to measure package size");
+      }
+    }
+  }
+  if (DEBUG_INSTALL)   Slog.d(TAG,"Measured code size " + stats.codeSize + ", data size "+ stats.dataSize);
+  final long startFreeBytes=measurePath.getFreeSpace();
+  final long sizeBytes;
+  if (moveCompleteApp) {
+    sizeBytes=stats.codeSize + stats.dataSize;
+  }
+ else {
+    sizeBytes=stats.codeSize;
+  }
+  if (sizeBytes > storage.getStorageBytesUntilLow(measurePath)) {
+    freezer.close();
+    throw new PackageManagerException(MOVE_FAILED_INTERNAL_ERROR,"Not enough free space to move");
+  }
+  mMoveCallbacks.notifyStatusChanged(moveId,10);
+  final CountDownLatch installedLatch=new CountDownLatch(1);
+  final IPackageInstallObserver2 installObserver=new IPackageInstallObserver2.Stub(){
+    @Override public void onUserActionRequired(    Intent intent) throws RemoteException {
+      throw new IllegalStateException();
+    }
+    @Override public void onPackageInstalled(    String basePackageName,    int returnCode,    String msg,    Bundle extras) throws RemoteException {
+      if (DEBUG_INSTALL)       Slog.d(TAG,"Install result for move: " + PackageManager.installStatusToString(returnCode,msg));
+      installedLatch.countDown();
+      freezer.close();
+      final int status=PackageManager.installStatusToPublicStatus(returnCode);
+switch (status) {
+case PackageInstaller.STATUS_SUCCESS:
+        mMoveCallbacks.notifyStatusChanged(moveId,PackageManager.MOVE_SUCCEEDED);
+      break;
+case PackageInstaller.STATUS_FAILURE_STORAGE:
+    mMoveCallbacks.notifyStatusChanged(moveId,PackageManager.MOVE_FAILED_INSUFFICIENT_STORAGE);
+  break;
+default :
+mMoveCallbacks.notifyStatusChanged(moveId,PackageManager.MOVE_FAILED_INTERNAL_ERROR);
+break;
+}
+}
+}
+;
+final MoveInfo move;
+if (moveCompleteApp) {
+new Thread(){
+@Override public void run(){
+while (true) {
+try {
+if (installedLatch.await(1,TimeUnit.SECONDS)) {
+  break;
+}
+}
+ catch (InterruptedException ignored) {
+}
+final long deltaFreeBytes=startFreeBytes - measurePath.getFreeSpace();
+final int progress=10 + (int)MathUtils.constrain(((deltaFreeBytes * 80) / sizeBytes),0,80);
+mMoveCallbacks.notifyStatusChanged(moveId,progress);
+}
+}
+}
+.start();
+final String dataAppName=codeFile.getName();
+move=new MoveInfo(moveId,currentVolumeUuid,volumeUuid,packageName,dataAppName,appId,seinfo,targetSdkVersion);
+}
+ else {
+move=null;
+}
+installFlags|=PackageManager.INSTALL_REPLACE_EXISTING;
+final Message msg=mHandler.obtainMessage(INIT_COPY);
+final OriginInfo origin=OriginInfo.fromExistingFile(codeFile);
+final InstallParams params=new InstallParams(origin,move,installObserver,installFlags,installerPackageName,volumeUuid,null,user,packageAbiOverride,null,null);
+params.setTraceMethod("movePackage").setTraceCookie(System.identityHashCode(params));
+msg.obj=params;
+Trace.asyncTraceBegin(TRACE_TAG_PACKAGE_MANAGER,"movePackage",System.identityHashCode(msg.obj));
+Trace.asyncTraceBegin(TRACE_TAG_PACKAGE_MANAGER,"queueInstall",System.identityHashCode(msg.obj));
+mHandler.sendMessage(msg);
+}

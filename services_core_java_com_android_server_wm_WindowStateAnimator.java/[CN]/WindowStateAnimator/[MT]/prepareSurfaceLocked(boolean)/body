@@ -1,6 +1,6 @@
 {
   final WindowState w=mWin;
-  if (mSurfaceControl == null) {
+  if (!hasSurface()) {
     if (w.mOrientationChanging) {
       if (DEBUG_ORIENTATION) {
         Slog.v(TAG,"Orientation change skips hidden " + w);
@@ -9,15 +9,18 @@
     }
     return;
   }
+  if (isWaitingForOpening()) {
+    return;
+  }
   boolean displayed=false;
   computeShownFrameLocked();
   setSurfaceBoundariesLocked(recoveringMemory);
   if (mIsWallpaper && !mWin.mWallpaperVisible) {
-    hide();
+    hide("prepareSurfaceLocked");
   }
  else   if (w.mAttachedHidden || !w.isOnScreen()) {
-    hide();
-    mService.hideWallpapersLocked(w);
+    hide("prepareSurfaceLocked");
+    mWallpaperControllerLocked.hideWallpapers(w);
     if (w.mOrientationChanging) {
       w.mOrientationChanging=false;
       if (DEBUG_ORIENTATION)       Slog.v(TAG,"Orientation change skips hidden " + w);
@@ -33,42 +36,28 @@
     mLastDtDy=mDtDy;
     w.mLastHScale=w.mHScale;
     w.mLastVScale=w.mVScale;
-    if (WindowManagerService.SHOW_TRANSACTIONS)     WindowManagerService.logSurface(w,"alpha=" + mShownAlpha + " layer="+ mAnimLayer+ " matrix=["+ mDsDx+ "*"+ w.mHScale+ ","+ mDtDx+ "*"+ w.mVScale+ "]["+ mDsDy+ "*"+ w.mHScale+ ","+ mDtDy+ "*"+ w.mVScale+ "]",null);
-    if (mSurfaceControl != null) {
-      try {
-        mSurfaceAlpha=mShownAlpha;
-        mSurfaceControl.setAlpha(mShownAlpha);
-        mSurfaceLayer=mAnimLayer;
-        mSurfaceControl.setLayer(mAnimLayer);
-        mSurfaceControl.setMatrix(mDsDx * w.mHScale,mDtDx * w.mVScale,mDsDy * w.mHScale,mDtDy * w.mVScale);
-        if (mLastHidden && mDrawState == HAS_DRAWN) {
-          if (WindowManagerService.SHOW_TRANSACTIONS)           WindowManagerService.logSurface(w,"SHOW (performLayout)",null);
-          if (WindowManagerService.DEBUG_VISIBILITY)           Slog.v(TAG,"Showing " + w + " during relayout");
-          if (showSurfaceRobustlyLocked()) {
-            mLastHidden=false;
-            if (mIsWallpaper) {
-              mService.dispatchWallpaperVisibility(w,true);
-            }
-            mAnimator.setPendingLayoutChanges(w.getDisplayId(),WindowManagerPolicy.FINISH_LAYOUT_REDO_ANIM);
-          }
+    if (SHOW_TRANSACTIONS)     WindowManagerService.logSurface(w,"controller=" + mSurfaceController + "alpha="+ mShownAlpha+ " layer="+ mAnimLayer+ " matrix=["+ mDsDx+ "*"+ w.mHScale+ ","+ mDtDx+ "*"+ w.mVScale+ "]["+ mDsDy+ "*"+ w.mHScale+ ","+ mDtDy+ "*"+ w.mVScale+ "]",false);
+    boolean prepared=mSurfaceController.prepareToShowInTransaction(mShownAlpha,mAnimLayer,mDsDx * w.mHScale * mExtraHScale,mDtDx * w.mVScale * mExtraVScale,mDsDy * w.mHScale * mExtraHScale,mDtDy * w.mVScale * mExtraVScale,recoveringMemory);
+    if (prepared && mLastHidden && mDrawState == HAS_DRAWN) {
+      if (showSurfaceRobustlyLocked()) {
+        markPreservedSurfaceForDestroy();
+        mAnimator.requestRemovalOfReplacedWindows(w);
+        mLastHidden=false;
+        if (mIsWallpaper) {
+          mWallpaperControllerLocked.dispatchWallpaperVisibility(w,true);
+        }
+        mAnimator.setPendingLayoutChanges(w.getDisplayId(),WindowManagerPolicy.FINISH_LAYOUT_REDO_ANIM);
+      }
  else {
-            w.mOrientationChanging=false;
-          }
-        }
-        if (mSurfaceControl != null) {
-          w.mToken.hasVisible=true;
-        }
+        w.mOrientationChanging=false;
       }
- catch (      RuntimeException e) {
-        Slog.w(TAG,"Error updating surface in " + w,e);
-        if (!recoveringMemory) {
-          mService.reclaimSomeSurfaceMemoryLocked(this,"update",true);
-        }
-      }
+    }
+    if (hasSurface()) {
+      w.mToken.hasVisible=true;
     }
   }
  else {
-    if (DEBUG_ANIM && isAnimating()) {
+    if (DEBUG_ANIM && isAnimationSet()) {
       Slog.v(TAG,"prepareSurface: No changes in animation for " + this);
     }
     displayed=true;

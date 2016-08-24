@@ -1,0 +1,42 @@
+{
+  final long identity=Binder.clearCallingIdentity();
+  try {
+    UserInfo user=mUserManager.getUserInfo(userId);
+    boolean lockedProfile=!mUserManager.isUserUnlockingOrUnlocked(userId);
+    boolean quietProfile=user.isQuietModeEnabled();
+    final int N=mProviders.size();
+    for (int i=0; i < N; i++) {
+      Provider provider=mProviders.get(i);
+      int providerUserId=provider.getUserId();
+      if (providerUserId != userId) {
+        continue;
+      }
+      boolean changed=provider.setMaskedByLockedProfileLocked(lockedProfile);
+      changed|=provider.setMaskedByQuietProfileLocked(quietProfile);
+      try {
+        boolean suspended;
+        try {
+          suspended=mPackageManager.isPackageSuspendedForUser(provider.info.provider.getPackageName(),provider.getUserId());
+        }
+ catch (        IllegalArgumentException ex) {
+          suspended=false;
+        }
+        changed|=provider.setMaskedBySuspendedPackageLocked(suspended);
+      }
+ catch (      RemoteException e) {
+        Slog.e(TAG,"Failed to query application info",e);
+      }
+      if (changed) {
+        if (provider.isMaskedLocked()) {
+          maskWidgetsViewsLocked(provider,null);
+        }
+ else {
+          unmaskWidgetsViewsLocked(provider);
+        }
+      }
+    }
+  }
+  finally {
+    Binder.restoreCallingIdentity(identity);
+  }
+}

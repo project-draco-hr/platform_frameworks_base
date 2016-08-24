@@ -1,0 +1,57 @@
+{
+  data.totalTime=0;
+  for (int i=0; i < STATE_COUNT; i++) {
+    data.processStateWeight[i]=0;
+    data.processStatePss[i]=0;
+    data.processStateTime[i]=0;
+    data.processStateSamples[i]=0;
+  }
+  for (int i=0; i < SYS_MEM_USAGE_COUNT; i++) {
+    data.sysMemUsage[i]=0;
+  }
+  data.sysMemCachedWeight=0;
+  data.sysMemFreeWeight=0;
+  data.sysMemZRamWeight=0;
+  data.sysMemKernelWeight=0;
+  data.sysMemNativeWeight=0;
+  data.sysMemSamples=0;
+  final long[] totalMemUsage=mSysMemUsage.getTotalMemUsage();
+  for (int is=0; is < data.screenStates.length; is++) {
+    for (int im=0; im < data.memStates.length; im++) {
+      int memBucket=data.screenStates[is] + data.memStates[im];
+      int stateBucket=memBucket * STATE_COUNT;
+      long memTime=mMemFactorDurations[memBucket];
+      if (mMemFactor == memBucket) {
+        memTime+=now - mStartTime;
+      }
+      data.totalTime+=memTime;
+      final int sysKey=mSysMemUsage.getKey((byte)stateBucket);
+      long[] longs=totalMemUsage;
+      int idx=0;
+      if (sysKey != SparseMappingTable.INVALID_KEY) {
+        final long[] tmpLongs=mSysMemUsage.getArrayForKey(sysKey);
+        final int tmpIndex=SparseMappingTable.getIndexFromKey(sysKey);
+        if (tmpLongs[tmpIndex + SYS_MEM_USAGE_SAMPLE_COUNT] >= 3) {
+          SysMemUsageTable.mergeSysMemUsage(data.sysMemUsage,0,longs,idx);
+          longs=tmpLongs;
+          idx=tmpIndex;
+        }
+      }
+      data.sysMemCachedWeight+=longs[idx + SYS_MEM_USAGE_CACHED_AVERAGE] * (double)memTime;
+      data.sysMemFreeWeight+=longs[idx + SYS_MEM_USAGE_FREE_AVERAGE] * (double)memTime;
+      data.sysMemZRamWeight+=longs[idx + SYS_MEM_USAGE_ZRAM_AVERAGE] * (double)memTime;
+      data.sysMemKernelWeight+=longs[idx + SYS_MEM_USAGE_KERNEL_AVERAGE] * (double)memTime;
+      data.sysMemNativeWeight+=longs[idx + SYS_MEM_USAGE_NATIVE_AVERAGE] * (double)memTime;
+      data.sysMemSamples+=longs[idx + SYS_MEM_USAGE_SAMPLE_COUNT];
+    }
+  }
+  data.hasSwappedOutPss=mHasSwappedOutPss;
+  ArrayMap<String,SparseArray<ProcessState>> procMap=mProcesses.getMap();
+  for (int iproc=0; iproc < procMap.size(); iproc++) {
+    SparseArray<ProcessState> uids=procMap.valueAt(iproc);
+    for (int iu=0; iu < uids.size(); iu++) {
+      final ProcessState proc=uids.valueAt(iu);
+      proc.aggregatePss(data,now);
+    }
+  }
+}

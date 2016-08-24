@@ -3,7 +3,7 @@ switch (msg.what) {
 case UPDATE_CONFIGURATION_MSG:
 {
       final ContentResolver resolver=mContext.getContentResolver();
-      Settings.System.putConfiguration(resolver,(Configuration)msg.obj);
+      Settings.System.putConfigurationForUser(resolver,(Configuration)msg.obj,msg.arg1);
     }
   break;
 case GC_BACKGROUND_PROCESSES_MSG:
@@ -113,19 +113,19 @@ break;
 case DO_PENDING_ACTIVITY_LAUNCHES_MSG:
 {
 synchronized (ActivityManagerService.this) {
-mStackSupervisor.doPendingActivityLaunchesLocked(true);
+mActivityStarter.doPendingActivityLaunchesLocked(true);
 }
 }
 break;
 case KILL_APPLICATION_MSG:
 {
 synchronized (ActivityManagerService.this) {
-int appid=msg.arg1;
-boolean restart=(msg.arg2 == 1);
+final int appId=msg.arg1;
+final int userId=msg.arg2;
 Bundle bundle=(Bundle)msg.obj;
 String pkg=bundle.getString("pkg");
 String reason=bundle.getString("reason");
-forceStopPackageLocked(pkg,appid,restart,false,true,false,false,UserHandle.USER_ALL,reason);
+forceStopPackageLocked(pkg,appId,false,false,true,false,false,userId,reason);
 }
 }
 break;
@@ -204,17 +204,17 @@ break;
 }
 case REPORT_USER_SWITCH_MSG:
 {
-dispatchUserSwitch((UserState)msg.obj,msg.arg1,msg.arg2);
+mUserController.dispatchUserSwitch((UserState)msg.obj,msg.arg1,msg.arg2);
 break;
 }
 case CONTINUE_USER_SWITCH_MSG:
 {
-continueUserSwitch((UserState)msg.obj,msg.arg1,msg.arg2);
+mUserController.continueUserSwitch((UserState)msg.obj,msg.arg1,msg.arg2);
 break;
 }
 case USER_SWITCH_TIMEOUT_MSG:
 {
-timeoutUserSwitch((UserState)msg.obj,msg.arg1,msg.arg2);
+mUserController.timeoutUserSwitch((UserState)msg.obj,msg.arg1,msg.arg2);
 break;
 }
 case IMMERSIVE_MODE_LOCK_MSG:
@@ -246,7 +246,7 @@ break;
 case START_PROFILES_MSG:
 {
 synchronized (ActivityManagerService.this) {
-startProfilesLocked();
+mUserController.startProfilesLocked();
 }
 break;
 }
@@ -271,6 +271,20 @@ case SYSTEM_USER_START_MSG:
 {
 mBatteryStatsService.noteEvent(BatteryStats.HistoryItem.EVENT_USER_RUNNING_START,Integer.toString(msg.arg1),msg.arg1);
 mSystemServiceManager.startUser(msg.arg1);
+break;
+}
+case SYSTEM_USER_UNLOCK_MSG:
+{
+final int userId=msg.arg1;
+mSystemServiceManager.unlockUser(userId);
+synchronized (ActivityManagerService.this) {
+mRecentTasks.loadUserRecentsLocked(userId);
+}
+if (userId == UserHandle.USER_SYSTEM) {
+startPersistentApps(PackageManager.MATCH_DIRECT_BOOT_UNAWARE);
+}
+installEncryptionUnawareProviders(userId);
+mUserController.finishUserUnlocked((UserState)msg.obj);
 break;
 }
 case SYSTEM_USER_CURRENT_MSG:
@@ -323,11 +337,79 @@ break;
 case NOTIFY_TASK_STACK_CHANGE_LISTENERS_MSG:
 {
 synchronized (ActivityManagerService.this) {
-int i=mTaskStackListeners.beginBroadcast();
-while (i > 0) {
-i--;
+for (int i=mTaskStackListeners.beginBroadcast() - 1; i >= 0; i--) {
 try {
 mTaskStackListeners.getBroadcastItem(i).onTaskStackChanged();
+}
+ catch (RemoteException e) {
+}
+}
+mTaskStackListeners.finishBroadcast();
+}
+break;
+}
+case NOTIFY_ACTIVITY_PINNED_LISTENERS_MSG:
+{
+synchronized (ActivityManagerService.this) {
+for (int i=mTaskStackListeners.beginBroadcast() - 1; i >= 0; i--) {
+try {
+mTaskStackListeners.getBroadcastItem(i).onActivityPinned();
+}
+ catch (RemoteException e) {
+}
+}
+mTaskStackListeners.finishBroadcast();
+}
+break;
+}
+case NOTIFY_PINNED_ACTIVITY_RESTART_ATTEMPT_LISTENERS_MSG:
+{
+synchronized (ActivityManagerService.this) {
+for (int i=mTaskStackListeners.beginBroadcast() - 1; i >= 0; i--) {
+try {
+mTaskStackListeners.getBroadcastItem(i).onPinnedActivityRestartAttempt();
+}
+ catch (RemoteException e) {
+}
+}
+mTaskStackListeners.finishBroadcast();
+}
+break;
+}
+case NOTIFY_PINNED_STACK_ANIMATION_ENDED_LISTENERS_MSG:
+{
+synchronized (ActivityManagerService.this) {
+for (int i=mTaskStackListeners.beginBroadcast() - 1; i >= 0; i--) {
+try {
+mTaskStackListeners.getBroadcastItem(i).onPinnedStackAnimationEnded();
+}
+ catch (RemoteException e) {
+}
+}
+mTaskStackListeners.finishBroadcast();
+}
+break;
+}
+case NOTIFY_FORCED_RESIZABLE_MSG:
+{
+synchronized (ActivityManagerService.this) {
+for (int i=mTaskStackListeners.beginBroadcast() - 1; i >= 0; i--) {
+try {
+mTaskStackListeners.getBroadcastItem(i).onActivityForcedResizable((String)msg.obj,msg.arg1);
+}
+ catch (RemoteException e) {
+}
+}
+mTaskStackListeners.finishBroadcast();
+}
+break;
+}
+case NOTIFY_ACTIVITY_DISMISSING_DOCKED_STACK_MSG:
+{
+synchronized (ActivityManagerService.this) {
+for (int i=mTaskStackListeners.beginBroadcast() - 1; i >= 0; i--) {
+try {
+mTaskStackListeners.getBroadcastItem(i).onActivityDismissingDockedStack();
 }
  catch (RemoteException e) {
 }
@@ -395,7 +477,7 @@ if (reportPackage != null) {
 intent.putExtra(DumpHeapActivity.KEY_DIRECT_LAUNCH,reportPackage);
 }
 int userId=UserHandle.getUserId(uid);
-Notification notification=new Notification.Builder(mContext).setSmallIcon(com.android.internal.R.drawable.stat_sys_adb).setWhen(0).setOngoing(true).setAutoCancel(true).setTicker(text).setColor(mContext.getColor(com.android.internal.R.color.system_notification_accent_color)).setContentTitle(text).setContentText(mContext.getText(R.string.dump_heap_notification_detail)).setContentIntent(PendingIntent.getActivityAsUser(mContext,0,intent,PendingIntent.FLAG_CANCEL_CURRENT,null,new UserHandle(userId))).setDeleteIntent(PendingIntent.getBroadcastAsUser(mContext,0,deleteIntent,0,UserHandle.OWNER)).build();
+Notification notification=new Notification.Builder(mContext).setSmallIcon(com.android.internal.R.drawable.stat_sys_adb).setWhen(0).setOngoing(true).setAutoCancel(true).setTicker(text).setColor(mContext.getColor(com.android.internal.R.color.system_notification_accent_color)).setContentTitle(text).setContentText(mContext.getText(R.string.dump_heap_notification_detail)).setContentIntent(PendingIntent.getActivityAsUser(mContext,0,intent,PendingIntent.FLAG_CANCEL_CURRENT,null,new UserHandle(userId))).setDeleteIntent(PendingIntent.getBroadcastAsUser(mContext,0,deleteIntent,0,UserHandle.SYSTEM)).build();
 try {
 int[] outId=new int[1];
 inm.enqueueNotificationWithTag("android","android",null,R.string.dump_heap_notification,notification,outId,userId);
@@ -420,7 +502,7 @@ mMemWatchDumpUid=-1;
 break;
 case FOREGROUND_PROFILE_CHANGED_MSG:
 {
-dispatchForegroundProfileChanged(msg.arg1);
+mUserController.dispatchForegroundProfileChanged(msg.arg1);
 }
 break;
 case REPORT_TIME_TRACKER_MSG:
@@ -431,7 +513,7 @@ tracker.deliverResult(mContext);
 break;
 case REPORT_USER_SWITCH_COMPLETE_MSG:
 {
-dispatchUserSwitchComplete(msg.arg1);
+mUserController.dispatchUserSwitchComplete(msg.arg1);
 }
 break;
 case SHUTDOWN_UI_AUTOMATION_CONNECTION_MSG:
@@ -460,6 +542,48 @@ Message newmsg=mHandler.obtainMessage(APP_BOOST_DEACTIVATE_MSG);
 mHandler.sendMessageDelayed(newmsg,APP_BOOST_TIMEOUT);
 }
 }
+}
+}
+break;
+case IDLE_UIDS_MSG:
+{
+idleUids();
+}
+break;
+case LOG_STACK_STATE:
+{
+synchronized (ActivityManagerService.this) {
+mStackSupervisor.logStackState();
+}
+}
+break;
+case VR_MODE_CHANGE_MSG:
+{
+VrManagerInternal vrService=LocalServices.getService(VrManagerInternal.class);
+final ActivityRecord r=(ActivityRecord)msg.obj;
+boolean vrMode;
+ComponentName requestedPackage;
+ComponentName callingPackage;
+int userId;
+synchronized (ActivityManagerService.this) {
+vrMode=r.requestedVrComponent != null;
+requestedPackage=r.requestedVrComponent;
+userId=r.userId;
+callingPackage=r.info.getComponentName();
+if (mInVrMode != vrMode) {
+mInVrMode=vrMode;
+mShowDialogs=shouldShowDialogs(mConfiguration,mInVrMode);
+}
+}
+vrService.setVrMode(vrMode,requestedPackage,userId,callingPackage);
+}
+break;
+case VR_MODE_APPLY_IF_NEEDED_MSG:
+{
+final ActivityRecord r=(ActivityRecord)msg.obj;
+final boolean needsVrMode=r != null && r.requestedVrComponent != null;
+if (needsVrMode) {
+applyVrMode(msg.arg1 == 1,r.requestedVrComponent,r.userId,r.info.getComponentName(),false);
 }
 }
 break;

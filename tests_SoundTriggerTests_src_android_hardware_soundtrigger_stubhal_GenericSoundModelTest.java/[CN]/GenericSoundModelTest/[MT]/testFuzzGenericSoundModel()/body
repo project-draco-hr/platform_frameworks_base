@@ -1,0 +1,66 @@
+{
+  int numModels=2;
+  final int STATUS_UNLOADED=0;
+  final int STATUS_LOADED=1;
+  final int STATUS_STARTED=2;
+class ModelInfo {
+    int status;
+    GenericSoundModel model;
+    public ModelInfo(    GenericSoundModel model,    int status){
+      this.status=status;
+      this.model=model;
+    }
+  }
+  Random predictableRandom=new Random(100);
+  ArrayList modelInfos=new ArrayList<ModelInfo>();
+  for (int i=0; i < numModels; i++) {
+    byte[] data=new byte[1024];
+    predictableRandom.nextBytes(data);
+    UUID modelUuid=UUID.randomUUID();
+    UUID mVendorUuid=UUID.randomUUID();
+    GenericSoundModel model=new GenericSoundModel(modelUuid,mVendorUuid,data);
+    ModelInfo modelInfo=new ModelInfo(model,STATUS_UNLOADED);
+    modelInfos.add(modelInfo);
+  }
+  boolean captureTriggerAudio=true;
+  boolean allowMultipleTriggers=true;
+  RecognitionConfig config=new RecognitionConfig(captureTriggerAudio,allowMultipleTriggers,null,null);
+  TestRecognitionStatusCallback spyCallback=spy(new TestRecognitionStatusCallback());
+  int numOperationsToRun=100;
+  for (int i=0; i < numOperationsToRun; i++) {
+    int modelInfoIndex=predictableRandom.nextInt(modelInfos.size());
+    ModelInfo modelInfo=(ModelInfo)modelInfos.get(modelInfoIndex);
+    int operation=predictableRandom.nextInt(5);
+    if (operation == 0 && modelInfo.status == STATUS_UNLOADED) {
+      soundTriggerService.updateSoundModel(modelInfo.model);
+      loadedModelUuids.add(modelInfo.model.uuid);
+      modelInfo.status=STATUS_LOADED;
+    }
+ else     if (operation == 1 && modelInfo.status == STATUS_LOADED) {
+      int r=soundTriggerService.startRecognition(new ParcelUuid(modelInfo.model.uuid),spyCallback,config);
+      assertEquals("Could Not Start Recognition with code: " + r,android.hardware.soundtrigger.SoundTrigger.STATUS_OK,r);
+      modelInfo.status=STATUS_STARTED;
+    }
+ else     if (operation == 2 && modelInfo.status == STATUS_STARTED) {
+      Socket socket=new Socket(InetAddress.getLocalHost(),14035);
+      DataOutputStream out=new DataOutputStream(socket.getOutputStream());
+      out.writeBytes("trig " + modelInfo.model.uuid + "\r\n");
+      out.flush();
+      socket.close();
+      verify(spyCallback,timeout(100)).onGenericSoundTriggerDetected(any());
+      reset(spyCallback);
+    }
+ else     if (operation == 3 && modelInfo.status == STATUS_STARTED) {
+      int r=soundTriggerService.stopRecognition(new ParcelUuid(modelInfo.model.uuid),spyCallback);
+      assertEquals("Could Not Stop Recognition with code: " + r,android.hardware.soundtrigger.SoundTrigger.STATUS_OK,r);
+      modelInfo.status=STATUS_LOADED;
+    }
+ else     if (operation == 4 && modelInfo.status != STATUS_UNLOADED) {
+      soundTriggerService.deleteSoundModel(new ParcelUuid(modelInfo.model.uuid));
+      loadedModelUuids.remove(modelInfo.model.uuid);
+      GenericSoundModel returnedModel=soundTriggerService.getSoundModel(new ParcelUuid(modelInfo.model.uuid));
+      assertEquals(null,returnedModel);
+      modelInfo.status=STATUS_UNLOADED;
+    }
+  }
+}

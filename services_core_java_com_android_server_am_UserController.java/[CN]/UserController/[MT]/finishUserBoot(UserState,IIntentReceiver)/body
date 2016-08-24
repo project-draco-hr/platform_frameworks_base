@@ -1,0 +1,30 @@
+{
+  final int userId=uss.mHandle.getIdentifier();
+  Slog.d(TAG,"Finishing user boot " + userId);
+synchronized (mService) {
+    if (mStartedUsers.get(userId) != uss)     return;
+    if (uss.setState(STATE_BOOTING,STATE_RUNNING_LOCKED)) {
+      getUserManagerInternal().setUserState(userId,uss.state);
+      int uptimeSeconds=(int)(SystemClock.elapsedRealtime() / 1000);
+      MetricsLogger.histogram(mService.mContext,"framework_locked_boot_completed",uptimeSeconds);
+      Intent intent=new Intent(Intent.ACTION_LOCKED_BOOT_COMPLETED,null);
+      intent.putExtra(Intent.EXTRA_USER_HANDLE,userId);
+      intent.addFlags(Intent.FLAG_RECEIVER_NO_ABORT | Intent.FLAG_RECEIVER_INCLUDE_BACKGROUND);
+      mService.broadcastIntentLocked(null,null,intent,null,resultTo,0,null,null,new String[]{android.Manifest.permission.RECEIVE_BOOT_COMPLETED},AppOpsManager.OP_NONE,null,true,false,MY_PID,SYSTEM_UID,userId);
+    }
+    if (getUserManager().isManagedProfile(userId)) {
+      final UserInfo parent=getUserManager().getProfileParent(userId);
+      if (parent != null && isUserRunningLocked(parent.id,ActivityManager.FLAG_AND_UNLOCKED)) {
+        Slog.d(TAG,"User " + userId + " (parent "+ parent.id+ "): attempting unlock because parent is unlocked");
+        maybeUnlockUser(userId);
+      }
+ else {
+        String parentId=(parent == null) ? "<null>" : String.valueOf(parent.id);
+        Slog.d(TAG,"User " + userId + " (parent "+ parentId+ "): delaying unlock because parent is locked");
+      }
+    }
+ else {
+      maybeUnlockUser(userId);
+    }
+  }
+}

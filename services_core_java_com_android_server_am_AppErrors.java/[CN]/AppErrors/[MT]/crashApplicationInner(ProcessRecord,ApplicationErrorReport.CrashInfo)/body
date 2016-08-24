@@ -1,0 +1,87 @@
+{
+  long timeMillis=System.currentTimeMillis();
+  String shortMsg=crashInfo.exceptionClassName;
+  String longMsg=crashInfo.exceptionMessage;
+  String stackTrace=crashInfo.stackTrace;
+  if (shortMsg != null && longMsg != null) {
+    longMsg=shortMsg + ": " + longMsg;
+  }
+ else   if (shortMsg != null) {
+    longMsg=shortMsg;
+  }
+  AppErrorResult result=new AppErrorResult();
+  TaskRecord task;
+synchronized (mService) {
+    if (handleAppCrashInActivityController(r,crashInfo,shortMsg,longMsg,stackTrace,timeMillis)) {
+      return;
+    }
+    if (r != null && r.instrumentationClass != null) {
+      return;
+    }
+    if (r != null) {
+      mService.mBatteryStatsService.noteProcessCrash(r.processName,r.uid);
+    }
+    AppErrorDialog.Data data=new AppErrorDialog.Data();
+    data.result=result;
+    data.proc=r;
+    if (r == null || !makeAppCrashingLocked(r,shortMsg,longMsg,stackTrace,data)) {
+      return;
+    }
+    Message msg=Message.obtain();
+    msg.what=ActivityManagerService.SHOW_ERROR_UI_MSG;
+    task=data.task;
+    msg.obj=data;
+    mService.mUiHandler.sendMessage(msg);
+  }
+  int res=result.get();
+  Intent appErrorIntent=null;
+  MetricsLogger.action(mContext,MetricsProto.MetricsEvent.ACTION_APP_CRASH,res);
+  if (res == AppErrorDialog.TIMEOUT || res == AppErrorDialog.CANCEL) {
+    res=AppErrorDialog.FORCE_QUIT;
+  }
+synchronized (mService) {
+    if (res == AppErrorDialog.MUTE) {
+      stopReportingCrashesLocked(r);
+    }
+    if (res == AppErrorDialog.RESTART) {
+      mService.removeProcessLocked(r,false,true,"crash");
+      if (task != null) {
+        try {
+          mService.startActivityFromRecents(task.taskId,ActivityOptions.makeBasic().toBundle());
+        }
+ catch (        IllegalArgumentException e) {
+          if (task.intent.getCategories().contains(Intent.CATEGORY_LAUNCHER)) {
+            mService.startActivityInPackage(task.mCallingUid,task.mCallingPackage,task.intent,null,null,null,0,0,ActivityOptions.makeBasic().toBundle(),task.userId,null,null);
+          }
+        }
+      }
+    }
+    if (res == AppErrorDialog.FORCE_QUIT) {
+      long orig=Binder.clearCallingIdentity();
+      try {
+        mService.mStackSupervisor.handleAppCrashLocked(r);
+        if (!r.persistent) {
+          mService.removeProcessLocked(r,false,false,"crash");
+          mService.mStackSupervisor.resumeFocusedStackTopActivityLocked();
+        }
+      }
+  finally {
+        Binder.restoreCallingIdentity(orig);
+      }
+    }
+    if (res == AppErrorDialog.FORCE_QUIT_AND_REPORT) {
+      appErrorIntent=createAppErrorIntentLocked(r,timeMillis,crashInfo);
+    }
+    if (r != null && !r.isolated && res != AppErrorDialog.RESTART) {
+      mProcessCrashTimes.put(r.info.processName,r.uid,SystemClock.uptimeMillis());
+    }
+  }
+  if (appErrorIntent != null) {
+    try {
+      mContext.startActivityAsUser(appErrorIntent,new UserHandle(r.userId));
+    }
+ catch (    ActivityNotFoundException e) {
+      Slog.w(TAG,"bug report receiver dissappeared",e);
+    }
+  }
+}

@@ -1,22 +1,29 @@
 {
-  long nextExpiryTime=Long.MAX_VALUE;
-  final long nowElapsedMillis=SystemClock.elapsedRealtime();
-  Iterator<JobStatus> it=mTrackedJobs.iterator();
-  while (it.hasNext()) {
-    JobStatus job=it.next();
-    if (!job.hasDeadlineConstraint()) {
-      continue;
-    }
-    final long jobDeadline=job.getLatestRunTimeElapsed();
-    if (jobDeadline <= nowElapsedMillis) {
-      job.deadlineConstraintSatisfied.set(true);
-      mStateChangedListener.onRunJobNow(job);
-      it.remove();
-    }
+synchronized (mLock) {
+    long nextExpiryTime=Long.MAX_VALUE;
+    int nextExpiryUid=0;
+    final long nowElapsedMillis=SystemClock.elapsedRealtime();
+    Iterator<JobStatus> it=mTrackedJobs.iterator();
+    while (it.hasNext()) {
+      JobStatus job=it.next();
+      if (!job.hasDeadlineConstraint()) {
+        continue;
+      }
+      final long jobDeadline=job.getLatestRunTimeElapsed();
+      if (jobDeadline <= nowElapsedMillis) {
+        if (job.hasTimingDelayConstraint()) {
+          job.setTimingDelayConstraintSatisfied(true);
+        }
+        job.setDeadlineConstraintSatisfied(true);
+        mStateChangedListener.onRunJobNow(job);
+        it.remove();
+      }
  else {
-      nextExpiryTime=jobDeadline;
-      break;
+        nextExpiryTime=jobDeadline;
+        nextExpiryUid=job.getSourceUid();
+        break;
+      }
     }
+    setDeadlineExpiredAlarmLocked(nextExpiryTime,nextExpiryUid);
   }
-  setDeadlineExpiredAlarm(nextExpiryTime);
 }

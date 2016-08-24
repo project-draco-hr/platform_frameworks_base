@@ -1,0 +1,163 @@
+{
+  int result=0;
+  boolean configChanged;
+  boolean hasStatusBarPermission=mContext.checkCallingOrSelfPermission(android.Manifest.permission.STATUS_BAR) == PackageManager.PERMISSION_GRANTED;
+  long origId=Binder.clearCallingIdentity();
+synchronized (mWindowMap) {
+    WindowState win=windowForClientLocked(session,client,false);
+    if (win == null) {
+      return 0;
+    }
+    WindowStateAnimator winAnimator=win.mWinAnimator;
+    if (viewVisibility != View.GONE) {
+      win.setRequestedSize(requestedWidth,requestedHeight);
+    }
+    int attrChanges=0;
+    int flagChanges=0;
+    if (attrs != null) {
+      mPolicy.adjustWindowParamsLw(attrs);
+      if (seq == win.mSeq) {
+        int systemUiVisibility=attrs.systemUiVisibility | attrs.subtreeSystemUiVisibility;
+        if ((systemUiVisibility & DISABLE_MASK) != 0) {
+          if (!hasStatusBarPermission) {
+            systemUiVisibility&=~DISABLE_MASK;
+          }
+        }
+        win.mSystemUiVisibility=systemUiVisibility;
+      }
+      if (win.mAttrs.type != attrs.type) {
+        throw new IllegalArgumentException("Window type can not be changed after the window is added.");
+      }
+      if ((attrs.privateFlags & WindowManager.LayoutParams.PRIVATE_FLAG_PRESERVE_GEOMETRY) != 0) {
+        attrs.x=win.mAttrs.x;
+        attrs.y=win.mAttrs.y;
+        attrs.width=win.mAttrs.width;
+        attrs.height=win.mAttrs.height;
+      }
+      flagChanges=win.mAttrs.flags^=attrs.flags;
+      attrChanges=win.mAttrs.copyFrom(attrs);
+      if ((attrChanges & (WindowManager.LayoutParams.LAYOUT_CHANGED | WindowManager.LayoutParams.SYSTEM_UI_VISIBILITY_CHANGED)) != 0) {
+        win.mLayoutNeeded=true;
+      }
+    }
+    if (DEBUG_LAYOUT)     Slog.v(TAG_WM,"Relayout " + win + ": viewVisibility="+ viewVisibility+ " req="+ requestedWidth+ "x"+ requestedHeight+ " "+ win.mAttrs);
+    winAnimator.mSurfaceDestroyDeferred=(flags & RELAYOUT_DEFER_SURFACE_DESTROY) != 0;
+    win.mEnforceSizeCompat=(win.mAttrs.privateFlags & PRIVATE_FLAG_COMPATIBLE_WINDOW) != 0;
+    if ((attrChanges & WindowManager.LayoutParams.ALPHA_CHANGED) != 0) {
+      winAnimator.mAlpha=attrs.alpha;
+    }
+    win.setWindowScale(win.mRequestedWidth,win.mRequestedHeight);
+    if (win.mAttrs.surfaceInsets.left != 0 || win.mAttrs.surfaceInsets.top != 0 || win.mAttrs.surfaceInsets.right != 0 || win.mAttrs.surfaceInsets.bottom != 0) {
+      winAnimator.setOpaqueLocked(false);
+    }
+    boolean imMayMove=(flagChanges & (FLAG_ALT_FOCUSABLE_IM | FLAG_NOT_FOCUSABLE)) != 0;
+    final boolean isDefaultDisplay=win.isDefaultDisplay();
+    boolean focusMayChange=isDefaultDisplay && (win.mViewVisibility != viewVisibility || ((flagChanges & FLAG_NOT_FOCUSABLE) != 0) || (!win.mRelayoutCalled));
+    boolean wallpaperMayMove=win.mViewVisibility != viewVisibility && (win.mAttrs.flags & FLAG_SHOW_WALLPAPER) != 0;
+    wallpaperMayMove|=(flagChanges & FLAG_SHOW_WALLPAPER) != 0;
+    if ((flagChanges & FLAG_SECURE) != 0 && winAnimator.mSurfaceController != null) {
+      winAnimator.mSurfaceController.setSecure(isSecureLocked(win));
+    }
+    win.mRelayoutCalled=true;
+    win.mInRelayout=true;
+    final int oldVisibility=win.mViewVisibility;
+    win.mViewVisibility=viewVisibility;
+    if (DEBUG_SCREEN_ON) {
+      RuntimeException stack=new RuntimeException();
+      stack.fillInStackTrace();
+      Slog.i(TAG_WM,"Relayout " + win + ": oldVis="+ oldVisibility+ " newVis="+ viewVisibility,stack);
+    }
+    if (viewVisibility == View.VISIBLE && (win.mAppToken == null || !win.mAppToken.clientHidden)) {
+      result=relayoutVisibleWindow(outConfig,result,win,winAnimator,attrChanges,oldVisibility);
+      try {
+        result=createSurfaceControl(outSurface,result,win,winAnimator);
+      }
+ catch (      Exception e) {
+        mInputMonitor.updateInputWindowsLw(true);
+        Slog.w(TAG_WM,"Exception thrown when creating surface for client " + client + " ("+ win.mAttrs.getTitle()+ ")",e);
+        Binder.restoreCallingIdentity(origId);
+        return 0;
+      }
+      if ((result & WindowManagerGlobal.RELAYOUT_RES_FIRST_TIME) != 0) {
+        focusMayChange=isDefaultDisplay;
+      }
+      if (win.mAttrs.type == TYPE_INPUT_METHOD && mInputMethodWindow == null) {
+        mInputMethodWindow=win;
+        imMayMove=true;
+      }
+      win.adjustStartingWindowFlags();
+    }
+ else {
+      winAnimator.mEnterAnimationPending=false;
+      winAnimator.mEnteringAnimation=false;
+      final boolean usingSavedSurfaceBeforeVisible=oldVisibility != View.VISIBLE && win.isAnimatingWithSavedSurface();
+      if (DEBUG_APP_TRANSITIONS || DEBUG_ANIM) {
+        if (winAnimator.hasSurface() && !win.mAnimatingExit && usingSavedSurfaceBeforeVisible) {
+          Slog.d(TAG,"Ignoring layout to invisible when using saved surface " + win);
+        }
+      }
+      if (winAnimator.hasSurface() && !win.mAnimatingExit && !usingSavedSurfaceBeforeVisible) {
+        if (DEBUG_VISIBILITY)         Slog.i(TAG_WM,"Relayout invis " + win + ": mAnimatingExit="+ win.mAnimatingExit);
+        if (!win.mWillReplaceWindow) {
+          focusMayChange=tryStartExitingAnimation(win,winAnimator,isDefaultDisplay,focusMayChange);
+        }
+        result|=RELAYOUT_RES_SURFACE_CHANGED;
+      }
+      outSurface.release();
+      if (DEBUG_VISIBILITY)       Slog.i(TAG_WM,"Releasing surface in: " + win);
+    }
+    if (focusMayChange) {
+      if (updateFocusedWindowLocked(UPDATE_FOCUS_WILL_PLACE_SURFACES,false)) {
+        imMayMove=false;
+      }
+    }
+    boolean toBeDisplayed=(result & WindowManagerGlobal.RELAYOUT_RES_FIRST_TIME) != 0;
+    if (imMayMove && (moveInputMethodWindowsIfNeededLocked(false) || toBeDisplayed)) {
+      mLayersController.assignLayersLocked(win.getWindowList());
+    }
+    if (wallpaperMayMove) {
+      getDefaultDisplayContentLocked().pendingLayoutChanges|=WindowManagerPolicy.FINISH_LAYOUT_REDO_WALLPAPER;
+    }
+    win.setDisplayLayoutNeeded();
+    win.mGivenInsetsPending=(flags & WindowManagerGlobal.RELAYOUT_INSETS_PENDING) != 0;
+    configChanged=updateOrientationFromAppTokensLocked(false);
+    mWindowPlacerLocked.performSurfacePlacement();
+    if (toBeDisplayed && win.mIsWallpaper) {
+      DisplayInfo displayInfo=getDefaultDisplayInfoLocked();
+      mWallpaperControllerLocked.updateWallpaperOffset(win,displayInfo.logicalWidth,displayInfo.logicalHeight,false);
+    }
+    if (win.mAppToken != null) {
+      win.mAppToken.updateReportedVisibilityLocked();
+    }
+    if (winAnimator.mReportSurfaceResized) {
+      winAnimator.mReportSurfaceResized=false;
+      result|=WindowManagerGlobal.RELAYOUT_RES_SURFACE_RESIZED;
+    }
+    if (mPolicy.isNavBarForcedShownLw(win)) {
+      result|=WindowManagerGlobal.RELAYOUT_RES_CONSUME_ALWAYS_NAV_BAR;
+    }
+    if (!win.isGoneForLayoutLw()) {
+      win.mResizedWhileGone=false;
+    }
+    outFrame.set(win.mCompatFrame);
+    outOverscanInsets.set(win.mOverscanInsets);
+    outContentInsets.set(win.mContentInsets);
+    outVisibleInsets.set(win.mVisibleInsets);
+    outStableInsets.set(win.mStableInsets);
+    outOutsets.set(win.mOutsets);
+    outBackdropFrame.set(win.getBackdropFrame(win.mFrame));
+    if (localLOGV)     Slog.v(TAG_WM,"Relayout given client " + client.asBinder() + ", requestedWidth="+ requestedWidth+ ", requestedHeight="+ requestedHeight+ ", viewVisibility="+ viewVisibility+ "\nRelayout returning frame="+ outFrame+ ", surface="+ outSurface);
+    if (localLOGV || DEBUG_FOCUS)     Slog.v(TAG_WM,"Relayout of " + win + ": focusMayChange="+ focusMayChange);
+    result|=mInTouchMode ? WindowManagerGlobal.RELAYOUT_RES_IN_TOUCH_MODE : 0;
+    mInputMonitor.updateInputWindowsLw(true);
+    if (DEBUG_LAYOUT) {
+      Slog.v(TAG_WM,"Relayout complete " + win + ": outFrame="+ outFrame.toShortString());
+    }
+    win.mInRelayout=false;
+  }
+  if (configChanged) {
+    sendNewConfiguration();
+  }
+  Binder.restoreCallingIdentity(origId);
+  return result;
+}

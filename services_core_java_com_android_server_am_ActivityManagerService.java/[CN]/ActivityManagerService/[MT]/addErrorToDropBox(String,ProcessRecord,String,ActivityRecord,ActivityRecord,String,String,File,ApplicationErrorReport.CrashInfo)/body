@@ -2,8 +2,19 @@
   final String dropboxTag=processClass(process) + "_" + eventType;
   final DropBoxManager dbox=(DropBoxManager)mContext.getSystemService(Context.DROPBOX_SERVICE);
   if (dbox == null || !dbox.isTagEnabled(dropboxTag))   return;
+  final long now=SystemClock.elapsedRealtime();
+  if (now - mWtfClusterStart > 10 * DateUtils.SECOND_IN_MILLIS) {
+    mWtfClusterStart=now;
+    mWtfClusterCount=1;
+  }
+ else {
+    if (mWtfClusterCount++ >= 5)     return;
+  }
   final StringBuilder sb=new StringBuilder(1024);
   appendDropBoxProcessHeaders(process,processName,sb);
+  if (process != null) {
+    sb.append("Foreground: ").append(process.isInterestingToUserLocked() ? "Yes" : "No").append("\n");
+  }
   if (activity != null) {
     sb.append("Activity: ").append(activity.shortComponentName).append("\n");
   }
@@ -26,24 +37,25 @@
       if (report != null) {
         sb.append(report);
       }
-      if (logFile != null) {
+      String setting=Settings.Global.ERROR_LOGCAT_PREFIX + dropboxTag;
+      int lines=Settings.Global.getInt(mContext.getContentResolver(),setting,0);
+      int maxDataFileSize=DROPBOX_MAX_SIZE - sb.length() - lines * RESERVED_BYTES_PER_LOGCAT_LINE;
+      if (dataFile != null && maxDataFileSize > 0) {
         try {
-          sb.append(FileUtils.readTextFile(logFile,DROPBOX_MAX_SIZE,"\n\n[[TRUNCATED]]"));
+          sb.append(FileUtils.readTextFile(dataFile,maxDataFileSize,"\n\n[[TRUNCATED]]"));
         }
  catch (        IOException e) {
-          Slog.e(TAG,"Error reading " + logFile,e);
+          Slog.e(TAG,"Error reading " + dataFile,e);
         }
       }
       if (crashInfo != null && crashInfo.stackTrace != null) {
         sb.append(crashInfo.stackTrace);
       }
-      String setting=Settings.Global.ERROR_LOGCAT_PREFIX + dropboxTag;
-      int lines=Settings.Global.getInt(mContext.getContentResolver(),setting,0);
       if (lines > 0) {
         sb.append("\n");
         InputStreamReader input=null;
         try {
-          java.lang.Process logcat=new ProcessBuilder("/system/bin/logcat","-v","time","-b","events","-b","system","-b","main","-b","crash","-t",String.valueOf(lines)).redirectErrorStream(true).start();
+          java.lang.Process logcat=new ProcessBuilder("/system/bin/timeout","-k","15s","10s","/system/bin/logcat","-v","time","-b","events","-b","system","-b","main","-b","crash","-t",String.valueOf(lines)).redirectErrorStream(true).start();
           try {
             logcat.getOutputStream().close();
           }

@@ -1,18 +1,24 @@
 {
   mContext.enforceCallingOrSelfPermission(android.Manifest.permission.MANAGE_DEVICE_ADMINS,null);
-  enforceCrossUserPermission(userHandle);
+  enforceFullCrossUsersPermission(userHandle);
   DevicePolicyData policy=getUserData(userHandle);
-  DeviceAdminInfo info=findAdmin(adminReceiver,userHandle);
+  DeviceAdminInfo info=findAdmin(adminReceiver,userHandle,true);
   if (info == null) {
     throw new IllegalArgumentException("Bad admin: " + adminReceiver);
   }
+  if (!info.getActivityInfo().applicationInfo.isInternal()) {
+    throw new IllegalArgumentException("Only apps in internal storage can be active admin: " + adminReceiver);
+  }
 synchronized (this) {
-    long ident=Binder.clearCallingIdentity();
+    long ident=mInjector.binderClearCallingIdentity();
     try {
       if (!refreshing && getActiveAdminUncheckedLocked(adminReceiver,userHandle) != null) {
         throw new IllegalArgumentException("Admin is already added");
       }
-      ActiveAdmin newAdmin=new ActiveAdmin(info);
+      if (policy.mRemovingAdmins.contains(adminReceiver)) {
+        throw new IllegalArgumentException("Trying to set an admin which is being removed");
+      }
+      ActiveAdmin newAdmin=new ActiveAdmin(info,false);
       policy.mAdminMap.put(adminReceiver,newAdmin);
       int replaceIndex=-1;
       final int N=policy.mAdminList.size();
@@ -34,7 +40,7 @@ synchronized (this) {
       sendAdminCommandLocked(newAdmin,DeviceAdminReceiver.ACTION_DEVICE_ADMIN_ENABLED,onEnableData,null);
     }
   finally {
-      Binder.restoreCallingIdentity(ident);
+      mInjector.binderRestoreCallingIdentity(ident);
     }
   }
 }

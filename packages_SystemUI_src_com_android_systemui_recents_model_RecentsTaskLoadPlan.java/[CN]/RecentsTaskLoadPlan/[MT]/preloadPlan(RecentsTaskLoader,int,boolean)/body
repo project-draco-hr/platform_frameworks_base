@@ -1,0 +1,46 @@
+{
+  Resources res=mContext.getResources();
+  ArrayList<Task> allTasks=new ArrayList<>();
+  if (mRawTasks == null) {
+    preloadRawTasks(includeFrontMostExcludedTask);
+  }
+  SparseArray<Task.TaskKey> affiliatedTasks=new SparseArray<>();
+  SparseIntArray affiliatedTaskCounts=new SparseIntArray();
+  String dismissDescFormat=mContext.getString(R.string.accessibility_recents_item_will_be_dismissed);
+  String appInfoDescFormat=mContext.getString(R.string.accessibility_recents_item_open_app_info);
+  long lastStackActiveTime=Prefs.getLong(mContext,Prefs.Key.OVERVIEW_LAST_STACK_TASK_ACTIVE_TIME,0);
+  if (RecentsDebugFlags.Static.EnableMockTasks) {
+    lastStackActiveTime=0;
+  }
+  long newLastStackActiveTime=-1;
+  int taskCount=mRawTasks.size();
+  for (int i=0; i < taskCount; i++) {
+    ActivityManager.RecentTaskInfo t=mRawTasks.get(i);
+    Task.TaskKey taskKey=new Task.TaskKey(t.persistentId,t.stackId,t.baseIntent,t.userId,t.firstActiveTime,t.lastActiveTime);
+    boolean isFreeformTask=SystemServicesProxy.isFreeformStack(t.stackId);
+    boolean isStackTask=isFreeformTask || !isHistoricalTask(t) || (t.lastActiveTime >= lastStackActiveTime && i >= (taskCount - MIN_NUM_TASKS));
+    boolean isLaunchTarget=taskKey.id == runningTaskId;
+    if (isStackTask && newLastStackActiveTime < 0) {
+      newLastStackActiveTime=t.lastActiveTime;
+    }
+    ActivityInfo info=loader.getAndUpdateActivityInfo(taskKey);
+    String title=loader.getAndUpdateActivityTitle(taskKey,t.taskDescription);
+    String titleDescription=loader.getAndUpdateContentDescription(taskKey,res);
+    String dismissDescription=String.format(dismissDescFormat,titleDescription);
+    String appInfoDescription=String.format(appInfoDescFormat,titleDescription);
+    Drawable icon=isStackTask ? loader.getAndUpdateActivityIcon(taskKey,t.taskDescription,res,false) : null;
+    Bitmap thumbnail=loader.getAndUpdateThumbnail(taskKey,false);
+    int activityColor=loader.getActivityPrimaryColor(t.taskDescription);
+    int backgroundColor=loader.getActivityBackgroundColor(t.taskDescription);
+    boolean isSystemApp=(info != null) && ((info.applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) != 0);
+    Task task=new Task(taskKey,t.affiliatedTaskId,t.affiliatedTaskColor,icon,thumbnail,title,titleDescription,dismissDescription,appInfoDescription,activityColor,backgroundColor,isLaunchTarget,isStackTask,isSystemApp,t.isDockable,t.bounds,t.taskDescription,t.resizeMode,t.topActivity);
+    allTasks.add(task);
+    affiliatedTaskCounts.put(taskKey.id,affiliatedTaskCounts.get(taskKey.id,0) + 1);
+    affiliatedTasks.put(taskKey.id,taskKey);
+  }
+  if (newLastStackActiveTime != -1) {
+    Prefs.putLong(mContext,Prefs.Key.OVERVIEW_LAST_STACK_TASK_ACTIVE_TIME,newLastStackActiveTime);
+  }
+  mStack=new TaskStack();
+  mStack.setTasks(mContext,allTasks,false);
+}

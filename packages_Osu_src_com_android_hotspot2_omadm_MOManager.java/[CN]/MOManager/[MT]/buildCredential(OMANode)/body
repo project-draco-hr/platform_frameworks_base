@@ -1,0 +1,81 @@
+{
+  long ctime=getTime(credNode.getChild(TAG_CreationDate));
+  long expTime=getTime(credNode.getChild(TAG_ExpirationDate));
+  String realm=getString(credNode.getChild(TAG_Realm));
+  boolean checkAAACert=getBoolean(credNode.getChild(TAG_CheckAAAServerCertStatus));
+  OMANode unNode=credNode.getChild(TAG_UsernamePassword);
+  OMANode certNode=credNode.getChild(TAG_DigitalCertificate);
+  OMANode simNode=credNode.getChild(TAG_SIM);
+  int alternatives=0;
+  alternatives+=unNode != null ? 1 : 0;
+  alternatives+=certNode != null ? 1 : 0;
+  alternatives+=simNode != null ? 1 : 0;
+  if (alternatives != 1) {
+    throw new OMAException("Expected exactly one credential type, got " + alternatives);
+  }
+  if (unNode != null) {
+    String userName=getString(unNode.getChild(TAG_Username));
+    String password=getString(unNode.getChild(TAG_Password));
+    boolean machineManaged=getBoolean(unNode.getChild(TAG_MachineManaged));
+    String softTokenApp=getString(unNode.getChild(TAG_SoftTokenApp));
+    boolean ableToShare=getBoolean(unNode.getChild(TAG_AbleToShare));
+    OMANode eapMethodNode=unNode.getChild(TAG_EAPMethod);
+    int eapID=getInteger(eapMethodNode.getChild(TAG_EAPType));
+    EAP.EAPMethodID eapMethodID=EAP.mapEAPMethod(eapID);
+    if (eapMethodID == null) {
+      throw new OMAException("Unknown EAP method: " + eapID);
+    }
+    Long vid=getOptionalInteger(eapMethodNode.getChild(TAG_VendorId));
+    Long vtype=getOptionalInteger(eapMethodNode.getChild(TAG_VendorType));
+    Long innerEAPType=getOptionalInteger(eapMethodNode.getChild(TAG_InnerEAPType));
+    EAP.EAPMethodID innerEAPMethod=null;
+    if (innerEAPType != null) {
+      innerEAPMethod=EAP.mapEAPMethod(innerEAPType.intValue());
+      if (innerEAPMethod == null) {
+        throw new OMAException("Bad inner EAP method: " + innerEAPType);
+      }
+    }
+    Long innerVid=getOptionalInteger(eapMethodNode.getChild(TAG_InnerVendorID));
+    Long innerVtype=getOptionalInteger(eapMethodNode.getChild(TAG_InnerVendorType));
+    String innerNonEAPMethod=getString(eapMethodNode.getChild(TAG_InnerMethod));
+    EAPMethod eapMethod;
+    if (innerEAPMethod != null) {
+      eapMethod=new EAPMethod(eapMethodID,new InnerAuthEAP(innerEAPMethod));
+    }
+ else     if (vid != null) {
+      eapMethod=new EAPMethod(eapMethodID,new ExpandedEAPMethod(EAP.AuthInfoID.ExpandedEAPMethod,vid.intValue(),vtype));
+    }
+ else     if (innerVid != null) {
+      eapMethod=new EAPMethod(eapMethodID,new ExpandedEAPMethod(EAP.AuthInfoID.ExpandedInnerEAPMethod,innerVid.intValue(),innerVtype));
+    }
+ else     if (innerNonEAPMethod != null) {
+      eapMethod=new EAPMethod(eapMethodID,new NonEAPInnerAuth(innerNonEAPMethod));
+    }
+ else {
+      throw new OMAException("Incomplete set of EAP parameters");
+    }
+    return new Credential(ctime,expTime,realm,checkAAACert,eapMethod,userName,password,machineManaged,softTokenApp,ableToShare);
+  }
+  if (certNode != null) {
+    try {
+      String certTypeString=getString(certNode.getChild(TAG_CertificateType));
+      byte[] fingerPrint=getOctets(certNode.getChild(TAG_CertSHA256Fingerprint));
+      EAPMethod eapMethod=new EAPMethod(EAP.EAPMethodID.EAP_TLS,null);
+      return new Credential(ctime,expTime,realm,checkAAACert,eapMethod,Credential.mapCertType(certTypeString),fingerPrint);
+    }
+ catch (    NumberFormatException nfe) {
+      throw new OMAException("Bad hex string: " + nfe.toString());
+    }
+  }
+  if (simNode != null) {
+    try {
+      IMSIParameter imsi=new IMSIParameter(getString(simNode.getChild(TAG_IMSI)));
+      EAPMethod eapMethod=new EAPMethod(EAP.mapEAPMethod(getInteger(simNode.getChild(TAG_EAPType))),null);
+      return new Credential(ctime,expTime,realm,checkAAACert,eapMethod,imsi);
+    }
+ catch (    IOException ioe) {
+      throw new OMAException("Failed to parse IMSI: " + ioe);
+    }
+  }
+  throw new OMAException("Missing credential parameters");
+}

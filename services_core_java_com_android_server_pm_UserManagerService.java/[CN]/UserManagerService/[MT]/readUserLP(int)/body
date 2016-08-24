@@ -1,0 +1,126 @@
+{
+  int flags=0;
+  int serialNumber=id;
+  String name=null;
+  String account=null;
+  String iconPath=null;
+  long creationTime=0L;
+  long lastLoggedInTime=0L;
+  String lastLoggedInFingerprint=null;
+  int profileGroupId=UserInfo.NO_PROFILE_GROUP_ID;
+  int restrictedProfileParentId=UserInfo.NO_PROFILE_GROUP_ID;
+  boolean partial=false;
+  boolean guestToRemove=false;
+  boolean persistSeedData=false;
+  String seedAccountName=null;
+  String seedAccountType=null;
+  PersistableBundle seedAccountOptions=null;
+  Bundle baseRestrictions=new Bundle();
+  Bundle localRestrictions=new Bundle();
+  FileInputStream fis=null;
+  try {
+    AtomicFile userFile=new AtomicFile(new File(mUsersDir,Integer.toString(id) + XML_SUFFIX));
+    fis=userFile.openRead();
+    XmlPullParser parser=Xml.newPullParser();
+    parser.setInput(fis,StandardCharsets.UTF_8.name());
+    int type;
+    while ((type=parser.next()) != XmlPullParser.START_TAG && type != XmlPullParser.END_DOCUMENT) {
+    }
+    if (type != XmlPullParser.START_TAG) {
+      Slog.e(LOG_TAG,"Unable to read user " + id);
+      return null;
+    }
+    if (type == XmlPullParser.START_TAG && parser.getName().equals(TAG_USER)) {
+      int storedId=readIntAttribute(parser,ATTR_ID,-1);
+      if (storedId != id) {
+        Slog.e(LOG_TAG,"User id does not match the file name");
+        return null;
+      }
+      serialNumber=readIntAttribute(parser,ATTR_SERIAL_NO,id);
+      flags=readIntAttribute(parser,ATTR_FLAGS,0);
+      iconPath=parser.getAttributeValue(null,ATTR_ICON_PATH);
+      creationTime=readLongAttribute(parser,ATTR_CREATION_TIME,0);
+      lastLoggedInTime=readLongAttribute(parser,ATTR_LAST_LOGGED_IN_TIME,0);
+      lastLoggedInFingerprint=parser.getAttributeValue(null,ATTR_LAST_LOGGED_IN_FINGERPRINT);
+      profileGroupId=readIntAttribute(parser,ATTR_PROFILE_GROUP_ID,UserInfo.NO_PROFILE_GROUP_ID);
+      restrictedProfileParentId=readIntAttribute(parser,ATTR_RESTRICTED_PROFILE_PARENT_ID,UserInfo.NO_PROFILE_GROUP_ID);
+      String valueString=parser.getAttributeValue(null,ATTR_PARTIAL);
+      if ("true".equals(valueString)) {
+        partial=true;
+      }
+      valueString=parser.getAttributeValue(null,ATTR_GUEST_TO_REMOVE);
+      if ("true".equals(valueString)) {
+        guestToRemove=true;
+      }
+      seedAccountName=parser.getAttributeValue(null,ATTR_SEED_ACCOUNT_NAME);
+      seedAccountType=parser.getAttributeValue(null,ATTR_SEED_ACCOUNT_TYPE);
+      if (seedAccountName != null || seedAccountType != null) {
+        persistSeedData=true;
+      }
+      int outerDepth=parser.getDepth();
+      while ((type=parser.next()) != XmlPullParser.END_DOCUMENT && (type != XmlPullParser.END_TAG || parser.getDepth() > outerDepth)) {
+        if (type == XmlPullParser.END_TAG || type == XmlPullParser.TEXT) {
+          continue;
+        }
+        String tag=parser.getName();
+        if (TAG_NAME.equals(tag)) {
+          type=parser.next();
+          if (type == XmlPullParser.TEXT) {
+            name=parser.getText();
+          }
+        }
+ else         if (TAG_RESTRICTIONS.equals(tag)) {
+          UserRestrictionsUtils.readRestrictions(parser,baseRestrictions);
+        }
+ else         if (TAG_DEVICE_POLICY_RESTRICTIONS.equals(tag)) {
+          UserRestrictionsUtils.readRestrictions(parser,localRestrictions);
+        }
+ else         if (TAG_ACCOUNT.equals(tag)) {
+          type=parser.next();
+          if (type == XmlPullParser.TEXT) {
+            account=parser.getText();
+          }
+        }
+ else         if (TAG_SEED_ACCOUNT_OPTIONS.equals(tag)) {
+          seedAccountOptions=PersistableBundle.restoreFromXml(parser);
+          persistSeedData=true;
+        }
+      }
+    }
+    UserInfo userInfo=new UserInfo(id,name,iconPath,flags);
+    userInfo.serialNumber=serialNumber;
+    userInfo.creationTime=creationTime;
+    userInfo.lastLoggedInTime=lastLoggedInTime;
+    userInfo.lastLoggedInFingerprint=lastLoggedInFingerprint;
+    userInfo.partial=partial;
+    userInfo.guestToRemove=guestToRemove;
+    userInfo.profileGroupId=profileGroupId;
+    userInfo.restrictedProfileParentId=restrictedProfileParentId;
+    UserData userData=new UserData();
+    userData.info=userInfo;
+    userData.account=account;
+    userData.seedAccountName=seedAccountName;
+    userData.seedAccountType=seedAccountType;
+    userData.persistSeedData=persistSeedData;
+    userData.seedAccountOptions=seedAccountOptions;
+synchronized (mRestrictionsLock) {
+      mBaseUserRestrictions.put(id,baseRestrictions);
+      mDevicePolicyLocalUserRestrictions.put(id,localRestrictions);
+    }
+    return userData;
+  }
+ catch (  IOException ioe) {
+  }
+catch (  XmlPullParserException pe) {
+  }
+ finally {
+    if (fis != null) {
+      try {
+        fis.close();
+      }
+ catch (      IOException e) {
+      }
+    }
+  }
+  return null;
+}

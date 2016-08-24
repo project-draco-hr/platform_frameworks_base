@@ -1,0 +1,133 @@
+{
+  if (mSv.getTaskViews().size() == 0) {
+    return false;
+  }
+  final TaskStackLayoutAlgorithm layoutAlgorithm=mSv.mLayoutAlgorithm;
+  int action=ev.getAction();
+switch (action & MotionEvent.ACTION_MASK) {
+case MotionEvent.ACTION_DOWN:
+{
+      mScroller.stopScroller();
+      mScroller.stopBoundScrollAnimation();
+      mScroller.resetDeltaScroll();
+      cancelNonDismissTaskAnimations();
+      mSv.cancelDeferredTaskViewLayoutAnimation();
+      mDownX=(int)ev.getX();
+      mDownY=(int)ev.getY();
+      mLastY=mDownY;
+      mDownScrollP=mScroller.getStackScroll();
+      mActivePointerId=ev.getPointerId(0);
+      mActiveTaskView=findViewAtPoint(mDownX,mDownY);
+      initOrResetVelocityTracker();
+      mVelocityTracker.addMovement(ev);
+      break;
+    }
+case MotionEvent.ACTION_POINTER_DOWN:
+{
+    final int index=ev.getActionIndex();
+    mActivePointerId=ev.getPointerId(index);
+    mDownX=(int)ev.getX(index);
+    mDownY=(int)ev.getY(index);
+    mLastY=mDownY;
+    mDownScrollP=mScroller.getStackScroll();
+    mScroller.resetDeltaScroll();
+    mVelocityTracker.addMovement(ev);
+    break;
+  }
+case MotionEvent.ACTION_MOVE:
+{
+  int activePointerIndex=ev.findPointerIndex(mActivePointerId);
+  int y=(int)ev.getY(activePointerIndex);
+  int x=(int)ev.getX(activePointerIndex);
+  if (!mIsScrolling) {
+    int yDiff=Math.abs(y - mDownY);
+    int xDiff=Math.abs(x - mDownX);
+    if (Math.abs(y - mDownY) > mScrollTouchSlop && yDiff > xDiff) {
+      mIsScrolling=true;
+      float stackScroll=mScroller.getStackScroll();
+      List<TaskView> taskViews=mSv.getTaskViews();
+      for (int i=taskViews.size() - 1; i >= 0; i--) {
+        layoutAlgorithm.addUnfocusedTaskOverride(taskViews.get(i).getTask(),stackScroll);
+      }
+      layoutAlgorithm.setFocusState(TaskStackLayoutAlgorithm.STATE_UNFOCUSED);
+      final ViewParent parent=mSv.getParent();
+      if (parent != null) {
+        parent.requestDisallowInterceptTouchEvent(true);
+      }
+      MetricsLogger.action(mSv.getContext(),MetricsEvent.OVERVIEW_SCROLL);
+    }
+  }
+  if (mIsScrolling) {
+    float deltaP=layoutAlgorithm.getDeltaPForY(mDownY,y);
+    float minScrollP=layoutAlgorithm.mMinScrollP;
+    float maxScrollP=layoutAlgorithm.mMaxScrollP;
+    float curScrollP=mDownScrollP + deltaP;
+    if (curScrollP < minScrollP || curScrollP > maxScrollP) {
+      float clampedScrollP=Utilities.clamp(curScrollP,minScrollP,maxScrollP);
+      float overscrollP=(curScrollP - clampedScrollP);
+      float overscrollX=Math.abs(overscrollP) / MAX_OVERSCROLL;
+      float interpX=OVERSCROLL_INTERP.getInterpolation(overscrollX);
+      curScrollP=clampedScrollP + Math.signum(overscrollP) * (interpX * MAX_OVERSCROLL);
+    }
+    mDownScrollP+=mScroller.setDeltaStackScroll(mDownScrollP,curScrollP - mDownScrollP);
+    mStackViewScrolledEvent.updateY(y - mLastY);
+    EventBus.getDefault().send(mStackViewScrolledEvent);
+  }
+  mLastY=y;
+  mVelocityTracker.addMovement(ev);
+  break;
+}
+case MotionEvent.ACTION_POINTER_UP:
+{
+int pointerIndex=ev.getActionIndex();
+int pointerId=ev.getPointerId(pointerIndex);
+if (pointerId == mActivePointerId) {
+  final int newPointerIndex=(pointerIndex == 0) ? 1 : 0;
+  mActivePointerId=ev.getPointerId(newPointerIndex);
+  mDownX=(int)ev.getX(pointerIndex);
+  mDownY=(int)ev.getY(pointerIndex);
+  mLastY=mDownY;
+  mDownScrollP=mScroller.getStackScroll();
+}
+mVelocityTracker.addMovement(ev);
+break;
+}
+case MotionEvent.ACTION_UP:
+{
+mVelocityTracker.addMovement(ev);
+mVelocityTracker.computeCurrentVelocity(1000,mMaximumVelocity);
+int activePointerIndex=ev.findPointerIndex(mActivePointerId);
+int y=(int)ev.getY(activePointerIndex);
+int velocity=(int)mVelocityTracker.getYVelocity(mActivePointerId);
+if (mIsScrolling) {
+if (mScroller.isScrollOutOfBounds()) {
+  mScroller.animateBoundScroll();
+}
+ else if (Math.abs(velocity) > mMinimumVelocity) {
+  float minY=mDownY + layoutAlgorithm.getYForDeltaP(mDownScrollP,layoutAlgorithm.mMaxScrollP);
+  float maxY=mDownY + layoutAlgorithm.getYForDeltaP(mDownScrollP,layoutAlgorithm.mMinScrollP);
+  mScroller.fling(mDownScrollP,mDownY,y,velocity,(int)minY,(int)maxY,mOverscrollSize);
+  mSv.invalidate();
+}
+if (!mSv.mTouchExplorationEnabled) {
+  mSv.resetFocusedTask(mSv.getFocusedTask());
+}
+}
+ else if (mActiveTaskView == null) {
+maybeHideRecentsFromBackgroundTap((int)ev.getX(),(int)ev.getY());
+}
+mActivePointerId=INACTIVE_POINTER_ID;
+mIsScrolling=false;
+recycleVelocityTracker();
+break;
+}
+case MotionEvent.ACTION_CANCEL:
+{
+mActivePointerId=INACTIVE_POINTER_ID;
+mIsScrolling=false;
+recycleVelocityTracker();
+break;
+}
+}
+return mIsScrolling;
+}

@@ -15,7 +15,7 @@ synchronized (mService) {
       for (int i=0; i < N; i++) {
         Object target=r.receivers.get(i);
         if (DEBUG_BROADCAST)         Slog.v(TAG_BROADCAST,"Delivering non-ordered on [" + mQueueName + "] to registered "+ target+ ": "+ r);
-        deliverToRegisteredReceiverLocked(r,(BroadcastFilter)target,false);
+        deliverToRegisteredReceiverLocked(r,(BroadcastFilter)target,false,i);
       }
       addBroadcastToHistoryLocked(r);
       if (DEBUG_BROADCAST_LIGHT)       Slog.v(TAG_BROADCAST,"Done with parallel broadcast [" + mQueueName + "] "+ r);
@@ -78,6 +78,9 @@ synchronized (mService.mPidsSelfLocked) {
         cancelBroadcastTimeoutLocked();
         if (DEBUG_BROADCAST_LIGHT)         Slog.v(TAG_BROADCAST,"Finished with ordered broadcast " + r);
         addBroadcastToHistoryLocked(r);
+        if (r.intent.getComponent() == null && r.intent.getPackage() == null && (r.intent.getFlags() & Intent.FLAG_RECEIVER_REGISTERED_ONLY) == 0) {
+          mService.addBroadcastStatLocked(r.intent.getAction(),r.callerPackage,r.manifestCount,r.manifestSkipCount,r.finishTime - r.dispatchTime);
+        }
         mOrderedBroadcasts.remove(0);
         r=null;
         looped=true;
@@ -102,7 +105,7 @@ synchronized (mService.mPidsSelfLocked) {
     if (nextReceiver instanceof BroadcastFilter) {
       BroadcastFilter filter=(BroadcastFilter)nextReceiver;
       if (DEBUG_BROADCAST)       Slog.v(TAG_BROADCAST,"Delivering ordered [" + mQueueName + "] to registered "+ filter+ ": "+ r);
-      deliverToRegisteredReceiverLocked(r,filter,r.ordered);
+      deliverToRegisteredReceiverLocked(r,filter,r.ordered,recIdx);
       if (r.receiver == null || !r.ordered) {
         if (DEBUG_BROADCAST)         Slog.v(TAG_BROADCAST,"Quick finishing [" + mQueueName + "]: ordered="+ r.ordered+ " receiver="+ r.receiver);
         r.state=BroadcastRecord.IDLE;
@@ -118,8 +121,11 @@ synchronized (mService.mPidsSelfLocked) {
     ResolveInfo info=(ResolveInfo)nextReceiver;
     ComponentName component=new ComponentName(info.activityInfo.applicationInfo.packageName,info.activityInfo.name);
     boolean skip=false;
+    if (brOptions != null && (info.activityInfo.applicationInfo.targetSdkVersion < brOptions.getMinManifestReceiverApiLevel() || info.activityInfo.applicationInfo.targetSdkVersion > brOptions.getMaxManifestReceiverApiLevel())) {
+      skip=true;
+    }
     int perm=mService.checkComponentPermission(info.activityInfo.permission,r.callingPid,r.callingUid,info.activityInfo.applicationInfo.uid,info.activityInfo.exported);
-    if (perm != PackageManager.PERMISSION_GRANTED) {
+    if (!skip && perm != PackageManager.PERMISSION_GRANTED) {
       if (!info.activityInfo.exported) {
         Slog.w(TAG,"Permission Denial: broadcasting " + r.intent.toString() + " from "+ r.callerPackage+ " (pid="+ r.callingPid+ ", uid="+ r.callingUid+ ")"+ " is not exported from uid "+ info.activityInfo.applicationInfo.uid+ " due to receiver "+ component.flattenToShortString());
       }
@@ -128,7 +134,7 @@ synchronized (mService.mPidsSelfLocked) {
       }
       skip=true;
     }
- else     if (info.activityInfo.permission != null) {
+ else     if (!skip && info.activityInfo.permission != null) {
       final int opCode=AppOpsManager.permissionToOpCode(info.activityInfo.permission);
       if (opCode != AppOpsManager.OP_NONE && mService.mAppOpsService.noteOperation(opCode,r.callingUid,r.callerPackage) != AppOpsManager.MODE_ALLOWED) {
         Slog.w(TAG,"Appop Denial: broadcasting " + r.intent.toString() + " from "+ r.callerPackage+ " (pid="+ r.callingPid+ ", uid="+ r.callingUid+ ")"+ " requires appop "+ AppOpsManager.permissionToOp(info.activityInfo.permission)+ " due to registered receiver "+ component.flattenToShortString());
@@ -178,6 +184,12 @@ synchronized (mService.mPidsSelfLocked) {
         skip=true;
       }
     }
+    if (!skip) {
+      r.manifestCount++;
+    }
+ else {
+      r.manifestSkipCount++;
+    }
     if (r.curApp != null && r.curApp.crashing) {
       Slog.w(TAG,"Skipping deliver ordered [" + mQueueName + "] "+ r+ " to "+ r.curApp+ ": process crashing");
       skip=true;
@@ -195,21 +207,42 @@ synchronized (mService.mPidsSelfLocked) {
         skip=true;
       }
     }
+    if (Build.PERMISSIONS_REVIEW_REQUIRED && !skip) {
+      if (!requestStartTargetPermissionsReviewIfNeededLocked(r,info.activityInfo.packageName,UserHandle.getUserId(info.activityInfo.applicationInfo.uid))) {
+        skip=true;
+      }
+    }
+    final int receiverUid=info.activityInfo.applicationInfo.uid;
+    if (r.callingUid != Process.SYSTEM_UID && isSingleton && mService.isValidSingletonCall(r.callingUid,receiverUid)) {
+      info.activityInfo=mService.getActivityInfoForUser(info.activityInfo,0);
+    }
+    String targetProcess=info.activityInfo.processName;
+    ProcessRecord app=mService.getProcessRecordLocked(targetProcess,info.activityInfo.applicationInfo.uid,false);
+    if (!skip) {
+      final int allowed=mService.checkAllowBackgroundLocked(info.activityInfo.applicationInfo.uid,info.activityInfo.packageName,-1,false);
+      if (allowed != ActivityManager.APP_START_MODE_NORMAL) {
+        if (allowed == ActivityManager.APP_START_MODE_DISABLED) {
+          Slog.w(TAG,"Background execution disabled: receiving " + r.intent + " to "+ component.flattenToShortString());
+          skip=true;
+        }
+ else         if (((r.intent.getFlags() & Intent.FLAG_RECEIVER_EXCLUDE_BACKGROUND) != 0) || (r.intent.getComponent() == null && r.intent.getPackage() == null && ((r.intent.getFlags() & Intent.FLAG_RECEIVER_INCLUDE_BACKGROUND) == 0))) {
+          Slog.w(TAG,"Background execution not allowed: receiving " + r.intent + " to "+ component.flattenToShortString());
+          skip=true;
+        }
+      }
+    }
     if (skip) {
       if (DEBUG_BROADCAST)       Slog.v(TAG_BROADCAST,"Skipping delivery of ordered [" + mQueueName + "] "+ r+ " for whatever reason");
+      r.delivery[recIdx]=BroadcastRecord.DELIVERY_SKIPPED;
       r.receiver=null;
       r.curFilter=null;
       r.state=BroadcastRecord.IDLE;
       scheduleBroadcastsLocked();
       return;
     }
+    r.delivery[recIdx]=BroadcastRecord.DELIVERY_DELIVERED;
     r.state=BroadcastRecord.APP_RECEIVE;
-    String targetProcess=info.activityInfo.processName;
     r.curComponent=component;
-    final int receiverUid=info.activityInfo.applicationInfo.uid;
-    if (r.callingUid != Process.SYSTEM_UID && isSingleton && mService.isValidSingletonCall(r.callingUid,receiverUid)) {
-      info.activityInfo=mService.getActivityInfoForUser(info.activityInfo,0);
-    }
     r.curReceiver=info.activityInfo;
     if (DEBUG_MU && r.callingUid > UserHandle.PER_USER_RANGE) {
       Slog.v(TAG_MU,"Updated broadcast record activity info for secondary user, " + info.activityInfo + ", callingUid = "+ r.callingUid+ ", uid = "+ info.activityInfo.applicationInfo.uid);
@@ -225,7 +258,6 @@ synchronized (mService.mPidsSelfLocked) {
 catch (    IllegalArgumentException e) {
       Slog.w(TAG,"Failed trying to unstop package " + r.curComponent.getPackageName() + ": "+ e);
     }
-    ProcessRecord app=mService.getProcessRecordLocked(targetProcess,info.activityInfo.applicationInfo.uid,false);
     if (app != null && app.thread != null) {
       try {
         app.addPackage(info.activityInfo.packageName,info.activityInfo.applicationInfo.versionCode,mService.mProcessStats);

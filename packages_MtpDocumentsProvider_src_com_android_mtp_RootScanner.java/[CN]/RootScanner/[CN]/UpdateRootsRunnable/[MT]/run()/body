@@ -1,0 +1,56 @@
+{
+  Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND);
+  int pollingCount=0;
+  while (mStopped.getCount() > 0) {
+    boolean changed=false;
+    final MtpDeviceRecord[] devices=mManager.getDevices();
+    try {
+      mDatabase.getMapper().startAddingDocuments(null);
+      for (      final MtpDeviceRecord device : devices) {
+        if (mDatabase.getMapper().putDeviceDocument(device)) {
+          changed=true;
+        }
+      }
+      if (mDatabase.getMapper().stopAddingDocuments(null)) {
+        changed=true;
+      }
+    }
+ catch (    FileNotFoundException exception) {
+      Log.e(MtpDocumentsProvider.TAG,"Unexpected FileNotFoundException",exception);
+      throw new AssertionError("Unexpected exception for the top parent",exception);
+    }
+    for (    final MtpDeviceRecord device : devices) {
+      final String documentId=mDatabase.getDocumentIdForDevice(device.deviceId);
+      if (documentId == null) {
+        continue;
+      }
+      try {
+        mDatabase.getMapper().startAddingDocuments(documentId);
+        if (mDatabase.getMapper().putStorageDocuments(documentId,device.eventsSupported,device.roots)) {
+          changed=true;
+        }
+        if (mDatabase.getMapper().stopAddingDocuments(documentId)) {
+          changed=true;
+        }
+      }
+ catch (      FileNotFoundException exception) {
+        Log.e(MtpDocumentsProvider.TAG,"Parent document is gone.",exception);
+        continue;
+      }
+    }
+    if (changed) {
+      notifyChange();
+    }
+    mFirstScanCompleted.countDown();
+    pollingCount++;
+    if (devices.length == 0) {
+      break;
+    }
+    try {
+      mStopped.await(pollingCount > SHORT_POLLING_TIMES ? LONG_POLLING_INTERVAL : SHORT_POLLING_INTERVAL,TimeUnit.MILLISECONDS);
+    }
+ catch (    InterruptedException exp) {
+      break;
+    }
+  }
+}

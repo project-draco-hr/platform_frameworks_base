@@ -1,0 +1,48 @@
+{
+  final int widgetCount=provider.widgets.size();
+  if (widgetCount == 0) {
+    return;
+  }
+  final String providerPackage=provider.info.provider.getPackageName();
+  final int providerUserId=provider.getUserId();
+  Bitmap iconBitmap=createMaskedWidgetBitmap(providerPackage,providerUserId);
+  if (iconBitmap == null) {
+    return;
+  }
+  final boolean showBadge;
+  final Intent onClickIntent;
+  final long identity=Binder.clearCallingIdentity();
+  try {
+    if (provider.maskedBySuspendedPackage) {
+      UserInfo userInfo=mUserManager.getUserInfo(providerUserId);
+      showBadge=userInfo.isManagedProfile();
+      onClickIntent=mDevicePolicyManagerInternal.createPackageSuspendedDialogIntent(providerPackage,providerUserId);
+    }
+ else     if (provider.maskedByQuietProfile) {
+      showBadge=true;
+      onClickIntent=UnlaunchableAppActivity.createInQuietModeDialogIntent(providerUserId);
+    }
+ else {
+      showBadge=true;
+      onClickIntent=mKeyguardManager.createConfirmDeviceCredentialIntent(null,null,providerUserId);
+      if (onClickIntent != null) {
+        onClickIntent.setFlags(FLAG_ACTIVITY_NEW_TASK | FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS);
+      }
+    }
+    for (int j=0; j < widgetCount; j++) {
+      Widget widget=provider.widgets.get(j);
+      if (targetWidget != null && targetWidget != widget)       continue;
+      PendingIntent intent=null;
+      if (onClickIntent != null) {
+        intent=PendingIntent.getActivity(mContext,widget.appWidgetId,onClickIntent,PendingIntent.FLAG_UPDATE_CURRENT);
+      }
+      RemoteViews views=createMaskedWidgetRemoteViews(iconBitmap,showBadge,intent);
+      if (widget.replaceWithMaskedViewsLocked(views)) {
+        scheduleNotifyUpdateAppWidgetLocked(widget,widget.getEffectiveViewsLocked());
+      }
+    }
+  }
+  finally {
+    Binder.restoreCallingIdentity(identity);
+  }
+}

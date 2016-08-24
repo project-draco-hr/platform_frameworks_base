@@ -1,0 +1,61 @@
+{
+  Bundle.setDefusable(optionsIn,true);
+  if (Log.isLoggable(TAG,Log.VERBOSE)) {
+    Log.v(TAG,"startAddAccountSession: accountType " + accountType + ", response "+ response+ ", authTokenType "+ authTokenType+ ", requiredFeatures "+ stringArrayToString(requiredFeatures)+ ", expectActivityLaunch "+ expectActivityLaunch+ ", caller's uid "+ Binder.getCallingUid()+ ", pid "+ Binder.getCallingPid());
+  }
+  if (response == null) {
+    throw new IllegalArgumentException("response is null");
+  }
+  if (accountType == null) {
+    throw new IllegalArgumentException("accountType is null");
+  }
+  final int uid=Binder.getCallingUid();
+  if (!isSystemUid(uid)) {
+    String msg=String.format("uid %s cannot stat add account session.",uid);
+    throw new SecurityException(msg);
+  }
+  final int userId=UserHandle.getUserId(uid);
+  if (!canUserModifyAccounts(userId,uid)) {
+    try {
+      response.onError(AccountManager.ERROR_CODE_USER_RESTRICTED,"User is not allowed to add an account!");
+    }
+ catch (    RemoteException re) {
+    }
+    showCantAddAccount(AccountManager.ERROR_CODE_USER_RESTRICTED,userId);
+    return;
+  }
+  if (!canUserModifyAccountsForType(userId,accountType,uid)) {
+    try {
+      response.onError(AccountManager.ERROR_CODE_MANAGEMENT_DISABLED_FOR_ACCOUNT_TYPE,"User cannot modify accounts of this type (policy).");
+    }
+ catch (    RemoteException re) {
+    }
+    showCantAddAccount(AccountManager.ERROR_CODE_MANAGEMENT_DISABLED_FOR_ACCOUNT_TYPE,userId);
+    return;
+  }
+  final int pid=Binder.getCallingPid();
+  final Bundle options=(optionsIn == null) ? new Bundle() : optionsIn;
+  options.putInt(AccountManager.KEY_CALLER_UID,uid);
+  options.putInt(AccountManager.KEY_CALLER_PID,pid);
+  String callerPkg=optionsIn.getString(AccountManager.KEY_ANDROID_PACKAGE_NAME);
+  boolean isPasswordForwardingAllowed=isPermitted(callerPkg,uid,Manifest.permission.GET_PASSWORD);
+  int usrId=UserHandle.getCallingUserId();
+  long identityToken=clearCallingIdentity();
+  try {
+    UserAccounts accounts=getUserAccounts(usrId);
+    logRecordWithUid(accounts,DebugDbHelper.ACTION_CALLED_START_ACCOUNT_ADD,TABLE_ACCOUNTS,uid);
+    new StartAccountSession(accounts,response,accountType,expectActivityLaunch,null,false,true,isPasswordForwardingAllowed){
+      @Override public void run() throws RemoteException {
+        mAuthenticator.startAddAccountSession(this,mAccountType,authTokenType,requiredFeatures,options);
+      }
+      @Override protected String toDebugString(      long now){
+        String requiredFeaturesStr=TextUtils.join(",",requiredFeatures);
+        return super.toDebugString(now) + ", startAddAccountSession" + ", accountType "+ accountType+ ", requiredFeatures "+ (requiredFeatures != null ? requiredFeaturesStr : null);
+      }
+    }
+.bind();
+  }
+  finally {
+    restoreCallingIdentity(identityToken);
+  }
+}

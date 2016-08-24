@@ -1,0 +1,57 @@
+{
+  final TaskRecord task=anyTaskForIdLocked(taskId);
+  if (task == null) {
+    Slog.w(TAG,"moveTaskToStack: no task for id=" + taskId);
+    return false;
+  }
+  if (task.stack != null && task.stack.mStackId == stackId) {
+    Slog.i(TAG,"moveTaskToStack: taskId=" + taskId + " already in stackId="+ stackId);
+    return true;
+  }
+  if (stackId == FREEFORM_WORKSPACE_STACK_ID && !mService.mSupportsFreeformWindowManagement) {
+    throw new IllegalArgumentException("moveTaskToStack:" + "Attempt to move task " + taskId + " to unsupported freeform stack");
+  }
+  final ActivityRecord topActivity=task.getTopActivity();
+  final int sourceStackId=task.stack != null ? task.stack.mStackId : INVALID_STACK_ID;
+  final boolean mightReplaceWindow=StackId.replaceWindowsOnTaskMove(sourceStackId,stackId) && topActivity != null;
+  if (mightReplaceWindow) {
+    mWindowManager.setReplacingWindow(topActivity.appToken,animate);
+  }
+  mWindowManager.deferSurfaceLayout();
+  final int preferredLaunchStackId=stackId;
+  boolean kept=true;
+  try {
+    final ActivityStack stack=moveTaskToStackUncheckedLocked(task,stackId,toTop,forceFocus,reason + " moveTaskToStack");
+    stackId=stack.mStackId;
+    if (!animate) {
+      stack.mNoAnimActivities.add(topActivity);
+    }
+    mWindowManager.prepareFreezingTaskBounds(stack.mStackId);
+    if (stackId == FULLSCREEN_WORKSPACE_STACK_ID && task.mBounds != null) {
+      kept=resizeTaskLocked(task,stack.mBounds,RESIZE_MODE_SYSTEM,!mightReplaceWindow,deferResume);
+    }
+ else     if (stackId == FREEFORM_WORKSPACE_STACK_ID) {
+      Rect bounds=task.getLaunchBounds();
+      if (bounds == null) {
+        stack.layoutTaskInStack(task,null);
+        bounds=task.mBounds;
+      }
+      kept=resizeTaskLocked(task,bounds,RESIZE_MODE_FORCED,!mightReplaceWindow,deferResume);
+    }
+ else     if (stackId == DOCKED_STACK_ID || stackId == PINNED_STACK_ID) {
+      kept=resizeTaskLocked(task,stack.mBounds,RESIZE_MODE_SYSTEM,!mightReplaceWindow,deferResume);
+    }
+  }
+  finally {
+    mWindowManager.continueSurfaceLayout();
+  }
+  if (mightReplaceWindow) {
+    mWindowManager.scheduleClearReplacingWindowIfNeeded(topActivity.appToken,!kept);
+  }
+  if (!deferResume) {
+    ensureActivitiesVisibleLocked(null,0,!mightReplaceWindow);
+    resumeFocusedStackTopActivityLocked();
+  }
+  handleNonResizableTaskIfNeeded(task,preferredLaunchStackId,stackId);
+  return (preferredLaunchStackId == stackId);
+}

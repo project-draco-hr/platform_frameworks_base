@@ -6,12 +6,12 @@
     if (callerApp == null) {
       throw new SecurityException("Unable to find app for caller " + caller + " (pid="+ Binder.getCallingPid()+ ") when starting service "+ service);
     }
-    callerFg=callerApp.setSchedGroup != Process.THREAD_GROUP_BG_NONINTERACTIVE;
+    callerFg=callerApp.setSchedGroup != ProcessList.SCHED_GROUP_BACKGROUND;
   }
  else {
     callerFg=true;
   }
-  ServiceLookupResult res=retrieveServiceLocked(service,resolvedType,callingPackage,callingPid,callingUid,userId,true,callerFg);
+  ServiceLookupResult res=retrieveServiceLocked(service,resolvedType,callingPackage,callingPid,callingUid,userId,true,callerFg,false);
   if (res == null) {
     return null;
   }
@@ -19,11 +19,29 @@
     return new ComponentName("!",res.permission != null ? res.permission : "private to package");
   }
   ServiceRecord r=res.record;
-  if (!mAm.getUserManagerLocked().exists(r.userId)) {
-    Slog.d(TAG,"Trying to start service with non-existent user! " + r.userId);
+  if (!mAm.mUserController.exists(r.userId)) {
+    Slog.w(TAG,"Trying to start service with non-existent user! " + r.userId);
     return null;
   }
+  if (!r.startRequested) {
+    final long token=Binder.clearCallingIdentity();
+    try {
+      final int allowed=mAm.checkAllowBackgroundLocked(r.appInfo.uid,r.packageName,callingPid,true);
+      if (allowed != ActivityManager.APP_START_MODE_NORMAL) {
+        Slog.w(TAG,"Background start not allowed: service " + service + " to "+ r.name.flattenToShortString()+ " from pid="+ callingPid+ " uid="+ callingUid+ " pkg="+ callingPackage);
+        return null;
+      }
+    }
+  finally {
+      Binder.restoreCallingIdentity(token);
+    }
+  }
   NeededUriGrants neededGrants=mAm.checkGrantUriPermissionFromIntentLocked(callingUid,r.packageName,service,service.getFlags(),null,r.userId);
+  if (Build.PERMISSIONS_REVIEW_REQUIRED) {
+    if (!requestStartTargetPermissionsReviewIfNeededLocked(r,callingPackage,callingUid,service,callerFg,userId)) {
+      return null;
+    }
+  }
   if (unscheduleServiceRestartLocked(r,callingUid,false)) {
     if (DEBUG_SERVICE)     Slog.v(TAG_SERVICE,"START SERVICE WHILE RESTART PENDING: " + r);
   }
@@ -33,7 +51,7 @@
   r.pendingStarts.add(new ServiceRecord.StartItem(r,false,r.makeNextStartId(),service,neededGrants));
   final ServiceMap smap=getServiceMap(r.userId);
   boolean addToStarting=false;
-  if (!callerFg && r.app == null && mAm.mStartedUsers.get(r.userId) != null) {
+  if (!callerFg && r.app == null && mAm.mUserController.hasStartedUserState(r.userId)) {
     ProcessRecord proc=mAm.getProcessRecordLocked(r.processName,r.appInfo.uid,false);
     if (proc == null || proc.curProcState > ActivityManager.PROCESS_STATE_RECEIVER) {
       if (DEBUG_DELAYED_SERVICE)       Slog.v(TAG_SERVICE,"Potential start delay of " + r + " in "+ proc);

@@ -1,0 +1,77 @@
+{
+  String packageName=ps.name;
+  if (DEBUG_REMOVE)   Slog.d(TAG,"removePackageDataLI: " + ps);
+  final PackageParser.Package deletedPkg;
+  final PackageSetting deletedPs;
+synchronized (mPackages) {
+    deletedPkg=mPackages.get(packageName);
+    deletedPs=mSettings.mPackages.get(packageName);
+    if (outInfo != null) {
+      outInfo.removedPackage=packageName;
+      outInfo.removedUsers=deletedPs != null ? deletedPs.queryInstalledUsers(sUserManager.getUserIds(),true) : null;
+    }
+  }
+  removePackageLI(ps,(flags & REMOVE_CHATTY) != 0);
+  if ((flags & PackageManager.DELETE_KEEP_DATA) == 0) {
+    final PackageParser.Package resolvedPkg;
+    if (deletedPkg != null) {
+      resolvedPkg=deletedPkg;
+    }
+ else {
+      resolvedPkg=new PackageParser.Package(ps.name);
+      resolvedPkg.setVolumeUuid(ps.volumeUuid);
+    }
+    destroyAppDataLIF(resolvedPkg,UserHandle.USER_ALL,StorageManager.FLAG_STORAGE_DE | StorageManager.FLAG_STORAGE_CE);
+    destroyAppProfilesLIF(resolvedPkg,UserHandle.USER_ALL);
+    if (outInfo != null) {
+      outInfo.dataRemoved=true;
+    }
+    schedulePackageCleaning(packageName,UserHandle.USER_ALL,true);
+  }
+synchronized (mPackages) {
+    if (deletedPs != null) {
+      if ((flags & PackageManager.DELETE_KEEP_DATA) == 0) {
+        clearIntentFilterVerificationsLPw(deletedPs.name,UserHandle.USER_ALL);
+        clearDefaultBrowserIfNeeded(packageName);
+        if (outInfo != null) {
+          mSettings.mKeySetManagerService.removeAppKeySetDataLPw(packageName);
+          outInfo.removedAppId=mSettings.removePackageLPw(packageName);
+        }
+        updatePermissionsLPw(deletedPs.name,null,0);
+        if (deletedPs.sharedUser != null) {
+          for (          int userId : UserManagerService.getInstance().getUserIds()) {
+            final int userIdToKill=mSettings.updateSharedUserPermsLPw(deletedPs,userId);
+            if (userIdToKill == UserHandle.USER_ALL || userIdToKill >= UserHandle.USER_SYSTEM) {
+              mHandler.post(new Runnable(){
+                @Override public void run(){
+                  killApplication(deletedPs.name,deletedPs.appId,KILL_APP_REASON_GIDS_CHANGED);
+                }
+              }
+);
+              break;
+            }
+          }
+        }
+        clearPackagePreferredActivitiesLPw(deletedPs.name,UserHandle.USER_ALL);
+      }
+      if (allUserHandles != null && outInfo != null && outInfo.origUsers != null) {
+        if (DEBUG_REMOVE) {
+          Slog.d(TAG,"Propagating install state across downgrade");
+        }
+        for (        int userId : allUserHandles) {
+          final boolean installed=ArrayUtils.contains(outInfo.origUsers,userId);
+          if (DEBUG_REMOVE) {
+            Slog.d(TAG,"    user " + userId + " => "+ installed);
+          }
+          ps.setInstalled(installed,userId);
+        }
+      }
+    }
+    if (writeSettings) {
+      mSettings.writeLPr();
+    }
+  }
+  if (outInfo != null) {
+    removeKeystoreDataIfNeeded(UserHandle.USER_ALL,outInfo.removedAppId);
+  }
+}

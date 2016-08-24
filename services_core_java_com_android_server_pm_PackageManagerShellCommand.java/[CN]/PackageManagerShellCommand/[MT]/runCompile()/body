@@ -1,0 +1,128 @@
+{
+  final PrintWriter pw=getOutPrintWriter();
+  boolean checkProfiles=SystemProperties.getBoolean("dalvik.vm.usejitprofiles",false);
+  boolean forceCompilation=false;
+  boolean allPackages=false;
+  boolean clearProfileData=false;
+  String compilerFilter=null;
+  String compilationReason=null;
+  String checkProfilesRaw=null;
+  String opt;
+  while ((opt=getNextOption()) != null) {
+switch (opt) {
+case "-a":
+      allPackages=true;
+    break;
+case "-c":
+  clearProfileData=true;
+break;
+case "-f":
+forceCompilation=true;
+break;
+case "-m":
+compilerFilter=getNextArgRequired();
+break;
+case "-r":
+compilationReason=getNextArgRequired();
+break;
+case "--check-prof":
+checkProfilesRaw=getNextArgRequired();
+break;
+case "--reset":
+forceCompilation=true;
+clearProfileData=true;
+compilationReason="install";
+break;
+default :
+pw.println("Error: Unknown option: " + opt);
+return 1;
+}
+}
+if (checkProfilesRaw != null) {
+if ("true".equals(checkProfilesRaw)) {
+checkProfiles=true;
+}
+ else if ("false".equals(checkProfilesRaw)) {
+checkProfiles=false;
+}
+ else {
+pw.println("Invalid value for \"--check-prof\". Expected \"true\" or \"false\".");
+return 1;
+}
+}
+if (compilerFilter != null && compilationReason != null) {
+pw.println("Cannot use compilation filter (\"-m\") and compilation reason (\"-r\") " + "at the same time");
+return 1;
+}
+if (compilerFilter == null && compilationReason == null) {
+pw.println("Cannot run without any of compilation filter (\"-m\") and compilation " + "reason (\"-r\") at the same time");
+return 1;
+}
+String targetCompilerFilter;
+if (compilerFilter != null) {
+if (!DexFile.isValidCompilerFilter(compilerFilter)) {
+pw.println("Error: \"" + compilerFilter + "\" is not a valid compilation filter.");
+return 1;
+}
+targetCompilerFilter=compilerFilter;
+}
+ else {
+int reason=-1;
+for (int i=0; i < PackageManagerServiceCompilerMapping.REASON_STRINGS.length; i++) {
+if (PackageManagerServiceCompilerMapping.REASON_STRINGS[i].equals(compilationReason)) {
+reason=i;
+break;
+}
+}
+if (reason == -1) {
+pw.println("Error: Unknown compilation reason: " + compilationReason);
+return 1;
+}
+targetCompilerFilter=PackageManagerServiceCompilerMapping.getCompilerFilterForReason(reason);
+}
+List<String> packageNames=null;
+if (allPackages) {
+packageNames=mInterface.getAllPackages();
+}
+ else {
+String packageName=getNextArg();
+if (packageName == null) {
+pw.println("Error: package name not specified");
+return 1;
+}
+packageNames=Collections.singletonList(packageName);
+}
+List<String> failedPackages=new ArrayList<>();
+for (String packageName : packageNames) {
+if (clearProfileData) {
+mInterface.clearApplicationProfileData(packageName);
+}
+boolean result=mInterface.performDexOptMode(packageName,checkProfiles,targetCompilerFilter,forceCompilation);
+if (!result) {
+failedPackages.add(packageName);
+}
+}
+if (failedPackages.isEmpty()) {
+pw.println("Success");
+return 0;
+}
+ else if (failedPackages.size() == 1) {
+pw.println("Failure: package " + failedPackages.get(0) + " could not be compiled");
+return 1;
+}
+ else {
+pw.print("Failure: the following packages could not be compiled: ");
+boolean is_first=true;
+for (String packageName : failedPackages) {
+if (is_first) {
+is_first=false;
+}
+ else {
+pw.print(", ");
+}
+pw.print(packageName);
+}
+pw.println();
+return 1;
+}
+}

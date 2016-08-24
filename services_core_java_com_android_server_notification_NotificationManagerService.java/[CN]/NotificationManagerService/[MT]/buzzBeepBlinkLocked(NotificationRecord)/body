@@ -3,7 +3,8 @@
   boolean beep=false;
   boolean blink=false;
   final Notification notification=record.sbn.getNotification();
-  final boolean aboveThreshold=record.score >= SCORE_INTERRUPTION_THRESHOLD;
+  final String key=record.getKey();
+  final boolean aboveThreshold=record.getImportance() >= IMPORTANCE_DEFAULT;
   final boolean canInterrupt=aboveThreshold && !record.isIntercepted();
   if (DBG || record.isIntercepted())   Slog.v(TAG,"pkg=" + record.sbn.getPackageName() + " canInterrupt="+ canInterrupt+ " intercept="+ record.isIntercepted());
   final int currentUser;
@@ -18,12 +19,14 @@
   if (disableEffects != null) {
     ZenLog.traceDisableEffects(record,disableEffects);
   }
-  if (disableEffects == null && (!(record.isUpdate && (notification.flags & Notification.FLAG_ONLY_ALERT_ONCE) != 0)) && (record.getUserId() == UserHandle.USER_ALL || record.getUserId() == currentUser || mUserProfiles.isCurrentProfile(record.getUserId())) && canInterrupt && mSystemReady && mAudioManager != null) {
+  boolean wasBeep=key != null && key.equals(mSoundNotificationKey);
+  boolean wasBuzz=key != null && key.equals(mVibrateNotificationKey);
+  boolean hasValidVibrate=false;
+  boolean hasValidSound=false;
+  if (disableEffects == null && (record.getUserId() == UserHandle.USER_ALL || record.getUserId() == currentUser || mUserProfiles.isCurrentProfile(record.getUserId())) && canInterrupt && mSystemReady && mAudioManager != null) {
     if (DBG)     Slog.v(TAG,"Interrupting!");
-    sendAccessibilityEvent(notification,record.sbn.getPackageName());
     final boolean useDefaultSound=(notification.defaults & Notification.DEFAULT_SOUND) != 0 || Settings.System.DEFAULT_NOTIFICATION_URI.equals(notification.sound);
     Uri soundUri=null;
-    boolean hasValidSound=false;
     if (useDefaultSound) {
       soundUri=Settings.System.DEFAULT_NOTIFICATION_URI;
       ContentResolver resolver=getContext().getContentResolver();
@@ -33,51 +36,61 @@
       soundUri=notification.sound;
       hasValidSound=(soundUri != null);
     }
-    if (hasValidSound) {
-      boolean looping=(notification.flags & Notification.FLAG_INSISTENT) != 0;
-      AudioAttributes audioAttributes=audioAttributesForNotification(notification);
-      mSoundNotificationKey=record.getKey();
-      if ((mAudioManager.getStreamVolume(AudioAttributes.toLegacyStreamType(audioAttributes)) != 0) && !mAudioManager.isAudioFocusExclusive()) {
-        final long identity=Binder.clearCallingIdentity();
-        try {
-          final IRingtonePlayer player=mAudioManager.getRingtonePlayer();
-          if (player != null) {
-            if (DBG)             Slog.v(TAG,"Playing sound " + soundUri + " with attributes "+ audioAttributes);
-            player.playAsync(soundUri,record.sbn.getUser(),looping,audioAttributes);
-            beep=true;
-          }
-        }
- catch (        RemoteException e) {
-        }
- finally {
-          Binder.restoreCallingIdentity(identity);
-        }
-      }
-    }
     final boolean hasCustomVibrate=notification.vibrate != null;
     final boolean convertSoundToVibration=!hasCustomVibrate && hasValidSound && (mAudioManager.getRingerModeInternal() == AudioManager.RINGER_MODE_VIBRATE);
     final boolean useDefaultVibrate=(notification.defaults & Notification.DEFAULT_VIBRATE) != 0;
-    if ((useDefaultVibrate || convertSoundToVibration || hasCustomVibrate) && !(mAudioManager.getRingerModeInternal() == AudioManager.RINGER_MODE_SILENT)) {
-      mVibrateNotificationKey=record.getKey();
-      if (useDefaultVibrate || convertSoundToVibration) {
-        long identity=Binder.clearCallingIdentity();
-        try {
-          mVibrator.vibrate(record.sbn.getUid(),record.sbn.getOpPkg(),useDefaultVibrate ? mDefaultVibrationPattern : mFallbackVibrationPattern,((notification.flags & Notification.FLAG_INSISTENT) != 0) ? 0 : -1,audioAttributesForNotification(notification));
-          buzz=true;
-        }
-  finally {
-          Binder.restoreCallingIdentity(identity);
+    hasValidVibrate=useDefaultVibrate || convertSoundToVibration || hasCustomVibrate;
+    if (!(record.isUpdate && (notification.flags & Notification.FLAG_ONLY_ALERT_ONCE) != 0)) {
+      sendAccessibilityEvent(notification,record.sbn.getPackageName());
+      if (hasValidSound) {
+        boolean looping=(notification.flags & Notification.FLAG_INSISTENT) != 0;
+        AudioAttributes audioAttributes=audioAttributesForNotification(notification);
+        mSoundNotificationKey=key;
+        if ((mAudioManager.getStreamVolume(AudioAttributes.toLegacyStreamType(audioAttributes)) != 0) && !mAudioManager.isAudioFocusExclusive()) {
+          final long identity=Binder.clearCallingIdentity();
+          try {
+            final IRingtonePlayer player=mAudioManager.getRingtonePlayer();
+            if (player != null) {
+              if (DBG)               Slog.v(TAG,"Playing sound " + soundUri + " with attributes "+ audioAttributes);
+              player.playAsync(soundUri,record.sbn.getUser(),looping,audioAttributes);
+              beep=true;
+            }
+          }
+ catch (          RemoteException e) {
+          }
+ finally {
+            Binder.restoreCallingIdentity(identity);
+          }
         }
       }
- else       if (notification.vibrate.length > 1) {
-        mVibrator.vibrate(record.sbn.getUid(),record.sbn.getOpPkg(),notification.vibrate,((notification.flags & Notification.FLAG_INSISTENT) != 0) ? 0 : -1,audioAttributesForNotification(notification));
-        buzz=true;
+      if (hasValidVibrate && !(mAudioManager.getRingerModeInternal() == AudioManager.RINGER_MODE_SILENT)) {
+        mVibrateNotificationKey=key;
+        if (useDefaultVibrate || convertSoundToVibration) {
+          long identity=Binder.clearCallingIdentity();
+          try {
+            mVibrator.vibrate(record.sbn.getUid(),record.sbn.getOpPkg(),useDefaultVibrate ? mDefaultVibrationPattern : mFallbackVibrationPattern,((notification.flags & Notification.FLAG_INSISTENT) != 0) ? 0 : -1,audioAttributesForNotification(notification));
+            buzz=true;
+          }
+  finally {
+            Binder.restoreCallingIdentity(identity);
+          }
+        }
+ else         if (notification.vibrate.length > 1) {
+          mVibrator.vibrate(record.sbn.getUid(),record.sbn.getOpPkg(),notification.vibrate,((notification.flags & Notification.FLAG_INSISTENT) != 0) ? 0 : -1,audioAttributesForNotification(notification));
+          buzz=true;
+        }
       }
     }
   }
-  boolean wasShowLights=mLights.remove(record.getKey());
-  if ((notification.flags & Notification.FLAG_SHOW_LIGHTS) != 0 && aboveThreshold) {
-    mLights.add(record.getKey());
+  if (wasBeep && !hasValidSound) {
+    clearSoundLocked();
+  }
+  if (wasBuzz && !hasValidVibrate) {
+    clearVibrateLocked();
+  }
+  boolean wasShowLights=mLights.remove(key);
+  if ((notification.flags & Notification.FLAG_SHOW_LIGHTS) != 0 && aboveThreshold && ((record.getSuppressedVisualEffects() & NotificationListenerService.SUPPRESSED_EFFECT_SCREEN_OFF) == 0)) {
+    mLights.add(key);
     updateLightsLocked();
     if (mUseAttentionLight) {
       mAttentionLight.pulse();
@@ -88,7 +101,12 @@
     updateLightsLocked();
   }
   if (buzz || beep || blink) {
-    EventLogTags.writeNotificationAlert(record.getKey(),buzz ? 1 : 0,beep ? 1 : 0,blink ? 1 : 0);
-    mHandler.post(mBuzzBeepBlinked);
+    if (((record.getSuppressedVisualEffects() & NotificationListenerService.SUPPRESSED_EFFECT_SCREEN_OFF) != 0)) {
+      if (DBG)       Slog.v(TAG,"Suppressed SystemUI from triggering screen on");
+    }
+ else {
+      EventLogTags.writeNotificationAlert(key,buzz ? 1 : 0,beep ? 1 : 0,blink ? 1 : 0);
+      mHandler.post(mBuzzBeepBlinked);
+    }
   }
 }

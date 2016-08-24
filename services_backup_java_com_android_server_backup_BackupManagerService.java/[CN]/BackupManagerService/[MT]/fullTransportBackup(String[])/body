@@ -1,7 +1,7 @@
 {
   mContext.enforceCallingPermission(android.Manifest.permission.BACKUP,"fullTransportBackup");
   final int callingUserHandle=UserHandle.getCallingUserId();
-  if (callingUserHandle != UserHandle.USER_OWNER) {
+  if (callingUserHandle != UserHandle.USER_SYSTEM) {
     throw new IllegalStateException("Restore supported only for the device owner");
   }
   if (!fullBackupAllowable(getTransport(mCurrentTransport))) {
@@ -11,21 +11,28 @@
     if (DEBUG) {
       Slog.d(TAG,"fullTransportBackup()");
     }
-    CountDownLatch latch=new CountDownLatch(1);
-    PerformFullTransportBackupTask task=new PerformFullTransportBackupTask(null,pkgNames,false,null,latch);
-    (new Thread(task,"full-transport-master")).start();
-    do {
-      try {
-        latch.await();
-        break;
+    final long oldId=Binder.clearCallingIdentity();
+    try {
+      CountDownLatch latch=new CountDownLatch(1);
+      PerformFullTransportBackupTask task=new PerformFullTransportBackupTask(null,pkgNames,false,null,latch,null,false);
+      mWakelock.acquire();
+      (new Thread(task,"full-transport-master")).start();
+      do {
+        try {
+          latch.await();
+          break;
+        }
+ catch (        InterruptedException e) {
+        }
       }
- catch (      InterruptedException e) {
+ while (true);
+      final long now=System.currentTimeMillis();
+      for (      String pkg : pkgNames) {
+        enqueueFullBackup(pkg,now);
       }
     }
- while (true);
-    final long now=System.currentTimeMillis();
-    for (    String pkg : pkgNames) {
-      enqueueFullBackup(pkg,now);
+  finally {
+      Binder.restoreCallingIdentity(oldId);
     }
   }
   if (DEBUG) {

@@ -15,19 +15,31 @@
   }
   final boolean onSd=(installFlags & PackageManager.INSTALL_EXTERNAL) != 0;
   final boolean onInt=(installFlags & PackageManager.INSTALL_INTERNAL) != 0;
+  final boolean ephemeral=(installFlags & PackageManager.INSTALL_EPHEMERAL) != 0;
   PackageInfoLite pkgLite=null;
   if (onInt && onSd) {
     Slog.w(TAG,"Conflicting flags specified for installing on both internal and external");
     ret=PackageManager.INSTALL_FAILED_INVALID_INSTALL_LOCATION;
   }
+ else   if (onSd && ephemeral) {
+    Slog.w(TAG,"Conflicting flags specified for installing ephemeral on external");
+    ret=PackageManager.INSTALL_FAILED_INVALID_INSTALL_LOCATION;
+  }
  else {
     pkgLite=mContainerService.getMinimalPackageInfo(origin.resolvedPath,installFlags,packageAbiOverride);
+    if (DEBUG_EPHEMERAL && ephemeral) {
+      Slog.v(TAG,"pkgLite for install: " + pkgLite);
+    }
     if (!origin.staged && pkgLite.recommendedInstallLocation == PackageHelper.RECOMMEND_FAILED_INSUFFICIENT_STORAGE) {
       final StorageManager storage=StorageManager.from(mContext);
       final long lowThreshold=storage.getStorageLowBytes(Environment.getDataDirectory());
       final long sizeBytes=mContainerService.calculateInstalledSize(origin.resolvedPath,isForwardLocked(),packageAbiOverride);
-      if (mInstaller.freeCache(null,sizeBytes + lowThreshold) >= 0) {
+      try {
+        mInstaller.freeCache(null,sizeBytes + lowThreshold);
         pkgLite=mContainerService.getMinimalPackageInfo(origin.resolvedPath,installFlags,packageAbiOverride);
+      }
+ catch (      InstallerException e) {
+        Slog.w(TAG,"Failed to free cache",e);
       }
       if (pkgLite.recommendedInstallLocation == PackageHelper.RECOMMEND_FAILED_INVALID_URI) {
         pkgLite.recommendedInstallLocation=PackageHelper.RECOMMEND_FAILED_INSUFFICIENT_STORAGE;
@@ -64,6 +76,13 @@
           installFlags|=PackageManager.INSTALL_EXTERNAL;
           installFlags&=~PackageManager.INSTALL_INTERNAL;
         }
+ else         if (loc == PackageHelper.RECOMMEND_INSTALL_EPHEMERAL) {
+          if (DEBUG_EPHEMERAL) {
+            Slog.v(TAG,"...setting INSTALL_EPHEMERAL install flag");
+          }
+          installFlags|=PackageManager.INSTALL_EPHEMERAL;
+          installFlags&=~(PackageManager.INSTALL_EXTERNAL | PackageManager.INSTALL_INTERNAL);
+        }
  else {
           installFlags|=PackageManager.INSTALL_INTERNAL;
           installFlags&=~PackageManager.INSTALL_EXTERNAL;
@@ -74,17 +93,17 @@
   final InstallArgs args=createInstallArgs(this);
   mArgs=args;
   if (ret == PackageManager.INSTALL_SUCCEEDED) {
-    int userIdentifier=getUser().getIdentifier();
-    if (userIdentifier == UserHandle.USER_ALL && ((installFlags & PackageManager.INSTALL_FROM_ADB) != 0)) {
-      userIdentifier=UserHandle.USER_OWNER;
+    UserHandle verifierUser=getUser();
+    if (verifierUser == UserHandle.ALL) {
+      verifierUser=UserHandle.SYSTEM;
     }
-    final int requiredUid=mRequiredVerifierPackage == null ? -1 : getPackageUid(mRequiredVerifierPackage,userIdentifier);
-    if (!origin.existing && requiredUid != -1 && isVerificationEnabled(userIdentifier,installFlags)) {
+    final int requiredUid=mRequiredVerifierPackage == null ? -1 : getPackageUid(mRequiredVerifierPackage,MATCH_DEBUG_TRIAGED_MISSING,verifierUser.getIdentifier());
+    if (!origin.existing && requiredUid != -1 && isVerificationEnabled(verifierUser.getIdentifier(),installFlags)) {
       final Intent verification=new Intent(Intent.ACTION_PACKAGE_NEEDS_VERIFICATION);
       verification.addFlags(Intent.FLAG_RECEIVER_FOREGROUND);
       verification.setDataAndType(Uri.fromFile(new File(origin.resolvedPath)),PACKAGE_MIME_TYPE);
       verification.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-      final List<ResolveInfo> receivers=queryIntentReceivers(verification,PACKAGE_MIME_TYPE,PackageManager.GET_DISABLED_COMPONENTS,0);
+      final List<ResolveInfo> receivers=queryIntentReceiversInternal(verification,PACKAGE_MIME_TYPE,0,verifierUser.getIdentifier());
       if (DEBUG_VERIFY) {
         Slog.d(TAG,"Found " + receivers.size() + " verifiers for intent "+ verification.toString()+ " with "+ pkgLite.verifiers.length+ " optional verifiers");
       }
@@ -94,30 +113,23 @@
       verification.putExtra(PackageManager.EXTRA_VERIFICATION_INSTALL_FLAGS,installFlags);
       verification.putExtra(PackageManager.EXTRA_VERIFICATION_PACKAGE_NAME,pkgLite.packageName);
       verification.putExtra(PackageManager.EXTRA_VERIFICATION_VERSION_CODE,pkgLite.versionCode);
-      if (verificationParams != null) {
-        if (verificationParams.getVerificationURI() != null) {
-          verification.putExtra(PackageManager.EXTRA_VERIFICATION_URI,verificationParams.getVerificationURI());
+      if (verificationInfo != null) {
+        if (verificationInfo.originatingUri != null) {
+          verification.putExtra(Intent.EXTRA_ORIGINATING_URI,verificationInfo.originatingUri);
         }
-        if (verificationParams.getOriginatingURI() != null) {
-          verification.putExtra(Intent.EXTRA_ORIGINATING_URI,verificationParams.getOriginatingURI());
+        if (verificationInfo.referrer != null) {
+          verification.putExtra(Intent.EXTRA_REFERRER,verificationInfo.referrer);
         }
-        if (verificationParams.getReferrer() != null) {
-          verification.putExtra(Intent.EXTRA_REFERRER,verificationParams.getReferrer());
+        if (verificationInfo.originatingUid >= 0) {
+          verification.putExtra(Intent.EXTRA_ORIGINATING_UID,verificationInfo.originatingUid);
         }
-        if (verificationParams.getOriginatingUid() >= 0) {
-          verification.putExtra(Intent.EXTRA_ORIGINATING_UID,verificationParams.getOriginatingUid());
-        }
-        if (verificationParams.getInstallerUid() >= 0) {
-          verification.putExtra(PackageManager.EXTRA_VERIFICATION_INSTALLER_UID,verificationParams.getInstallerUid());
+        if (verificationInfo.installerUid >= 0) {
+          verification.putExtra(PackageManager.EXTRA_VERIFICATION_INSTALLER_UID,verificationInfo.installerUid);
         }
       }
       final PackageVerificationState verificationState=new PackageVerificationState(requiredUid,args);
       mPendingVerification.append(verificationId,verificationState);
       final List<ComponentName> sufficientVerifiers=matchVerifiers(pkgLite,receivers,verificationState);
-      UserHandle verifierUser=getUser();
-      if (verifierUser == UserHandle.ALL) {
-        verifierUser=UserHandle.OWNER;
-      }
       if (sufficientVerifiers != null) {
         final int N=sufficientVerifiers.size();
         if (N == 0) {
@@ -135,6 +147,7 @@
       }
       final ComponentName requiredVerifierComponent=matchComponentForVerifier(mRequiredVerifierPackage,receivers);
       if (ret == PackageManager.INSTALL_SUCCEEDED && mRequiredVerifierPackage != null) {
+        Trace.asyncTraceBegin(TRACE_TAG_PACKAGE_MANAGER,"verification",verificationId);
         verification.setComponent(requiredVerifierComponent);
         mContext.sendOrderedBroadcastAsUser(verification,verifierUser,android.Manifest.permission.PACKAGE_VERIFICATION_AGENT,new BroadcastReceiver(){
           @Override public void onReceive(          Context context,          Intent intent){

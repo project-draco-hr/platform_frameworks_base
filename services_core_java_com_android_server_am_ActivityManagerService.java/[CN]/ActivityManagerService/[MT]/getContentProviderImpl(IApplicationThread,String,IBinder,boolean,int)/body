@@ -3,7 +3,7 @@
   ContentProviderConnection conn=null;
   ProviderInfo cpi=null;
 synchronized (this) {
-    long startTime=SystemClock.elapsedRealtime();
+    long startTime=SystemClock.uptimeMillis();
     ProcessRecord r=null;
     if (caller != null) {
       r=getRecordForAppLocked(caller);
@@ -14,12 +14,12 @@ synchronized (this) {
     boolean checkCrossUser=true;
     checkTime(startTime,"getContentProviderImpl: getProviderByName");
     cpr=mProviderMap.getProviderByName(name,userId);
-    if (cpr == null && userId != UserHandle.USER_OWNER) {
-      cpr=mProviderMap.getProviderByName(name,UserHandle.USER_OWNER);
+    if (cpr == null && userId != UserHandle.USER_SYSTEM) {
+      cpr=mProviderMap.getProviderByName(name,UserHandle.USER_SYSTEM);
       if (cpr != null) {
         cpi=cpr.info;
         if (isSingleton(cpi.processName,cpi.applicationInfo,cpi.name,cpi.flags) && isValidSingletonCall(r.uid,cpi.applicationInfo.uid)) {
-          userId=UserHandle.USER_OWNER;
+          userId=UserHandle.USER_SYSTEM;
           checkCrossUser=false;
         }
  else {
@@ -28,7 +28,7 @@ synchronized (this) {
         }
       }
     }
-    boolean providerRunning=cpr != null;
+    boolean providerRunning=cpr != null && cpr.proc != null && !cpr.proc.killed;
     if (providerRunning) {
       cpi=cpr.info;
       String msg;
@@ -52,34 +52,32 @@ synchronized (this) {
           checkTime(startTime,"getContentProviderImpl: after updateLruProcess");
         }
       }
-      if (cpr.proc != null) {
-        if (false) {
-          if (cpr.name.flattenToShortString().equals("com.android.providers.calendar/.CalendarProvider2")) {
-            Slog.v(TAG,"****************** KILLING " + cpr.name.flattenToShortString());
-            Process.killProcess(cpr.proc.pid);
-          }
+      checkTime(startTime,"getContentProviderImpl: before updateOomAdj");
+      final int verifiedAdj=cpr.proc.verifiedAdj;
+      boolean success=updateOomAdjLocked(cpr.proc);
+      if (success && verifiedAdj != cpr.proc.setAdj && !isProcessAliveLocked(cpr.proc)) {
+        success=false;
+      }
+      maybeUpdateProviderUsageStatsLocked(r,cpr.info.packageName,name);
+      checkTime(startTime,"getContentProviderImpl: after updateOomAdj");
+      if (DEBUG_PROVIDER)       Slog.i(TAG_PROVIDER,"Adjust success: " + success);
+      if (!success) {
+        Slog.i(TAG,"Existing provider " + cpr.name.flattenToShortString() + " is crashing; detaching "+ r);
+        boolean lastRef=decProviderCountLocked(conn,cpr,token,stable);
+        checkTime(startTime,"getContentProviderImpl: before appDied");
+        appDiedLocked(cpr.proc);
+        checkTime(startTime,"getContentProviderImpl: after appDied");
+        if (!lastRef) {
+          return null;
         }
-        checkTime(startTime,"getContentProviderImpl: before updateOomAdj");
-        boolean success=updateOomAdjLocked(cpr.proc);
-        maybeUpdateProviderUsageStatsLocked(r,cpr.info.packageName,name);
-        checkTime(startTime,"getContentProviderImpl: after updateOomAdj");
-        if (DEBUG_PROVIDER)         Slog.i(TAG_PROVIDER,"Adjust success: " + success);
-        if (!success) {
-          Slog.i(TAG,"Existing provider " + cpr.name.flattenToShortString() + " is crashing; detaching "+ r);
-          boolean lastRef=decProviderCountLocked(conn,cpr,token,stable);
-          checkTime(startTime,"getContentProviderImpl: before appDied");
-          appDiedLocked(cpr.proc);
-          checkTime(startTime,"getContentProviderImpl: after appDied");
-          if (!lastRef) {
-            return null;
-          }
-          providerRunning=false;
-          conn=null;
-        }
+        providerRunning=false;
+        conn=null;
+      }
+ else {
+        cpr.proc.verifiedAdj=cpr.proc.setAdj;
       }
       Binder.restoreCallingIdentity(origId);
     }
-    boolean singleton;
     if (!providerRunning) {
       try {
         checkTime(startTime,"getContentProviderImpl: before resolveContentProvider");
@@ -91,9 +89,9 @@ synchronized (this) {
       if (cpi == null) {
         return null;
       }
-      singleton=isSingleton(cpi.processName,cpi.applicationInfo,cpi.name,cpi.flags) && isValidSingletonCall(r.uid,cpi.applicationInfo.uid);
+      boolean singleton=isSingleton(cpi.processName,cpi.applicationInfo,cpi.name,cpi.flags) && isValidSingletonCall(r.uid,cpi.applicationInfo.uid);
       if (singleton) {
-        userId=UserHandle.USER_OWNER;
+        userId=UserHandle.USER_SYSTEM;
       }
       cpi.applicationInfo=getAppInfoForUser(cpi.applicationInfo,userId);
       checkTime(startTime,"getContentProviderImpl: got app info for user");
@@ -103,10 +101,10 @@ synchronized (this) {
         throw new SecurityException(msg);
       }
       checkTime(startTime,"getContentProviderImpl: after checkContentProviderPermission");
-      if (!mProcessesReady && !mDidUpdate && !mWaitingUpdate&& !cpi.processName.equals("system")) {
+      if (!mProcessesReady && !cpi.processName.equals("system")) {
         throw new IllegalArgumentException("Attempt to launch content provider before system ready");
       }
-      if (!isUserRunningLocked(userId,false)) {
+      if (!mUserController.isUserRunningLocked(userId,0)) {
         Slog.w(TAG,"Unable to launch app " + cpi.applicationInfo.packageName + "/"+ cpi.applicationInfo.uid+ " for provider "+ name+ ": user "+ userId+ " is stopped");
         return null;
       }
@@ -117,6 +115,11 @@ synchronized (this) {
       final boolean firstClass=cpr == null;
       if (firstClass) {
         final long ident=Binder.clearCallingIdentity();
+        if (Build.PERMISSIONS_REVIEW_REQUIRED) {
+          if (!requestTargetProviderPermissionsReviewIfNeededLocked(cpi,r,userId)) {
+            return null;
+          }
+        }
         try {
           checkTime(startTime,"getContentProviderImpl: before getApplicationInfo");
           ApplicationInfo ai=AppGlobals.getPackageManager().getApplicationInfo(cpi.applicationInfo.packageName,STOCK_PM_FLAGS,userId);
@@ -161,7 +164,7 @@ catch (          IllegalArgumentException e) {
           }
           checkTime(startTime,"getContentProviderImpl: looking for process record");
           ProcessRecord proc=getProcessRecordLocked(cpi.processName,cpr.appInfo.uid,false);
-          if (proc != null && proc.thread != null) {
+          if (proc != null && proc.thread != null && !proc.killed) {
             if (DEBUG_PROVIDER)             Slog.d(TAG_PROVIDER,"Installing in existing process " + proc);
             if (!proc.pubProviders.containsKey(cpi.name)) {
               checkTime(startTime,"getContentProviderImpl: scheduling install");

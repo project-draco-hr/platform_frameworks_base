@@ -3,124 +3,55 @@
     throw new SecurityException("Requires MANAGE_APP_TOKENS permission");
   }
 synchronized (mWindowMap) {
-    if (DEBUG_STARTING_WINDOW)     Slog.v(TAG,"setAppStartingWindow: token=" + token + " pkg="+ pkg+ " transferFrom="+ transferFrom);
+    if (DEBUG_STARTING_WINDOW)     Slog.v(TAG_WM,"setAppStartingWindow: token=" + token + " pkg="+ pkg+ " transferFrom="+ transferFrom);
     AppWindowToken wtoken=findAppWindowToken(token);
     if (wtoken == null) {
-      Slog.w(TAG,"Attempted to set icon of non-existing app token: " + token);
-      return;
+      Slog.w(TAG_WM,"Attempted to set icon of non-existing app token: " + token);
+      return false;
     }
     if (!okToDisplay()) {
-      return;
+      return false;
     }
     if (wtoken.startingData != null) {
-      return;
+      return false;
     }
-    if (transferFrom != null) {
-      AppWindowToken ttoken=findAppWindowToken(transferFrom);
-      if (ttoken != null) {
-        WindowState startingWindow=ttoken.startingWindow;
-        if (startingWindow != null && ttoken.startingView != null) {
-          mSkipAppTransitionAnimation=true;
-          if (DEBUG_STARTING_WINDOW)           Slog.v(TAG,"Moving existing starting " + startingWindow + " from "+ ttoken+ " to "+ wtoken);
-          final long origId=Binder.clearCallingIdentity();
-          wtoken.startingData=ttoken.startingData;
-          wtoken.startingView=ttoken.startingView;
-          wtoken.startingDisplayed=ttoken.startingDisplayed;
-          ttoken.startingDisplayed=false;
-          wtoken.startingWindow=startingWindow;
-          wtoken.reportedVisible=ttoken.reportedVisible;
-          ttoken.startingData=null;
-          ttoken.startingView=null;
-          ttoken.startingWindow=null;
-          ttoken.startingMoved=true;
-          startingWindow.mToken=wtoken;
-          startingWindow.mRootToken=wtoken;
-          startingWindow.mAppToken=wtoken;
-          if (DEBUG_WINDOW_MOVEMENT || DEBUG_ADD_REMOVE || DEBUG_STARTING_WINDOW) {
-            Slog.v(TAG,"Removing starting window: " + startingWindow);
-          }
-          startingWindow.getWindowList().remove(startingWindow);
-          mWindowsChanged=true;
-          if (DEBUG_ADD_REMOVE)           Slog.v(TAG,"Removing starting " + startingWindow + " from "+ ttoken);
-          ttoken.windows.remove(startingWindow);
-          ttoken.allAppWindows.remove(startingWindow);
-          addWindowToListInOrderLocked(startingWindow,true);
-          if (ttoken.allDrawn) {
-            wtoken.allDrawn=true;
-            wtoken.deferClearAllDrawn=ttoken.deferClearAllDrawn;
-          }
-          if (ttoken.firstWindowDrawn) {
-            wtoken.firstWindowDrawn=true;
-          }
-          if (!ttoken.hidden) {
-            wtoken.hidden=false;
-            wtoken.hiddenRequested=false;
-            wtoken.willBeHidden=false;
-          }
-          if (wtoken.clientHidden != ttoken.clientHidden) {
-            wtoken.clientHidden=ttoken.clientHidden;
-            wtoken.sendAppVisibilityToClients();
-          }
-          ttoken.mAppAnimator.transferCurrentAnimation(wtoken.mAppAnimator,startingWindow.mWinAnimator);
-          updateFocusedWindowLocked(UPDATE_FOCUS_WILL_PLACE_SURFACES,true);
-          getDefaultDisplayContentLocked().layoutNeeded=true;
-          performLayoutAndPlaceSurfacesLocked();
-          Binder.restoreCallingIdentity(origId);
-          return;
-        }
- else         if (ttoken.startingData != null) {
-          if (DEBUG_STARTING_WINDOW)           Slog.v(TAG,"Moving pending starting from " + ttoken + " to "+ wtoken);
-          wtoken.startingData=ttoken.startingData;
-          ttoken.startingData=null;
-          ttoken.startingMoved=true;
-          Message m=mH.obtainMessage(H.ADD_STARTING,wtoken);
-          mH.sendMessageAtFrontOfQueue(m);
-          return;
-        }
-        final AppWindowAnimator tAppAnimator=ttoken.mAppAnimator;
-        final AppWindowAnimator wAppAnimator=wtoken.mAppAnimator;
-        if (tAppAnimator.thumbnail != null) {
-          if (wAppAnimator.thumbnail != null) {
-            wAppAnimator.thumbnail.destroy();
-          }
-          wAppAnimator.thumbnail=tAppAnimator.thumbnail;
-          wAppAnimator.thumbnailX=tAppAnimator.thumbnailX;
-          wAppAnimator.thumbnailY=tAppAnimator.thumbnailY;
-          wAppAnimator.thumbnailLayer=tAppAnimator.thumbnailLayer;
-          wAppAnimator.thumbnailAnimation=tAppAnimator.thumbnailAnimation;
-          tAppAnimator.thumbnail=null;
-        }
-      }
-    }
-    if (!createIfNeeded) {
-      return;
-    }
-    if (DEBUG_STARTING_WINDOW)     Slog.v(TAG,"Checking theme of starting window: 0x" + Integer.toHexString(theme));
+    if (DEBUG_STARTING_WINDOW)     Slog.v(TAG_WM,"Checking theme of starting window: 0x" + Integer.toHexString(theme));
     if (theme != 0) {
       AttributeCache.Entry ent=AttributeCache.instance().get(pkg,theme,com.android.internal.R.styleable.Window,mCurrentUserId);
       if (ent == null) {
-        return;
+        return false;
       }
-      if (DEBUG_STARTING_WINDOW)       Slog.v(TAG,"Translucent=" + ent.array.getBoolean(com.android.internal.R.styleable.Window_windowIsTranslucent,false) + " Floating="+ ent.array.getBoolean(com.android.internal.R.styleable.Window_windowIsFloating,false)+ " ShowWallpaper="+ ent.array.getBoolean(com.android.internal.R.styleable.Window_windowShowWallpaper,false));
-      if (ent.array.getBoolean(com.android.internal.R.styleable.Window_windowIsTranslucent,false)) {
-        return;
+      final boolean windowIsTranslucent=ent.array.getBoolean(com.android.internal.R.styleable.Window_windowIsTranslucent,false);
+      final boolean windowIsFloating=ent.array.getBoolean(com.android.internal.R.styleable.Window_windowIsFloating,false);
+      final boolean windowShowWallpaper=ent.array.getBoolean(com.android.internal.R.styleable.Window_windowShowWallpaper,false);
+      final boolean windowDisableStarting=ent.array.getBoolean(com.android.internal.R.styleable.Window_windowDisablePreview,false);
+      if (DEBUG_STARTING_WINDOW)       Slog.v(TAG_WM,"Translucent=" + windowIsTranslucent + " Floating="+ windowIsFloating+ " ShowWallpaper="+ windowShowWallpaper);
+      if (windowIsTranslucent) {
+        return false;
       }
-      if (ent.array.getBoolean(com.android.internal.R.styleable.Window_windowIsFloating,false)) {
-        return;
+      if (windowIsFloating || windowDisableStarting) {
+        return false;
       }
-      if (ent.array.getBoolean(com.android.internal.R.styleable.Window_windowShowWallpaper,false)) {
-        if (mWallpaperTarget == null) {
+      if (windowShowWallpaper) {
+        if (mWallpaperControllerLocked.getWallpaperTarget() == null) {
           windowFlags|=FLAG_SHOW_WALLPAPER;
         }
  else {
-          return;
+          return false;
         }
       }
     }
-    if (DEBUG_STARTING_WINDOW)     Slog.v(TAG,"Creating StartingData");
+    if (transferStartingWindow(transferFrom,wtoken)) {
+      return true;
+    }
+    if (!createIfNeeded) {
+      return false;
+    }
+    if (DEBUG_STARTING_WINDOW)     Slog.v(TAG_WM,"Creating StartingData");
     wtoken.startingData=new StartingData(pkg,theme,compatInfo,nonLocalizedLabel,labelRes,icon,logo,windowFlags);
     Message m=mH.obtainMessage(H.ADD_STARTING,wtoken);
-    if (DEBUG_STARTING_WINDOW)     Slog.v(TAG,"Enqueueing ADD_STARTING");
+    if (DEBUG_STARTING_WINDOW)     Slog.v(TAG_WM,"Enqueueing ADD_STARTING");
     mH.sendMessageAtFrontOfQueue(m);
   }
+  return true;
 }

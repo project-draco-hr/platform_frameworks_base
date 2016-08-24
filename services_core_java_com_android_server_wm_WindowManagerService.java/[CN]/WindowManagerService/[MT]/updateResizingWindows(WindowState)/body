@@ -1,16 +1,25 @@
 {
   final WindowStateAnimator winAnimator=w.mWinAnimator;
-  if (w.mHasSurface && w.mLayoutSeq == mLayoutSeq) {
+  if (w.mHasSurface && w.mLayoutSeq == mLayoutSeq && !w.isGoneForLayoutLw()) {
+    final Task task=w.getTask();
+    if (task != null && task.mStack.getBoundsAnimating()) {
+      return;
+    }
     w.setInsetsChanged();
     boolean configChanged=w.isConfigChanged();
     if (DEBUG_CONFIGURATION && configChanged) {
-      Slog.v(TAG,"Win " + w + " config changed: "+ mCurConfiguration);
+      Slog.v(TAG_WM,"Win " + w + " config changed: "+ mCurConfiguration);
     }
-    if (localLOGV)     Slog.v(TAG,"Resizing " + w + ": configChanged="+ configChanged+ " last="+ w.mLastFrame+ " frame="+ w.mFrame);
+    final boolean dragResizingChanged=w.isDragResizeChanged() && !w.isDragResizingChangeReported();
+    if (localLOGV)     Slog.v(TAG_WM,"Resizing " + w + ": configChanged="+ configChanged+ " dragResizingChanged="+ dragResizingChanged+ " last="+ w.mLastFrame+ " frame="+ w.mFrame);
     w.mLastFrame.set(w.mFrame);
-    if (w.mContentInsetsChanged || w.mVisibleInsetsChanged || winAnimator.mSurfaceResized|| w.mOutsetsChanged|| configChanged) {
+    if (w.mContentInsetsChanged || w.mVisibleInsetsChanged || winAnimator.mSurfaceResized|| w.mOutsetsChanged|| configChanged|| dragResizingChanged|| !w.isResizedWhileNotDragResizingReported()) {
       if (DEBUG_RESIZE || DEBUG_ORIENTATION) {
-        Slog.v(TAG,"Resize reasons for w=" + w + ": "+ " contentInsetsChanged="+ w.mContentInsetsChanged+ " "+ w.mContentInsets.toShortString()+ " visibleInsetsChanged="+ w.mVisibleInsetsChanged+ " "+ w.mVisibleInsets.toShortString()+ " stableInsetsChanged="+ w.mStableInsetsChanged+ " "+ w.mStableInsets.toShortString()+ " outsetsChanged="+ w.mOutsetsChanged+ " "+ w.mOutsets.toShortString()+ " surfaceResized="+ winAnimator.mSurfaceResized+ " configChanged="+ configChanged);
+        Slog.v(TAG_WM,"Resize reasons for w=" + w + ": "+ " contentInsetsChanged="+ w.mContentInsetsChanged+ " "+ w.mContentInsets.toShortString()+ " visibleInsetsChanged="+ w.mVisibleInsetsChanged+ " "+ w.mVisibleInsets.toShortString()+ " stableInsetsChanged="+ w.mStableInsetsChanged+ " "+ w.mStableInsets.toShortString()+ " outsetsChanged="+ w.mOutsetsChanged+ " "+ w.mOutsets.toShortString()+ " surfaceResized="+ winAnimator.mSurfaceResized+ " configChanged="+ configChanged+ " dragResizingChanged="+ dragResizingChanged+ " resizedWhileNotDragResizingReported="+ w.isResizedWhileNotDragResizingReported());
+      }
+      if (w.mAppToken != null && w.mAppDied) {
+        w.mAppToken.removeAllDeadWindows();
+        return;
       }
       w.mLastOverscanInsets.set(w.mOverscanInsets);
       w.mLastContentInsets.set(w.mContentInsets);
@@ -18,22 +27,23 @@
       w.mLastStableInsets.set(w.mStableInsets);
       w.mLastOutsets.set(w.mOutsets);
       makeWindowFreezingScreenIfNeededLocked(w);
-      if (w.mOrientationChanging) {
-        if (DEBUG_SURFACE_TRACE || DEBUG_ANIM || DEBUG_ORIENTATION)         Slog.v(TAG,"Orientation start waiting for draw mDrawState=DRAW_PENDING in " + w + ", surface "+ winAnimator.mSurfaceControl);
-        winAnimator.mDrawState=WindowStateAnimator.DRAW_PENDING;
+      if (w.mOrientationChanging || dragResizingChanged || w.isResizedWhileNotDragResizing()) {
+        if (DEBUG_SURFACE_TRACE || DEBUG_ANIM || DEBUG_ORIENTATION|| DEBUG_RESIZE) {
+          Slog.v(TAG_WM,"Orientation or resize start waiting for draw" + ", mDrawState=DRAW_PENDING in " + w + ", surfaceController "+ winAnimator.mSurfaceController);
+        }
+        winAnimator.mDrawState=DRAW_PENDING;
         if (w.mAppToken != null) {
-          w.mAppToken.allDrawn=false;
-          w.mAppToken.deferClearAllDrawn=false;
+          w.mAppToken.clearAllDrawn();
         }
       }
       if (!mResizingWindows.contains(w)) {
-        if (DEBUG_RESIZE || DEBUG_ORIENTATION)         Slog.v(TAG,"Resizing window " + w + " to "+ winAnimator.mSurfaceW+ "x"+ winAnimator.mSurfaceH);
+        if (DEBUG_RESIZE || DEBUG_ORIENTATION)         Slog.v(TAG_WM,"Resizing window " + w);
         mResizingWindows.add(w);
       }
     }
  else     if (w.mOrientationChanging) {
       if (w.isDrawnLw()) {
-        if (DEBUG_ORIENTATION)         Slog.v(TAG,"Orientation not waiting for draw in " + w + ", surface "+ winAnimator.mSurfaceControl);
+        if (DEBUG_ORIENTATION)         Slog.v(TAG_WM,"Orientation not waiting for draw in " + w + ", surfaceController "+ winAnimator.mSurfaceController);
         w.mOrientationChanging=false;
         w.mLastFreezeDuration=(int)(SystemClock.elapsedRealtime() - mDisplayFreezeTime);
       }

@@ -1,54 +1,59 @@
 {
-  if (mResConfiguration == null) {
-    mResConfiguration=new Configuration();
-  }
-  if (!mResConfiguration.isOtherSeqNewer(config) && compat == null) {
-    if (DEBUG || DEBUG_CONFIGURATION)     Slog.v(TAG,"Skipping new config: curSeq=" + mResConfiguration.seq + ", newSeq="+ config.seq);
-    return false;
-  }
-  int changes=mResConfiguration.updateFrom(config);
-  mDisplays.clear();
-  DisplayMetrics defaultDisplayMetrics=getDisplayMetricsLocked();
-  if (compat != null && (mResCompatibilityInfo == null || !mResCompatibilityInfo.equals(compat))) {
-    mResCompatibilityInfo=compat;
-    changes|=ActivityInfo.CONFIG_SCREEN_LAYOUT | ActivityInfo.CONFIG_SCREEN_SIZE | ActivityInfo.CONFIG_SMALLEST_SCREEN_SIZE;
-  }
-  if (config.locale != null) {
-    Locale.setDefault(config.locale);
-  }
-  Resources.updateSystemConfiguration(config,defaultDisplayMetrics,compat);
-  ApplicationPackageManager.configurationChanged();
-  Configuration tmpConfig=null;
-  for (int i=mActiveResources.size() - 1; i >= 0; i--) {
-    ResourcesKey key=mActiveResources.keyAt(i);
-    Resources r=mActiveResources.valueAt(i).get();
-    if (r != null) {
-      if (DEBUG || DEBUG_CONFIGURATION)       Slog.v(TAG,"Changing resources " + r + " config to: "+ config);
-      int displayId=key.mDisplayId;
-      boolean isDefaultDisplay=(displayId == Display.DEFAULT_DISPLAY);
-      DisplayMetrics dm=defaultDisplayMetrics;
-      final boolean hasOverrideConfiguration=key.hasOverrideConfiguration();
-      if (!isDefaultDisplay || hasOverrideConfiguration) {
-        if (tmpConfig == null) {
-          tmpConfig=new Configuration();
+  try {
+    Trace.traceBegin(Trace.TRACE_TAG_RESOURCES,"ResourcesManager#applyConfigurationToResourcesLocked");
+    if (!mResConfiguration.isOtherSeqNewer(config) && compat == null) {
+      if (DEBUG || DEBUG_CONFIGURATION)       Slog.v(TAG,"Skipping new config: curSeq=" + mResConfiguration.seq + ", newSeq="+ config.seq);
+      return false;
+    }
+    int changes=mResConfiguration.updateFrom(config);
+    mDisplays.clear();
+    DisplayMetrics defaultDisplayMetrics=getDisplayMetrics();
+    if (compat != null && (mResCompatibilityInfo == null || !mResCompatibilityInfo.equals(compat))) {
+      mResCompatibilityInfo=compat;
+      changes|=ActivityInfo.CONFIG_SCREEN_LAYOUT | ActivityInfo.CONFIG_SCREEN_SIZE | ActivityInfo.CONFIG_SMALLEST_SCREEN_SIZE;
+    }
+    Resources.updateSystemConfiguration(config,defaultDisplayMetrics,compat);
+    ApplicationPackageManager.configurationChanged();
+    Configuration tmpConfig=null;
+    for (int i=mResourceImpls.size() - 1; i >= 0; i--) {
+      ResourcesKey key=mResourceImpls.keyAt(i);
+      ResourcesImpl r=mResourceImpls.valueAt(i).get();
+      if (r != null) {
+        if (DEBUG || DEBUG_CONFIGURATION)         Slog.v(TAG,"Changing resources " + r + " config to: "+ config);
+        int displayId=key.mDisplayId;
+        boolean isDefaultDisplay=(displayId == Display.DEFAULT_DISPLAY);
+        DisplayMetrics dm=defaultDisplayMetrics;
+        final boolean hasOverrideConfiguration=key.hasOverrideConfiguration();
+        if (!isDefaultDisplay || hasOverrideConfiguration) {
+          if (tmpConfig == null) {
+            tmpConfig=new Configuration();
+          }
+          tmpConfig.setTo(config);
+          if (!isDefaultDisplay) {
+            DisplayAdjustments daj=r.getDisplayAdjustments();
+            if (compat != null) {
+              daj=new DisplayAdjustments(daj);
+              daj.setCompatibilityInfo(compat);
+            }
+            dm=getDisplayMetrics(displayId,daj);
+            applyNonDefaultDisplayMetricsToConfiguration(dm,tmpConfig);
+          }
+          if (hasOverrideConfiguration) {
+            tmpConfig.updateFrom(key.mOverrideConfiguration);
+          }
+          r.updateConfiguration(tmpConfig,dm,compat);
         }
-        tmpConfig.setTo(config);
-        if (!isDefaultDisplay) {
-          dm=getDisplayMetricsLocked(displayId);
-          applyNonDefaultDisplayMetricsToConfigurationLocked(dm,tmpConfig);
+ else {
+          r.updateConfiguration(config,dm,compat);
         }
-        if (hasOverrideConfiguration) {
-          tmpConfig.updateFrom(key.mOverrideConfiguration);
-        }
-        r.updateConfiguration(tmpConfig,dm,compat);
       }
  else {
-        r.updateConfiguration(config,dm,compat);
+        mResourceImpls.removeAt(i);
       }
     }
- else {
-      mActiveResources.removeAt(i);
-    }
+    return changes != 0;
   }
-  return changes != 0;
+  finally {
+    Trace.traceEnd(Trace.TRACE_TAG_RESOURCES);
+  }
 }

@@ -1,14 +1,16 @@
 {
   List<ResolveInfo> ris=pm.queryIntentActivities(new Intent(ACTION_MANAGE_VOICE_KEYPHRASES),PackageManager.MATCH_DEFAULT_ONLY);
   if (ris == null || ris.isEmpty()) {
-    mParseError="No enrollment application found";
+    mParseError="No enrollment applications found";
+    mKeyphrasePackageMap=Collections.<KeyphraseMetadata,String>emptyMap();
+    mKeyphrases=null;
     return;
   }
-  boolean found=false;
-  ApplicationInfo ai=null;
+  List<String> parseErrors=new LinkedList<String>();
+  mKeyphrasePackageMap=new HashMap<KeyphraseMetadata,String>();
   for (  ResolveInfo ri : ris) {
     try {
-      ai=pm.getApplicationInfo(ri.activityInfo.packageName,PackageManager.GET_META_DATA);
+      ApplicationInfo ai=pm.getApplicationInfo(ri.activityInfo.packageName,PackageManager.GET_META_DATA);
       if ((ai.privateFlags & ApplicationInfo.PRIVATE_FLAG_PRIVILEGED) == 0) {
         Slog.w(TAG,ai.packageName + "is not a privileged system app");
         continue;
@@ -17,56 +19,24 @@
         Slog.w(TAG,ai.packageName + " does not require MANAGE_VOICE_KEYPHRASES");
         continue;
       }
-      mEnrollmentPackage=ai.packageName;
-      found=true;
-      break;
+      mKeyphrasePackageMap.put(getKeyphraseMetadataFromApplicationInfo(pm,ai,parseErrors),ai.packageName);
     }
  catch (    PackageManager.NameNotFoundException e) {
-      Slog.w(TAG,"error parsing voice enrollment meta-data",e);
+      String error="error parsing voice enrollment meta-data for " + ri.activityInfo.packageName;
+      parseErrors.add(error + ": " + e);
+      Slog.w(TAG,error,e);
     }
   }
-  if (!found) {
+  if (mKeyphrasePackageMap.isEmpty()) {
+    String error="No suitable enrollment application found";
+    parseErrors.add(error);
+    Slog.w(TAG,error);
     mKeyphrases=null;
-    mParseError="No suitable enrollment application found";
-    return;
   }
-  XmlResourceParser parser=null;
-  try {
-    parser=ai.loadXmlMetaData(pm,VOICE_KEYPHRASE_META_DATA);
-    if (parser == null) {
-      mParseError="No " + VOICE_KEYPHRASE_META_DATA + " meta-data for "+ ai.packageName;
-      return;
-    }
-    Resources res=pm.getResourcesForApplication(ai);
-    AttributeSet attrs=Xml.asAttributeSet(parser);
-    int type;
-    while ((type=parser.next()) != XmlPullParser.END_DOCUMENT && type != XmlPullParser.START_TAG) {
-    }
-    String nodeName=parser.getName();
-    if (!"voice-enrollment-application".equals(nodeName)) {
-      mParseError="Meta-data does not start with voice-enrollment-application tag";
-      return;
-    }
-    TypedArray array=res.obtainAttributes(attrs,com.android.internal.R.styleable.VoiceEnrollmentApplication);
-    initializeKeyphrasesFromTypedArray(array);
-    array.recycle();
+ else {
+    mKeyphrases=mKeyphrasePackageMap.keySet().toArray(new KeyphraseMetadata[mKeyphrasePackageMap.size()]);
   }
- catch (  XmlPullParserException e) {
-    mParseError="Error parsing keyphrase enrollment meta-data: " + e;
-    Slog.w(TAG,"error parsing keyphrase enrollment meta-data",e);
-    return;
-  }
-catch (  IOException e) {
-    mParseError="Error parsing keyphrase enrollment meta-data: " + e;
-    Slog.w(TAG,"error parsing keyphrase enrollment meta-data",e);
-    return;
-  }
-catch (  PackageManager.NameNotFoundException e) {
-    mParseError="Error parsing keyphrase enrollment meta-data: " + e;
-    Slog.w(TAG,"error parsing keyphrase enrollment meta-data",e);
-    return;
-  }
- finally {
-    if (parser != null)     parser.close();
+  if (!parseErrors.isEmpty()) {
+    mParseError=TextUtils.join("\n",parseErrors);
   }
 }

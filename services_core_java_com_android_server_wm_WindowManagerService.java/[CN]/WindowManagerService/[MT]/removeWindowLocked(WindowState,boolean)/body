@@ -1,0 +1,69 @@
+{
+  win.mWindowRemovalAllowed=true;
+  if (DEBUG_ADD_REMOVE)   Slog.v(TAG,"removeWindowLocked: " + win + " callers="+ Debug.getCallers(4));
+  final boolean startingWindow=win.mAttrs.type == TYPE_APPLICATION_STARTING;
+  if (startingWindow) {
+    if (DEBUG_STARTING_WINDOW)     Slog.d(TAG_WM,"Starting window removed " + win);
+  }
+  if (localLOGV || DEBUG_FOCUS || DEBUG_FOCUS_LIGHT && win == mCurrentFocus)   Slog.v(TAG_WM,"Remove " + win + " client="+ Integer.toHexString(System.identityHashCode(win.mClient.asBinder()))+ ", surfaceController="+ win.mWinAnimator.mSurfaceController+ " Callers="+ Debug.getCallers(4));
+  final long origId=Binder.clearCallingIdentity();
+  win.disposeInputChannel();
+  if (DEBUG_APP_TRANSITIONS)   Slog.v(TAG_WM,"Remove " + win + ": mSurfaceController="+ win.mWinAnimator.mSurfaceController+ " mAnimatingExit="+ win.mAnimatingExit+ " mRemoveOnExit="+ win.mRemoveOnExit+ " mHasSurface="+ win.mHasSurface+ " surfaceShowing="+ win.mWinAnimator.getShown()+ " isAnimationSet="+ win.mWinAnimator.isAnimationSet()+ " app-animation="+ (win.mAppToken != null ? win.mAppToken.mAppAnimator.animation : null)+ " mWillReplaceWindow="+ win.mWillReplaceWindow+ " inPendingTransaction="+ (win.mAppToken != null ? win.mAppToken.inPendingTransaction : false)+ " mDisplayFrozen="+ mDisplayFrozen+ " callers="+ Debug.getCallers(6));
+  boolean wasVisible=false;
+  if (win.mHasSurface && okToDisplay()) {
+    final AppWindowToken appToken=win.mAppToken;
+    if (win.mWillReplaceWindow) {
+      if (DEBUG_ADD_REMOVE)       Slog.v(TAG_WM,"Preserving " + win + " until the new one is "+ "added");
+      win.mAnimatingExit=true;
+      win.mReplacingRemoveRequested=true;
+      Binder.restoreCallingIdentity(origId);
+      return;
+    }
+    if (win.isAnimatingWithSavedSurface() && !appToken.allDrawnExcludingSaved) {
+      if (DEBUG_ADD_REMOVE) {
+        Slog.d(TAG_WM,"removeWindowLocked: delay removal of " + win + " due to early animation");
+      }
+      setupWindowForRemoveOnExit(win);
+      Binder.restoreCallingIdentity(origId);
+      return;
+    }
+    wasVisible=win.isWinVisibleLw();
+    if (keepVisibleDeadWindow) {
+      if (DEBUG_ADD_REMOVE)       Slog.v(TAG_WM,"Not removing " + win + " because app died while it's visible");
+      win.mAppDied=true;
+      win.setDisplayLayoutNeeded();
+      mWindowPlacerLocked.performSurfacePlacement();
+      win.openInputChannel(null);
+      mInputMonitor.updateInputWindowsLw(true);
+      Binder.restoreCallingIdentity(origId);
+      return;
+    }
+    final WindowStateAnimator winAnimator=win.mWinAnimator;
+    if (wasVisible) {
+      final int transit=(!startingWindow) ? TRANSIT_EXIT : TRANSIT_PREVIEW_DONE;
+      if (winAnimator.applyAnimationLocked(transit,false)) {
+        win.mAnimatingExit=true;
+      }
+      if (mAccessibilityController != null && win.getDisplayId() == Display.DEFAULT_DISPLAY) {
+        mAccessibilityController.onWindowTransitionLocked(win,transit);
+      }
+    }
+    final boolean isAnimating=winAnimator.isAnimationSet() && !winAnimator.isDummyAnimation();
+    final boolean lastWindowIsStartingWindow=startingWindow && appToken != null && appToken.allAppWindows.size() == 1;
+    if (winAnimator.getShown() && win.mAnimatingExit && (!lastWindowIsStartingWindow || isAnimating)) {
+      if (DEBUG_ADD_REMOVE)       Slog.v(TAG_WM,"Not removing " + win + " due to exit animation ");
+      setupWindowForRemoveOnExit(win);
+      if (appToken != null) {
+        appToken.updateReportedVisibilityLocked();
+      }
+      Binder.restoreCallingIdentity(origId);
+      return;
+    }
+  }
+  removeWindowInnerLocked(win);
+  if (wasVisible && updateOrientationFromAppTokensLocked(false)) {
+    mH.sendEmptyMessage(H.SEND_NEW_CONFIGURATION);
+  }
+  updateFocusedWindowLocked(UPDATE_FOCUS_NORMAL,true);
+  Binder.restoreCallingIdentity(origId);
+}

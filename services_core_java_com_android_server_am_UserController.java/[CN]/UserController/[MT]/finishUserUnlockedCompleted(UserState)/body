@@ -1,0 +1,32 @@
+{
+  final int userId=uss.mHandle.getIdentifier();
+synchronized (mService) {
+    if (mStartedUsers.get(uss.mHandle.getIdentifier()) != uss)     return;
+    final UserInfo userInfo=getUserInfo(userId);
+    if (userInfo == null) {
+      return;
+    }
+    if (!StorageManager.isUserKeyUnlocked(userId))     return;
+    mUserManager.onUserLoggedIn(userId);
+    if (!userInfo.isInitialized()) {
+      if (userId != UserHandle.USER_SYSTEM) {
+        Slog.d(TAG,"Initializing user #" + userId);
+        Intent intent=new Intent(Intent.ACTION_USER_INITIALIZE);
+        intent.addFlags(Intent.FLAG_RECEIVER_FOREGROUND);
+        mService.broadcastIntentLocked(null,null,intent,null,new IIntentReceiver.Stub(){
+          @Override public void performReceive(          Intent intent,          int resultCode,          String data,          Bundle extras,          boolean ordered,          boolean sticky,          int sendingUser){
+            getUserManager().makeInitialized(userInfo.id);
+          }
+        }
+,0,null,null,null,AppOpsManager.OP_NONE,null,true,false,MY_PID,SYSTEM_UID,userId);
+      }
+    }
+    Slog.d(TAG,"Sending BOOT_COMPLETE user #" + userId);
+    int uptimeSeconds=(int)(SystemClock.elapsedRealtime() / 1000);
+    MetricsLogger.histogram(mService.mContext,"framework_boot_completed",uptimeSeconds);
+    final Intent bootIntent=new Intent(Intent.ACTION_BOOT_COMPLETED,null);
+    bootIntent.putExtra(Intent.EXTRA_USER_HANDLE,userId);
+    bootIntent.addFlags(Intent.FLAG_RECEIVER_NO_ABORT | Intent.FLAG_RECEIVER_INCLUDE_BACKGROUND);
+    mService.broadcastIntentLocked(null,null,bootIntent,null,null,0,null,null,new String[]{android.Manifest.permission.RECEIVE_BOOT_COMPLETED},AppOpsManager.OP_NONE,null,true,false,MY_PID,SYSTEM_UID,userId);
+  }
+}

@@ -3,6 +3,7 @@
   if (ps == null) {
     return;
   }
+  Trace.traceBegin(TRACE_TAG_PACKAGE_MANAGER,"grantPermissions");
   PermissionsState permissionsState=ps.getPermissionsState();
   PermissionsState origPermissions=permissionsState;
   final int[] currentUserIds=UserManagerService.getInstance().getUserIds();
@@ -48,6 +49,7 @@
       pkgs.add(pkg.packageName);
     }
     final int level=bp.protectionLevel & PermissionInfo.PROTECTION_MASK_BASE;
+    final boolean appSupportsRuntimePermissions=pkg.applicationInfo.targetSdkVersion >= Build.VERSION_CODES.M;
 switch (level) {
 case PermissionInfo.PROTECTION_NORMAL:
 {
@@ -56,8 +58,8 @@ case PermissionInfo.PROTECTION_NORMAL:
     break;
 case PermissionInfo.PROTECTION_DANGEROUS:
 {
-    if (pkg.applicationInfo.targetSdkVersion <= Build.VERSION_CODES.LOLLIPOP_MR1) {
-      grant=GRANT_INSTALL_LEGACY;
+    if (!appSupportsRuntimePermissions && !Build.PERMISSIONS_REVIEW_REQUIRED) {
+      grant=GRANT_INSTALL;
     }
  else     if (origPermissions.hasInstallPermission(bp.name)) {
       grant=GRANT_UPGRADE;
@@ -105,20 +107,28 @@ changedInstallPermission=true;
 }
 }
 break;
-case GRANT_INSTALL_LEGACY:
-{
-if (permissionsState.grantInstallPermission(bp) != PermissionsState.PERMISSION_OPERATION_FAILURE) {
-changedInstallPermission=true;
-}
-}
-break;
 case GRANT_RUNTIME:
 {
 for (int userId : UserManagerService.getInstance().getUserIds()) {
 PermissionState permissionState=origPermissions.getRuntimePermissionState(bp.name,userId);
-final int flags=permissionState != null ? permissionState.getFlags() : 0;
+int flags=permissionState != null ? permissionState.getFlags() : 0;
 if (origPermissions.hasRuntimePermission(bp.name,userId)) {
 if (permissionsState.grantRuntimePermission(bp,userId) == PermissionsState.PERMISSION_OPERATION_FAILURE) {
+changedRuntimePermissionUserIds=ArrayUtils.appendInt(changedRuntimePermissionUserIds,userId);
+}
+if (Build.PERMISSIONS_REVIEW_REQUIRED && appSupportsRuntimePermissions && (flags & PackageManager.FLAG_PERMISSION_REVIEW_REQUIRED) != 0) {
+flags&=~PackageManager.FLAG_PERMISSION_REVIEW_REQUIRED;
+changedRuntimePermissionUserIds=ArrayUtils.appendInt(changedRuntimePermissionUserIds,userId);
+}
+}
+ else if (Build.PERMISSIONS_REVIEW_REQUIRED && !appSupportsRuntimePermissions) {
+if (PLATFORM_PACKAGE_NAME.equals(bp.sourcePackage)) {
+if ((flags & FLAG_PERMISSION_REVIEW_REQUIRED) == 0) {
+  flags|=FLAG_PERMISSION_REVIEW_REQUIRED;
+  changedRuntimePermissionUserIds=ArrayUtils.appendInt(changedRuntimePermissionUserIds,userId);
+}
+}
+if (permissionsState.grantRuntimePermission(bp,userId) != PermissionsState.PERMISSION_OPERATION_FAILURE) {
 changedRuntimePermissionUserIds=ArrayUtils.appendInt(changedRuntimePermissionUserIds,userId);
 }
 }
@@ -172,4 +182,5 @@ ps.installPermissionsFixed=true;
 for (int userId : changedRuntimePermissionUserIds) {
 mSettings.writeRuntimePermissionsForUserLPr(userId,runtimePermissionsRevoked);
 }
+Trace.traceEnd(TRACE_TAG_PACKAGE_MANAGER);
 }

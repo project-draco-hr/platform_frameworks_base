@@ -1,0 +1,94 @@
+{
+switch (msg.what) {
+case CMD_STOP:
+    transitionTo(mStoppingState);
+  break;
+case CMD_START:
+Log.e(mTag,"ALERT: START received in StartedState. Please fix caller.");
+break;
+case CMD_CONFIRM:
+if (mIpReachabilityMonitor != null) {
+mIpReachabilityMonitor.probeAll();
+}
+break;
+case EVENT_PRE_DHCP_ACTION_COMPLETE:
+if (mDhcpClient != null) {
+mDhcpClient.sendMessage(DhcpClient.CMD_PRE_DHCP_ACTION_COMPLETE);
+}
+break;
+case EVENT_NETLINK_LINKPROPERTIES_CHANGED:
+if (!handleLinkPropertiesUpdate(SEND_CALLBACKS)) {
+transitionTo(mStoppingState);
+}
+break;
+case CMD_UPDATE_TCP_BUFFER_SIZES:
+mTcpBufferSizes=(String)msg.obj;
+handleLinkPropertiesUpdate(SEND_CALLBACKS);
+break;
+case CMD_UPDATE_HTTP_PROXY:
+mHttpProxy=(ProxyInfo)msg.obj;
+handleLinkPropertiesUpdate(SEND_CALLBACKS);
+break;
+case CMD_SET_MULTICAST_FILTER:
+{
+mMulticastFiltering=(boolean)msg.obj;
+if (mApfFilter != null) {
+mApfFilter.setMulticastFilter(mMulticastFiltering);
+}
+ else {
+mCallback.setFallbackMulticastFilter(mMulticastFiltering);
+}
+break;
+}
+case EVENT_PROVISIONING_TIMEOUT:
+handleProvisioningFailure();
+break;
+case EVENT_DHCPACTION_TIMEOUT:
+stopDhcpAction();
+break;
+case DhcpClient.CMD_PRE_DHCP_ACTION:
+if (mConfiguration.mRequestedPreDhcpActionMs > 0) {
+ensureDhcpAction();
+}
+ else {
+sendMessage(EVENT_PRE_DHCP_ACTION_COMPLETE);
+}
+break;
+case DhcpClient.CMD_CLEAR_LINKADDRESS:
+clearIPv4Address();
+break;
+case DhcpClient.CMD_CONFIGURE_LINKADDRESS:
+{
+final LinkAddress ipAddress=(LinkAddress)msg.obj;
+if (setIPv4Address(ipAddress)) {
+mDhcpClient.sendMessage(DhcpClient.EVENT_LINKADDRESS_CONFIGURED);
+}
+ else {
+Log.e(mTag,"Failed to set IPv4 address!");
+dispatchCallback(ProvisioningChange.LOST_PROVISIONING,new LinkProperties(mLinkProperties));
+transitionTo(mStoppingState);
+}
+break;
+}
+case DhcpClient.CMD_POST_DHCP_ACTION:
+stopDhcpAction();
+switch (msg.arg1) {
+case DhcpClient.DHCP_SUCCESS:
+handleIPv4Success((DhcpResults)msg.obj);
+break;
+case DhcpClient.DHCP_FAILURE:
+handleIPv4Failure();
+break;
+default :
+Log.e(mTag,"Unknown CMD_POST_DHCP_ACTION status:" + msg.arg1);
+}
+break;
+case DhcpClient.CMD_ON_QUIT:
+Log.e(mTag,"Unexpected CMD_ON_QUIT.");
+mDhcpClient=null;
+break;
+default :
+return NOT_HANDLED;
+}
+return HANDLED;
+}

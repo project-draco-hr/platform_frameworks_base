@@ -1,0 +1,71 @@
+{
+  if (which != FLAG_SYSTEM && which != FLAG_LOCK) {
+    throw new IllegalArgumentException("Must specify exactly one kind of wallpaper to read");
+  }
+  WallpaperData wallpaper=null;
+  if (which == FLAG_LOCK) {
+    wallpaper=mLockWallpaperMap.get(userId);
+    if (wallpaper == null) {
+      if (DEBUG) {
+        Slog.i(TAG,"Lock wallpaper already cleared");
+      }
+      return;
+    }
+  }
+ else {
+    wallpaper=mWallpaperMap.get(userId);
+    if (wallpaper == null) {
+      loadSettingsLocked(userId,false);
+      wallpaper=mWallpaperMap.get(userId);
+    }
+  }
+  if (wallpaper == null) {
+    return;
+  }
+  final long ident=Binder.clearCallingIdentity();
+  try {
+    if (wallpaper.wallpaperFile.exists()) {
+      wallpaper.wallpaperFile.delete();
+      wallpaper.cropFile.delete();
+      if (which == FLAG_LOCK) {
+        mLockWallpaperMap.remove(userId);
+        final IWallpaperManagerCallback cb=mKeyguardListener;
+        if (cb != null) {
+          if (DEBUG) {
+            Slog.i(TAG,"Notifying keyguard of lock wallpaper clear");
+          }
+          try {
+            cb.onWallpaperChanged();
+          }
+ catch (          RemoteException e) {
+          }
+        }
+        saveSettingsLocked(userId);
+        return;
+      }
+    }
+    RuntimeException e=null;
+    try {
+      wallpaper.imageWallpaperPending=false;
+      if (userId != mCurrentUserId)       return;
+      if (bindWallpaperComponentLocked(defaultFailed ? mImageWallpaper : null,true,false,wallpaper,reply)) {
+        return;
+      }
+    }
+ catch (    IllegalArgumentException e1) {
+      e=e1;
+    }
+    Slog.e(TAG,"Default wallpaper component not found!",e);
+    clearWallpaperComponentLocked(wallpaper);
+    if (reply != null) {
+      try {
+        reply.sendResult(null);
+      }
+ catch (      RemoteException e1) {
+      }
+    }
+  }
+  finally {
+    Binder.restoreCallingIdentity(ident);
+  }
+}

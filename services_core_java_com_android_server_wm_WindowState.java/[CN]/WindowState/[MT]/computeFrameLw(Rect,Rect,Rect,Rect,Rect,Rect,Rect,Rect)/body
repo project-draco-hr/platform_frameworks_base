@@ -1,65 +1,65 @@
 {
+  if (mWillReplaceWindow && (mAnimatingExit || !mReplacingRemoveRequested)) {
+    return;
+  }
   mHaveFrame=true;
-  final TaskStack stack=mAppToken != null ? getStack() : null;
-  final boolean nonFullscreenStack=stack != null && !stack.isFullscreen();
-  if (nonFullscreenStack) {
-    stack.getBounds(mContainingFrame);
-    final WindowState imeWin=mService.mInputMethodWindow;
-    if (imeWin != null && imeWin.isVisibleNow() && mService.mInputMethodTarget == this && mContainingFrame.bottom > cf.bottom) {
-      mContainingFrame.top-=mContainingFrame.bottom - cf.bottom;
-    }
-    if (!mContainingFrame.intersect(cf)) {
-      mContainingFrame.set(cf);
-    }
-    mDisplayFrame.set(mContainingFrame);
+  final Task task=getTask();
+  final boolean fullscreenTask=!isInMultiWindowMode();
+  final boolean windowsAreFloating=task != null && task.isFloating();
+  if (fullscreenTask) {
+    mInsetFrame.setEmpty();
   }
  else {
+    task.getTempInsetBounds(mInsetFrame);
+  }
+  final Rect layoutContainingFrame;
+  final Rect layoutDisplayFrame;
+  final int layoutXDiff;
+  final int layoutYDiff;
+  if (fullscreenTask || layoutInParentFrame()) {
     mContainingFrame.set(pf);
     mDisplayFrame.set(df);
+    layoutDisplayFrame=df;
+    layoutContainingFrame=pf;
+    layoutXDiff=0;
+    layoutYDiff=0;
+  }
+ else {
+    task.getBounds(mContainingFrame);
+    if (mAppToken != null && !mAppToken.mFrozenBounds.isEmpty()) {
+      Rect frozen=mAppToken.mFrozenBounds.peek();
+      mContainingFrame.right=mContainingFrame.left + frozen.width();
+      mContainingFrame.bottom=mContainingFrame.top + frozen.height();
+    }
+    final WindowState imeWin=mService.mInputMethodWindow;
+    if (imeWin != null && imeWin.isVisibleNow() && mService.mInputMethodTarget == this) {
+      if (windowsAreFloating && mContainingFrame.bottom > cf.bottom) {
+        mContainingFrame.top-=mContainingFrame.bottom - cf.bottom;
+      }
+ else       if (mContainingFrame.bottom > pf.bottom) {
+        mContainingFrame.bottom=pf.bottom;
+      }
+    }
+    if (windowsAreFloating) {
+      if (mContainingFrame.isEmpty()) {
+        mContainingFrame.set(cf);
+      }
+    }
+    mDisplayFrame.set(mContainingFrame);
+    layoutXDiff=!mInsetFrame.isEmpty() ? mInsetFrame.left - mContainingFrame.left : 0;
+    layoutYDiff=!mInsetFrame.isEmpty() ? mInsetFrame.top - mContainingFrame.top : 0;
+    layoutContainingFrame=!mInsetFrame.isEmpty() ? mInsetFrame : mContainingFrame;
+    mTmpRect.set(0,0,mDisplayContent.getDisplayInfo().logicalWidth,mDisplayContent.getDisplayInfo().logicalHeight);
+    subtractInsets(mDisplayFrame,layoutContainingFrame,df,mTmpRect);
+    if (!layoutInParentFrame()) {
+      subtractInsets(mContainingFrame,layoutContainingFrame,pf,mTmpRect);
+      subtractInsets(mInsetFrame,layoutContainingFrame,pf,mTmpRect);
+    }
+    layoutDisplayFrame=df;
+    layoutDisplayFrame.intersect(layoutContainingFrame);
   }
   final int pw=mContainingFrame.width();
   final int ph=mContainingFrame.height();
-  int w, h;
-  if ((mAttrs.flags & WindowManager.LayoutParams.FLAG_SCALED) != 0) {
-    if (mAttrs.width < 0) {
-      w=pw;
-    }
- else     if (mEnforceSizeCompat) {
-      w=(int)(mAttrs.width * mGlobalScale + .5f);
-    }
- else {
-      w=mAttrs.width;
-    }
-    if (mAttrs.height < 0) {
-      h=ph;
-    }
- else     if (mEnforceSizeCompat) {
-      h=(int)(mAttrs.height * mGlobalScale + .5f);
-    }
- else {
-      h=mAttrs.height;
-    }
-  }
- else {
-    if (mAttrs.width == WindowManager.LayoutParams.MATCH_PARENT) {
-      w=pw;
-    }
- else     if (mEnforceSizeCompat) {
-      w=(int)(mRequestedWidth * mGlobalScale + .5f);
-    }
- else {
-      w=mRequestedWidth;
-    }
-    if (mAttrs.height == WindowManager.LayoutParams.MATCH_PARENT) {
-      h=ph;
-    }
- else     if (mEnforceSizeCompat) {
-      h=(int)(mRequestedHeight * mGlobalScale + .5f);
-    }
- else {
-      h=mRequestedHeight;
-    }
-  }
   if (!mParentFrame.equals(pf)) {
     mParentFrame.set(pf);
     mContentChanged=true;
@@ -80,34 +80,59 @@
   }
   final int fw=mFrame.width();
   final int fh=mFrame.height();
-  float x, y;
-  if (mEnforceSizeCompat) {
-    x=mAttrs.x * mGlobalScale;
-    y=mAttrs.y * mGlobalScale;
-  }
- else {
-    x=mAttrs.x;
-    y=mAttrs.y;
-  }
-  if (nonFullscreenStack) {
-    w=Math.min(w,pw);
-    h=Math.min(h,ph);
-  }
-  Gravity.apply(mAttrs.gravity,w,h,mContainingFrame,(int)(x + mAttrs.horizontalMargin * pw),(int)(y + mAttrs.verticalMargin * ph),mFrame);
-  Gravity.applyDisplay(mAttrs.gravity,mDisplayFrame,mFrame);
+  applyGravityAndUpdateFrame(layoutContainingFrame,layoutDisplayFrame);
   if (hasOutsets) {
     mOutsets.set(Math.max(mContentFrame.left - mOutsetFrame.left,0),Math.max(mContentFrame.top - mOutsetFrame.top,0),Math.max(mOutsetFrame.right - mContentFrame.right,0),Math.max(mOutsetFrame.bottom - mContentFrame.bottom,0));
   }
  else {
     mOutsets.set(0,0,0,0);
   }
-  mContentFrame.set(Math.max(mContentFrame.left,mFrame.left),Math.max(mContentFrame.top,mFrame.top),Math.min(mContentFrame.right,mFrame.right),Math.min(mContentFrame.bottom,mFrame.bottom));
-  mVisibleFrame.set(Math.max(mVisibleFrame.left,mFrame.left),Math.max(mVisibleFrame.top,mFrame.top),Math.min(mVisibleFrame.right,mFrame.right),Math.min(mVisibleFrame.bottom,mFrame.bottom));
-  mStableFrame.set(Math.max(mStableFrame.left,mFrame.left),Math.max(mStableFrame.top,mFrame.top),Math.min(mStableFrame.right,mFrame.right),Math.min(mStableFrame.bottom,mFrame.bottom));
-  mOverscanInsets.set(Math.max(mOverscanFrame.left - mFrame.left,0),Math.max(mOverscanFrame.top - mFrame.top,0),Math.max(mFrame.right - mOverscanFrame.right,0),Math.max(mFrame.bottom - mOverscanFrame.bottom,0));
-  mContentInsets.set(mContentFrame.left - mFrame.left,mContentFrame.top - mFrame.top,mFrame.right - mContentFrame.right,mFrame.bottom - mContentFrame.bottom);
-  mVisibleInsets.set(mVisibleFrame.left - mFrame.left,mVisibleFrame.top - mFrame.top,mFrame.right - mVisibleFrame.right,mFrame.bottom - mVisibleFrame.bottom);
-  mStableInsets.set(Math.max(mStableFrame.left - mFrame.left,0),Math.max(mStableFrame.top - mFrame.top,0),Math.max(mFrame.right - mStableFrame.right,0),Math.max(mFrame.bottom - mStableFrame.bottom,0));
+  if (windowsAreFloating && !mFrame.isEmpty()) {
+    final int height=Math.min(mFrame.height(),mContentFrame.height());
+    final int width=Math.min(mContentFrame.width(),mFrame.width());
+    final DisplayMetrics displayMetrics=getDisplayContent().getDisplayMetrics();
+    final int minVisibleHeight=WindowManagerService.dipToPixel(MINIMUM_VISIBLE_HEIGHT_IN_DP,displayMetrics);
+    final int minVisibleWidth=WindowManagerService.dipToPixel(MINIMUM_VISIBLE_WIDTH_IN_DP,displayMetrics);
+    final int top=Math.max(mContentFrame.top,Math.min(mFrame.top,mContentFrame.bottom - minVisibleHeight));
+    final int left=Math.max(mContentFrame.left + minVisibleWidth - width,Math.min(mFrame.left,mContentFrame.right - minVisibleWidth));
+    mFrame.set(left,top,left + width,top + height);
+    mContentFrame.set(mFrame);
+    mVisibleFrame.set(mContentFrame);
+    mStableFrame.set(mContentFrame);
+  }
+ else   if (mAttrs.type == TYPE_DOCK_DIVIDER) {
+    mDisplayContent.getDockedDividerController().positionDockedStackedDivider(mFrame);
+    mContentFrame.set(mFrame);
+    if (!mFrame.equals(mLastFrame)) {
+      mMovedByResize=true;
+    }
+  }
+ else {
+    mContentFrame.set(Math.max(mContentFrame.left,mFrame.left),Math.max(mContentFrame.top,mFrame.top),Math.min(mContentFrame.right,mFrame.right),Math.min(mContentFrame.bottom,mFrame.bottom));
+    mVisibleFrame.set(Math.max(mVisibleFrame.left,mFrame.left),Math.max(mVisibleFrame.top,mFrame.top),Math.min(mVisibleFrame.right,mFrame.right),Math.min(mVisibleFrame.bottom,mFrame.bottom));
+    mStableFrame.set(Math.max(mStableFrame.left,mFrame.left),Math.max(mStableFrame.top,mFrame.top),Math.min(mStableFrame.right,mFrame.right),Math.min(mStableFrame.bottom,mFrame.bottom));
+  }
+  if (fullscreenTask && !windowsAreFloating) {
+    mOverscanInsets.set(Math.max(mOverscanFrame.left - layoutContainingFrame.left,0),Math.max(mOverscanFrame.top - layoutContainingFrame.top,0),Math.max(layoutContainingFrame.right - mOverscanFrame.right,0),Math.max(layoutContainingFrame.bottom - mOverscanFrame.bottom,0));
+  }
+  if (mAttrs.type == TYPE_DOCK_DIVIDER) {
+    mStableInsets.set(Math.max(mStableFrame.left - mDisplayFrame.left,0),Math.max(mStableFrame.top - mDisplayFrame.top,0),Math.max(mDisplayFrame.right - mStableFrame.right,0),Math.max(mDisplayFrame.bottom - mStableFrame.bottom,0));
+    mContentInsets.setEmpty();
+    mVisibleInsets.setEmpty();
+  }
+ else {
+    getDisplayContent().getLogicalDisplayRect(mTmpRect);
+    boolean overrideRightInset=!fullscreenTask && mFrame.right > mTmpRect.right;
+    boolean overrideBottomInset=!fullscreenTask && mFrame.bottom > mTmpRect.bottom;
+    mContentInsets.set(mContentFrame.left - mFrame.left,mContentFrame.top - mFrame.top,overrideRightInset ? mTmpRect.right - mContentFrame.right : mFrame.right - mContentFrame.right,overrideBottomInset ? mTmpRect.bottom - mContentFrame.bottom : mFrame.bottom - mContentFrame.bottom);
+    mVisibleInsets.set(mVisibleFrame.left - mFrame.left,mVisibleFrame.top - mFrame.top,overrideRightInset ? mTmpRect.right - mVisibleFrame.right : mFrame.right - mVisibleFrame.right,overrideBottomInset ? mTmpRect.bottom - mVisibleFrame.bottom : mFrame.bottom - mVisibleFrame.bottom);
+    mStableInsets.set(Math.max(mStableFrame.left - mFrame.left,0),Math.max(mStableFrame.top - mFrame.top,0),overrideRightInset ? Math.max(mTmpRect.right - mStableFrame.right,0) : Math.max(mFrame.right - mStableFrame.right,0),overrideBottomInset ? Math.max(mTmpRect.bottom - mStableFrame.bottom,0) : Math.max(mFrame.bottom - mStableFrame.bottom,0));
+  }
+  mFrame.offset(-layoutXDiff,-layoutYDiff);
+  mCompatFrame.offset(-layoutXDiff,-layoutYDiff);
+  mContentFrame.offset(-layoutXDiff,-layoutYDiff);
+  mVisibleFrame.offset(-layoutXDiff,-layoutYDiff);
+  mStableFrame.offset(-layoutXDiff,-layoutYDiff);
   mCompatFrame.set(mFrame);
   if (mEnforceSizeCompat) {
     mOverscanInsets.scale(mInvGlobalScale);
@@ -121,8 +146,8 @@
     final DisplayContent displayContent=getDisplayContent();
     if (displayContent != null) {
       final DisplayInfo displayInfo=displayContent.getDisplayInfo();
-      mService.updateWallpaperOffsetLocked(this,displayInfo.logicalWidth,displayInfo.logicalHeight,false);
+      mService.mWallpaperControllerLocked.updateWallpaperOffset(this,displayInfo.logicalWidth,displayInfo.logicalHeight,false);
     }
   }
-  if (DEBUG_LAYOUT || WindowManagerService.localLOGV)   Slog.v(TAG,"Resolving (mRequestedWidth=" + mRequestedWidth + ", mRequestedheight="+ mRequestedHeight+ ") to"+ " (pw="+ pw+ ", ph="+ ph+ "): frame="+ mFrame.toShortString()+ " ci="+ mContentInsets.toShortString()+ " vi="+ mVisibleInsets.toShortString()+ " vi="+ mStableInsets.toShortString()+ " of="+ mOutsets.toShortString());
+  if (DEBUG_LAYOUT || WindowManagerService.localLOGV)   Slog.v(TAG,"Resolving (mRequestedWidth=" + mRequestedWidth + ", mRequestedheight="+ mRequestedHeight+ ") to"+ " (pw="+ pw+ ", ph="+ ph+ "): frame="+ mFrame.toShortString()+ " ci="+ mContentInsets.toShortString()+ " vi="+ mVisibleInsets.toShortString()+ " si="+ mStableInsets.toShortString()+ " of="+ mOutsets.toShortString());
 }

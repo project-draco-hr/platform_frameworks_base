@@ -1,22 +1,36 @@
 {
+  final String volumeUuid=vol.fsUuid;
+  if (TextUtils.isEmpty(volumeUuid)) {
+    Slog.e(TAG,"Unloading internal storage is probably a mistake; ignoring");
+    return;
+  }
   final ArrayList<ApplicationInfo> unloaded=new ArrayList<>();
 synchronized (mInstallLock) {
 synchronized (mPackages) {
-      final List<PackageSetting> packages=mSettings.getVolumePackagesLPr(vol.fsUuid);
+      final List<PackageSetting> packages=mSettings.getVolumePackagesLPr(volumeUuid);
       for (      PackageSetting ps : packages) {
         if (ps.pkg == null)         continue;
         final ApplicationInfo info=ps.pkg.applicationInfo;
+        final int deleteFlags=PackageManager.DELETE_KEEP_DATA;
         final PackageRemovedInfo outInfo=new PackageRemovedInfo();
-        if (deletePackageLI(ps.name,null,false,null,null,PackageManager.DELETE_KEEP_DATA,outInfo,false)) {
-          unloaded.add(info);
-        }
+        try (PackageFreezer freezer=freezePackageForDelete(ps.name,deleteFlags,"unloadPrivatePackagesInner")){
+          if (deletePackageLIF(ps.name,null,false,null,deleteFlags,outInfo,false,null)) {
+            unloaded.add(info);
+          }
  else {
-          Slog.w(TAG,"Failed to unload " + ps.codePath);
+            Slog.w(TAG,"Failed to unload " + ps.codePath);
+          }
         }
+         AttributeCache.instance().removePackage(ps.name);
       }
       mSettings.writeLPr();
     }
   }
   if (DEBUG_INSTALL)   Slog.d(TAG,"Unloaded packages " + unloaded);
   sendResourcesChangedBroadcast(false,false,unloaded,null);
+  ResourcesManager.getInstance().invalidatePath(vol.getPath().getAbsolutePath());
+  for (int i=0; i < 3; i++) {
+    System.gc();
+    System.runFinalization();
+  }
 }

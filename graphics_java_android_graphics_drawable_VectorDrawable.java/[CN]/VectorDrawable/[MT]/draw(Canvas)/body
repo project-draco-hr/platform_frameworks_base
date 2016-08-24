@@ -4,35 +4,25 @@
     return;
   }
   final ColorFilter colorFilter=(mColorFilter == null ? mTintFilter : mColorFilter);
-  canvas.getMatrix(mTmpMatrix);
-  mTmpMatrix.getValues(mTmpFloats);
-  float canvasScaleX=Math.abs(mTmpFloats[Matrix.MSCALE_X]);
-  float canvasScaleY=Math.abs(mTmpFloats[Matrix.MSCALE_Y]);
-  int scaledWidth=(int)(mTmpBounds.width() * canvasScaleX);
-  int scaledHeight=(int)(mTmpBounds.height() * canvasScaleY);
-  scaledWidth=Math.min(MAX_CACHED_BITMAP_SIZE,scaledWidth);
-  scaledHeight=Math.min(MAX_CACHED_BITMAP_SIZE,scaledHeight);
-  if (scaledWidth <= 0 || scaledHeight <= 0) {
+  final long colorFilterNativeInstance=colorFilter == null ? 0 : colorFilter.native_instance;
+  boolean canReuseCache=mVectorState.canReuseCache();
+  int pixelCount=nDraw(mVectorState.getNativeRenderer(),canvas.getNativeCanvasWrapper(),colorFilterNativeInstance,mTmpBounds,needMirroring(),canReuseCache);
+  if (pixelCount == 0) {
     return;
   }
-  final int saveCount=canvas.save();
-  canvas.translate(mTmpBounds.left,mTmpBounds.top);
-  final boolean needMirroring=needMirroring();
-  if (needMirroring) {
-    canvas.translate(mTmpBounds.width(),0);
-    canvas.scale(-1.0f,1.0f);
-  }
-  mTmpBounds.offsetTo(0,0);
-  mVectorState.createCachedBitmapIfNeeded(scaledWidth,scaledHeight);
-  if (!mAllowCaching) {
-    mVectorState.updateCachedBitmap(scaledWidth,scaledHeight);
+  int deltaInBytes;
+  if (canvas.isHardwareAccelerated()) {
+    deltaInBytes=(pixelCount - mVectorState.mLastHWCachePixelCount) * 4;
+    mVectorState.mLastHWCachePixelCount=pixelCount;
   }
  else {
-    if (!mVectorState.canReuseCache()) {
-      mVectorState.updateCachedBitmap(scaledWidth,scaledHeight);
-      mVectorState.updateCacheStates();
-    }
+    deltaInBytes=(pixelCount - mVectorState.mLastSWCachePixelCount) * 4;
+    mVectorState.mLastSWCachePixelCount=pixelCount;
   }
-  mVectorState.drawCachedBitmapWithRootAlpha(canvas,colorFilter,mTmpBounds);
-  canvas.restoreToCount(saveCount);
+  if (deltaInBytes > 0) {
+    VMRuntime.getRuntime().registerNativeAllocation(deltaInBytes);
+  }
+ else   if (deltaInBytes < 0) {
+    VMRuntime.getRuntime().registerNativeFree(-deltaInBytes);
+  }
 }

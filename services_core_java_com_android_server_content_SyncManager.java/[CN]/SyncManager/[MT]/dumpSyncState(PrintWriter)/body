@@ -13,6 +13,8 @@
   pw.println(mStorageIsLow);
   pw.print("device idle: ");
   pw.println(mDeviceIsIdle);
+  pw.print("reported active: ");
+  pw.println(mReportedSyncActive);
   final AccountAndUser[] accounts=AccountManagerService.getSingleton().getAllAccounts();
   pw.print("accounts: ");
   if (accounts != INITIAL_ACCOUNTS_ARRAY) {
@@ -25,8 +27,6 @@
   pw.print("now: ");
   pw.print(now);
   pw.println(" (" + formatTime(System.currentTimeMillis()) + ")");
-  pw.print("offset: ");
-  pw.print(DateUtils.formatElapsedTime(mSyncRandomOffsetMillis / 1000));
   pw.println(" (HH:MM:SS)");
   pw.print("uptime: ");
   pw.print(DateUtils.formatElapsedTime(now / 1000));
@@ -36,16 +36,6 @@
   pw.print(" (HH:MM:SS), sync ");
   pw.print(mSyncHandler.mSyncTimeTracker.mLastWasSyncing ? "" : "not ");
   pw.println("in progress");
-  if (mSyncHandler.mAlarmScheduleTime != null) {
-    pw.print("next alarm time: ");
-    pw.print(mSyncHandler.mAlarmScheduleTime);
-    pw.print(" (");
-    pw.print(DateUtils.formatElapsedTime((mSyncHandler.mAlarmScheduleTime - now) / 1000));
-    pw.println(" (HH:MM:SS) from now)");
-  }
- else {
-    pw.println("no alarm is scheduled (there had better not be any pending syncs)");
-  }
   pw.println();
   pw.println("Active Syncs: " + mActiveSyncContexts.size());
   final PackageManager pm=mContext.getPackageManager();
@@ -57,20 +47,13 @@
     pw.print(activeSyncContext.mSyncOperation.dump(pm,false));
     pw.println();
   }
-  final StringBuilder sb=new StringBuilder();
-synchronized (mSyncQueue) {
-    mSyncQueue.dump(sb);
-    getSyncStorageEngine().dumpPendingOperations(sb);
-  }
-  pw.println();
-  pw.print(sb.toString());
   pw.println();
   pw.println("Sync Status");
   for (  AccountAndUser account : accounts) {
     pw.printf("Account %s u%d %s\n",account.account.name,account.userId,account.account.type);
     pw.println("=======================================================================");
-    final PrintTable table=new PrintTable(13);
-    table.set(0,0,"Authority","Syncable","Enabled","Delay","Loc","Poll","Per","Serv","User","Tot","Time","Last Sync","Periodic");
+    final PrintTable table=new PrintTable(12);
+    table.set(0,0,"Authority","Syncable","Enabled","Delay","Loc","Poll","Per","Serv","User","Tot","Time","Last Sync");
     final List<RegisteredServicesCache.ServiceInfo<SyncAdapterType>> sorted=Lists.newArrayList();
     sorted.addAll(mSyncAdapters.getAllServices(account.userId));
     Collections.sort(sorted,new Comparator<RegisteredServicesCache.ServiceInfo<SyncAdapterType>>(){
@@ -93,14 +76,6 @@ synchronized (mSyncQueue) {
       }
       table.set(row,0,authority,settings.syncable,settings.enabled);
       table.set(row,4,status.numSourceLocal,status.numSourcePoll,status.numSourcePeriodic,status.numSourceServer,status.numSourceUser,status.numSyncs,DateUtils.formatElapsedTime(status.totalElapsedTime / 1000));
-      for (int i=0; i < settings.periodicSyncs.size(); i++) {
-        final PeriodicSync sync=settings.periodicSyncs.get(i);
-        final String period=String.format("[p:%d s, f: %d s]",sync.period,sync.flexTime);
-        final String extras=sync.extras.size() > 0 ? sync.extras.toString() : "Bundle[]";
-        final String next="Next sync: " + formatTime(status.getPeriodicSyncTime(i) + sync.period * 1000);
-        table.set(row + i * 2,12,period + " " + extras);
-        table.set(row + i * 2 + 1,12,next);
-      }
       int row1=row;
       if (settings.delayUntil > now) {
         table.set(row1++,12,"D: " + (settings.delayUntil - now) / 1000);

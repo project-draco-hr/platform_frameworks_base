@@ -2,7 +2,7 @@
   if (DEBUG_ENERGY) {
     Slog.d(TAG,"Updating wifi stats");
   }
-  final long elapsedRealtimeMs=SystemClock.elapsedRealtime();
+  final long elapsedRealtimeMs=mClocks.elapsedRealtime();
   NetworkStats delta=null;
   try {
     if (!ArrayUtils.isEmpty(mWifiIfaces)) {
@@ -27,7 +27,7 @@
       if (DEBUG_ENERGY) {
         Slog.d(TAG,"Wifi uid " + entry.uid + ": delta rx="+ entry.rxBytes+ " tx="+ entry.txBytes+ " rxPackets="+ entry.rxPackets+ " txPackets="+ entry.txPackets);
       }
-      if (entry.rxBytes == 0 || entry.txBytes == 0) {
+      if (entry.rxBytes == 0 && entry.txBytes == 0) {
         continue;
       }
       final Uid u=getUidStatsLocked(mapUid(entry.uid));
@@ -48,7 +48,7 @@
     }
   }
   if (info != null) {
-    mHasWifiEnergyReporting=true;
+    mHasWifiReporting=true;
     final long txTimeMs=info.getControllerTxTimeMillis();
     final long rxTimeMs=info.getControllerRxTimeMillis();
     final long idleTimeMs=info.getControllerIdleTimeMillis();
@@ -92,8 +92,9 @@
         if (DEBUG_ENERGY) {
           Slog.d(TAG,"  ScanTime for UID " + uid.getUid() + ": Rx:"+ scanRxTimeSinceMarkMs+ " ms  Tx:"+ scanTxTimeSinceMarkMs+ " ms)");
         }
-        uid.noteWifiControllerActivityLocked(CONTROLLER_RX_TIME,scanRxTimeSinceMarkMs);
-        uid.noteWifiControllerActivityLocked(CONTROLLER_TX_TIME,scanTxTimeSinceMarkMs);
+        ControllerActivityCounterImpl activityCounter=uid.getOrCreateWifiControllerActivityLocked();
+        activityCounter.getRxTimeCounter().addCountLocked(scanRxTimeSinceMarkMs);
+        activityCounter.getTxTimeCounters()[0].addCountLocked(scanTxTimeSinceMarkMs);
         leftOverRxTimeMs-=scanRxTimeSinceMarkMs;
         leftOverTxTimeMs-=scanTxTimeSinceMarkMs;
       }
@@ -104,7 +105,7 @@
         if (DEBUG_ENERGY) {
           Slog.d(TAG,"  IdleTime for UID " + uid.getUid() + ": "+ myIdleTimeMs+ " ms");
         }
-        uid.noteWifiControllerActivityLocked(CONTROLLER_IDLE_TIME,myIdleTimeMs);
+        uid.getOrCreateWifiControllerActivityLocked().getIdleTimeCounter().addCountLocked(myIdleTimeMs);
       }
     }
     if (DEBUG_ENERGY) {
@@ -117,7 +118,7 @@
       if (DEBUG_ENERGY) {
         Slog.d(TAG,"  TxTime for UID " + uid.getUid() + ": "+ myTxTimeMs+ " ms");
       }
-      uid.noteWifiControllerActivityLocked(CONTROLLER_TX_TIME,myTxTimeMs);
+      uid.getOrCreateWifiControllerActivityLocked().getTxTimeCounters()[0].addCountLocked(myTxTimeMs);
     }
     for (int i=0; i < rxPackets.size(); i++) {
       final Uid uid=getUidStatsLocked(rxPackets.keyAt(i));
@@ -125,14 +126,14 @@
       if (DEBUG_ENERGY) {
         Slog.d(TAG,"  RxTime for UID " + uid.getUid() + ": "+ myRxTimeMs+ " ms");
       }
-      uid.noteWifiControllerActivityLocked(CONTROLLER_RX_TIME,myRxTimeMs);
+      uid.getOrCreateWifiControllerActivityLocked().getRxTimeCounter().addCountLocked(myRxTimeMs);
     }
-    mWifiActivityCounters[CONTROLLER_RX_TIME].addCountLocked(info.getControllerRxTimeMillis());
-    mWifiActivityCounters[CONTROLLER_TX_TIME].addCountLocked(info.getControllerTxTimeMillis());
-    mWifiActivityCounters[CONTROLLER_IDLE_TIME].addCountLocked(info.getControllerIdleTimeMillis());
+    mWifiActivity.getRxTimeCounter().addCountLocked(info.getControllerRxTimeMillis());
+    mWifiActivity.getTxTimeCounters()[0].addCountLocked(info.getControllerTxTimeMillis());
+    mWifiActivity.getIdleTimeCounter().addCountLocked(info.getControllerIdleTimeMillis());
     final double opVolt=mPowerProfile.getAveragePower(PowerProfile.POWER_WIFI_CONTROLLER_OPERATING_VOLTAGE) / 1000.0;
     if (opVolt != 0) {
-      mWifiActivityCounters[CONTROLLER_POWER_DRAIN].addCountLocked((long)(info.getControllerEnergyUsed() / opVolt));
+      mWifiActivity.getPowerCounter().addCountLocked((long)(info.getControllerEnergyUsed() / opVolt));
     }
   }
 }

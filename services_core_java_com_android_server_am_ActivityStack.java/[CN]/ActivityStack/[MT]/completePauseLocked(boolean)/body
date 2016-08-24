@@ -2,29 +2,26 @@
   ActivityRecord prev=mPausingActivity;
   if (DEBUG_PAUSE)   Slog.v(TAG_PAUSE,"Complete pause: " + prev);
   if (prev != null) {
+    final boolean wasStopping=prev.state == ActivityState.STOPPING;
     prev.state=ActivityState.PAUSED;
     if (prev.finishing) {
       if (DEBUG_PAUSE)       Slog.v(TAG_PAUSE,"Executing finish of activity: " + prev);
       prev=finishCurrentActivityLocked(prev,FINISH_AFTER_VISIBLE,false);
     }
  else     if (prev.app != null) {
-      if (DEBUG_PAUSE)       Slog.v(TAG_PAUSE,"Enqueueing pending stop: " + prev);
+      if (DEBUG_PAUSE)       Slog.v(TAG_PAUSE,"Enqueue pending stop if needed: " + prev + " wasStopping="+ wasStopping+ " visible="+ prev.visible);
       if (mStackSupervisor.mWaitingVisibleActivities.remove(prev)) {
         if (DEBUG_SWITCH || DEBUG_PAUSE)         Slog.v(TAG_PAUSE,"Complete pause, no longer waiting: " + prev);
       }
-      if (prev.configDestroy) {
-        if (DEBUG_PAUSE)         Slog.v(TAG_PAUSE,"Destroying after pause: " + prev);
-        destroyActivityLocked(prev,true,"pause-config");
+      if (prev.deferRelaunchUntilPaused) {
+        if (DEBUG_PAUSE)         Slog.v(TAG_PAUSE,"Re-launching after pause: " + prev);
+        relaunchActivityLocked(prev,prev.configChangeFlags,false,prev.preserveWindowOnDeferredRelaunch);
       }
- else       if (!hasVisibleBehindActivity() || mService.isSleepingOrShuttingDown()) {
-        mStackSupervisor.mStoppingActivities.add(prev);
-        if (mStackSupervisor.mStoppingActivities.size() > 3 || prev.frontOfTask && mTaskHistory.size() <= 1) {
-          if (DEBUG_PAUSE)           Slog.v(TAG_PAUSE,"To many pending stops, forcing idle");
-          mStackSupervisor.scheduleIdleLocked();
-        }
- else {
-          mStackSupervisor.checkReadyForSleepLocked();
-        }
+ else       if (wasStopping) {
+        prev.state=ActivityState.STOPPING;
+      }
+ else       if ((!prev.visible && !hasVisibleBehindActivity()) || mService.isSleepingOrShuttingDownLocked()) {
+        addToStopping(prev,true);
       }
     }
  else {
@@ -36,14 +33,14 @@
   }
   if (resumeNext) {
     final ActivityStack topStack=mStackSupervisor.getFocusedStack();
-    if (!mService.isSleepingOrShuttingDown()) {
-      mStackSupervisor.resumeTopActivitiesLocked(topStack,prev,null);
+    if (!mService.isSleepingOrShuttingDownLocked()) {
+      mStackSupervisor.resumeFocusedStackTopActivityLocked(topStack,prev,null);
     }
  else {
       mStackSupervisor.checkReadyForSleepLocked();
-      ActivityRecord top=topStack.topRunningActivityLocked(null);
+      ActivityRecord top=topStack.topRunningActivityLocked();
       if (top == null || (prev != null && top != prev)) {
-        mStackSupervisor.resumeTopActivitiesLocked(topStack,null,null);
+        mStackSupervisor.resumeFocusedStackTopActivityLocked();
       }
     }
   }
@@ -63,5 +60,9 @@ synchronized (bsi) {
     }
     prev.cpuTimeAtResume=0;
   }
-  mService.notifyTaskStackChangedLocked();
+  if (mStackSupervisor.mAppVisibilitiesChangedSinceLastPause) {
+    mService.notifyTaskStackChangedLocked();
+    mStackSupervisor.mAppVisibilitiesChangedSinceLastPause=false;
+  }
+  mStackSupervisor.ensureActivitiesVisibleLocked(null,0,!PRESERVE_WINDOWS);
 }

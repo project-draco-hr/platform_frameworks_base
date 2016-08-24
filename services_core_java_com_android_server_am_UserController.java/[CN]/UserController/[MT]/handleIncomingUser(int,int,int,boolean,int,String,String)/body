@@ -1,0 +1,64 @@
+{
+  final int callingUserId=UserHandle.getUserId(callingUid);
+  if (callingUserId == userId) {
+    return userId;
+  }
+  int targetUserId=unsafeConvertIncomingUserLocked(userId);
+  if (callingUid != 0 && callingUid != SYSTEM_UID) {
+    final boolean allow;
+    if (mService.checkComponentPermission(INTERACT_ACROSS_USERS_FULL,callingPid,callingUid,-1,true) == PackageManager.PERMISSION_GRANTED) {
+      allow=true;
+    }
+ else     if (allowMode == ALLOW_FULL_ONLY) {
+      allow=false;
+    }
+ else     if (mService.checkComponentPermission(INTERACT_ACROSS_USERS,callingPid,callingUid,-1,true) != PackageManager.PERMISSION_GRANTED) {
+      allow=false;
+    }
+ else     if (allowMode == ALLOW_NON_FULL) {
+      allow=true;
+    }
+ else     if (allowMode == ALLOW_NON_FULL_IN_PROFILE) {
+      allow=isSameProfileGroup(callingUserId,targetUserId);
+    }
+ else {
+      throw new IllegalArgumentException("Unknown mode: " + allowMode);
+    }
+    if (!allow) {
+      if (userId == UserHandle.USER_CURRENT_OR_SELF) {
+        targetUserId=callingUserId;
+      }
+ else {
+        StringBuilder builder=new StringBuilder(128);
+        builder.append("Permission Denial: ");
+        builder.append(name);
+        if (callerPackage != null) {
+          builder.append(" from ");
+          builder.append(callerPackage);
+        }
+        builder.append(" asks to run as user ");
+        builder.append(userId);
+        builder.append(" but is calling from user ");
+        builder.append(UserHandle.getUserId(callingUid));
+        builder.append("; this requires ");
+        builder.append(INTERACT_ACROSS_USERS_FULL);
+        if (allowMode != ALLOW_FULL_ONLY) {
+          builder.append(" or ");
+          builder.append(INTERACT_ACROSS_USERS);
+        }
+        String msg=builder.toString();
+        Slog.w(TAG,msg);
+        throw new SecurityException(msg);
+      }
+    }
+  }
+  if (!allowAll && targetUserId < 0) {
+    throw new IllegalArgumentException("Call does not support special user #" + targetUserId);
+  }
+  if (callingUid == Process.SHELL_UID && targetUserId >= UserHandle.USER_SYSTEM) {
+    if (hasUserRestriction(UserManager.DISALLOW_DEBUGGING_FEATURES,targetUserId)) {
+      throw new SecurityException("Shell does not have permission to access user " + targetUserId + "\n "+ Debug.getCallers(3));
+    }
+  }
+  return targetUserId;
+}

@@ -1,0 +1,50 @@
+{
+  mContext.enforceCallingPermission(android.Manifest.permission.BACKUP,"requestBackup");
+  if (packages == null || packages.length < 1) {
+    Slog.e(TAG,"No packages named for backup request");
+    sendBackupFinished(observer,BackupManager.ERROR_TRANSPORT_ABORTED);
+    throw new IllegalArgumentException("No packages are provided for backup");
+  }
+  IBackupTransport transport=getTransport(mCurrentTransport);
+  if (transport == null) {
+    sendBackupFinished(observer,BackupManager.ERROR_TRANSPORT_ABORTED);
+    return BackupManager.ERROR_TRANSPORT_ABORTED;
+  }
+  ArrayList<String> fullBackupList=new ArrayList<>();
+  ArrayList<String> kvBackupList=new ArrayList<>();
+  for (  String packageName : packages) {
+    try {
+      PackageInfo packageInfo=mPackageManager.getPackageInfo(packageName,PackageManager.GET_SIGNATURES);
+      if (!appIsEligibleForBackup(packageInfo.applicationInfo)) {
+        sendBackupOnPackageResult(observer,packageName,BackupManager.ERROR_BACKUP_NOT_ALLOWED);
+        continue;
+      }
+      if (appGetsFullBackup(packageInfo)) {
+        fullBackupList.add(packageInfo.packageName);
+      }
+ else {
+        kvBackupList.add(packageInfo.packageName);
+      }
+    }
+ catch (    NameNotFoundException e) {
+      sendBackupOnPackageResult(observer,packageName,BackupManager.ERROR_PACKAGE_NOT_FOUND);
+    }
+  }
+  EventLog.writeEvent(EventLogTags.BACKUP_REQUESTED,packages.length,kvBackupList.size(),fullBackupList.size());
+  if (MORE_DEBUG) {
+    Slog.i(TAG,"Backup requested for " + packages.length + " packages, of them: "+ fullBackupList.size()+ " full backups, "+ kvBackupList.size()+ " k/v backups");
+  }
+  String dirName;
+  try {
+    dirName=transport.transportDirName();
+  }
+ catch (  RemoteException e) {
+    Slog.e(TAG,"Transport became unavailable while attempting backup");
+    sendBackupFinished(observer,BackupManager.ERROR_TRANSPORT_ABORTED);
+    return BackupManager.ERROR_TRANSPORT_ABORTED;
+  }
+  Message msg=mBackupHandler.obtainMessage(MSG_REQUEST_BACKUP);
+  msg.obj=new BackupParams(transport,dirName,kvBackupList,fullBackupList,observer,true);
+  mBackupHandler.sendMessage(msg);
+  return BackupManager.SUCCESS;
+}

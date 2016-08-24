@@ -1,0 +1,36 @@
+{
+  final int userId=uss.mHandle.getIdentifier();
+synchronized (mService) {
+    if (mStartedUsers.get(uss.mHandle.getIdentifier()) != uss)     return;
+    if (!StorageManager.isUserKeyUnlocked(userId))     return;
+    if (uss.setState(STATE_RUNNING_UNLOCKING,STATE_RUNNING_UNLOCKED)) {
+      getUserManagerInternal().setUserState(userId,uss.state);
+      uss.mUnlockProgress.finish();
+      final Intent unlockedIntent=new Intent(Intent.ACTION_USER_UNLOCKED);
+      unlockedIntent.putExtra(Intent.EXTRA_USER_HANDLE,userId);
+      unlockedIntent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY | Intent.FLAG_RECEIVER_FOREGROUND);
+      mService.broadcastIntentLocked(null,null,unlockedIntent,null,null,0,null,null,null,AppOpsManager.OP_NONE,null,false,false,MY_PID,SYSTEM_UID,userId);
+      if (getUserInfo(userId).isManagedProfile()) {
+        UserInfo parent=getUserManager().getProfileParent(userId);
+        if (parent != null) {
+          final Intent profileUnlockedIntent=new Intent(Intent.ACTION_MANAGED_PROFILE_UNLOCKED);
+          profileUnlockedIntent.putExtra(Intent.EXTRA_USER,UserHandle.of(userId));
+          profileUnlockedIntent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY | Intent.FLAG_RECEIVER_FOREGROUND);
+          mService.broadcastIntentLocked(null,null,profileUnlockedIntent,null,null,0,null,null,null,AppOpsManager.OP_NONE,null,false,false,MY_PID,SYSTEM_UID,parent.id);
+        }
+      }
+      final UserInfo info=getUserInfo(userId);
+      if (!Objects.equals(info.lastLoggedInFingerprint,Build.FINGERPRINT)) {
+        new PreBootBroadcaster(mService,userId,null){
+          @Override public void onFinished(){
+            finishUserUnlockedCompleted(uss);
+          }
+        }
+.sendNext();
+      }
+ else {
+        finishUserUnlockedCompleted(uss);
+      }
+    }
+  }
+}

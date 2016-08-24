@@ -1,0 +1,94 @@
+{
+  final float x=event.getX();
+  final float y=event.getY();
+  final long time=event.getEventTime();
+  mPolicyFlags=policyFlags;
+switch (event.getActionMasked()) {
+case MotionEvent.ACTION_DOWN:
+    mDoubleTapDetected=false;
+  mSecondFingerDoubleTap=false;
+mRecognizingGesture=true;
+mGestureStarted=false;
+mPreviousGestureX=x;
+mPreviousGestureY=y;
+mStrokeBuffer.clear();
+mStrokeBuffer.add(new GesturePoint(x,y,time));
+mBaseX=x;
+mBaseY=y;
+mBaseTime=time;
+break;
+case MotionEvent.ACTION_MOVE:
+if (mRecognizingGesture) {
+final float deltaX=mBaseX - x;
+final float deltaY=mBaseY - y;
+final double moveDelta=Math.hypot(deltaX,deltaY);
+if (moveDelta > mGestureDetectionThreshold) {
+mBaseX=x;
+mBaseY=y;
+mBaseTime=time;
+mFirstTapDetected=false;
+mDoubleTapDetected=false;
+if (!mGestureStarted) {
+mGestureStarted=true;
+return mListener.onGestureStarted();
+}
+}
+ else if (!mFirstTapDetected) {
+final long timeDelta=time - mBaseTime;
+final long threshold=mGestureStarted ? CANCEL_ON_PAUSE_THRESHOLD_STARTED_MS : CANCEL_ON_PAUSE_THRESHOLD_NOT_STARTED_MS;
+if (timeDelta > threshold) {
+cancelGesture();
+return mListener.onGestureCancelled(event,policyFlags);
+}
+}
+final float dX=Math.abs(x - mPreviousGestureX);
+final float dY=Math.abs(y - mPreviousGestureY);
+if (dX >= TOUCH_TOLERANCE || dY >= TOUCH_TOLERANCE) {
+mPreviousGestureX=x;
+mPreviousGestureY=y;
+mStrokeBuffer.add(new GesturePoint(x,y,time));
+}
+}
+break;
+case MotionEvent.ACTION_UP:
+if (mDoubleTapDetected) {
+return finishDoubleTap(event,policyFlags);
+}
+if (mGestureStarted) {
+mStrokeBuffer.add(new GesturePoint(x,y,time));
+return recognizeGesture(event,policyFlags);
+}
+break;
+case MotionEvent.ACTION_POINTER_DOWN:
+cancelGesture();
+if (event.getPointerCount() == 2) {
+mSecondFingerDoubleTap=true;
+mSecondPointerDownTime=time;
+}
+ else {
+mSecondFingerDoubleTap=false;
+}
+break;
+case MotionEvent.ACTION_POINTER_UP:
+if (mSecondFingerDoubleTap && mDoubleTapDetected) {
+return finishDoubleTap(event,policyFlags);
+}
+break;
+case MotionEvent.ACTION_CANCEL:
+clear();
+break;
+}
+if (mSecondFingerDoubleTap) {
+MotionEvent newEvent=mapSecondPointerToFirstPointer(event);
+if (newEvent == null) {
+return false;
+}
+boolean handled=mGestureDetector.onTouchEvent(newEvent);
+newEvent.recycle();
+return handled;
+}
+if (!mRecognizingGesture) {
+return false;
+}
+return mGestureDetector.onTouchEvent(event);
+}

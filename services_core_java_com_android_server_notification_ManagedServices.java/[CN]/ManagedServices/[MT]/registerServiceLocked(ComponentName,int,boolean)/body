@@ -1,0 +1,68 @@
+{
+  if (DEBUG)   Slog.v(TAG,"registerService: " + name + " u="+ userid);
+  final String servicesBindingTag=name.toString() + "/" + userid;
+  if (mServicesBinding.contains(servicesBindingTag)) {
+    return;
+  }
+  mServicesBinding.add(servicesBindingTag);
+  final int N=mServices.size();
+  for (int i=N - 1; i >= 0; i--) {
+    final ManagedServiceInfo info=mServices.get(i);
+    if (name.equals(info.component) && info.userid == userid) {
+      if (DEBUG)       Slog.v(TAG,"    disconnecting old " + getCaption() + ": "+ info.service);
+      removeServiceLocked(i);
+      if (info.connection != null) {
+        mContext.unbindService(info.connection);
+      }
+    }
+  }
+  Intent intent=new Intent(mConfig.serviceInterface);
+  intent.setComponent(name);
+  intent.putExtra(Intent.EXTRA_CLIENT_LABEL,mConfig.clientLabel);
+  final PendingIntent pendingIntent=PendingIntent.getActivity(mContext,0,new Intent(mConfig.settingsAction),0);
+  intent.putExtra(Intent.EXTRA_CLIENT_INTENT,pendingIntent);
+  ApplicationInfo appInfo=null;
+  try {
+    appInfo=mContext.getPackageManager().getApplicationInfo(name.getPackageName(),0);
+  }
+ catch (  NameNotFoundException e) {
+  }
+  final int targetSdkVersion=appInfo != null ? appInfo.targetSdkVersion : Build.VERSION_CODES.BASE;
+  try {
+    if (DEBUG)     Slog.v(TAG,"binding: " + intent);
+    ServiceConnection serviceConnection=new ServiceConnection(){
+      IInterface mService;
+      @Override public void onServiceConnected(      ComponentName name,      IBinder binder){
+        boolean added=false;
+        ManagedServiceInfo info=null;
+synchronized (mMutex) {
+          mServicesBinding.remove(servicesBindingTag);
+          try {
+            mService=asInterface(binder);
+            info=newServiceInfo(mService,name,userid,isSystem,this,targetSdkVersion);
+            binder.linkToDeath(info,0);
+            added=mServices.add(info);
+          }
+ catch (          RemoteException e) {
+          }
+        }
+        if (added) {
+          onServiceAdded(info);
+        }
+      }
+      @Override public void onServiceDisconnected(      ComponentName name){
+        Slog.v(TAG,getCaption() + " connection lost: " + name);
+      }
+    }
+;
+    if (!mContext.bindServiceAsUser(intent,serviceConnection,BIND_AUTO_CREATE | BIND_FOREGROUND_SERVICE | BIND_ALLOW_WHITELIST_MANAGEMENT,new UserHandle(userid))) {
+      mServicesBinding.remove(servicesBindingTag);
+      Slog.w(TAG,"Unable to bind " + getCaption() + " service: "+ intent);
+      return;
+    }
+  }
+ catch (  SecurityException ex) {
+    Slog.e(TAG,"Unable to bind " + getCaption() + " service: "+ intent,ex);
+    return;
+  }
+}

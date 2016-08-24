@@ -2,7 +2,7 @@
   if (ps.pkg == null) {
     return;
   }
-  final int userSettableFlags=FLAG_PERMISSION_USER_SET | FLAG_PERMISSION_USER_FIXED | FLAG_PERMISSION_REVOKE_ON_UPGRADE;
+  final int userSettableMask=FLAG_PERMISSION_USER_SET | FLAG_PERMISSION_USER_FIXED | FLAG_PERMISSION_REVOKE_ON_UPGRADE| FLAG_PERMISSION_REVIEW_REQUIRED;
   final int policyOrSystemFlags=FLAG_PERMISSION_SYSTEM_FIXED | FLAG_PERMISSION_POLICY_FIXED;
   boolean writeInstallPermissions=false;
   boolean writeRuntimePermissions=false;
@@ -30,7 +30,11 @@
     PermissionsState permissionsState=ps.getPermissionsState();
     final int oldFlags=permissionsState.getPermissionFlags(bp.name,userId);
     final boolean hasInstallState=permissionsState.getInstallPermissionState(bp.name) != null;
-    if (permissionsState.updatePermissionFlags(bp,userId,userSettableFlags,0)) {
+    int flags=0;
+    if (Build.PERMISSIONS_REVIEW_REQUIRED && ps.pkg.applicationInfo.targetSdkVersion < Build.VERSION_CODES.M) {
+      flags|=FLAG_PERMISSION_REVIEW_REQUIRED;
+    }
+    if (permissionsState.updatePermissionFlags(bp,userId,userSettableMask,flags)) {
       if (hasInstallState) {
         writeInstallPermissions=true;
       }
@@ -49,27 +53,23 @@
         writeRuntimePermissions=true;
       }
     }
- else {
+ else     if ((flags & FLAG_PERMISSION_REVIEW_REQUIRED) == 0) {
       final int revokeResult=permissionsState.revokeRuntimePermission(bp,userId);
 switch (revokeResult) {
 case PERMISSION_OPERATION_SUCCESS:
-{
-          writeRuntimePermissions=true;
-        }
-      break;
 case PERMISSION_OPERATION_SUCCESS_GIDS_CHANGED:
 {
-      writeRuntimePermissions=true;
-      final int appId=ps.appId;
-      mHandler.post(new Runnable(){
-        @Override public void run(){
-          killUid(appId,userId,KILL_APP_REASON_GIDS_CHANGED);
-        }
-      }
+          writeRuntimePermissions=true;
+          final int appId=ps.appId;
+          mHandler.post(new Runnable(){
+            @Override public void run(){
+              killUid(appId,userId,KILL_APP_REASON_PERMISSIONS_REVOKED);
+            }
+          }
 );
-    }
-  break;
-}
+        }
+      break;
+  }
 }
 }
 if (writeRuntimePermissions) {

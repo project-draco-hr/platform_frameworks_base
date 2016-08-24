@@ -1,0 +1,79 @@
+{
+  if (alarm.operation != null) {
+    try {
+      alarm.operation.send(getContext(),0,mBackgroundIntent.putExtra(Intent.EXTRA_ALARM_COUNT,alarm.count),mDeliveryTracker,mHandler,null,allowWhileIdle ? mIdleOptions : null);
+    }
+ catch (    PendingIntent.CanceledException e) {
+      if (alarm.repeatInterval > 0) {
+        removeImpl(alarm.operation);
+      }
+      return;
+    }
+  }
+ else {
+    try {
+      if (DEBUG_LISTENER_CALLBACK) {
+        Slog.v(TAG,"Alarm to uid=" + alarm.uid + " listener="+ alarm.listener.asBinder());
+      }
+      alarm.listener.doAlarm(this);
+      mHandler.sendMessageDelayed(mHandler.obtainMessage(AlarmHandler.LISTENER_TIMEOUT,alarm.listener.asBinder()),mConstants.LISTENER_TIMEOUT);
+    }
+ catch (    Exception e) {
+      if (DEBUG_LISTENER_CALLBACK) {
+        Slog.i(TAG,"Alarm undeliverable to listener " + alarm.listener.asBinder(),e);
+      }
+      return;
+    }
+  }
+  if (mBroadcastRefCount == 0) {
+    setWakelockWorkSource(alarm.operation,alarm.workSource,alarm.type,alarm.statsTag,(alarm.operation == null) ? alarm.uid : -1,true);
+    mWakeLock.acquire();
+    mHandler.obtainMessage(AlarmHandler.REPORT_ALARMS_ACTIVE,1).sendToTarget();
+  }
+  final InFlight inflight=new InFlight(AlarmManagerService.this,alarm.operation,alarm.listener,alarm.workSource,alarm.uid,alarm.packageName,alarm.type,alarm.statsTag,nowELAPSED);
+  mInFlight.add(inflight);
+  mBroadcastRefCount++;
+  if (allowWhileIdle) {
+    mLastAllowWhileIdleDispatch.put(alarm.uid,nowELAPSED);
+    if (RECORD_DEVICE_IDLE_ALARMS) {
+      IdleDispatchEntry ent=new IdleDispatchEntry();
+      ent.uid=alarm.uid;
+      ent.pkg=alarm.packageName;
+      ent.tag=alarm.statsTag;
+      ent.op="DELIVER";
+      ent.elapsedRealtime=nowELAPSED;
+      mAllowWhileIdleDispatches.add(ent);
+    }
+  }
+  final BroadcastStats bs=inflight.mBroadcastStats;
+  bs.count++;
+  if (bs.nesting == 0) {
+    bs.nesting=1;
+    bs.startTime=nowELAPSED;
+  }
+ else {
+    bs.nesting++;
+  }
+  final FilterStats fs=inflight.mFilterStats;
+  fs.count++;
+  if (fs.nesting == 0) {
+    fs.nesting=1;
+    fs.startTime=nowELAPSED;
+  }
+ else {
+    fs.nesting++;
+  }
+  if (alarm.type == ELAPSED_REALTIME_WAKEUP || alarm.type == RTC_WAKEUP) {
+    bs.numWakeup++;
+    fs.numWakeup++;
+    if (alarm.workSource != null && alarm.workSource.size() > 0) {
+      for (int wi=0; wi < alarm.workSource.size(); wi++) {
+        final String wsName=alarm.workSource.getName(wi);
+        ActivityManagerNative.noteWakeupAlarm(alarm.operation,alarm.workSource.get(wi),(wsName != null) ? wsName : alarm.packageName,alarm.statsTag);
+      }
+    }
+ else {
+      ActivityManagerNative.noteWakeupAlarm(alarm.operation,alarm.uid,alarm.packageName,alarm.statsTag);
+    }
+  }
+}

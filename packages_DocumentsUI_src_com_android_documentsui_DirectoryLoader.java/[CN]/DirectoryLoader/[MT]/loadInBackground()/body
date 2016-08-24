@@ -8,8 +8,8 @@ synchronized (this) {
   final ContentResolver resolver=getContext().getContentResolver();
   final String authority=mUri.getAuthority();
   final DirectoryResult result=new DirectoryResult();
-  int userMode=State.MODE_UNKNOWN;
-  if (mType == DirectoryFragment.TYPE_SEARCH) {
+  result.doc=mDoc;
+  if (mSearchMode) {
     final Uri docUri=DocumentsContract.buildDocumentUri(mRoot.authority,mRoot.documentId);
     try {
       mDoc=DocumentInfo.fromUri(resolver,docUri);
@@ -18,28 +18,6 @@ synchronized (this) {
       Log.w(TAG,"Failed to query",e);
       result.exception=e;
       return result;
-    }
-  }
-  Cursor cursor=null;
-  try {
-    final Uri stateUri=RecentsProvider.buildState(mRoot.authority,mRoot.rootId,mDoc.documentId);
-    cursor=resolver.query(stateUri,null,null,null,null);
-    if (cursor.moveToFirst()) {
-      userMode=getCursorInt(cursor,StateColumns.MODE);
-    }
-  }
-  finally {
-    IoUtils.closeQuietly(cursor);
-  }
-  if (userMode != State.MODE_UNKNOWN) {
-    result.mode=userMode;
-  }
- else {
-    if ((mDoc.flags & Document.FLAG_DIR_PREFERS_GRID) != 0) {
-      result.mode=State.MODE_GRID;
-    }
- else {
-      result.mode=State.MODE_LIST;
     }
   }
   if (mUserSortOrder != State.SORT_ORDER_UNKNOWN) {
@@ -53,11 +31,12 @@ synchronized (this) {
       result.sortOrder=State.SORT_ORDER_DISPLAY_NAME;
     }
   }
-  if (mType == DirectoryFragment.TYPE_SEARCH) {
+  if (mSearchMode) {
     result.sortOrder=State.SORT_ORDER_UNKNOWN;
   }
-  Log.d(TAG,"userMode=" + userMode + ", userSortOrder="+ mUserSortOrder+ " --> mode="+ result.mode+ ", sortOrder="+ result.sortOrder);
+  if (DEBUG)   Log.d(TAG,"userSortOrder=" + mUserSortOrder + ", sortOrder="+ result.sortOrder);
   ContentProviderClient client=null;
+  Cursor cursor=null;
   try {
     client=DocumentsApplication.acquireUnstableProviderOrThrow(resolver,authority);
     cursor=client.query(mUri,null,null,null,getQuerySortOrder(result.sortOrder),mSignal);
@@ -66,11 +45,8 @@ synchronized (this) {
     }
     cursor.registerContentObserver(mObserver);
     cursor=new RootCursorWrapper(mUri.getAuthority(),mRoot.rootId,cursor,-1);
-    if (mType == DirectoryFragment.TYPE_SEARCH) {
+    if (mSearchMode) {
       cursor=new FilteringCursorWrapper(cursor,null,SEARCH_REJECT_MIMES);
-    }
- else {
-      cursor=new SortingCursorWrapper(cursor,result.sortOrder);
     }
     result.client=client;
     result.cursor=cursor;

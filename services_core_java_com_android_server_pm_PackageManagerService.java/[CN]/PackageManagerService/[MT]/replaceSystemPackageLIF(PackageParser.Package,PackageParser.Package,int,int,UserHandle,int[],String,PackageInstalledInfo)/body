@@ -1,0 +1,73 @@
+{
+  if (DEBUG_INSTALL)   Slog.d(TAG,"replaceSystemPackageLI: new=" + pkg + ", old="+ deletedPackage);
+  final boolean disabledSystem;
+  removePackageLI(deletedPackage,true);
+synchronized (mPackages) {
+    disabledSystem=disableSystemPackageLPw(deletedPackage,pkg);
+  }
+  if (!disabledSystem) {
+    res.removedInfo.args=createInstallArgsForExisting(0,deletedPackage.applicationInfo.getCodePath(),deletedPackage.applicationInfo.getResourcePath(),getAppDexInstructionSets(deletedPackage.applicationInfo));
+  }
+ else {
+    res.removedInfo.args=null;
+  }
+  clearAppDataLIF(pkg,UserHandle.USER_ALL,StorageManager.FLAG_STORAGE_DE | StorageManager.FLAG_STORAGE_CE | Installer.FLAG_CLEAR_CODE_CACHE_ONLY);
+  clearAppProfilesLIF(deletedPackage,UserHandle.USER_ALL);
+  res.setReturnCode(PackageManager.INSTALL_SUCCEEDED);
+  pkg.setApplicationInfoFlags(ApplicationInfo.FLAG_UPDATED_SYSTEM_APP,ApplicationInfo.FLAG_UPDATED_SYSTEM_APP);
+  PackageParser.Package newPackage=null;
+  try {
+    newPackage=scanPackageTracedLI(pkg,policyFlags,scanFlags,0,user);
+    PackageSetting deletedPkgSetting=(PackageSetting)deletedPackage.mExtras;
+    setInstallAndUpdateTime(newPackage,deletedPkgSetting.firstInstallTime,System.currentTimeMillis());
+    if (res.returnCode == PackageManager.INSTALL_SUCCEEDED) {
+      final int deletedChildCount=(deletedPackage.childPackages != null) ? deletedPackage.childPackages.size() : 0;
+      final int newChildCount=(newPackage.childPackages != null) ? newPackage.childPackages.size() : 0;
+      for (int i=0; i < deletedChildCount; i++) {
+        PackageParser.Package deletedChildPkg=deletedPackage.childPackages.get(i);
+        boolean childPackageDeleted=true;
+        for (int j=0; j < newChildCount; j++) {
+          PackageParser.Package newChildPkg=newPackage.childPackages.get(j);
+          if (deletedChildPkg.packageName.equals(newChildPkg.packageName)) {
+            childPackageDeleted=false;
+            break;
+          }
+        }
+        if (childPackageDeleted) {
+          PackageSetting ps=mSettings.getDisabledSystemPkgLPr(deletedChildPkg.packageName);
+          if (ps != null && res.removedInfo.removedChildPackages != null) {
+            PackageRemovedInfo removedChildRes=res.removedInfo.removedChildPackages.get(deletedChildPkg.packageName);
+            removePackageDataLIF(ps,allUsers,removedChildRes,0,false);
+            removedChildRes.removedForAllUsers=mPackages.get(ps.name) == null;
+          }
+        }
+      }
+      updateSettingsLI(newPackage,installerPackageName,allUsers,res,user);
+      prepareAppDataAfterInstallLIF(newPackage);
+    }
+  }
+ catch (  PackageManagerException e) {
+    res.setReturnCode(INSTALL_FAILED_INTERNAL_ERROR);
+    res.setError("Package couldn't be installed in " + pkg.codePath,e);
+  }
+  if (res.returnCode != PackageManager.INSTALL_SUCCEEDED) {
+    if (newPackage != null) {
+      removeInstalledPackageLI(newPackage,true);
+    }
+    try {
+      scanPackageTracedLI(deletedPackage,policyFlags,SCAN_UPDATE_SIGNATURE,0,user);
+    }
+ catch (    PackageManagerException e) {
+      Slog.e(TAG,"Failed to restore original package: " + e.getMessage());
+    }
+synchronized (mPackages) {
+      if (disabledSystem) {
+        enableSystemPackageLPw(deletedPackage);
+      }
+      setInstallerPackageNameLPw(deletedPackage,installerPackageName);
+      updatePermissionsLPw(deletedPackage,UPDATE_PERMISSIONS_ALL);
+      mSettings.writeLPr();
+    }
+    Slog.i(TAG,"Successfully restored package : " + deletedPackage.packageName + " after failed upgrade");
+  }
+}

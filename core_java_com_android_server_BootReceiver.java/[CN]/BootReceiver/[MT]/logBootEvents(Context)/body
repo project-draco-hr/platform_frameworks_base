@@ -1,9 +1,8 @@
 {
   final DropBoxManager db=(DropBoxManager)ctx.getSystemService(Context.DROPBOX_SERVICE);
-  final SharedPreferences prefs=ctx.getSharedPreferences("log_files",Context.MODE_PRIVATE);
   final String headers=new StringBuilder(512).append("Build: ").append(Build.FINGERPRINT).append("\n").append("Hardware: ").append(Build.BOARD).append("\n").append("Revision: ").append(SystemProperties.get("ro.revision","")).append("\n").append("Bootloader: ").append(Build.BOOTLOADER).append("\n").append("Radio: ").append(Build.RADIO).append("\n").append("Kernel: ").append(FileUtils.readTextFile(new File("/proc/version"),1024,"...\n")).append("\n").toString();
   final String bootReason=SystemProperties.get("ro.boot.bootreason",null);
-  String recovery=RecoverySystem.handleAftermath();
+  String recovery=RecoverySystem.handleAftermath(ctx);
   if (recovery != null && db != null) {
     db.addText("SYSTEM_RECOVERY_LOG",headers + recovery);
   }
@@ -11,20 +10,21 @@
   if (bootReason != null) {
     lastKmsgFooter=new StringBuilder(512).append("\n").append("Boot info:\n").append("Last boot reason: ").append(bootReason).append("\n").toString();
   }
+  HashMap<String,Long> timestamps=readTimestamps();
   if (SystemProperties.getLong("ro.runtime.firstboot",0) == 0) {
-    if ("encrypted".equals(SystemProperties.get("ro.crypto.state")) && "trigger_restart_min_framework".equals(SystemProperties.get("vold.decrypt"))) {
+    if (StorageManager.inCryptKeeperBounce()) {
     }
  else {
       String now=Long.toString(System.currentTimeMillis());
       SystemProperties.set("ro.runtime.firstboot",now);
     }
     if (db != null)     db.addText("SYSTEM_BOOT",headers);
-    addFileWithFootersToDropBox(db,prefs,headers,lastKmsgFooter,"/proc/last_kmsg",-LOG_SIZE,"SYSTEM_LAST_KMSG");
-    addFileWithFootersToDropBox(db,prefs,headers,lastKmsgFooter,"/sys/fs/pstore/console-ramoops",-LOG_SIZE,"SYSTEM_LAST_KMSG");
-    addFileToDropBox(db,prefs,headers,"/cache/recovery/log",-LOG_SIZE,"SYSTEM_RECOVERY_LOG");
-    addFileToDropBox(db,prefs,headers,"/cache/recovery/last_kmsg",-LOG_SIZE,"SYSTEM_RECOVERY_KMSG");
-    addAuditErrorsToDropBox(db,prefs,headers,-LOG_SIZE,"SYSTEM_AUDIT");
-    addFsckErrorsToDropBox(db,prefs,headers,-LOG_SIZE,"SYSTEM_FSCK");
+    addFileWithFootersToDropBox(db,timestamps,headers,lastKmsgFooter,"/proc/last_kmsg",-LOG_SIZE,"SYSTEM_LAST_KMSG");
+    addFileWithFootersToDropBox(db,timestamps,headers,lastKmsgFooter,"/sys/fs/pstore/console-ramoops",-LOG_SIZE,"SYSTEM_LAST_KMSG");
+    addFileToDropBox(db,timestamps,headers,"/cache/recovery/log",-LOG_SIZE,"SYSTEM_RECOVERY_LOG");
+    addFileToDropBox(db,timestamps,headers,"/cache/recovery/last_kmsg",-LOG_SIZE,"SYSTEM_RECOVERY_KMSG");
+    addAuditErrorsToDropBox(db,timestamps,headers,-LOG_SIZE,"SYSTEM_AUDIT");
+    addFsckErrorsToDropBox(db,timestamps,headers,-LOG_SIZE,"SYSTEM_FSCK");
   }
  else {
     if (db != null)     db.addText("SYSTEM_RESTART",headers);
@@ -32,20 +32,23 @@
   File[] tombstoneFiles=TOMBSTONE_DIR.listFiles();
   for (int i=0; tombstoneFiles != null && i < tombstoneFiles.length; i++) {
     if (tombstoneFiles[i].isFile()) {
-      addFileToDropBox(db,prefs,headers,tombstoneFiles[i].getPath(),LOG_SIZE,"SYSTEM_TOMBSTONE");
+      addFileToDropBox(db,timestamps,headers,tombstoneFiles[i].getPath(),LOG_SIZE,"SYSTEM_TOMBSTONE");
     }
   }
+  writeTimestamps(timestamps);
   sTombstoneObserver=new FileObserver(TOMBSTONE_DIR.getPath(),FileObserver.CLOSE_WRITE){
     @Override public void onEvent(    int event,    String path){
+      HashMap<String,Long> timestamps=readTimestamps();
       try {
         File file=new File(TOMBSTONE_DIR,path);
         if (file.isFile()) {
-          addFileToDropBox(db,prefs,headers,file.getPath(),LOG_SIZE,"SYSTEM_TOMBSTONE");
+          addFileToDropBox(db,timestamps,headers,file.getPath(),LOG_SIZE,"SYSTEM_TOMBSTONE");
         }
       }
  catch (      IOException e) {
         Slog.e(TAG,"Can't log tombstone",e);
       }
+      writeTimestamps(timestamps);
     }
   }
 ;

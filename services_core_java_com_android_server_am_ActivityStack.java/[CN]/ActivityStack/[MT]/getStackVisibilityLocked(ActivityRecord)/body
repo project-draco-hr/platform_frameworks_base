@@ -1,0 +1,61 @@
+{
+  if (!isAttached()) {
+    return STACK_INVISIBLE;
+  }
+  if (mStackSupervisor.isFrontStack(this) || mStackSupervisor.isFocusedStack(this)) {
+    return STACK_VISIBLE;
+  }
+  final int stackIndex=mStacks.indexOf(this);
+  if (stackIndex == mStacks.size() - 1) {
+    Slog.wtf(TAG,"Stack=" + this + " isn't front stack but is at the top of the stack list");
+    return STACK_INVISIBLE;
+  }
+  final boolean isLockscreenShown=mService.mLockScreenShown == LOCK_SCREEN_SHOWN;
+  if (isLockscreenShown && !StackId.isAllowedOverLockscreen(mStackId)) {
+    return STACK_INVISIBLE;
+  }
+  final ActivityStack focusedStack=mStackSupervisor.getFocusedStack();
+  final int focusedStackId=focusedStack.mStackId;
+  if (mStackId == FULLSCREEN_WORKSPACE_STACK_ID && hasVisibleBehindActivity() && focusedStackId == HOME_STACK_ID && !focusedStack.topActivity().fullscreen) {
+    return STACK_VISIBLE_ACTIVITY_BEHIND;
+  }
+  if (mStackId == DOCKED_STACK_ID) {
+    final ActivityRecord r=focusedStack.topRunningActivityLocked();
+    final TaskRecord task=r != null ? r.task : null;
+    return task == null || task.canGoInDockedStack() || task.isHomeTask() ? STACK_VISIBLE : STACK_INVISIBLE;
+  }
+  int stackBehindFocusedIndex=mStacks.indexOf(focusedStack) - 1;
+  while (stackBehindFocusedIndex >= 0 && mStacks.get(stackBehindFocusedIndex).topRunningActivityLocked() == null) {
+    stackBehindFocusedIndex--;
+  }
+  if ((focusedStackId == DOCKED_STACK_ID || focusedStackId == PINNED_STACK_ID) && stackIndex == stackBehindFocusedIndex) {
+    return STACK_VISIBLE;
+  }
+  final int stackBehindFocusedId=(stackBehindFocusedIndex >= 0) ? mStacks.get(stackBehindFocusedIndex).mStackId : INVALID_STACK_ID;
+  if (focusedStackId == FULLSCREEN_WORKSPACE_STACK_ID && focusedStack.isStackTranslucent(starting,stackBehindFocusedId)) {
+    if (stackIndex == stackBehindFocusedIndex) {
+      return STACK_VISIBLE;
+    }
+    if (stackBehindFocusedIndex >= 0) {
+      if ((stackBehindFocusedId == DOCKED_STACK_ID || stackBehindFocusedId == PINNED_STACK_ID) && stackIndex == (stackBehindFocusedIndex - 1)) {
+        return STACK_VISIBLE;
+      }
+    }
+  }
+  if (StackId.isStaticStack(mStackId)) {
+    return STACK_INVISIBLE;
+  }
+  for (int i=stackIndex + 1; i < mStacks.size(); i++) {
+    final ActivityStack stack=mStacks.get(i);
+    if (!stack.mFullscreen && !stack.hasFullscreenTask()) {
+      continue;
+    }
+    if (!StackId.isDynamicStacksVisibleBehindAllowed(stack.mStackId)) {
+      return STACK_INVISIBLE;
+    }
+    if (!stack.isStackTranslucent(starting,INVALID_STACK_ID)) {
+      return STACK_INVISIBLE;
+    }
+  }
+  return STACK_VISIBLE;
+}

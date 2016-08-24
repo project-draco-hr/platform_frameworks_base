@@ -1,0 +1,33 @@
+{
+  setUpPackageManagerForAdmin(admin2,DpmMockContext.CALLER_SYSTEM_USER_UID);
+  DpmTestUtils.writeToFile((new File(mContext.dataDir,OwnersTestable.LEGACY_FILE)).getAbsoluteFile(),DpmTestUtils.readAsset(mRealTestContext,"DevicePolicyManagerServiceMigrationTest2/legacy_device_owner.xml"));
+  DpmTestUtils.writeToFile((new File(mContext.systemUserDataDir,"device_policies.xml")).getAbsoluteFile(),DpmTestUtils.readAsset(mRealTestContext,"DevicePolicyManagerServiceMigrationTest2/legacy_device_policies.xml"));
+  when(mMockContext.userManagerInternal.getBaseUserRestrictions(eq(UserHandle.USER_SYSTEM))).thenReturn(DpmTestUtils.newRestrictions(UserManager.DISALLOW_ADD_USER,UserManager.DISALLOW_RECORD_AUDIO,UserManager.DISALLOW_SMS,UserManager.DISALLOW_OUTGOING_CALLS));
+  final Map<Integer,Bundle> newBaseRestrictions=new HashMap<>();
+  doAnswer(new Answer<Void>(){
+    @Override public Void answer(    InvocationOnMock invocation) throws Throwable {
+      Integer userId=(Integer)invocation.getArguments()[0];
+      Bundle bundle=(Bundle)invocation.getArguments()[1];
+      newBaseRestrictions.put(userId,bundle);
+      return null;
+    }
+  }
+).when(mContext.userManagerInternal).setBaseUserRestrictionsByDpmsForMigration(anyInt(),any(Bundle.class));
+  final DevicePolicyManagerServiceTestable dpms;
+  final long ident=mContext.binder.clearCallingIdentity();
+  try {
+    LocalServices.removeServiceForTest(DevicePolicyManagerInternal.class);
+    dpms=new DevicePolicyManagerServiceTestable(mContext,dataDir);
+    dpms.systemReady(SystemService.PHASE_LOCK_SETTINGS_READY);
+    dpms.systemReady(SystemService.PHASE_BOOT_COMPLETED);
+  }
+  finally {
+    mContext.binder.restoreCallingIdentity(ident);
+  }
+  assertFalse(dpms.mOwners.hasDeviceOwner());
+  assertTrue(dpms.mOwners.hasProfileOwner(UserHandle.USER_SYSTEM));
+  assertFalse(dpms.mOwners.getDeviceOwnerUserRestrictionsNeedsMigration());
+  assertFalse(dpms.mOwners.getProfileOwnerUserRestrictionsNeedsMigration(UserHandle.USER_SYSTEM));
+  DpmTestUtils.assertRestrictions(DpmTestUtils.newRestrictions(UserManager.DISALLOW_RECORD_AUDIO),newBaseRestrictions.get(UserHandle.USER_SYSTEM));
+  DpmTestUtils.assertRestrictions(DpmTestUtils.newRestrictions(UserManager.DISALLOW_ADD_USER,UserManager.DISALLOW_SMS,UserManager.DISALLOW_OUTGOING_CALLS),dpms.getProfileOwnerAdminLocked(UserHandle.USER_SYSTEM).ensureUserRestrictions());
+}

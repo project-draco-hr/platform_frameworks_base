@@ -2,6 +2,7 @@
   sSelf=this;
   mContext=context;
   mCallbacks=new Callbacks(FgThread.get().getLooper());
+  mLockPatternUtils=new LockPatternUtils(mContext);
   mPms=(PackageManagerService)ServiceManager.getService("package");
   HandlerThread hthread=new HandlerThread(TAG);
   hthread.start();
@@ -21,24 +22,25 @@
  else {
     mLastMaintenance=mLastMaintenanceFile.lastModified();
   }
-  mSettingsFile=new AtomicFile(new File(Environment.getSystemSecureDirectory(),"storage.xml"));
+  mSettingsFile=new AtomicFile(new File(Environment.getDataSystemDirectory(),"storage.xml"));
 synchronized (mLock) {
     readSettingsLocked();
   }
   LocalServices.addService(MountServiceInternal.class,mMountServiceInternal);
   mConnector=new NativeDaemonConnector(this,"vold",MAX_CONTAINERS * 2,VOLD_TAG,25,null);
   mConnector.setDebug(true);
-  Thread thread=new Thread(mConnector,VOLD_TAG);
-  thread.start();
+  mConnector.setWarnIfHeld(mLock);
+  mConnectorThread=new Thread(mConnector,VOLD_TAG);
   mCryptConnector=new NativeDaemonConnector(this,"cryptd",MAX_CONTAINERS * 2,CRYPTD_TAG,25,null);
   mCryptConnector.setDebug(true);
-  Thread crypt_thread=new Thread(mCryptConnector,CRYPTD_TAG);
-  crypt_thread.start();
+  mCryptConnectorThread=new Thread(mCryptConnector,CRYPTD_TAG);
   final IntentFilter userFilter=new IntentFilter();
   userFilter.addAction(Intent.ACTION_USER_ADDED);
   userFilter.addAction(Intent.ACTION_USER_REMOVED);
   mContext.registerReceiver(mUserReceiver,userFilter,null,mHandler);
-  addInternalVolume();
+synchronized (mLock) {
+    addInternalVolumeLocked();
+  }
   if (WATCHDOG_ENABLE) {
     Watchdog.getInstance().addMonitor(this);
   }

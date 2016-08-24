@@ -6,11 +6,12 @@
   if (mPauseRefreshUsers) {
     return;
   }
+  boolean forceAllUsers=mForcePictureLoadForUserId.get(UserHandle.USER_ALL);
   SparseArray<Bitmap> bitmaps=new SparseArray<>(mUsers.size());
   final int N=mUsers.size();
   for (int i=0; i < N; i++) {
     UserRecord r=mUsers.get(i);
-    if (r == null || r.picture == null || r.info == null || mForcePictureLoadForUserId.get(r.info.id)) {
+    if (r == null || r.picture == null || r.info == null || forceAllUsers || mForcePictureLoadForUserId.get(r.info.id)) {
       continue;
     }
     bitmaps.put(r.info.id,r.picture);
@@ -26,35 +27,45 @@
       }
       ArrayList<UserRecord> records=new ArrayList<>(infos.size());
       int currentId=ActivityManager.getCurrentUser();
+      boolean canSwitchUsers=mUserManager.canSwitchUsers();
+      UserInfo currentUserInfo=null;
       UserRecord guestRecord=null;
-      int avatarSize=mContext.getResources().getDimensionPixelSize(R.dimen.max_avatar_size);
       for (      UserInfo info : infos) {
         boolean isCurrent=currentId == info.id;
-        if (info.isGuest()) {
-          guestRecord=new UserRecord(info,null,true,isCurrent,false,false);
+        if (isCurrent) {
+          currentUserInfo=info;
         }
- else         if (info.supportsSwitchTo()) {
-          Bitmap picture=bitmaps.get(info.id);
-          if (picture == null) {
-            picture=mUserManager.getUserIcon(info.id);
-            if (picture != null) {
-              picture=BitmapHelper.createCircularClip(picture,avatarSize,avatarSize);
-            }
+        boolean switchToEnabled=canSwitchUsers || isCurrent;
+        if (info.isEnabled()) {
+          if (info.isGuest()) {
+            guestRecord=new UserRecord(info,null,true,isCurrent,false,false,canSwitchUsers);
           }
-          int index=isCurrent ? 0 : records.size();
-          records.add(index,new UserRecord(info,picture,false,isCurrent,false,false));
+ else           if (info.supportsSwitchToByUser()) {
+            Bitmap picture=bitmaps.get(info.id);
+            if (picture == null) {
+              picture=mUserManager.getUserIcon(info.id);
+              if (picture != null) {
+                int avatarSize=mContext.getResources().getDimensionPixelSize(R.dimen.max_avatar_size);
+                picture=Bitmap.createScaledBitmap(picture,avatarSize,avatarSize,true);
+              }
+            }
+            int index=isCurrent ? 0 : records.size();
+            records.add(index,new UserRecord(info,picture,false,isCurrent,false,false,switchToEnabled));
+          }
         }
       }
-      boolean ownerCanCreateUsers=!mUserManager.hasUserRestriction(UserManager.DISALLOW_ADD_USER,UserHandle.OWNER);
-      boolean currentUserCanCreateUsers=(currentId == UserHandle.USER_OWNER) && ownerCanCreateUsers;
-      boolean anyoneCanCreateUsers=ownerCanCreateUsers && addUsersWhenLocked;
+      boolean systemCanCreateUsers=!mUserManager.hasBaseUserRestriction(UserManager.DISALLOW_ADD_USER,UserHandle.SYSTEM);
+      boolean currentUserCanCreateUsers=currentUserInfo != null && (currentUserInfo.isAdmin() || currentUserInfo.id == UserHandle.USER_SYSTEM) && systemCanCreateUsers;
+      boolean anyoneCanCreateUsers=systemCanCreateUsers && addUsersWhenLocked;
       boolean canCreateGuest=(currentUserCanCreateUsers || anyoneCanCreateUsers) && guestRecord == null;
       boolean canCreateUser=(currentUserCanCreateUsers || anyoneCanCreateUsers) && mUserManager.canAddMoreUsers();
       boolean createIsRestricted=!addUsersWhenLocked;
       if (!mSimpleUserSwitcher) {
         if (guestRecord == null) {
           if (canCreateGuest) {
-            records.add(new UserRecord(null,null,true,false,false,createIsRestricted));
+            guestRecord=new UserRecord(null,null,true,false,false,createIsRestricted,canSwitchUsers);
+            checkIfAddUserDisallowedByAdminOnly(guestRecord);
+            records.add(guestRecord);
           }
         }
  else {
@@ -63,7 +74,9 @@
         }
       }
       if (!mSimpleUserSwitcher && canCreateUser) {
-        records.add(new UserRecord(null,null,false,false,true,createIsRestricted));
+        UserRecord addUserRecord=new UserRecord(null,null,false,false,true,createIsRestricted,canSwitchUsers);
+        checkIfAddUserDisallowedByAdminOnly(addUserRecord);
+        records.add(addUserRecord);
       }
       return records;
     }

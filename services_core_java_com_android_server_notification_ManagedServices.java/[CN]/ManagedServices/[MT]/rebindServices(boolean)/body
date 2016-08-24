@@ -1,0 +1,60 @@
+{
+  if (DEBUG)   Slog.d(TAG,"rebindServices");
+  final int[] userIds=mUserProfiles.getCurrentProfileIds();
+  final int nUserIds=userIds.length;
+  final SparseArray<ArraySet<ComponentName>> componentsByUser=new SparseArray<>();
+  for (int i=0; i < nUserIds; ++i) {
+    componentsByUser.put(userIds[i],loadComponentNamesFromSetting(mConfig.secureSettingName,userIds[i]));
+    if (mConfig.secondarySettingName != null) {
+      componentsByUser.get(userIds[i]).addAll(loadComponentNamesFromSetting(mConfig.secondarySettingName,userIds[i]));
+    }
+  }
+  final ArrayList<ManagedServiceInfo> removableBoundServices=new ArrayList<>();
+  final SparseArray<Set<ComponentName>> toAdd=new SparseArray<>();
+synchronized (mMutex) {
+    for (    ManagedServiceInfo service : mServices) {
+      if (!service.isSystem && !service.isGuest(this)) {
+        removableBoundServices.add(service);
+      }
+    }
+    mEnabledServicesForCurrentProfiles.clear();
+    mEnabledServicesPackageNames.clear();
+    for (int i=0; i < nUserIds; ++i) {
+      final ArraySet<ComponentName> userComponents=componentsByUser.get(userIds[i]);
+      if (null == userComponents) {
+        toAdd.put(userIds[i],new ArraySet<ComponentName>());
+        continue;
+      }
+      final Set<ComponentName> add=new HashSet<>(userComponents);
+      add.removeAll(mSnoozingForCurrentProfiles);
+      toAdd.put(userIds[i],add);
+      mEnabledServicesForCurrentProfiles.addAll(userComponents);
+      for (int j=0; j < userComponents.size(); j++) {
+        final ComponentName component=userComponents.valueAt(j);
+        mEnabledServicesPackageNames.add(component.getPackageName());
+      }
+    }
+  }
+  for (  ManagedServiceInfo info : removableBoundServices) {
+    final ComponentName component=info.component;
+    final int oldUser=info.userid;
+    final Set<ComponentName> allowedComponents=toAdd.get(info.userid);
+    if (allowedComponents != null) {
+      if (allowedComponents.contains(component) && !forceRebind) {
+        allowedComponents.remove(component);
+      }
+ else {
+        Slog.v(TAG,"disabling " + getCaption() + " for user "+ oldUser+ ": "+ component);
+        unregisterService(component,oldUser);
+      }
+    }
+  }
+  for (int i=0; i < nUserIds; ++i) {
+    final Set<ComponentName> add=toAdd.get(userIds[i]);
+    for (    ComponentName component : add) {
+      Slog.v(TAG,"enabling " + getCaption() + " for "+ userIds[i]+ ": "+ component);
+      registerService(component,userIds[i]);
+    }
+  }
+  mLastSeenProfileIds=userIds;
+}

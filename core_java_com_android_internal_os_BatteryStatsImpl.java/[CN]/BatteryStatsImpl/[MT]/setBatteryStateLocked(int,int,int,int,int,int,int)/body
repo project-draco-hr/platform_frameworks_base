@@ -1,0 +1,139 @@
+{
+  final boolean onBattery=plugType == BATTERY_PLUGGED_NONE;
+  final long uptime=mClocks.uptimeMillis();
+  final long elapsedRealtime=mClocks.elapsedRealtime();
+  if (!mHaveBatteryLevel) {
+    mHaveBatteryLevel=true;
+    if (onBattery == mOnBattery) {
+      if (onBattery) {
+        mHistoryCur.states&=~HistoryItem.STATE_BATTERY_PLUGGED_FLAG;
+      }
+ else {
+        mHistoryCur.states|=HistoryItem.STATE_BATTERY_PLUGGED_FLAG;
+      }
+    }
+    mHistoryCur.states2|=HistoryItem.STATE2_CHARGING_FLAG;
+    mHistoryCur.batteryStatus=(byte)status;
+    mHistoryCur.batteryLevel=(byte)level;
+    mHistoryCur.batteryChargeUAh=chargeUAh;
+    mMaxChargeStepLevel=mMinDischargeStepLevel=mLastChargeStepLevel=mLastDischargeStepLevel=level;
+    mLastChargingStateLevel=level;
+  }
+ else   if (mCurrentBatteryLevel != level || mOnBattery != onBattery) {
+    recordDailyStatsIfNeededLocked(level >= 100 && onBattery);
+  }
+  int oldStatus=mHistoryCur.batteryStatus;
+  if (onBattery) {
+    mDischargeCurrentLevel=level;
+    if (!mRecordingHistory) {
+      mRecordingHistory=true;
+      startRecordingHistory(elapsedRealtime,uptime,true);
+    }
+  }
+ else   if (level < 96) {
+    if (!mRecordingHistory) {
+      mRecordingHistory=true;
+      startRecordingHistory(elapsedRealtime,uptime,true);
+    }
+  }
+  mCurrentBatteryLevel=level;
+  if (mDischargePlugLevel < 0) {
+    mDischargePlugLevel=level;
+  }
+  if (onBattery != mOnBattery) {
+    mHistoryCur.batteryLevel=(byte)level;
+    mHistoryCur.batteryStatus=(byte)status;
+    mHistoryCur.batteryHealth=(byte)health;
+    mHistoryCur.batteryPlugType=(byte)plugType;
+    mHistoryCur.batteryTemperature=(short)temp;
+    mHistoryCur.batteryVoltage=(char)volt;
+    if (chargeUAh < mHistoryCur.batteryChargeUAh) {
+      final long chargeDiff=mHistoryCur.batteryChargeUAh - chargeUAh;
+      mDischargeCounter.addCountLocked(chargeDiff);
+      mDischargeScreenOffCounter.addCountLocked(chargeDiff);
+    }
+    mHistoryCur.batteryChargeUAh=chargeUAh;
+    setOnBatteryLocked(elapsedRealtime,uptime,onBattery,oldStatus,level,chargeUAh);
+  }
+ else {
+    boolean changed=false;
+    if (mHistoryCur.batteryLevel != level) {
+      mHistoryCur.batteryLevel=(byte)level;
+      changed=true;
+      scheduleSyncExternalStatsLocked("battery-level",ExternalStatsSync.UPDATE_ALL);
+    }
+    if (mHistoryCur.batteryStatus != status) {
+      mHistoryCur.batteryStatus=(byte)status;
+      changed=true;
+    }
+    if (mHistoryCur.batteryHealth != health) {
+      mHistoryCur.batteryHealth=(byte)health;
+      changed=true;
+    }
+    if (mHistoryCur.batteryPlugType != plugType) {
+      mHistoryCur.batteryPlugType=(byte)plugType;
+      changed=true;
+    }
+    if (temp >= (mHistoryCur.batteryTemperature + 10) || temp <= (mHistoryCur.batteryTemperature - 10)) {
+      mHistoryCur.batteryTemperature=(short)temp;
+      changed=true;
+    }
+    if (volt > (mHistoryCur.batteryVoltage + 20) || volt < (mHistoryCur.batteryVoltage - 20)) {
+      mHistoryCur.batteryVoltage=(char)volt;
+      changed=true;
+    }
+    if (chargeUAh >= (mHistoryCur.batteryChargeUAh + 10) || chargeUAh <= (mHistoryCur.batteryChargeUAh - 10)) {
+      if (chargeUAh < mHistoryCur.batteryChargeUAh) {
+        final long chargeDiff=mHistoryCur.batteryChargeUAh - chargeUAh;
+        mDischargeCounter.addCountLocked(chargeDiff);
+        mDischargeScreenOffCounter.addCountLocked(chargeDiff);
+      }
+      mHistoryCur.batteryChargeUAh=chargeUAh;
+      changed=true;
+    }
+    long modeBits=(((long)mInitStepMode) << STEP_LEVEL_INITIAL_MODE_SHIFT) | (((long)mModStepMode) << STEP_LEVEL_MODIFIED_MODE_SHIFT) | (((long)(level & 0xff)) << STEP_LEVEL_LEVEL_SHIFT);
+    if (onBattery) {
+      changed|=setChargingLocked(false);
+      if (mLastDischargeStepLevel != level && mMinDischargeStepLevel > level) {
+        mDischargeStepTracker.addLevelSteps(mLastDischargeStepLevel - level,modeBits,elapsedRealtime);
+        mDailyDischargeStepTracker.addLevelSteps(mLastDischargeStepLevel - level,modeBits,elapsedRealtime);
+        mLastDischargeStepLevel=level;
+        mMinDischargeStepLevel=level;
+        mInitStepMode=mCurStepMode;
+        mModStepMode=0;
+      }
+    }
+ else {
+      if (level >= 90) {
+        changed|=setChargingLocked(true);
+        mLastChargeStepLevel=level;
+      }
+      if (!mCharging) {
+        if (mLastChargeStepLevel < level) {
+          changed|=setChargingLocked(true);
+          mLastChargeStepLevel=level;
+        }
+      }
+ else {
+        if (mLastChargeStepLevel > level) {
+          changed|=setChargingLocked(false);
+          mLastChargeStepLevel=level;
+        }
+      }
+      if (mLastChargeStepLevel != level && mMaxChargeStepLevel < level) {
+        mChargeStepTracker.addLevelSteps(level - mLastChargeStepLevel,modeBits,elapsedRealtime);
+        mDailyChargeStepTracker.addLevelSteps(level - mLastChargeStepLevel,modeBits,elapsedRealtime);
+        mLastChargeStepLevel=level;
+        mMaxChargeStepLevel=level;
+        mInitStepMode=mCurStepMode;
+        mModStepMode=0;
+      }
+    }
+    if (changed) {
+      addHistoryRecordLocked(elapsedRealtime,uptime);
+    }
+  }
+  if (!onBattery && status == BatteryManager.BATTERY_STATUS_FULL) {
+    mRecordingHistory=DEBUG;
+  }
+}

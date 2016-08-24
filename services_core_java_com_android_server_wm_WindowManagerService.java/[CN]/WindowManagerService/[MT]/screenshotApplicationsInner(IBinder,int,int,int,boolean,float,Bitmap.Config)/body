@@ -1,0 +1,173 @@
+{
+  final DisplayContent displayContent;
+synchronized (mWindowMap) {
+    displayContent=getDisplayContentLocked(displayId);
+    if (displayContent == null) {
+      if (DEBUG_SCREENSHOT)       Slog.i(TAG_WM,"Screenshot of " + appToken + ": returning null. No Display for displayId="+ displayId);
+      return null;
+    }
+  }
+  final DisplayInfo displayInfo=displayContent.getDisplayInfo();
+  int dw=displayInfo.logicalWidth;
+  int dh=displayInfo.logicalHeight;
+  if (dw == 0 || dh == 0) {
+    if (DEBUG_SCREENSHOT)     Slog.i(TAG_WM,"Screenshot of " + appToken + ": returning null. logical widthxheight="+ dw+ "x"+ dh);
+    return null;
+  }
+  Bitmap bm=null;
+  int maxLayer=0;
+  final Rect frame=new Rect();
+  final Rect stackBounds=new Rect();
+  boolean screenshotReady;
+  int minLayer;
+  if (appToken == null) {
+    screenshotReady=true;
+    minLayer=0;
+  }
+ else {
+    screenshotReady=false;
+    minLayer=Integer.MAX_VALUE;
+  }
+  WindowState appWin=null;
+  boolean includeImeInScreenshot;
+synchronized (mWindowMap) {
+    final AppWindowToken imeTargetAppToken=mInputMethodTarget != null ? mInputMethodTarget.mAppToken : null;
+    includeImeInScreenshot=imeTargetAppToken != null && imeTargetAppToken.appToken != null && imeTargetAppToken.appToken.asBinder() == appToken && !mInputMethodTarget.isInMultiWindowMode();
+  }
+  final int aboveAppLayer=(mPolicy.windowTypeToLayerLw(TYPE_APPLICATION) + 1) * TYPE_LAYER_MULTIPLIER + TYPE_LAYER_OFFSET;
+synchronized (mWindowMap) {
+    appWin=null;
+    final WindowList windows=displayContent.getWindowList();
+    for (int i=windows.size() - 1; i >= 0; i--) {
+      WindowState ws=windows.get(i);
+      if (!ws.mHasSurface) {
+        continue;
+      }
+      if (ws.mLayer >= aboveAppLayer) {
+        continue;
+      }
+      if (ws.mIsImWindow) {
+        if (!includeImeInScreenshot) {
+          continue;
+        }
+      }
+ else       if (ws.mIsWallpaper) {
+        if (appWin == null) {
+          continue;
+        }
+      }
+ else       if (appToken != null) {
+        if (ws.mAppToken == null || ws.mAppToken.token != appToken) {
+          continue;
+        }
+        appWin=ws;
+      }
+      final WindowStateAnimator winAnim=ws.mWinAnimator;
+      int layer=winAnim.mSurfaceController.getLayer();
+      if (maxLayer < layer) {
+        maxLayer=layer;
+      }
+      if (minLayer > layer) {
+        minLayer=layer;
+      }
+      if (!includeFullDisplay && !ws.mIsWallpaper) {
+        final Rect wf=ws.mFrame;
+        final Rect cr=ws.mContentInsets;
+        int left=wf.left + cr.left;
+        int top=wf.top + cr.top;
+        int right=wf.right - cr.right;
+        int bottom=wf.bottom - cr.bottom;
+        frame.union(left,top,right,bottom);
+        ws.getVisibleBounds(stackBounds);
+        if (!Rect.intersects(frame,stackBounds)) {
+          frame.setEmpty();
+        }
+      }
+      if (ws.mAppToken != null && ws.mAppToken.token == appToken && ws.isDisplayedLw() && winAnim.getShown()) {
+        screenshotReady=true;
+      }
+      if (ws.isObscuringFullscreen(displayInfo)) {
+        break;
+      }
+    }
+    if (appToken != null && appWin == null) {
+      if (DEBUG_SCREENSHOT)       Slog.i(TAG_WM,"Screenshot: Couldn't find a surface matching " + appToken);
+      return null;
+    }
+    if (!screenshotReady) {
+      Slog.i(TAG_WM,"Failed to capture screenshot of " + appToken + " appWin="+ (appWin == null ? "null" : (appWin + " drawState=" + appWin.mWinAnimator.mDrawState)));
+      return null;
+    }
+    if (maxLayer == 0) {
+      if (DEBUG_SCREENSHOT)       Slog.i(TAG_WM,"Screenshot of " + appToken + ": returning null maxLayer="+ maxLayer);
+      return null;
+    }
+    if (!includeFullDisplay) {
+      if (!frame.intersect(0,0,dw,dh)) {
+        frame.setEmpty();
+      }
+    }
+ else {
+      frame.set(0,0,dw,dh);
+    }
+    if (frame.isEmpty()) {
+      return null;
+    }
+    if (width < 0) {
+      width=(int)(frame.width() * frameScale);
+    }
+    if (height < 0) {
+      height=(int)(frame.height() * frameScale);
+    }
+    Rect crop=new Rect(frame);
+    if (width / (float)frame.width() < height / (float)frame.height()) {
+      int cropWidth=(int)((float)width / (float)height * frame.height());
+      crop.right=crop.left + cropWidth;
+    }
+ else {
+      int cropHeight=(int)((float)height / (float)width * frame.width());
+      crop.bottom=crop.top + cropHeight;
+    }
+    int rot=getDefaultDisplayContentLocked().getDisplay().getRotation();
+    if (rot == Surface.ROTATION_90 || rot == Surface.ROTATION_270) {
+      rot=(rot == Surface.ROTATION_90) ? Surface.ROTATION_270 : Surface.ROTATION_90;
+    }
+    convertCropForSurfaceFlinger(crop,rot,dw,dh);
+    if (DEBUG_SCREENSHOT) {
+      Slog.i(TAG_WM,"Screenshot: " + dw + "x"+ dh+ " from "+ minLayer+ " to "+ maxLayer+ " appToken="+ appToken);
+      for (int i=0; i < windows.size(); i++) {
+        WindowState win=windows.get(i);
+        WindowSurfaceController controller=win.mWinAnimator.mSurfaceController;
+        Slog.i(TAG_WM,win + ": " + win.mLayer+ " animLayer="+ win.mWinAnimator.mAnimLayer+ " surfaceLayer="+ ((controller == null) ? "null" : controller.getLayer()));
+      }
+    }
+    ScreenRotationAnimation screenRotationAnimation=mAnimator.getScreenRotationAnimationLocked(Display.DEFAULT_DISPLAY);
+    final boolean inRotation=screenRotationAnimation != null && screenRotationAnimation.isAnimating();
+    if (DEBUG_SCREENSHOT && inRotation)     Slog.v(TAG_WM,"Taking screenshot while rotating");
+    SurfaceControl.openTransaction();
+    SurfaceControl.closeTransactionSync();
+    bm=SurfaceControl.screenshot(crop,width,height,minLayer,maxLayer,inRotation,rot);
+    if (bm == null) {
+      Slog.w(TAG_WM,"Screenshot failure taking screenshot for (" + dw + "x"+ dh+ ") to layer "+ maxLayer);
+      return null;
+    }
+  }
+  if (DEBUG_SCREENSHOT) {
+    int[] buffer=new int[bm.getWidth() * bm.getHeight()];
+    bm.getPixels(buffer,0,bm.getWidth(),0,0,bm.getWidth(),bm.getHeight());
+    boolean allBlack=true;
+    final int firstColor=buffer[0];
+    for (int i=0; i < buffer.length; i++) {
+      if (buffer[i] != firstColor) {
+        allBlack=false;
+        break;
+      }
+    }
+    if (allBlack) {
+      Slog.i(TAG_WM,"Screenshot " + appWin + " was monochrome("+ Integer.toHexString(firstColor)+ ")! mSurfaceLayer="+ (appWin != null ? appWin.mWinAnimator.mSurfaceController.getLayer() : "null")+ " minLayer="+ minLayer+ " maxLayer="+ maxLayer);
+    }
+  }
+  Bitmap ret=bm.createAshmemBitmap(config);
+  bm.recycle();
+  return ret;
+}

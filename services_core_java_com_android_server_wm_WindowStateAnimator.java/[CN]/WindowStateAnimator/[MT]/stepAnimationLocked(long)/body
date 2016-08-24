@@ -1,21 +1,22 @@
 {
+  mWasAnimating=mAnimating;
   final DisplayContent displayContent=mWin.getDisplayContent();
   if (displayContent != null && mService.okToDisplay()) {
     if (mWin.isDrawnLw() && mAnimation != null) {
       mHasTransformation=true;
       mHasLocalTransformation=true;
       if (!mLocalAnimating) {
-        if (DEBUG_ANIM)         Slog.v(TAG,"Starting animation in " + this + " @ "+ currentTime+ ": ww="+ mWin.mFrame.width()+ " wh="+ mWin.mFrame.height()+ " dw="+ mAnimDw+ " dh="+ mAnimDh+ " scale="+ mService.getWindowAnimationScaleLocked());
+        if (DEBUG_ANIM)         Slog.v(TAG,"Starting animation in " + this + " @ "+ currentTime+ ": ww="+ mWin.mFrame.width()+ " wh="+ mWin.mFrame.height()+ " dx="+ mAnimDx+ " dy="+ mAnimDy+ " scale="+ mService.getWindowAnimationScaleLocked());
         final DisplayInfo displayInfo=displayContent.getDisplayInfo();
         if (mAnimateMove) {
           mAnimateMove=false;
-          mAnimation.initialize(mWin.mFrame.width(),mWin.mFrame.height(),mAnimDw,mAnimDh);
+          mAnimation.initialize(mWin.mFrame.width(),mWin.mFrame.height(),mAnimDx,mAnimDy);
         }
  else {
           mAnimation.initialize(mWin.mFrame.width(),mWin.mFrame.height(),displayInfo.appWidth,displayInfo.appHeight);
         }
-        mAnimDw=displayInfo.appWidth;
-        mAnimDh=displayInfo.appHeight;
+        mAnimDx=displayInfo.appWidth;
+        mAnimDy=displayInfo.appHeight;
         mAnimation.setStartTime(mAnimationStartTime != -1 ? mAnimationStartTime : currentTime);
         mLocalAnimating=true;
         mAnimating=true;
@@ -38,7 +39,7 @@
  else     if (mHasTransformation) {
       mAnimating=true;
     }
- else     if (isAnimating()) {
+ else     if (isAnimationSet()) {
       mAnimating=true;
     }
   }
@@ -48,10 +49,10 @@
   if (!mAnimating && !mLocalAnimating) {
     return false;
   }
-  if (DEBUG_ANIM)   Slog.v(TAG,"Animation done in " + this + ": exiting="+ mWin.mExiting+ ", reportedVisible="+ (mWin.mAppToken != null ? mWin.mAppToken.reportedVisible : false));
+  if (DEBUG_ANIM)   Slog.v(TAG,"Animation done in " + this + ": exiting="+ mWin.mAnimatingExit+ ", reportedVisible="+ (mWin.mAppToken != null ? mWin.mAppToken.reportedVisible : false));
   mAnimating=false;
   mKeyguardGoingAwayAnimation=false;
-  mAnimatingMove=false;
+  mKeyguardGoingAwayWithWallpaper=false;
   mLocalAnimating=false;
   if (mAnimation != null) {
     mAnimation.cancel();
@@ -60,32 +61,12 @@
   if (mAnimator.mWindowDetachedWallpaper == mWin) {
     mAnimator.mWindowDetachedWallpaper=null;
   }
-  mAnimLayer=mWin.mLayer;
-  if (mWin.mIsImWindow) {
-    mAnimLayer+=mService.mInputMethodAnimLayerAdjustment;
-  }
- else   if (mIsWallpaper) {
-    mAnimLayer+=mService.mWallpaperAnimLayerAdjustment;
-  }
+  mAnimLayer=mWin.mLayer + mService.mLayersController.getSpecialWindowAnimLayerAdjustment(mWin);
   if (DEBUG_LAYERS)   Slog.v(TAG,"Stepping win " + this + " anim layer: "+ mAnimLayer);
   mHasTransformation=false;
   mHasLocalTransformation=false;
-  if (mWin.mPolicyVisibility != mWin.mPolicyVisibilityAfterAnim) {
-    if (DEBUG_VISIBILITY) {
-      Slog.v(TAG,"Policy visibility changing after anim in " + this + ": "+ mWin.mPolicyVisibilityAfterAnim);
-    }
-    mWin.mPolicyVisibility=mWin.mPolicyVisibilityAfterAnim;
-    if (displayContent != null) {
-      displayContent.layoutNeeded=true;
-    }
-    if (!mWin.mPolicyVisibility) {
-      if (mService.mCurrentFocus == mWin) {
-        if (WindowManagerService.DEBUG_FOCUS_LIGHT)         Slog.i(TAG,"setAnimationLocked: setting mFocusMayChange true");
-        mService.mFocusMayChange=true;
-      }
-      mService.enableScreenIfNeededLocked();
-    }
-  }
+  mStackClip=STACK_CLIP_BEFORE_ANIM;
+  mWin.checkPolicyVisibilityChange();
   mTransformation.clear();
   if (mDrawState == HAS_DRAWN && mWin.mAttrs.type == WindowManager.LayoutParams.TYPE_APPLICATION_STARTING && mWin.mAppToken != null && mWin.mAppToken.firstWindowDrawn && mWin.mAppToken.startingData != null) {
     if (DEBUG_STARTING_WINDOW)     Slog.v(TAG,"Finish starting " + mWin.mToken + ": first real window done animating");
@@ -100,7 +81,7 @@
   finishExit();
   final int displayId=mWin.getDisplayId();
   mAnimator.setPendingLayoutChanges(displayId,WindowManagerPolicy.FINISH_LAYOUT_REDO_ANIM);
-  if (WindowManagerService.DEBUG_LAYOUT_REPEATS)   mService.debugLayoutRepeats("WindowStateAnimator",mAnimator.getPendingLayoutChanges(displayId));
+  if (DEBUG_LAYOUT_REPEATS)   mService.mWindowPlacerLocked.debugLayoutRepeats("WindowStateAnimator",mAnimator.getPendingLayoutChanges(displayId));
   if (mWin.mAppToken != null) {
     mWin.mAppToken.updateReportedVisibilityLocked();
   }

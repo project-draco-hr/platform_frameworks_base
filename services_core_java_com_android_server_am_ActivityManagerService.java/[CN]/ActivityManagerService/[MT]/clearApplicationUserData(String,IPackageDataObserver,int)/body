@@ -1,18 +1,18 @@
 {
   enforceNotIsolatedCaller("clearApplicationUserData");
-  if (packageName != null && packageName.equals(mDeviceOwnerName)) {
-    throw new SecurityException("Clearing DeviceOwner data is forbidden.");
-  }
   int uid=Binder.getCallingUid();
   int pid=Binder.getCallingPid();
-  userId=handleIncomingUser(pid,uid,userId,false,ALLOW_FULL_ONLY,"clearApplicationUserData",null);
+  userId=mUserController.handleIncomingUser(pid,uid,userId,false,ALLOW_FULL_ONLY,"clearApplicationUserData",null);
   long callingId=Binder.clearCallingIdentity();
   try {
     IPackageManager pm=AppGlobals.getPackageManager();
     int pkgUid=-1;
 synchronized (this) {
+      if (getPackageManagerInternalLocked().canPackageBeWiped(userId,packageName)) {
+        throw new SecurityException("Cannot clear data for a device owner or a profile owner");
+      }
       try {
-        pkgUid=pm.getPackageUid(packageName,userId);
+        pkgUid=pm.getPackageUid(packageName,MATCH_UNINSTALLED_PACKAGES,userId);
       }
  catch (      RemoteException e) {
       }
@@ -39,17 +39,34 @@ synchronized (this) {
         final String taskPackageName=tr.getBaseIntent().getComponent().getPackageName();
         if (tr.userId != userId)         continue;
         if (!taskPackageName.equals(packageName))         continue;
-        removeTaskByIdLocked(tr.taskId,false);
+        removeTaskByIdLocked(tr.taskId,false,REMOVE_FROM_RECENTS);
       }
     }
+    final int pkgUidF=pkgUid;
+    final int userIdF=userId;
+    final IPackageDataObserver localObserver=new IPackageDataObserver.Stub(){
+      @Override public void onRemoveCompleted(      String packageName,      boolean succeeded) throws RemoteException {
+synchronized (ActivityManagerService.this) {
+          finishForceStopPackageLocked(packageName,pkgUidF);
+        }
+        final Intent intent=new Intent(Intent.ACTION_PACKAGE_DATA_CLEARED,Uri.fromParts("package",packageName,null));
+        intent.putExtra(Intent.EXTRA_UID,pkgUidF);
+        intent.putExtra(Intent.EXTRA_USER_HANDLE,UserHandle.getUserId(pkgUidF));
+        broadcastIntentInPackage("android",Process.SYSTEM_UID,intent,null,null,0,null,null,null,null,false,false,userIdF);
+        if (observer != null) {
+          observer.onRemoveCompleted(packageName,succeeded);
+        }
+      }
+    }
+;
     try {
-      pm.clearApplicationUserData(packageName,observer,userId);
+      pm.clearApplicationUserData(packageName,localObserver,userId);
 synchronized (this) {
         removeUriPermissionsForPackageLocked(packageName,userId,true);
       }
-      Intent intent=new Intent(Intent.ACTION_PACKAGE_DATA_CLEARED,Uri.fromParts("package",packageName,null));
-      intent.putExtra(Intent.EXTRA_UID,pkgUid);
-      broadcastIntentInPackage("android",Process.SYSTEM_UID,intent,null,null,0,null,null,null,null,false,false,userId);
+      INotificationManager inm=NotificationManager.getService();
+      inm.removeAutomaticZenRules(packageName);
+      inm.setNotificationPolicyAccessGranted(packageName,false);
     }
  catch (    RemoteException e) {
     }

@@ -1,0 +1,85 @@
+{
+  CancellationSignal canceller=new CancellationSignal();
+  AssetFileDescriptor srcFileAsAsset=null;
+  ParcelFileDescriptor srcFile=null;
+  ParcelFileDescriptor dstFile=null;
+  InputStream in=null;
+  ParcelFileDescriptor.AutoCloseOutputStream out=null;
+  boolean success=false;
+  try {
+    if (src.isVirtualDocument()) {
+      try {
+        srcFileAsAsset=getClient(src).openTypedAssetFileDescriptor(src.derivedUri,mimeType,null,canceller);
+      }
+ catch (      FileNotFoundException|RemoteException|RuntimeException e) {
+        throw new ResourceException("Failed to open a file as asset for %s due to an " + "exception.",src.derivedUri,e);
+      }
+      srcFile=srcFileAsAsset.getParcelFileDescriptor();
+      try {
+        in=new AssetFileDescriptor.AutoCloseInputStream(srcFileAsAsset);
+      }
+ catch (      IOException e) {
+        throw new ResourceException("Failed to open a file input stream for %s due " + "an exception.",src.derivedUri,e);
+      }
+    }
+ else {
+      try {
+        srcFile=getClient(src).openFile(src.derivedUri,"r",canceller);
+      }
+ catch (      FileNotFoundException|RemoteException|RuntimeException e) {
+        throw new ResourceException("Failed to open a file for %s due to an exception.",src.derivedUri,e);
+      }
+      in=new ParcelFileDescriptor.AutoCloseInputStream(srcFile);
+    }
+    try {
+      dstFile=getClient(dest).openFile(dest.derivedUri,"w",canceller);
+    }
+ catch (    FileNotFoundException|RemoteException|RuntimeException e) {
+      throw new ResourceException("Failed to open the destination file %s for writing " + "due to an exception.",dest.derivedUri,e);
+    }
+    out=new ParcelFileDescriptor.AutoCloseOutputStream(dstFile);
+    byte[] buffer=new byte[32 * 1024];
+    int len;
+    try {
+      while ((len=in.read(buffer)) != -1) {
+        if (isCanceled()) {
+          if (DEBUG)           Log.d(TAG,"Canceled copy mid-copy of: " + src.derivedUri);
+          return;
+        }
+        out.write(buffer,0,len);
+        makeCopyProgress(len);
+      }
+      IoUtils.close(dstFile.getFileDescriptor());
+      srcFile.checkError();
+    }
+ catch (    IOException e) {
+      throw new ResourceException("Failed to copy bytes from %s to %s due to an IO exception.",src.derivedUri,dest.derivedUri,e);
+    }
+    if (src.isVirtualDocument()) {
+      convertedFiles.add(src);
+    }
+    success=true;
+  }
+  finally {
+    if (!success) {
+      if (dstFile != null) {
+        try {
+          dstFile.closeWithError("Error copying bytes.");
+        }
+ catch (        IOException closeError) {
+          Log.w(TAG,"Error closing destination.",closeError);
+        }
+      }
+      if (DEBUG)       Log.d(TAG,"Cleaning up failed operation leftovers.");
+      canceller.cancel();
+      try {
+        deleteDocument(dest,destParent);
+      }
+ catch (      ResourceException e) {
+        Log.w(TAG,"Failed to cleanup after copy error: " + src.derivedUri,e);
+      }
+    }
+    IoUtils.closeQuietly(in);
+    IoUtils.closeQuietly(out);
+  }
+}

@@ -1,0 +1,44 @@
+{
+  if ((operation == null && directReceiver == null) || (operation != null && directReceiver != null)) {
+    Slog.w(TAG,"Alarms must either supply a PendingIntent or an AlarmReceiver");
+    return;
+  }
+  if (windowLength > AlarmManager.INTERVAL_HALF_DAY) {
+    Slog.w(TAG,"Window length " + windowLength + "ms suspiciously long; limiting to 1 hour");
+    windowLength=AlarmManager.INTERVAL_HOUR;
+  }
+  final long minInterval=mConstants.MIN_INTERVAL;
+  if (interval > 0 && interval < minInterval) {
+    Slog.w(TAG,"Suspiciously short interval " + interval + " millis; expanding to "+ (minInterval / 1000)+ " seconds");
+    interval=minInterval;
+  }
+  if (type < RTC_WAKEUP || type > ELAPSED_REALTIME) {
+    throw new IllegalArgumentException("Invalid alarm type " + type);
+  }
+  if (triggerAtTime < 0) {
+    final long what=Binder.getCallingPid();
+    Slog.w(TAG,"Invalid alarm trigger time! " + triggerAtTime + " from uid="+ callingUid+ " pid="+ what);
+    triggerAtTime=0;
+  }
+  final long nowElapsed=SystemClock.elapsedRealtime();
+  final long nominalTrigger=convertToElapsed(triggerAtTime,type);
+  final long minTrigger=nowElapsed + mConstants.MIN_FUTURITY;
+  final long triggerElapsed=(nominalTrigger > minTrigger) ? nominalTrigger : minTrigger;
+  final long maxElapsed;
+  if (windowLength == AlarmManager.WINDOW_EXACT) {
+    maxElapsed=triggerElapsed;
+  }
+ else   if (windowLength < 0) {
+    maxElapsed=maxTriggerTime(nowElapsed,triggerElapsed,interval);
+    windowLength=maxElapsed - triggerElapsed;
+  }
+ else {
+    maxElapsed=triggerElapsed + windowLength;
+  }
+synchronized (mLock) {
+    if (DEBUG_BATCH) {
+      Slog.v(TAG,"set(" + operation + ") : type="+ type+ " triggerAtTime="+ triggerAtTime+ " win="+ windowLength+ " tElapsed="+ triggerElapsed+ " maxElapsed="+ maxElapsed+ " interval="+ interval+ " flags=0x"+ Integer.toHexString(flags));
+    }
+    setImplLocked(type,triggerAtTime,triggerElapsed,windowLength,maxElapsed,interval,operation,directReceiver,listenerTag,flags,true,workSource,alarmClock,callingUid,callingPackage);
+  }
+}

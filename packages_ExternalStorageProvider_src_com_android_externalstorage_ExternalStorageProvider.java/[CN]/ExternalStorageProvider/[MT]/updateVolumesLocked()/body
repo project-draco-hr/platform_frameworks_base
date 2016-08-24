@@ -1,5 +1,6 @@
 {
   mRoots.clear();
+  VolumeInfo primaryVolume=null;
   final int userId=UserHandle.myUserId();
   final List<VolumeInfo> volumes=mStorageManager.getVolumes();
   for (  VolumeInfo volume : volumes) {
@@ -7,9 +8,11 @@
     final String rootId;
     final String title;
     if (volume.getType() == VolumeInfo.TYPE_EMULATED) {
+      if (DEBUG)       Log.d(TAG,"Found primary volume: " + volume);
       rootId=ROOT_ID_PRIMARY_EMULATED;
       if (VolumeInfo.ID_EMULATED_INTERNAL.equals(volume.getId())) {
-        title=getContext().getString(R.string.root_internal_storage);
+        String deviceName=Settings.Global.getString(getContext().getContentResolver(),Settings.Global.DEVICE_NAME);
+        title=!TextUtils.isEmpty(deviceName) ? deviceName : getContext().getString(R.string.root_internal_storage);
       }
  else {
         final VolumeInfo privateVol=mStorageManager.findPrivateForEmulated(volume);
@@ -31,22 +34,56 @@
       Log.w(TAG,"Duplicate UUID " + rootId + " for "+ volume.getId()+ "; skipping");
       continue;
     }
-    try {
-      final RootInfo root=new RootInfo();
-      mRoots.put(rootId,root);
-      root.rootId=rootId;
-      root.flags=Root.FLAG_SUPPORTS_CREATE | Root.FLAG_LOCAL_ONLY | Root.FLAG_ADVANCED| Root.FLAG_SUPPORTS_SEARCH| Root.FLAG_SUPPORTS_IS_CHILD;
-      root.title=title;
-      if (volume.getType() == VolumeInfo.TYPE_PUBLIC) {
-        root.flags|=Root.FLAG_HAS_SETTINGS;
-      }
-      if (volume.isVisibleForRead(userId)) {
-        root.visiblePath=volume.getPathForUser(userId);
-      }
+    final RootInfo root=new RootInfo();
+    mRoots.put(rootId,root);
+    root.rootId=rootId;
+    root.flags=Root.FLAG_LOCAL_ONLY | Root.FLAG_SUPPORTS_SEARCH | Root.FLAG_SUPPORTS_IS_CHILD;
+    final DiskInfo disk=volume.getDisk();
+    if (DEBUG)     Log.d(TAG,"Disk for root " + rootId + " is "+ disk);
+    if (disk != null && disk.isSd()) {
+      root.flags|=Root.FLAG_REMOVABLE_SD;
+    }
+ else     if (disk != null && disk.isUsb()) {
+      root.flags|=Root.FLAG_REMOVABLE_USB;
+    }
+    if (volume.isPrimary()) {
+      primaryVolume=volume;
+      root.flags|=Root.FLAG_ADVANCED;
+    }
+    if (volume.isMountedWritable()) {
+      root.flags|=Root.FLAG_SUPPORTS_CREATE;
+    }
+    root.title=title;
+    if (volume.getType() == VolumeInfo.TYPE_PUBLIC) {
+      root.flags|=Root.FLAG_HAS_SETTINGS;
+    }
+    if (volume.isVisibleForRead(userId)) {
+      root.visiblePath=volume.getPathForUser(userId);
+    }
  else {
-        root.visiblePath=null;
-      }
-      root.path=volume.getInternalPathForUser(userId);
+      root.visiblePath=null;
+    }
+    root.path=volume.getInternalPathForUser(userId);
+    try {
+      root.docId=getDocIdForFile(root.path);
+    }
+ catch (    FileNotFoundException e) {
+      throw new IllegalStateException(e);
+    }
+  }
+  if (primaryVolume != null && primaryVolume.isVisible()) {
+    final RootInfo root=new RootInfo();
+    root.rootId=ROOT_ID_HOME;
+    mRoots.put(root.rootId,root);
+    root.title=getContext().getString(R.string.root_documents);
+    root.reportAvailableBytes=false;
+    root.flags=Root.FLAG_LOCAL_ONLY | Root.FLAG_SUPPORTS_SEARCH | Root.FLAG_SUPPORTS_IS_CHILD;
+    if (primaryVolume.isMountedWritable()) {
+      root.flags|=Root.FLAG_SUPPORTS_CREATE;
+    }
+    root.visiblePath=new File(primaryVolume.getPathForUser(userId),Environment.DIRECTORY_DOCUMENTS);
+    root.path=new File(primaryVolume.getInternalPathForUser(userId),Environment.DIRECTORY_DOCUMENTS);
+    try {
       root.docId=getDocIdForFile(root.path);
     }
  catch (    FileNotFoundException e) {

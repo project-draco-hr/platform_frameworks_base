@@ -1,0 +1,39 @@
+{
+  AccountAndUser[] oldAccounts=mRunningAccounts;
+  mRunningAccounts=AccountManagerService.getSingleton().getRunningAccounts();
+  if (Log.isLoggable(TAG,Log.VERBOSE)) {
+    Slog.v(TAG,"Accounts list: ");
+    for (    AccountAndUser acc : mRunningAccounts) {
+      Slog.v(TAG,acc.toString());
+    }
+  }
+  if (mBootCompleted) {
+    doDatabaseCleanup();
+  }
+  AccountAndUser[] accounts=mRunningAccounts;
+  for (  ActiveSyncContext currentSyncContext : mActiveSyncContexts) {
+    if (!containsAccountAndUser(accounts,currentSyncContext.mSyncOperation.target.account,currentSyncContext.mSyncOperation.target.userId)) {
+      Log.d(TAG,"canceling sync since the account is no longer running");
+      sendSyncFinishedOrCanceledMessage(currentSyncContext,null);
+    }
+  }
+  for (  AccountAndUser aau : mRunningAccounts) {
+    if (!containsAccountAndUser(oldAccounts,aau.account,aau.userId)) {
+      if (Log.isLoggable(TAG,Log.DEBUG)) {
+        Log.d(TAG,"Account " + aau.account + " added, checking sync restore data");
+      }
+      AccountSyncSettingsBackupHelper.accountAdded(mContext);
+      break;
+    }
+  }
+  AccountAndUser[] allAccounts=AccountManagerService.getSingleton().getAllAccounts();
+  List<SyncOperation> ops=getAllPendingSyncs();
+  for (  SyncOperation op : ops) {
+    if (!containsAccountAndUser(allAccounts,op.target.account,op.target.userId)) {
+      getJobScheduler().cancel(op.jobId);
+    }
+  }
+  if (syncTargets != null) {
+    scheduleSync(syncTargets.account,syncTargets.userId,SyncOperation.REASON_ACCOUNTS_UPDATED,syncTargets.provider,null,0,0,true);
+  }
+}

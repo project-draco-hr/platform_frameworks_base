@@ -1,0 +1,189 @@
+{
+  int err=ActivityManager.START_SUCCESS;
+  ProcessRecord callerApp=null;
+  if (caller != null) {
+    callerApp=mService.getRecordForAppLocked(caller);
+    if (callerApp != null) {
+      callingPid=callerApp.pid;
+      callingUid=callerApp.info.uid;
+    }
+ else {
+      Slog.w(TAG,"Unable to find app for caller " + caller + " (pid="+ callingPid+ ") when starting: "+ intent.toString());
+      err=ActivityManager.START_PERMISSION_DENIED;
+    }
+  }
+  final int userId=aInfo != null ? UserHandle.getUserId(aInfo.applicationInfo.uid) : 0;
+  if (err == ActivityManager.START_SUCCESS) {
+    Slog.i(TAG,"START u" + userId + " {"+ intent.toShortString(true,true,true,false)+ "} from uid "+ callingUid+ " on display "+ (container == null ? (mSupervisor.mFocusedStack == null ? Display.DEFAULT_DISPLAY : mSupervisor.mFocusedStack.mDisplayId) : (container.mActivityDisplay == null ? Display.DEFAULT_DISPLAY : container.mActivityDisplay.mDisplayId)));
+  }
+  ActivityRecord sourceRecord=null;
+  ActivityRecord resultRecord=null;
+  if (resultTo != null) {
+    sourceRecord=mSupervisor.isInAnyStackLocked(resultTo);
+    if (DEBUG_RESULTS)     Slog.v(TAG_RESULTS,"Will send result to " + resultTo + " "+ sourceRecord);
+    if (sourceRecord != null) {
+      if (requestCode >= 0 && !sourceRecord.finishing) {
+        resultRecord=sourceRecord;
+      }
+    }
+  }
+  final int launchFlags=intent.getFlags();
+  if ((launchFlags & Intent.FLAG_ACTIVITY_FORWARD_RESULT) != 0 && sourceRecord != null) {
+    if (requestCode >= 0) {
+      ActivityOptions.abort(options);
+      return ActivityManager.START_FORWARD_AND_REQUEST_CONFLICT;
+    }
+    resultRecord=sourceRecord.resultTo;
+    if (resultRecord != null && !resultRecord.isInStackLocked()) {
+      resultRecord=null;
+    }
+    resultWho=sourceRecord.resultWho;
+    requestCode=sourceRecord.requestCode;
+    sourceRecord.resultTo=null;
+    if (resultRecord != null) {
+      resultRecord.removeResultsLocked(sourceRecord,resultWho,requestCode);
+    }
+    if (sourceRecord.launchedFromUid == callingUid) {
+      callingPackage=sourceRecord.launchedFromPackage;
+    }
+  }
+  if (err == ActivityManager.START_SUCCESS && intent.getComponent() == null) {
+    err=ActivityManager.START_INTENT_NOT_RESOLVED;
+  }
+  if (err == ActivityManager.START_SUCCESS && aInfo == null) {
+    err=ActivityManager.START_CLASS_NOT_FOUND;
+  }
+  if (err == ActivityManager.START_SUCCESS && sourceRecord != null && sourceRecord.task.voiceSession != null) {
+    if ((launchFlags & FLAG_ACTIVITY_NEW_TASK) == 0 && sourceRecord.info.applicationInfo.uid != aInfo.applicationInfo.uid) {
+      try {
+        intent.addCategory(Intent.CATEGORY_VOICE);
+        if (!AppGlobals.getPackageManager().activitySupportsIntent(intent.getComponent(),intent,resolvedType)) {
+          Slog.w(TAG,"Activity being started in current voice task does not support voice: " + intent);
+          err=ActivityManager.START_NOT_VOICE_COMPATIBLE;
+        }
+      }
+ catch (      RemoteException e) {
+        Slog.w(TAG,"Failure checking voice capabilities",e);
+        err=ActivityManager.START_NOT_VOICE_COMPATIBLE;
+      }
+    }
+  }
+  if (err == ActivityManager.START_SUCCESS && voiceSession != null) {
+    try {
+      if (!AppGlobals.getPackageManager().activitySupportsIntent(intent.getComponent(),intent,resolvedType)) {
+        Slog.w(TAG,"Activity being started in new voice task does not support: " + intent);
+        err=ActivityManager.START_NOT_VOICE_COMPATIBLE;
+      }
+    }
+ catch (    RemoteException e) {
+      Slog.w(TAG,"Failure checking voice capabilities",e);
+      err=ActivityManager.START_NOT_VOICE_COMPATIBLE;
+    }
+  }
+  final ActivityStack resultStack=resultRecord == null ? null : resultRecord.task.stack;
+  if (err != START_SUCCESS) {
+    if (resultRecord != null) {
+      resultStack.sendActivityResultLocked(-1,resultRecord,resultWho,requestCode,RESULT_CANCELED,null);
+    }
+    ActivityOptions.abort(options);
+    return err;
+  }
+  boolean abort=!mSupervisor.checkStartAnyActivityPermission(intent,aInfo,resultWho,requestCode,callingPid,callingUid,callingPackage,ignoreTargetSecurity,callerApp,resultRecord,resultStack,options);
+  abort|=!mService.mIntentFirewall.checkStartActivity(intent,callingUid,callingPid,resolvedType,aInfo.applicationInfo);
+  if (mService.mController != null) {
+    try {
+      Intent watchIntent=intent.cloneFilter();
+      abort|=!mService.mController.activityStarting(watchIntent,aInfo.applicationInfo.packageName);
+    }
+ catch (    RemoteException e) {
+      mService.mController=null;
+    }
+  }
+  mInterceptor.setStates(userId,realCallingPid,realCallingUid,startFlags,callingPackage);
+  mInterceptor.intercept(intent,rInfo,aInfo,resolvedType,inTask,callingPid,callingUid,options);
+  intent=mInterceptor.mIntent;
+  rInfo=mInterceptor.mRInfo;
+  aInfo=mInterceptor.mAInfo;
+  resolvedType=mInterceptor.mResolvedType;
+  inTask=mInterceptor.mInTask;
+  callingPid=mInterceptor.mCallingPid;
+  callingUid=mInterceptor.mCallingUid;
+  options=mInterceptor.mActivityOptions;
+  if (abort) {
+    if (resultRecord != null) {
+      resultStack.sendActivityResultLocked(-1,resultRecord,resultWho,requestCode,RESULT_CANCELED,null);
+    }
+    ActivityOptions.abort(options);
+    return START_SUCCESS;
+  }
+  if (Build.PERMISSIONS_REVIEW_REQUIRED && aInfo != null) {
+    if (mService.getPackageManagerInternalLocked().isPermissionsReviewRequired(aInfo.packageName,userId)) {
+      IIntentSender target=mService.getIntentSenderLocked(ActivityManager.INTENT_SENDER_ACTIVITY,callingPackage,callingUid,userId,null,null,0,new Intent[]{intent},new String[]{resolvedType},PendingIntent.FLAG_CANCEL_CURRENT | PendingIntent.FLAG_ONE_SHOT,null);
+      final int flags=intent.getFlags();
+      Intent newIntent=new Intent(Intent.ACTION_REVIEW_PERMISSIONS);
+      newIntent.setFlags(flags | Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS);
+      newIntent.putExtra(Intent.EXTRA_PACKAGE_NAME,aInfo.packageName);
+      newIntent.putExtra(Intent.EXTRA_INTENT,new IntentSender(target));
+      if (resultRecord != null) {
+        newIntent.putExtra(Intent.EXTRA_RESULT_NEEDED,true);
+      }
+      intent=newIntent;
+      resolvedType=null;
+      callingUid=realCallingUid;
+      callingPid=realCallingPid;
+      rInfo=mSupervisor.resolveIntent(intent,resolvedType,userId);
+      aInfo=mSupervisor.resolveActivity(intent,rInfo,startFlags,null);
+      if (DEBUG_PERMISSIONS_REVIEW) {
+        Slog.i(TAG,"START u" + userId + " {"+ intent.toShortString(true,true,true,false)+ "} from uid "+ callingUid+ " on display "+ (container == null ? (mSupervisor.mFocusedStack == null ? Display.DEFAULT_DISPLAY : mSupervisor.mFocusedStack.mDisplayId) : (container.mActivityDisplay == null ? Display.DEFAULT_DISPLAY : container.mActivityDisplay.mDisplayId)));
+      }
+    }
+  }
+  if (rInfo != null && rInfo.ephemeralResolveInfo != null) {
+    final IIntentSender failureTarget=mService.getIntentSenderLocked(ActivityManager.INTENT_SENDER_ACTIVITY,callingPackage,Binder.getCallingUid(),userId,null,null,0,new Intent[]{intent},new String[]{resolvedType},PendingIntent.FLAG_CANCEL_CURRENT | PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_IMMUTABLE,null);
+    ephemeralIntent.setPackage(rInfo.ephemeralResolveInfo.getPackageName());
+    final IIntentSender ephemeralTarget=mService.getIntentSenderLocked(ActivityManager.INTENT_SENDER_ACTIVITY,callingPackage,Binder.getCallingUid(),userId,null,null,0,new Intent[]{ephemeralIntent},new String[]{resolvedType},PendingIntent.FLAG_CANCEL_CURRENT | PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_IMMUTABLE,null);
+    int flags=intent.getFlags();
+    intent=new Intent();
+    intent.setFlags(flags | Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS);
+    intent.putExtra(Intent.EXTRA_PACKAGE_NAME,rInfo.ephemeralResolveInfo.getPackageName());
+    intent.putExtra(Intent.EXTRA_EPHEMERAL_FAILURE,new IntentSender(failureTarget));
+    intent.putExtra(Intent.EXTRA_EPHEMERAL_SUCCESS,new IntentSender(ephemeralTarget));
+    resolvedType=null;
+    callingUid=realCallingUid;
+    callingPid=realCallingPid;
+    rInfo=rInfo.ephemeralInstaller;
+    aInfo=mSupervisor.resolveActivity(intent,rInfo,startFlags,null);
+  }
+  ActivityRecord r=new ActivityRecord(mService,callerApp,callingUid,callingPackage,intent,resolvedType,aInfo,mService.mConfiguration,resultRecord,resultWho,requestCode,componentSpecified,voiceSession != null,mSupervisor,container,options,sourceRecord);
+  if (outActivity != null) {
+    outActivity[0]=r;
+  }
+  if (r.appTimeTracker == null && sourceRecord != null) {
+    r.appTimeTracker=sourceRecord.appTimeTracker;
+  }
+  final ActivityStack stack=mSupervisor.mFocusedStack;
+  if (voiceSession == null && (stack.mResumedActivity == null || stack.mResumedActivity.info.applicationInfo.uid != callingUid)) {
+    if (!mService.checkAppSwitchAllowedLocked(callingPid,callingUid,realCallingPid,realCallingUid,"Activity start")) {
+      PendingActivityLaunch pal=new PendingActivityLaunch(r,sourceRecord,startFlags,stack,callerApp);
+      mPendingActivityLaunches.add(pal);
+      ActivityOptions.abort(options);
+      return ActivityManager.START_SWITCHES_CANCELED;
+    }
+  }
+  if (mService.mDidAppSwitch) {
+    mService.mAppSwitchesAllowedTime=0;
+  }
+ else {
+    mService.mDidAppSwitch=true;
+  }
+  doPendingActivityLaunchesLocked(false);
+  try {
+    mService.mWindowManager.deferSurfaceLayout();
+    err=startActivityUnchecked(r,sourceRecord,voiceSession,voiceInteractor,startFlags,true,options,inTask);
+  }
+  finally {
+    mService.mWindowManager.continueSurfaceLayout();
+  }
+  postStartActivityUncheckedProcessing(r,err,stack.mStackId,mSourceRecord,mTargetStack);
+  return err;
+}

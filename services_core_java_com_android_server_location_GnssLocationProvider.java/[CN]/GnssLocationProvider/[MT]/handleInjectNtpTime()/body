@@ -1,0 +1,48 @@
+{
+  if (mInjectNtpTimePending == STATE_DOWNLOADING) {
+    return;
+  }
+  if (!isDataNetworkConnected()) {
+    mInjectNtpTimePending=STATE_PENDING_NETWORK;
+    return;
+  }
+  mInjectNtpTimePending=STATE_DOWNLOADING;
+  mWakeLock.acquire();
+  Log.i(TAG,"WakeLock acquired by handleInjectNtpTime()");
+  AsyncTask.THREAD_POOL_EXECUTOR.execute(new Runnable(){
+    @Override public void run(){
+      long delay;
+      boolean refreshSuccess=true;
+      if (mNtpTime.getCacheAge() >= NTP_INTERVAL) {
+        refreshSuccess=mNtpTime.forceRefresh();
+      }
+      if (mNtpTime.getCacheAge() < NTP_INTERVAL) {
+        long time=mNtpTime.getCachedNtpTime();
+        long timeReference=mNtpTime.getCachedNtpTimeReference();
+        long certainty=mNtpTime.getCacheCertainty();
+        long now=System.currentTimeMillis();
+        if (DEBUG) {
+          Log.d(TAG,"NTP server returned: " + time + " ("+ new Date(time)+ ") reference: "+ timeReference+ " certainty: "+ certainty+ " system time offset: "+ (time - now));
+        }
+        native_inject_time(time,timeReference,(int)certainty);
+        delay=NTP_INTERVAL;
+        mNtpBackOff.reset();
+      }
+ else {
+        Log.e(TAG,"requestTime failed");
+        delay=mNtpBackOff.nextBackoffMillis();
+      }
+      sendMessage(INJECT_NTP_TIME_FINISHED,0,null);
+      if (DEBUG) {
+        String message=String.format("onDemandTimeInjection=%s, refreshSuccess=%s, delay=%s",mOnDemandTimeInjection,refreshSuccess,delay);
+        Log.d(TAG,message);
+      }
+      if (mOnDemandTimeInjection || !refreshSuccess) {
+        mHandler.sendEmptyMessageDelayed(INJECT_NTP_TIME,delay);
+      }
+      mWakeLock.release();
+      Log.i(TAG,"WakeLock released by handleInjectNtpTime()");
+    }
+  }
+);
+}

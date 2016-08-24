@@ -1,0 +1,45 @@
+{
+  for (  String id : mCameraIds) {
+    try {
+      Log.i(TAG,"Testing constrained high speed recording for camera " + id);
+      mMediaRecorder=new MediaRecorder();
+      openDevice(id);
+      if (!mStaticInfo.isConstrainedHighSpeedVideoSupported()) {
+        Log.i(TAG,"Camera " + id + " doesn't support high speed recording, skipping.");
+        continue;
+      }
+      for (int iteration=0; iteration < getIterationCount(); ++iteration) {
+        Log.v(TAG,String.format("Constrained high speed recording: %d/%d",iteration + 1,getIterationCount()));
+        StreamConfigurationMap config=mStaticInfo.getValueFromKeyNonNull(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
+        Size[] highSpeedVideoSizes=config.getHighSpeedVideoSizes();
+        for (        Size size : highSpeedVideoSizes) {
+          List<Range<Integer>> fixedFpsRanges=getHighSpeedFixedFpsRangeForSize(config,size);
+          mCollector.expectTrue("Unable to find the fixed frame rate fps range for " + "size " + size,fixedFpsRanges.size() > 0);
+          for (          Range<Integer> fpsRange : fixedFpsRanges) {
+            int captureRate=fpsRange.getLower();
+            final int VIDEO_FRAME_RATE=30;
+            if (fpsRange.getUpper() > getFpsFromHighSpeedProfileForSize(size)) {
+              Log.w(TAG,"high speed recording " + size + "@"+ captureRate+ "fps"+ " is not supported by CamcorderProfile");
+              continue;
+            }
+            mOutMediaFileName=VIDEO_FILE_PATH + "/test_cslowMo_video_" + captureRate+ "fps_"+ id+ "_"+ size.toString()+ ".mp4";
+            prepareRecording(size,VIDEO_FRAME_RATE,captureRate);
+            updatePreviewSurfaceWithVideo(size,captureRate);
+            SimpleCaptureCallback resultListener=new SimpleCaptureCallback();
+            startSlowMotionRecording(true,VIDEO_FRAME_RATE,captureRate,fpsRange,resultListener,true);
+            SystemClock.sleep(RECORDING_DURATION_MS);
+            stopRecording(true);
+            int durationMs=(int)(resultListener.getTotalNumFrames() * 1000.0f / VIDEO_FRAME_RATE);
+            validateRecording(size,durationMs);
+          }
+          getResultPrinter().printStatus(getIterationCount(),iteration + 1,id);
+          Thread.sleep(getTestWaitIntervalMs());
+        }
+      }
+    }
+  finally {
+      closeDevice();
+      releaseRecorder();
+    }
+  }
+}

@@ -1,0 +1,191 @@
+{
+  if (cmd == null) {
+    return shell.handleDefaultCommands(cmd);
+  }
+  PrintWriter pw=shell.getOutPrintWriter();
+  PrintWriter err=shell.getErrPrintWriter();
+  try {
+switch (cmd) {
+case "set":
+{
+        int res=shell.parseUserPackageOp(true,err);
+        if (res < 0) {
+          return res;
+        }
+        String modeStr=shell.getNextArg();
+        if (modeStr == null) {
+          err.println("Error: Mode not specified.");
+          return -1;
+        }
+        final int mode=shell.strModeToMode(modeStr,err);
+        if (mode < 0) {
+          return -1;
+        }
+        shell.mInterface.setMode(shell.op,shell.packageUid,shell.packageName,mode);
+        return 0;
+      }
+case "get":
+{
+      int res=shell.parseUserPackageOp(false,err);
+      if (res < 0) {
+        return res;
+      }
+      List<AppOpsManager.PackageOps> ops=shell.mInterface.getOpsForPackage(shell.packageUid,shell.packageName,shell.op != AppOpsManager.OP_NONE ? new int[]{shell.op} : null);
+      if (ops == null || ops.size() <= 0) {
+        pw.println("No operations.");
+        return 0;
+      }
+      final long now=System.currentTimeMillis();
+      for (int i=0; i < ops.size(); i++) {
+        List<AppOpsManager.OpEntry> entries=ops.get(i).getOps();
+        for (int j=0; j < entries.size(); j++) {
+          AppOpsManager.OpEntry ent=entries.get(j);
+          pw.print(AppOpsManager.opToName(ent.getOp()));
+          pw.print(": ");
+switch (ent.getMode()) {
+case AppOpsManager.MODE_ALLOWED:
+            pw.print("allow");
+          break;
+case AppOpsManager.MODE_IGNORED:
+        pw.print("ignore");
+      break;
+case AppOpsManager.MODE_ERRORED:
+    pw.print("deny");
+  break;
+case AppOpsManager.MODE_DEFAULT:
+pw.print("default");
+break;
+default :
+pw.print("mode=");
+pw.print(ent.getMode());
+break;
+}
+if (ent.getTime() != 0) {
+pw.print("; time=");
+TimeUtils.formatDuration(now - ent.getTime(),pw);
+pw.print(" ago");
+}
+if (ent.getRejectTime() != 0) {
+pw.print("; rejectTime=");
+TimeUtils.formatDuration(now - ent.getRejectTime(),pw);
+pw.print(" ago");
+}
+if (ent.getDuration() == -1) {
+pw.print(" (running)");
+}
+ else if (ent.getDuration() != 0) {
+pw.print("; duration=");
+TimeUtils.formatDuration(ent.getDuration(),pw);
+}
+pw.println();
+}
+}
+return 0;
+}
+case "query-op":
+{
+int res=shell.parseUserOpMode(AppOpsManager.MODE_IGNORED,err);
+if (res < 0) {
+return res;
+}
+List<AppOpsManager.PackageOps> ops=shell.mInterface.getPackagesForOps(new int[]{shell.op});
+if (ops == null || ops.size() <= 0) {
+pw.println("No operations.");
+return 0;
+}
+for (int i=0; i < ops.size(); i++) {
+final AppOpsManager.PackageOps pkg=ops.get(i);
+boolean hasMatch=false;
+final List<AppOpsManager.OpEntry> entries=ops.get(i).getOps();
+for (int j=0; j < entries.size(); j++) {
+AppOpsManager.OpEntry ent=entries.get(j);
+if (ent.getOp() == shell.op && ent.getMode() == shell.mode) {
+hasMatch=true;
+break;
+}
+}
+if (hasMatch) {
+pw.println(pkg.getPackageName());
+}
+}
+return 0;
+}
+case "reset":
+{
+String packageName=null;
+int userId=UserHandle.USER_CURRENT;
+for (String argument; (argument=shell.getNextArg()) != null; ) {
+if ("--user".equals(argument)) {
+String userStr=shell.getNextArgRequired();
+userId=UserHandle.parseUserArg(userStr);
+}
+ else {
+if (packageName == null) {
+packageName=argument;
+}
+ else {
+err.println("Error: Unsupported argument: " + argument);
+return -1;
+}
+}
+}
+if (userId == UserHandle.USER_CURRENT) {
+userId=ActivityManager.getCurrentUser();
+}
+shell.mInterface.resetAllModes(userId,packageName);
+pw.print("Reset all modes for: ");
+if (userId == UserHandle.USER_ALL) {
+pw.print("all users");
+}
+ else {
+pw.print("user ");
+pw.print(userId);
+}
+pw.print(", ");
+if (packageName == null) {
+pw.println("all packages");
+}
+ else {
+pw.print("package ");
+pw.println(packageName);
+}
+return 0;
+}
+case "write-settings":
+{
+shell.mInternal.mContext.enforcePermission(android.Manifest.permission.UPDATE_APP_OPS_STATS,Binder.getCallingPid(),Binder.getCallingUid(),null);
+long token=Binder.clearCallingIdentity();
+try {
+synchronized (shell.mInternal) {
+shell.mInternal.mHandler.removeCallbacks(shell.mInternal.mWriteRunner);
+}
+shell.mInternal.writeState();
+pw.println("Current settings written.");
+}
+  finally {
+Binder.restoreCallingIdentity(token);
+}
+return 0;
+}
+case "read-settings":
+{
+shell.mInternal.mContext.enforcePermission(android.Manifest.permission.UPDATE_APP_OPS_STATS,Binder.getCallingPid(),Binder.getCallingUid(),null);
+long token=Binder.clearCallingIdentity();
+try {
+shell.mInternal.readState();
+pw.println("Last settings read.");
+}
+  finally {
+Binder.restoreCallingIdentity(token);
+}
+return 0;
+}
+default :
+return shell.handleDefaultCommands(cmd);
+}
+}
+ catch (RemoteException e) {
+pw.println("Remote exception: " + e);
+}
+return -1;
+}

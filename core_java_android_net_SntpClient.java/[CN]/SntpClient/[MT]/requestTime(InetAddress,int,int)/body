@@ -1,0 +1,43 @@
+{
+  DatagramSocket socket=null;
+  try {
+    socket=new DatagramSocket();
+    socket.setSoTimeout(timeout);
+    byte[] buffer=new byte[NTP_PACKET_SIZE];
+    DatagramPacket request=new DatagramPacket(buffer,buffer.length,address,port);
+    buffer[0]=NTP_MODE_CLIENT | (NTP_VERSION << 3);
+    final long requestTime=System.currentTimeMillis();
+    final long requestTicks=SystemClock.elapsedRealtime();
+    writeTimeStamp(buffer,TRANSMIT_TIME_OFFSET,requestTime);
+    socket.send(request);
+    DatagramPacket response=new DatagramPacket(buffer,buffer.length);
+    socket.receive(response);
+    final long responseTicks=SystemClock.elapsedRealtime();
+    final long responseTime=requestTime + (responseTicks - requestTicks);
+    final byte leap=(byte)((buffer[0] >> 6) & 0x3);
+    final byte mode=(byte)(buffer[0] & 0x7);
+    final int stratum=(int)(buffer[1] & 0xff);
+    final long originateTime=readTimeStamp(buffer,ORIGINATE_TIME_OFFSET);
+    final long receiveTime=readTimeStamp(buffer,RECEIVE_TIME_OFFSET);
+    final long transmitTime=readTimeStamp(buffer,TRANSMIT_TIME_OFFSET);
+    checkValidServerReply(leap,mode,stratum,transmitTime);
+    long roundTripTime=responseTicks - requestTicks - (transmitTime - receiveTime);
+    long clockOffset=((receiveTime - originateTime) + (transmitTime - responseTime)) / 2;
+    if (DBG) {
+      Log.d(TAG,"round trip: " + roundTripTime + "ms, "+ "clock offset: "+ clockOffset+ "ms");
+    }
+    mNtpTime=responseTime + clockOffset;
+    mNtpTimeReference=responseTicks;
+    mRoundTripTime=roundTripTime;
+  }
+ catch (  Exception e) {
+    if (DBG)     Log.d(TAG,"request time failed: " + e);
+    return false;
+  }
+ finally {
+    if (socket != null) {
+      socket.close();
+    }
+  }
+  return true;
+}

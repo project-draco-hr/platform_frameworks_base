@@ -5,17 +5,17 @@
     app=getProcessRecordLocked(processName,info.uid,keepIfLarge);
     checkTime(startTime,"startProcess: after getProcessRecord");
     if ((intentFlags & Intent.FLAG_FROM_BACKGROUND) != 0) {
-      if (mBadProcesses.get(info.processName,info.uid) != null) {
+      if (mAppErrors.isBadProcessLocked(info)) {
         if (DEBUG_PROCESSES)         Slog.v(TAG,"Bad process: " + info.uid + "/"+ info.processName);
         return null;
       }
     }
  else {
       if (DEBUG_PROCESSES)       Slog.v(TAG,"Clearing bad process: " + info.uid + "/"+ info.processName);
-      mProcessCrashTimes.remove(info.processName,info.uid);
-      if (mBadProcesses.get(info.processName,info.uid) != null) {
+      mAppErrors.resetProcessCrashTimeLocked(info);
+      if (mAppErrors.isBadProcessLocked(info)) {
         EventLog.writeEvent(EventLogTags.AM_PROC_GOOD,UserHandle.getUserId(info.uid),info.uid,info.processName);
-        mBadProcesses.remove(info.processName,info.uid);
+        mAppErrors.clearBadProcessLocked(info);
         if (app != null) {
           app.bad=false;
         }
@@ -25,16 +25,14 @@
  else {
     app=null;
   }
-synchronized (ActivityManagerService.this) {
-    nativeMigrateToBoost();
-    mIsBoosted=true;
-    mBoostStartTime=SystemClock.uptimeMillis();
-    Message msg=mHandler.obtainMessage(APP_BOOST_DEACTIVATE_MSG);
-    mHandler.sendMessageDelayed(msg,APP_BOOST_MESSAGE_DELAY);
-  }
+  nativeMigrateToBoost();
+  mIsBoosted=true;
+  mBoostStartTime=SystemClock.uptimeMillis();
+  Message msg=mHandler.obtainMessage(APP_BOOST_DEACTIVATE_MSG);
+  mHandler.sendMessageDelayed(msg,APP_BOOST_MESSAGE_DELAY);
   if (DEBUG_PROCESSES)   Slog.v(TAG_PROCESSES,"startProcess: name=" + processName + " app="+ app+ " knownToBeDead="+ knownToBeDead+ " thread="+ (app != null ? app.thread : null)+ " pid="+ (app != null ? app.pid : -1));
   if (app != null && app.pid > 0) {
-    if (!knownToBeDead || app.thread == null) {
+    if ((!knownToBeDead && !app.killed) || app.thread == null) {
       if (DEBUG_PROCESSES)       Slog.v(TAG_PROCESSES,"App already running: " + app);
       app.addPackage(info.packageName,info.versionCode,mProcessStats);
       checkTime(startTime,"startProcess: done, added package to proc");
@@ -42,7 +40,7 @@ synchronized (ActivityManagerService.this) {
     }
     if (DEBUG_PROCESSES || DEBUG_CLEANUP)     Slog.v(TAG_PROCESSES,"App died: " + app);
     checkTime(startTime,"startProcess: bad proc running, killing");
-    killProcessGroup(app.info.uid,app.pid);
+    killProcessGroup(app.uid,app.pid);
     handleAppDiedLocked(app,true,true);
     checkTime(startTime,"startProcess: done killing old proc");
   }

@@ -1,0 +1,89 @@
+{
+  SynchronousResultReceiver wifiReceiver=null;
+  SynchronousResultReceiver bluetoothReceiver=null;
+  SynchronousResultReceiver modemReceiver=null;
+synchronized (mExternalStatsLock) {
+    if (mContext == null) {
+      return;
+    }
+    if ((updateFlags & BatteryStatsImpl.ExternalStatsSync.UPDATE_WIFI) != 0) {
+      if (mWifiManager == null) {
+        mWifiManager=IWifiManager.Stub.asInterface(ServiceManager.getService(Context.WIFI_SERVICE));
+      }
+      if (mWifiManager != null) {
+        try {
+          wifiReceiver=new SynchronousResultReceiver();
+          mWifiManager.requestActivityInfo(wifiReceiver);
+        }
+ catch (        RemoteException e) {
+        }
+      }
+    }
+    if ((updateFlags & BatteryStatsImpl.ExternalStatsSync.UPDATE_BT) != 0) {
+      final BluetoothAdapter adapter=BluetoothAdapter.getDefaultAdapter();
+      if (adapter != null) {
+        bluetoothReceiver=new SynchronousResultReceiver();
+        adapter.requestControllerActivityEnergyInfo(bluetoothReceiver);
+      }
+    }
+    if ((updateFlags & BatteryStatsImpl.ExternalStatsSync.UPDATE_RADIO) != 0) {
+      if (mTelephony == null) {
+        mTelephony=TelephonyManager.from(mContext);
+      }
+      if (mTelephony != null) {
+        modemReceiver=new SynchronousResultReceiver();
+        mTelephony.requestModemActivityInfo(modemReceiver);
+      }
+    }
+    WifiActivityEnergyInfo wifiInfo=null;
+    BluetoothActivityEnergyInfo bluetoothInfo=null;
+    ModemActivityInfo modemInfo=null;
+    try {
+      wifiInfo=awaitControllerInfo(wifiReceiver);
+    }
+ catch (    TimeoutException e) {
+      Slog.w(TAG,"Timeout reading wifi stats");
+    }
+    try {
+      bluetoothInfo=awaitControllerInfo(bluetoothReceiver);
+    }
+ catch (    TimeoutException e) {
+      Slog.w(TAG,"Timeout reading bt stats");
+    }
+    try {
+      modemInfo=awaitControllerInfo(modemReceiver);
+    }
+ catch (    TimeoutException e) {
+      Slog.w(TAG,"Timeout reading modem stats");
+    }
+synchronized (mStats) {
+      mStats.addHistoryEventLocked(SystemClock.elapsedRealtime(),SystemClock.uptimeMillis(),BatteryStats.HistoryItem.EVENT_COLLECT_EXTERNAL_STATS,reason,0);
+      mStats.updateCpuTimeLocked();
+      mStats.updateKernelWakelocksLocked();
+      if (wifiInfo != null) {
+        if (wifiInfo.isValid()) {
+          mStats.updateWifiStateLocked(extractDelta(wifiInfo));
+        }
+ else {
+          Slog.e(TAG,"wifi info is invalid: " + wifiInfo);
+        }
+      }
+      if (bluetoothInfo != null) {
+        if (bluetoothInfo.isValid()) {
+          mStats.updateBluetoothStateLocked(bluetoothInfo);
+        }
+ else {
+          Slog.e(TAG,"bluetooth info is invalid: " + bluetoothInfo);
+        }
+      }
+      if (modemInfo != null) {
+        if (modemInfo.isValid()) {
+          mStats.updateMobileRadioStateLocked(SystemClock.elapsedRealtime(),modemInfo);
+        }
+ else {
+          Slog.e(TAG,"modem info is invalid: " + modemInfo);
+        }
+      }
+    }
+  }
+}

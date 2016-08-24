@@ -3,14 +3,34 @@
   if (pkg.applicationInfo.getCodePath() == null || pkg.applicationInfo.getResourcePath() == null) {
     throw new PackageManagerException(INSTALL_FAILED_INVALID_APK,"Code and resource paths haven't been set correctly");
   }
-  if ((parseFlags & PackageParser.PARSE_IS_SYSTEM) != 0) {
+  if ((policyFlags & PackageParser.PARSE_IS_SYSTEM) != 0) {
     pkg.applicationInfo.flags|=ApplicationInfo.FLAG_SYSTEM;
+    if (pkg.applicationInfo.isDirectBootAware()) {
+      for (      PackageParser.Service s : pkg.services) {
+        s.info.encryptionAware=s.info.directBootAware=true;
+      }
+      for (      PackageParser.Provider p : pkg.providers) {
+        p.info.encryptionAware=p.info.directBootAware=true;
+      }
+      for (      PackageParser.Activity a : pkg.activities) {
+        a.info.encryptionAware=a.info.directBootAware=true;
+      }
+      for (      PackageParser.Activity r : pkg.receivers) {
+        r.info.encryptionAware=r.info.directBootAware=true;
+      }
+    }
   }
  else {
     pkg.coreApp=false;
+    pkg.applicationInfo.privateFlags&=~ApplicationInfo.PRIVATE_FLAG_DEFAULT_TO_DEVICE_PROTECTED_STORAGE;
+    pkg.applicationInfo.privateFlags&=~ApplicationInfo.PRIVATE_FLAG_DIRECT_BOOT_AWARE;
   }
-  if ((parseFlags & PackageParser.PARSE_IS_PRIVILEGED) != 0) {
+  pkg.mTrustedOverlay=(policyFlags & PackageParser.PARSE_TRUSTED_OVERLAY) != 0;
+  if ((policyFlags & PackageParser.PARSE_IS_PRIVILEGED) != 0) {
     pkg.applicationInfo.privateFlags|=ApplicationInfo.PRIVATE_FLAG_PRIVILEGED;
+  }
+  if ((policyFlags & PackageParser.PARSE_ENFORCE_CODE) != 0) {
+    enforceCodePolicy(pkg);
   }
   if (mCustomResolverComponentName != null && mCustomResolverComponentName.getPackageName().equals(pkg.packageName)) {
     setUpCustomResolverActivity(pkg);
@@ -24,46 +44,52 @@ synchronized (mPackages) {
         Slog.w(TAG,"*************************************************");
         throw new PackageManagerException(INSTALL_FAILED_DUPLICATE_PACKAGE,"Core android package being redefined.  Skipping.");
       }
-      mPlatformPackage=pkg;
-      pkg.mVersionCode=mSdkVersion;
-      mAndroidApplication=pkg.applicationInfo;
-      if (!mResolverReplaced) {
-        mResolveActivity.applicationInfo=mAndroidApplication;
-        mResolveActivity.name=ResolverActivity.class.getName();
-        mResolveActivity.packageName=mAndroidApplication.packageName;
-        mResolveActivity.processName="system:ui";
-        mResolveActivity.launchMode=ActivityInfo.LAUNCH_MULTIPLE;
-        mResolveActivity.documentLaunchMode=ActivityInfo.DOCUMENT_LAUNCH_NEVER;
-        mResolveActivity.flags=ActivityInfo.FLAG_EXCLUDE_FROM_RECENTS;
-        mResolveActivity.theme=R.style.Theme_Holo_Dialog_Alert;
-        mResolveActivity.exported=true;
-        mResolveActivity.enabled=true;
-        mResolveInfo.activityInfo=mResolveActivity;
-        mResolveInfo.priority=0;
-        mResolveInfo.preferredOrder=0;
-        mResolveInfo.match=0;
-        mResolveComponentName=new ComponentName(mAndroidApplication.packageName,mResolveActivity.name);
+      if ((scanFlags & SCAN_CHECK_ONLY) == 0) {
+        mPlatformPackage=pkg;
+        pkg.mVersionCode=mSdkVersion;
+        mAndroidApplication=pkg.applicationInfo;
+        if (!mResolverReplaced) {
+          mResolveActivity.applicationInfo=mAndroidApplication;
+          mResolveActivity.name=ResolverActivity.class.getName();
+          mResolveActivity.packageName=mAndroidApplication.packageName;
+          mResolveActivity.processName="system:ui";
+          mResolveActivity.launchMode=ActivityInfo.LAUNCH_MULTIPLE;
+          mResolveActivity.documentLaunchMode=ActivityInfo.DOCUMENT_LAUNCH_NEVER;
+          mResolveActivity.flags=ActivityInfo.FLAG_EXCLUDE_FROM_RECENTS;
+          mResolveActivity.theme=R.style.Theme_Material_Dialog_Alert;
+          mResolveActivity.exported=true;
+          mResolveActivity.enabled=true;
+          mResolveActivity.resizeMode=ActivityInfo.RESIZE_MODE_RESIZEABLE;
+          mResolveActivity.configChanges=ActivityInfo.CONFIG_SCREEN_SIZE | ActivityInfo.CONFIG_SMALLEST_SCREEN_SIZE | ActivityInfo.CONFIG_SCREEN_LAYOUT| ActivityInfo.CONFIG_ORIENTATION| ActivityInfo.CONFIG_KEYBOARD| ActivityInfo.CONFIG_KEYBOARD_HIDDEN;
+          mResolveInfo.activityInfo=mResolveActivity;
+          mResolveInfo.priority=0;
+          mResolveInfo.preferredOrder=0;
+          mResolveInfo.match=0;
+          mResolveComponentName=new ComponentName(mAndroidApplication.packageName,mResolveActivity.name);
+        }
       }
     }
   }
   if (DEBUG_PACKAGE_SCANNING) {
-    if ((parseFlags & PackageParser.PARSE_CHATTY) != 0)     Log.d(TAG,"Scanning package " + pkg.packageName);
+    if ((policyFlags & PackageParser.PARSE_CHATTY) != 0)     Log.d(TAG,"Scanning package " + pkg.packageName);
   }
-  if (mPackages.containsKey(pkg.packageName) || mSharedLibraries.containsKey(pkg.packageName)) {
-    throw new PackageManagerException(INSTALL_FAILED_DUPLICATE_PACKAGE,"Application package " + pkg.packageName + " already installed.  Skipping duplicate.");
-  }
-  if ((scanFlags & SCAN_REQUIRE_KNOWN) != 0) {
-    if (mExpectingBetter.containsKey(pkg.packageName)) {
-      logCriticalInfo(Log.WARN,"Relax SCAN_REQUIRE_KNOWN requirement for package " + pkg.packageName);
+synchronized (mPackages) {
+    if (mPackages.containsKey(pkg.packageName) || mSharedLibraries.containsKey(pkg.packageName)) {
+      throw new PackageManagerException(INSTALL_FAILED_DUPLICATE_PACKAGE,"Application package " + pkg.packageName + " already installed.  Skipping duplicate.");
     }
+    if ((scanFlags & SCAN_REQUIRE_KNOWN) != 0) {
+      if (mExpectingBetter.containsKey(pkg.packageName)) {
+        logCriticalInfo(Log.WARN,"Relax SCAN_REQUIRE_KNOWN requirement for package " + pkg.packageName);
+      }
  else {
-      PackageSetting known=mSettings.peekPackageLPr(pkg.packageName);
-      if (known != null) {
-        if (DEBUG_PACKAGE_SCANNING) {
-          Log.d(TAG,"Examining " + pkg.codePath + " and requiring known paths "+ known.codePathString+ " & "+ known.resourcePathString);
-        }
-        if (!pkg.applicationInfo.getCodePath().equals(known.codePathString) || !pkg.applicationInfo.getResourcePath().equals(known.resourcePathString)) {
-          throw new PackageManagerException(INSTALL_FAILED_PACKAGE_CHANGED,"Application package " + pkg.packageName + " found at "+ pkg.applicationInfo.getCodePath()+ " but expected at "+ known.codePathString+ "; ignoring.");
+        PackageSetting known=mSettings.peekPackageLPr(pkg.packageName);
+        if (known != null) {
+          if (DEBUG_PACKAGE_SCANNING) {
+            Log.d(TAG,"Examining " + pkg.codePath + " and requiring known paths "+ known.codePathString+ " & "+ known.resourcePathString);
+          }
+          if (!pkg.applicationInfo.getCodePath().equals(known.codePathString) || !pkg.applicationInfo.getResourcePath().equals(known.resourcePathString)) {
+            throw new PackageManagerException(INSTALL_FAILED_PACKAGE_CHANGED,"Application package " + pkg.packageName + " found at "+ pkg.applicationInfo.getCodePath()+ " but expected at "+ known.codePathString+ "; ignoring.");
+          }
         }
       }
     }
@@ -77,6 +103,7 @@ synchronized (mPackages) {
     pkg.mRealPackage=null;
     pkg.mAdoptPermissions=null;
   }
+  PackageSetting nonMutatedPs=null;
 synchronized (mPackages) {
     if (pkg.mSharedUserId != null) {
       suid=mSettings.getSharedUserLPw(pkg.mSharedUserId,0,0,true);
@@ -84,7 +111,7 @@ synchronized (mPackages) {
         throw new PackageManagerException(INSTALL_FAILED_INSUFFICIENT_STORAGE,"Creating application package " + pkg.packageName + " for shared user failed");
       }
       if (DEBUG_PACKAGE_SCANNING) {
-        if ((parseFlags & PackageParser.PARSE_CHATTY) != 0)         Log.d(TAG,"Shared UserID " + pkg.mSharedUserId + " (uid="+ suid.userId+ "): packages="+ suid.packages);
+        if ((policyFlags & PackageParser.PARSE_CHATTY) != 0)         Log.d(TAG,"Shared UserID " + pkg.mSharedUserId + " (uid="+ suid.userId+ "): packages="+ suid.packages);
       }
     }
     PackageSetting origPackage=null;
@@ -122,6 +149,12 @@ synchronized (mPackages) {
     if (mTransferedPackages.contains(pkg.packageName)) {
       Slog.w(TAG,"Package " + pkg.packageName + " was transferred to another, but its .apk remains");
     }
+    if ((scanFlags & SCAN_CHECK_ONLY) != 0) {
+      PackageSetting foundPs=mSettings.peekPackageLPr(pkg.packageName);
+      if (foundPs != null) {
+        nonMutatedPs=new PackageSetting(foundPs);
+      }
+    }
     pkgSetting=mSettings.getPackageLPw(pkg,origPackage,realName,suid,destCodeFile,destResourceFile,pkg.applicationInfo.nativeLibraryRootDir,pkg.applicationInfo.primaryCpuAbi,pkg.applicationInfo.secondaryCpuAbi,pkg.applicationInfo.flags,pkg.applicationInfo.privateFlags,user,false);
     if (pkgSetting == null) {
       throw new PackageManagerException(INSTALL_FAILED_INSUFFICIENT_STORAGE,"Creating application package " + pkg.packageName + " failed");
@@ -130,16 +163,18 @@ synchronized (mPackages) {
       pkg.setPackageName(origPackage.name);
       String msg="New package " + pkgSetting.realName + " renamed to replace old package "+ pkgSetting.name;
       reportSettingsProblem(Log.WARN,msg);
-      mTransferedPackages.add(origPackage.name);
+      if ((scanFlags & SCAN_CHECK_ONLY) == 0) {
+        mTransferedPackages.add(origPackage.name);
+      }
       pkgSetting.origPackage=null;
     }
-    if (realName != null) {
+    if ((scanFlags & SCAN_CHECK_ONLY) == 0 && realName != null) {
       mTransferedPackages.add(pkg.packageName);
     }
     if (mSettings.isDisabledSystemPackageLPr(pkg.packageName)) {
       pkg.applicationInfo.flags|=ApplicationInfo.FLAG_UPDATED_SYSTEM_APP;
     }
-    if ((parseFlags & PackageParser.PARSE_IS_SYSTEM_DIR) == 0) {
+    if ((policyFlags & PackageParser.PARSE_IS_SYSTEM_DIR) == 0) {
       updateSharedLibrariesLPw(pkg,null);
     }
     if (mFoundPolicyFile) {
@@ -152,7 +187,7 @@ synchronized (mPackages) {
         pkgSetting.signatures.mSignatures=pkg.mSignatures;
       }
  else {
-        if ((parseFlags & PackageParser.PARSE_IS_SYSTEM_DIR) == 0) {
+        if ((policyFlags & PackageParser.PARSE_IS_SYSTEM_DIR) == 0) {
           throw new PackageManagerException(INSTALL_FAILED_UPDATE_INCOMPATIBLE,"Package " + pkg.packageName + " upgrade keys do not match the "+ "previously installed version");
         }
  else {
@@ -168,13 +203,13 @@ synchronized (mPackages) {
         pkgSetting.signatures.mSignatures=pkg.mSignatures;
       }
  catch (      PackageManagerException e) {
-        if ((parseFlags & PackageParser.PARSE_IS_SYSTEM_DIR) == 0) {
+        if ((policyFlags & PackageParser.PARSE_IS_SYSTEM_DIR) == 0) {
           throw e;
         }
         pkgSetting.signatures.mSignatures=pkg.mSignatures;
         if (pkgSetting.sharedUser != null) {
           if (compareSignatures(pkgSetting.sharedUser.signatures.mSignatures,pkg.mSignatures) != PackageManager.SIGNATURE_MATCH) {
-            throw new PackageManagerException(INSTALL_PARSE_FAILED_INCONSISTENT_CERTIFICATES,"Signature mismatch for shared user : " + pkgSetting.sharedUser);
+            throw new PackageManagerException(INSTALL_PARSE_FAILED_INCONSISTENT_CERTIFICATES,"Signature mismatch for shared user: " + pkgSetting.sharedUser);
           }
         }
         String msg="System package " + pkg.packageName + " signature changed; retaining data.";
@@ -198,7 +233,7 @@ synchronized (mPackages) {
         }
       }
     }
-    if (pkg.mAdoptPermissions != null) {
+    if ((scanFlags & SCAN_CHECK_ONLY) == 0 && pkg.mAdoptPermissions != null) {
       for (int i=pkg.mAdoptPermissions.size() - 1; i >= 0; i--) {
         final String origName=pkg.mAdoptPermissions.get(i);
         final PackageSetting orig=mSettings.peekPackageLPr(origName);
@@ -215,92 +250,8 @@ synchronized (mPackages) {
   final long scanFileTime=scanFile.lastModified();
   final boolean forceDex=(scanFlags & SCAN_FORCE_DEX) != 0;
   pkg.applicationInfo.processName=fixProcessName(pkg.applicationInfo.packageName,pkg.applicationInfo.processName,pkg.applicationInfo.uid);
-  File dataPath;
-  if (mPlatformPackage == pkg) {
-    dataPath=new File(Environment.getDataDirectory(),"system");
-    pkg.applicationInfo.dataDir=dataPath.getPath();
-  }
- else {
-    dataPath=Environment.getDataUserPackageDirectory(pkg.volumeUuid,UserHandle.USER_OWNER,pkg.packageName);
-    boolean uidError=false;
-    if (dataPath.exists()) {
-      int currentUid=0;
-      try {
-        StructStat stat=Os.stat(dataPath.getPath());
-        currentUid=stat.st_uid;
-      }
- catch (      ErrnoException e) {
-        Slog.e(TAG,"Couldn't stat path " + dataPath.getPath(),e);
-      }
-      if (currentUid != pkg.applicationInfo.uid) {
-        boolean recovered=false;
-        if (currentUid == 0) {
-          int ret=mInstaller.fixUid(pkg.volumeUuid,pkgName,pkg.applicationInfo.uid,pkg.applicationInfo.uid);
-          if (ret >= 0) {
-            recovered=true;
-            String msg="Package " + pkg.packageName + " unexpectedly changed to uid 0; recovered to "+ +pkg.applicationInfo.uid;
-            reportSettingsProblem(Log.WARN,msg);
-          }
-        }
-        if (!recovered && ((parseFlags & PackageParser.PARSE_IS_SYSTEM) != 0 || (scanFlags & SCAN_BOOTING) != 0)) {
-          int ret=removeDataDirsLI(pkg.volumeUuid,pkgName);
-          if (ret >= 0) {
-            String prefix=(parseFlags & PackageParser.PARSE_IS_SYSTEM) != 0 ? "System package " : "Third party package ";
-            String msg=prefix + pkg.packageName + " has changed from uid: "+ currentUid+ " to "+ pkg.applicationInfo.uid+ "; old data erased";
-            reportSettingsProblem(Log.WARN,msg);
-            recovered=true;
-            ret=createDataDirsLI(pkg.volumeUuid,pkgName,pkg.applicationInfo.uid,pkg.applicationInfo.seinfo);
-            if (ret == -1) {
-              msg=prefix + pkg.packageName + " could not have data directory re-created after delete.";
-              reportSettingsProblem(Log.WARN,msg);
-              throw new PackageManagerException(INSTALL_FAILED_INSUFFICIENT_STORAGE,msg);
-            }
-          }
-          if (!recovered) {
-            mHasSystemUidErrors=true;
-          }
-        }
- else         if (!recovered) {
-          throw new PackageManagerException(INSTALL_FAILED_UID_CHANGED,"scanPackageLI");
-        }
-        if (!recovered) {
-          pkg.applicationInfo.dataDir="/mismatched_uid/settings_" + pkg.applicationInfo.uid + "/fs_"+ currentUid;
-          pkg.applicationInfo.nativeLibraryDir=pkg.applicationInfo.dataDir;
-          pkg.applicationInfo.nativeLibraryRootDir=pkg.applicationInfo.dataDir;
-          String msg="Package " + pkg.packageName + " has mismatched uid: "+ currentUid+ " on disk, "+ pkg.applicationInfo.uid+ " in settings";
-synchronized (mPackages) {
-            mSettings.mReadMessages.append(msg);
-            mSettings.mReadMessages.append('\n');
-            uidError=true;
-            if (!pkgSetting.uidError) {
-              reportSettingsProblem(Log.ERROR,msg);
-            }
-          }
-        }
-      }
-      pkg.applicationInfo.dataDir=dataPath.getPath();
-      if (mShouldRestoreconData) {
-        Slog.i(TAG,"SELinux relabeling of " + pkg.packageName + " issued.");
-        mInstaller.restoreconData(pkg.volumeUuid,pkg.packageName,pkg.applicationInfo.seinfo,pkg.applicationInfo.uid);
-      }
-    }
- else {
-      if (DEBUG_PACKAGE_SCANNING) {
-        if ((parseFlags & PackageParser.PARSE_CHATTY) != 0)         Log.v(TAG,"Want this data dir: " + dataPath);
-      }
-      int ret=createDataDirsLI(pkg.volumeUuid,pkgName,pkg.applicationInfo.uid,pkg.applicationInfo.seinfo);
-      if (ret < 0) {
-        throw new PackageManagerException(INSTALL_FAILED_INSUFFICIENT_STORAGE,"Unable to create data dirs [errorCode=" + ret + "]");
-      }
-      if (dataPath.exists()) {
-        pkg.applicationInfo.dataDir=dataPath.getPath();
-      }
- else {
-        Slog.w(TAG,"Unable to create data directory: " + dataPath);
-        pkg.applicationInfo.dataDir=null;
-      }
-    }
-    pkgSetting.uidError=uidError;
+  if (pkg != mPlatformPackage) {
+    pkg.applicationInfo.initForUser(UserHandle.USER_SYSTEM);
   }
   final String path=scanFile.getPath();
   final String cpuAbiOverride=deriveAbiOverride(pkg.cpuAbiOverride,pkgSetting);
@@ -318,31 +269,12 @@ synchronized (mPackages) {
     }
     setNativeLibraryPaths(pkg);
   }
-  if (DEBUG_INSTALL)   Slog.i(TAG,"Linking native library dir for " + path);
-  final int[] userIds=sUserManager.getUserIds();
-synchronized (mInstallLock) {
-    if (!TextUtils.isEmpty(pkg.volumeUuid)) {
-      for (      int userId : userIds) {
-        if (userId != 0) {
-          mInstaller.createUserData(pkg.volumeUuid,pkg.packageName,UserHandle.getUid(userId,pkg.applicationInfo.uid),userId,pkg.applicationInfo.seinfo);
-        }
-      }
-    }
-    if (pkg.applicationInfo.primaryCpuAbi != null && !VMRuntime.is64BitAbi(pkg.applicationInfo.primaryCpuAbi)) {
-      final String nativeLibPath=pkg.applicationInfo.nativeLibraryDir;
-      for (      int userId : userIds) {
-        if (mInstaller.linkNativeLibraryDirectory(pkg.volumeUuid,pkg.packageName,nativeLibPath,userId) < 0) {
-          throw new PackageManagerException(INSTALL_FAILED_INTERNAL_ERROR,"Failed linking native library dir (user=" + userId + ")");
-        }
-      }
-    }
-  }
   if (mPlatformPackage == pkg) {
     pkg.applicationInfo.primaryCpuAbi=VMRuntime.getRuntime().is64Bit() ? Build.SUPPORTED_64_BIT_ABIS[0] : Build.SUPPORTED_32_BIT_ABIS[0];
   }
   if ((scanFlags & SCAN_NO_DEX) == 0 && (scanFlags & SCAN_NEW_INSTALL) != 0) {
     if (cpuAbiOverride == null && pkgSetting.cpuAbiOverrideString != null) {
-      Slog.w(TAG,"Ignoring persisted ABI override " + cpuAbiOverride + " for package: "+ pkg.packageName);
+      Slog.w(TAG,"Ignoring persisted ABI override " + cpuAbiOverride + " for package "+ pkg.packageName);
     }
   }
   pkgSetting.primaryCpuAbiString=pkg.applicationInfo.primaryCpuAbi;
@@ -357,18 +289,32 @@ synchronized (mInstallLock) {
     Log.d(TAG,"Abis for package[" + pkg.packageName + "] are"+ " primary="+ pkg.applicationInfo.primaryCpuAbi+ " secondary="+ pkg.applicationInfo.secondaryCpuAbi);
   }
   if ((scanFlags & SCAN_BOOTING) == 0 && pkgSetting.sharedUser != null) {
-    adjustCpuAbisForSharedUserLPw(pkgSetting.sharedUser.packages,pkg,forceDex,(scanFlags & SCAN_DEFER_DEX) != 0,true);
-  }
-  if ((scanFlags & SCAN_NO_DEX) == 0) {
-    int result=mPackageDexOptimizer.performDexOpt(pkg,null,forceDex,(scanFlags & SCAN_DEFER_DEX) != 0,false,(scanFlags & SCAN_BOOTING) == 0,false);
-    if (result == PackageDexOptimizer.DEX_OPT_FAILED) {
-      throw new PackageManagerException(INSTALL_FAILED_DEXOPT,"scanPackageLI");
-    }
+    adjustCpuAbisForSharedUserLPw(pkgSetting.sharedUser.packages,pkg,true);
   }
   if (mFactoryTest && pkg.requestedPermissions.contains(android.Manifest.permission.FACTORY_TEST)) {
     pkg.applicationInfo.flags|=ApplicationInfo.FLAG_FACTORY_TEST;
   }
   ArrayList<PackageParser.Package> clientLibPkgs=null;
+  if ((scanFlags & SCAN_CHECK_ONLY) != 0) {
+    if (nonMutatedPs != null) {
+synchronized (mPackages) {
+        mSettings.mPackages.put(nonMutatedPs.name,nonMutatedPs);
+      }
+    }
+    return pkg;
+  }
+  if (pkg.childPackages != null && !pkg.childPackages.isEmpty()) {
+    if ((policyFlags & PARSE_IS_PRIVILEGED) == 0) {
+      throw new PackageManagerException("Only privileged apps and updated " + "privileged apps can add child packages. Ignoring package " + pkg.packageName);
+    }
+    final int childCount=pkg.childPackages.size();
+    for (int i=0; i < childCount; i++) {
+      PackageParser.Package childPkg=pkg.childPackages.get(i);
+      if (mSettings.hasOtherDisabledSystemPkgWithChildLPr(pkg.packageName,childPkg.packageName)) {
+        throw new PackageManagerException("Cannot override a child package of " + "another disabled system app. Ignoring package " + pkg.packageName);
+      }
+    }
+  }
 synchronized (mPackages) {
     if ((pkg.applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) != 0) {
       if (pkg.libraryNames != null) {
@@ -380,7 +326,6 @@ synchronized (mPackages) {
             if (sysPs.pkg != null && sysPs.pkg.libraryNames != null) {
               for (int j=0; j < sysPs.pkg.libraryNames.size(); j++) {
                 if (name.equals(sysPs.pkg.libraryNames.get(j))) {
-                  allowed=true;
                   allowed=true;
                   break;
                 }
@@ -408,19 +353,14 @@ synchronized (mPackages) {
       }
     }
   }
-  if (clientLibPkgs != null) {
-    if ((scanFlags & SCAN_NO_DEX) == 0) {
-      for (int i=0; i < clientLibPkgs.size(); i++) {
-        PackageParser.Package clientPkg=clientLibPkgs.get(i);
-        int result=mPackageDexOptimizer.performDexOpt(clientPkg,null,forceDex,(scanFlags & SCAN_DEFER_DEX) != 0,false,(scanFlags & SCAN_BOOTING) == 0,false);
-        if (result == PackageDexOptimizer.DEX_OPT_FAILED) {
-          throw new PackageManagerException(INSTALL_FAILED_DEXOPT,"scanPackageLI failed to dexopt clientLibPkgs");
-        }
-      }
-    }
+  if ((scanFlags & SCAN_BOOTING) != 0) {
   }
-  if ((scanFlags & SCAN_REPLACING) != 0) {
-    killApplication(pkg.applicationInfo.packageName,pkg.applicationInfo.uid,"replace pkg");
+ else   if ((scanFlags & SCAN_DONT_KILL_APP) != 0) {
+  }
+ else   if ((scanFlags & SCAN_IGNORE_FROZEN) != 0) {
+  }
+ else {
+    checkPackageFrozen(pkgName);
   }
   if (clientLibPkgs != null) {
     for (int i=0; i < clientLibPkgs.size(); i++) {
@@ -430,7 +370,12 @@ synchronized (mPackages) {
   }
   KeySetManagerService ksms=mSettings.mKeySetManagerService;
   ksms.assertScannedPackageValid(pkg);
+  Trace.traceBegin(TRACE_TAG_PACKAGE_MANAGER,"updateSettings");
+  boolean createIdmapFailed=false;
 synchronized (mPackages) {
+    if (pkgSetting.pkg != null) {
+      maybeRenameForeignDexMarkers(pkgSetting.pkg,pkg,(user != null) ? user : UserHandle.ALL);
+    }
     mSettings.insertPackageSettingLPw(pkgSetting,pkg);
     mPackages.put(pkg.applicationInfo.packageName,pkg);
     final Iterator<PackageCleanItem> iter=mSettings.mPackagesToBeCleaned.iterator();
@@ -451,7 +396,7 @@ synchronized (mPackages) {
  else     if (pkgSetting.firstInstallTime == 0) {
       pkgSetting.firstInstallTime=pkgSetting.lastUpdateTime=scanFileTime;
     }
- else     if ((parseFlags & PackageParser.PARSE_IS_SYSTEM_DIR) != 0) {
+ else     if ((policyFlags & PackageParser.PARSE_IS_SYSTEM_DIR) != 0) {
       if (scanFileTime != pkgSetting.timeStamp) {
         pkgSetting.lastUpdateTime=scanFileTime;
       }
@@ -482,7 +427,7 @@ synchronized (mPackages) {
               p.info.authority=p.info.authority + ";" + names[j];
             }
             if (DEBUG_PACKAGE_SCANNING) {
-              if ((parseFlags & PackageParser.PARSE_CHATTY) != 0)               Log.d(TAG,"Registered content provider: " + names[j] + ", className = "+ p.info.name+ ", isSyncable = "+ p.info.isSyncable);
+              if ((policyFlags & PackageParser.PARSE_CHATTY) != 0)               Log.d(TAG,"Registered content provider: " + names[j] + ", className = "+ p.info.name+ ", isSyncable = "+ p.info.isSyncable);
             }
           }
  else {
@@ -491,7 +436,7 @@ synchronized (mPackages) {
           }
         }
       }
-      if ((parseFlags & PackageParser.PARSE_CHATTY) != 0) {
+      if ((policyFlags & PackageParser.PARSE_CHATTY) != 0) {
         if (r == null) {
           r=new StringBuilder(256);
         }
@@ -510,7 +455,7 @@ synchronized (mPackages) {
       PackageParser.Service s=pkg.services.get(i);
       s.info.processName=fixProcessName(pkg.applicationInfo.processName,s.info.processName,pkg.applicationInfo.uid);
       mServices.addService(s);
-      if ((parseFlags & PackageParser.PARSE_CHATTY) != 0) {
+      if ((policyFlags & PackageParser.PARSE_CHATTY) != 0) {
         if (r == null) {
           r=new StringBuilder(256);
         }
@@ -529,7 +474,7 @@ synchronized (mPackages) {
       PackageParser.Activity a=pkg.receivers.get(i);
       a.info.processName=fixProcessName(pkg.applicationInfo.processName,a.info.processName,pkg.applicationInfo.uid);
       mReceivers.addActivity(a,"receiver");
-      if ((parseFlags & PackageParser.PARSE_CHATTY) != 0) {
+      if ((policyFlags & PackageParser.PARSE_CHATTY) != 0) {
         if (r == null) {
           r=new StringBuilder(256);
         }
@@ -548,7 +493,7 @@ synchronized (mPackages) {
       PackageParser.Activity a=pkg.activities.get(i);
       a.info.processName=fixProcessName(pkg.applicationInfo.processName,a.info.processName,pkg.applicationInfo.uid);
       mActivities.addActivity(a,"activity");
-      if ((parseFlags & PackageParser.PARSE_CHATTY) != 0) {
+      if ((policyFlags & PackageParser.PARSE_CHATTY) != 0) {
         if (r == null) {
           r=new StringBuilder(256);
         }
@@ -568,7 +513,7 @@ synchronized (mPackages) {
       PackageParser.PermissionGroup cur=mPermissionGroups.get(pg.info.name);
       if (cur == null) {
         mPermissionGroups.put(pg.info.name,pg);
-        if ((parseFlags & PackageParser.PARSE_CHATTY) != 0) {
+        if ((policyFlags & PackageParser.PARSE_CHATTY) != 0) {
           if (r == null) {
             r=new StringBuilder(256);
           }
@@ -580,7 +525,7 @@ synchronized (mPackages) {
       }
  else {
         Slog.w(TAG,"Permission group " + pg.info.name + " from package "+ pg.info.packageName+ " ignored: original from "+ cur.info.packageName);
-        if ((parseFlags & PackageParser.PARSE_CHATTY) != 0) {
+        if ((policyFlags & PackageParser.PARSE_CHATTY) != 0) {
           if (r == null) {
             r=new StringBuilder(256);
           }
@@ -638,7 +583,7 @@ synchronized (mPackages) {
             bp.uid=pkg.applicationInfo.uid;
             bp.sourcePackage=p.info.packageName;
             p.info.flags|=PermissionInfo.FLAG_INSTALLED;
-            if ((parseFlags & PackageParser.PARSE_CHATTY) != 0) {
+            if ((policyFlags & PackageParser.PARSE_CHATTY) != 0) {
               if (r == null) {
                 r=new StringBuilder(256);
               }
@@ -656,7 +601,7 @@ synchronized (mPackages) {
           Slog.w(TAG,"Permission " + p.info.name + " from package "+ p.info.packageName+ " ignored: original from "+ bp.sourcePackage);
         }
       }
- else       if ((parseFlags & PackageParser.PARSE_CHATTY) != 0) {
+ else       if ((policyFlags & PackageParser.PARSE_CHATTY) != 0) {
         if (r == null) {
           r=new StringBuilder(256);
         }
@@ -683,9 +628,12 @@ synchronized (mPackages) {
       a.info.splitSourceDirs=pkg.applicationInfo.splitSourceDirs;
       a.info.splitPublicSourceDirs=pkg.applicationInfo.splitPublicSourceDirs;
       a.info.dataDir=pkg.applicationInfo.dataDir;
+      a.info.deviceProtectedDataDir=pkg.applicationInfo.deviceProtectedDataDir;
+      a.info.credentialProtectedDataDir=pkg.applicationInfo.credentialProtectedDataDir;
       a.info.nativeLibraryDir=pkg.applicationInfo.nativeLibraryDir;
+      a.info.secondaryNativeLibraryDir=pkg.applicationInfo.secondaryNativeLibraryDir;
       mInstrumentation.put(a.getComponentName(),a);
-      if ((parseFlags & PackageParser.PARSE_CHATTY) != 0) {
+      if ((policyFlags & PackageParser.PARSE_CHATTY) != 0) {
         if (r == null) {
           r=new StringBuilder(256);
         }
@@ -714,13 +662,17 @@ synchronized (mPackages) {
         map.put(pkg.packageName,pkg);
         PackageParser.Package orig=mPackages.get(pkg.mOverlayTarget);
         if (orig != null && !createIdmapForPackagePairLI(orig,pkg)) {
-          throw new PackageManagerException(INSTALL_FAILED_UPDATE_INCOMPATIBLE,"scanPackageLI failed to createIdmap");
+          createIdmapFailed=true;
         }
       }
     }
  else     if (mOverlays.containsKey(pkg.packageName) && !pkg.packageName.equals("android")) {
       createIdmapsForPackageLI(pkg);
     }
+  }
+  Trace.traceEnd(TRACE_TAG_PACKAGE_MANAGER);
+  if (createIdmapFailed) {
+    throw new PackageManagerException(INSTALL_FAILED_UPDATE_INCOMPATIBLE,"scanPackageLI failed to createIdmap");
   }
   return pkg;
 }

@@ -1,0 +1,59 @@
+{
+  final ActivityOptions opts=ActivityOptions.makeBasic();
+  if (bounds != null) {
+    opts.setLaunchBounds(bounds.isEmpty() ? null : bounds);
+  }
+  final ActivityOptions.OnAnimationStartedListener animStartedListener;
+  final IAppTransitionAnimationSpecsFuture transitionFuture;
+  if (taskView != null) {
+    transitionFuture=getAppTransitionFuture(new AnimationSpecComposer(){
+      @Override public List<AppTransitionAnimationSpec> composeSpecs(){
+        return composeAnimationSpecs(task,stackView,destinationStack);
+      }
+    }
+);
+    animStartedListener=new ActivityOptions.OnAnimationStartedListener(){
+      @Override public void onAnimationStarted(){
+        EventBus.getDefault().send(new CancelEnterRecentsWindowAnimationEvent(task));
+        EventBus.getDefault().send(new ExitRecentsWindowFirstAnimationFrameEvent());
+        stackView.cancelAllTaskViewAnimations();
+        if (screenPinningRequested) {
+          mStartScreenPinningRunnable.taskId=task.key.id;
+          mHandler.postDelayed(mStartScreenPinningRunnable,350);
+        }
+      }
+    }
+;
+  }
+ else {
+    transitionFuture=null;
+    animStartedListener=new ActivityOptions.OnAnimationStartedListener(){
+      @Override public void onAnimationStarted(){
+        EventBus.getDefault().send(new CancelEnterRecentsWindowAnimationEvent(task));
+        EventBus.getDefault().send(new ExitRecentsWindowFirstAnimationFrameEvent());
+        stackView.cancelAllTaskViewAnimations();
+      }
+    }
+;
+  }
+  if (taskView == null) {
+    startTaskActivity(stack,task,taskView,opts,transitionFuture,animStartedListener);
+  }
+ else {
+    LaunchTaskStartedEvent launchStartedEvent=new LaunchTaskStartedEvent(taskView,screenPinningRequested);
+    if (task.group != null && !task.group.isFrontMostTask(task)) {
+      launchStartedEvent.addPostAnimationCallback(new Runnable(){
+        @Override public void run(){
+          startTaskActivity(stack,task,taskView,opts,transitionFuture,animStartedListener);
+        }
+      }
+);
+      EventBus.getDefault().send(launchStartedEvent);
+    }
+ else {
+      EventBus.getDefault().send(launchStartedEvent);
+      startTaskActivity(stack,task,taskView,opts,transitionFuture,animStartedListener);
+    }
+  }
+  Recents.getSystemServices().sendCloseSystemWindows(BaseStatusBar.SYSTEM_DIALOG_REASON_HOME_KEY);
+}

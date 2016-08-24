@@ -1,33 +1,25 @@
 {
-  Log.i(TAG,"onIdleStart");
-  final PackageManagerService pm=(PackageManagerService)ServiceManager.getService("package");
+  if (DEBUG_DEXOPT) {
+    Log.i(TAG,"onStartJob");
+  }
+  PackageManagerService pm=(PackageManagerService)ServiceManager.getService("package");
   if (pm.isStorageLow()) {
-    schedule(BackgroundDexOptService.this,RETRY_LATENCY);
-    return false;
-  }
-  final ArraySet<String> pkgs=pm.getPackagesThatNeedDexOpt();
-  if (pkgs == null) {
-    return false;
-  }
-  final JobParameters jobParams=params;
-  mIdleTime.set(true);
-  new Thread("BackgroundDexOptService_DexOpter"){
-    @Override public void run(){
-      for (      String pkg : pkgs) {
-        if (!mIdleTime.get()) {
-          schedule(BackgroundDexOptService.this,0);
-          return;
-        }
-        if (sFailedPackageNames.contains(pkg)) {
-          continue;
-        }
-        if (!pm.performDexOpt(pkg,null,true)) {
-          sFailedPackageNames.add(pkg);
-        }
-      }
-      jobFinished(jobParams,false);
+    if (DEBUG_DEXOPT) {
+      Log.i(TAG,"Low storage, skipping this run");
     }
+    return false;
   }
-.start();
-  return true;
+  final ArraySet<String> pkgs=pm.getOptimizablePackages();
+  if (pkgs == null || pkgs.isEmpty()) {
+    if (DEBUG_DEXOPT) {
+      Log.i(TAG,"No packages to optimize");
+    }
+    return false;
+  }
+  if (params.getJobId() == JOB_POST_BOOT_UPDATE) {
+    return runPostBootUpdate(params,pm,pkgs);
+  }
+ else {
+    return runIdleOptimization(params,pm,pkgs);
+  }
 }

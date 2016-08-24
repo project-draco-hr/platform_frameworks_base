@@ -1,27 +1,19 @@
 {
   ReceivedPointerTracker receivedTracker=mReceivedPointerTracker;
-  mVelocityTracker.addMovement(rawEvent);
-  mDoubleTapDetector.onMotionEvent(event,policyFlags);
 switch (event.getActionMasked()) {
 case MotionEvent.ACTION_DOWN:
 {
       mAms.onTouchInteractionStart();
-      handleMotionEventGestureDetecting(rawEvent,policyFlags);
       sendAccessibilityEvent(AccessibilityEvent.TYPE_TOUCH_INTERACTION_START);
       mSendHoverEnterAndMoveDelayed.cancel();
       mSendHoverExitDelayed.cancel();
-      mPerformLongPressDelayed.cancel();
       if (mSendTouchExplorationEndDelayed.isPending()) {
         mSendTouchExplorationEndDelayed.forceSendAndRemove();
       }
       if (mSendTouchInteractionEndDelayed.isPending()) {
         mSendTouchInteractionEndDelayed.forceSendAndRemove();
       }
-      if (mDoubleTapDetector.firstTapDetected()) {
-        mPerformLongPressDelayed.post(event,policyFlags);
-        break;
-      }
-      if (!mTouchExplorationInProgress) {
+      if (!mGestureDetector.firstTapDetected() && !mTouchExplorationInProgress) {
         if (!mSendHoverEnterAndMoveDelayed.isPending()) {
           final int pointerId=receivedTracker.getPrimaryPointerId();
           final int pointerIdBits=(1 << pointerId);
@@ -37,7 +29,6 @@ case MotionEvent.ACTION_POINTER_DOWN:
 {
   mSendHoverEnterAndMoveDelayed.cancel();
   mSendHoverExitDelayed.cancel();
-  mPerformLongPressDelayed.cancel();
 }
 break;
 case MotionEvent.ACTION_MOVE:
@@ -49,41 +40,9 @@ switch (event.getPointerCount()) {
 case 1:
 {
   if (mSendHoverEnterAndMoveDelayed.isPending()) {
-    handleMotionEventGestureDetecting(rawEvent,policyFlags);
     mSendHoverEnterAndMoveDelayed.addEvent(event);
-    final float deltaX=receivedTracker.getReceivedPointerDownX(pointerId) - rawEvent.getX(pointerIndex);
-    final float deltaY=receivedTracker.getReceivedPointerDownY(pointerId) - rawEvent.getY(pointerIndex);
-    final double moveDelta=Math.hypot(deltaX,deltaY);
-    if (moveDelta > mDoubleTapSlop) {
-      mVelocityTracker.computeCurrentVelocity(1000);
-      final float maxAbsVelocity=Math.max(Math.abs(mVelocityTracker.getXVelocity(pointerId)),Math.abs(mVelocityTracker.getYVelocity(pointerId)));
-      if (maxAbsVelocity > mScaledGestureDetectionVelocity) {
-        mCurrentState=STATE_GESTURE_DETECTING;
-        mVelocityTracker.clear();
-        mSendHoverEnterAndMoveDelayed.cancel();
-        mSendHoverExitDelayed.cancel();
-        mPerformLongPressDelayed.cancel();
-        mExitGestureDetectionModeDelayed.post();
-        sendAccessibilityEvent(AccessibilityEvent.TYPE_GESTURE_DETECTION_START);
-      }
- else {
-        mSendHoverEnterAndMoveDelayed.forceSendAndRemove();
-        mSendHoverExitDelayed.cancel();
-        mPerformLongPressDelayed.cancel();
-        sendMotionEvent(event,MotionEvent.ACTION_HOVER_MOVE,pointerIdBits,policyFlags);
-      }
-      break;
-    }
   }
  else {
-    if (mPerformLongPressDelayed.isPending()) {
-      final float deltaX=receivedTracker.getReceivedPointerDownX(pointerId) - rawEvent.getX(pointerIndex);
-      final float deltaY=receivedTracker.getReceivedPointerDownY(pointerId) - rawEvent.getY(pointerIndex);
-      final double moveDelta=Math.hypot(deltaX,deltaY);
-      if (moveDelta > mTouchSlop) {
-        mPerformLongPressDelayed.cancel();
-      }
-    }
     if (mTouchExplorationInProgress) {
       sendTouchExplorationGestureStartAndHoverEnterIfNeeded(policyFlags);
       sendMotionEvent(event,MotionEvent.ACTION_HOVER_MOVE,pointerIdBits,policyFlags);
@@ -96,10 +55,8 @@ case 2:
 if (mSendHoverEnterAndMoveDelayed.isPending()) {
 mSendHoverEnterAndMoveDelayed.cancel();
 mSendHoverExitDelayed.cancel();
-mPerformLongPressDelayed.cancel();
 }
  else {
-mPerformLongPressDelayed.cancel();
 if (mTouchExplorationInProgress) {
   final float deltaX=receivedTracker.getReceivedPointerDownX(pointerId) - rawEvent.getX(pointerIndex);
   final float deltaY=receivedTracker.getReceivedPointerDownY(pointerId) - rawEvent.getY(pointerIndex);
@@ -110,7 +67,6 @@ if (mTouchExplorationInProgress) {
   sendHoverExitAndTouchExplorationGestureEndIfNeeded(policyFlags);
 }
 }
-mStrokeBuffer.clear();
 if (isDraggingGesture(event)) {
 mCurrentState=STATE_DRAGGING;
 mDraggingPointerId=pointerId;
@@ -121,7 +77,6 @@ sendMotionEvent(event,MotionEvent.ACTION_DOWN,pointerIdBits,policyFlags);
 mCurrentState=STATE_DELEGATING;
 sendDownForAllNotInjectedPointers(event,policyFlags);
 }
-mVelocityTracker.clear();
 }
 break;
 default :
@@ -129,15 +84,12 @@ default :
 if (mSendHoverEnterAndMoveDelayed.isPending()) {
 mSendHoverEnterAndMoveDelayed.cancel();
 mSendHoverExitDelayed.cancel();
-mPerformLongPressDelayed.cancel();
 }
  else {
-mPerformLongPressDelayed.cancel();
 sendHoverExitAndTouchExplorationGestureEndIfNeeded(policyFlags);
 }
 mCurrentState=STATE_DELEGATING;
 sendDownForAllNotInjectedPointers(event,policyFlags);
-mVelocityTracker.clear();
 }
 }
 }
@@ -145,11 +97,8 @@ break;
 case MotionEvent.ACTION_UP:
 {
 mAms.onTouchInteractionEnd();
-mStrokeBuffer.clear();
 final int pointerId=event.getPointerId(event.getActionIndex());
 final int pointerIdBits=(1 << pointerId);
-mPerformLongPressDelayed.cancel();
-mVelocityTracker.clear();
 if (mSendHoverEnterAndMoveDelayed.isPending()) {
 mSendHoverExitDelayed.post(event,pointerIdBits,policyFlags);
 }
@@ -159,11 +108,6 @@ sendHoverExitAndTouchExplorationGestureEndIfNeeded(policyFlags);
 if (!mSendTouchInteractionEndDelayed.isPending()) {
 mSendTouchInteractionEndDelayed.post();
 }
-}
-break;
-case MotionEvent.ACTION_CANCEL:
-{
-clear(event,policyFlags);
 }
 break;
 }

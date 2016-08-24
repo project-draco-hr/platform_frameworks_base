@@ -1,0 +1,48 @@
+{
+  String authRequestLine=httpResponse.getHeader(HTTPMessage.AuthHeader);
+  if (authRequestLine == null) {
+    throw new IOException("Missing auth line");
+  }
+  String[] tokens=authRequestLine.split("[ ,]+");
+  if (tokens.length < 3 || !tokens[0].equalsIgnoreCase("digest")) {
+    throw new IOException("Bad " + HTTPMessage.AuthHeader + ": '"+ authRequestLine+ "'");
+  }
+  Map<String,String> itemMap=new HashMap<>();
+  for (int n=1; n < tokens.length; n++) {
+    String s=tokens[n];
+    int split=s.indexOf('=');
+    if (split < 0) {
+      continue;
+    }
+    itemMap.put(s.substring(0,split).trim().toLowerCase(),unquote(s.substring(split + 1).trim()));
+  }
+  Set<String> qops=splitValue(itemMap.remove("qop"));
+  if (!qops.contains("auth")) {
+    throw new IOException("Unsupported quality of protection value(s): '" + qops + "'");
+  }
+  String algorithm=itemMap.remove("algorithm");
+  if (algorithm != null && !algorithm.equalsIgnoreCase("md5")) {
+    throw new IOException("Unsupported algorithm: '" + algorithm + "'");
+  }
+  String realm=itemMap.remove("realm");
+  String nonceText=itemMap.remove("nonce");
+  if (realm == null || nonceText == null) {
+    throw new IOException("realm and/or nonce missing: '" + authRequestLine + "'");
+  }
+  byte[] cnonce=new byte[16];
+  SecureRandom prng=new SecureRandom();
+  prng.nextBytes(cnonce);
+  String nc=String.format("%08d",sequence);
+  String passwordString=new String(password,StandardCharsets.UTF_8);
+  String cNonceString=bytesToHex(cnonce);
+  byte[] a1=hash(userName,realm,passwordString);
+  byte[] a2=hash("POST",url.getPath());
+  byte[] response=hash(a1,nonceText,nc,cNonceString,"auth",a2);
+  StringBuilder authLine=new StringBuilder();
+  authLine.append("Digest ").append("username=\"").append(userName).append("\", ").append("realm=\"").append(realm).append("\", ").append("nonce=\"").append(nonceText).append("\", ").append("uri=\"").append(url.getPath()).append("\", ").append("qop=\"auth\", ").append("nc=").append(nc).append(", ").append("cnonce=\"").append(cNonceString).append("\", ").append("response=\"").append(bytesToHex(response)).append('"');
+  String opaque=itemMap.get("opaque");
+  if (opaque != null) {
+    authLine.append(", \"").append(opaque).append('"');
+  }
+  return authLine.toString();
+}

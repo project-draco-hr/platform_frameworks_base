@@ -1,0 +1,113 @@
+{
+  final boolean isLoggable=Log.isLoggable(TAG,Log.VERBOSE);
+  try {
+    mDataConnectionIsConnected=readDataConnectionState();
+switch (msg.what) {
+case MESSAGE_SCHEDULE_SYNC:
+      SyncOperation op=(SyncOperation)msg.obj;
+    scheduleSyncOperationH(op);
+  break;
+case MESSAGE_START_SYNC:
+op=(SyncOperation)msg.obj;
+startSyncH(op);
+break;
+case MESSAGE_STOP_SYNC:
+op=(SyncOperation)msg.obj;
+if (isLoggable) {
+Slog.v(TAG,"Stop sync received.");
+}
+ActiveSyncContext asc=findActiveSyncContextH(op.jobId);
+if (asc != null) {
+runSyncFinishedOrCanceledH(null,asc);
+boolean reschedule=msg.arg1 != 0;
+boolean applyBackoff=msg.arg2 != 0;
+if (isLoggable) {
+Slog.v(TAG,"Stopping sync. Reschedule: " + reschedule + "Backoff: "+ applyBackoff);
+}
+if (applyBackoff) {
+increaseBackoffSetting(op.target);
+}
+if (reschedule) {
+deferStoppedSyncH(op,0);
+}
+}
+break;
+case MESSAGE_UPDATE_PERIODIC_SYNC:
+UpdatePeriodicSyncMessagePayload data=(UpdatePeriodicSyncMessagePayload)msg.obj;
+updateOrAddPeriodicSyncH(data.target,data.pollFrequency,data.flex,data.extras);
+break;
+case MESSAGE_REMOVE_PERIODIC_SYNC:
+removePeriodicSyncH((EndPoint)msg.obj,msg.getData());
+break;
+case SyncHandler.MESSAGE_CANCEL:
+SyncStorageEngine.EndPoint endpoint=(SyncStorageEngine.EndPoint)msg.obj;
+Bundle extras=msg.peekData();
+if (Log.isLoggable(TAG,Log.DEBUG)) {
+Log.d(TAG,"handleSyncHandlerMessage: MESSAGE_CANCEL: " + endpoint + " bundle: "+ extras);
+}
+cancelActiveSyncH(endpoint,extras);
+break;
+case SyncHandler.MESSAGE_SYNC_FINISHED:
+SyncFinishedOrCancelledMessagePayload payload=(SyncFinishedOrCancelledMessagePayload)msg.obj;
+if (!isSyncStillActiveH(payload.activeSyncContext)) {
+Log.d(TAG,"handleSyncHandlerMessage: dropping since the " + "sync is no longer active: " + payload.activeSyncContext);
+break;
+}
+if (isLoggable) {
+Slog.v(TAG,"syncFinished" + payload.activeSyncContext.mSyncOperation);
+}
+mSyncJobService.callJobFinished(payload.activeSyncContext.mSyncOperation.jobId,false);
+runSyncFinishedOrCanceledH(payload.syncResult,payload.activeSyncContext);
+break;
+case SyncHandler.MESSAGE_SERVICE_CONNECTED:
+{
+ServiceConnectionData msgData=(ServiceConnectionData)msg.obj;
+if (Log.isLoggable(TAG,Log.VERBOSE)) {
+Log.d(TAG,"handleSyncHandlerMessage: MESSAGE_SERVICE_CONNECTED: " + msgData.activeSyncContext);
+}
+if (isSyncStillActiveH(msgData.activeSyncContext)) {
+runBoundToAdapterH(msgData.activeSyncContext,msgData.adapter);
+}
+break;
+}
+case SyncHandler.MESSAGE_SERVICE_DISCONNECTED:
+{
+final ActiveSyncContext currentSyncContext=((ServiceConnectionData)msg.obj).activeSyncContext;
+if (Log.isLoggable(TAG,Log.VERBOSE)) {
+Log.d(TAG,"handleSyncHandlerMessage: MESSAGE_SERVICE_DISCONNECTED: " + currentSyncContext);
+}
+if (isSyncStillActiveH(currentSyncContext)) {
+try {
+if (currentSyncContext.mSyncAdapter != null) {
+currentSyncContext.mSyncAdapter.cancelSync(currentSyncContext);
+}
+}
+ catch (RemoteException e) {
+}
+SyncResult syncResult=new SyncResult();
+syncResult.stats.numIoExceptions++;
+mSyncJobService.callJobFinished(currentSyncContext.mSyncOperation.jobId,false);
+runSyncFinishedOrCanceledH(syncResult,currentSyncContext);
+}
+break;
+}
+case SyncHandler.MESSAGE_MONITOR_SYNC:
+ActiveSyncContext monitoredSyncContext=(ActiveSyncContext)msg.obj;
+if (Log.isLoggable(TAG,Log.DEBUG)) {
+Log.d(TAG,"handleSyncHandlerMessage: MESSAGE_MONITOR_SYNC: " + monitoredSyncContext.mSyncOperation.target);
+}
+if (isSyncNotUsingNetworkH(monitoredSyncContext)) {
+Log.w(TAG,String.format("Detected sync making no progress for %s. cancelling.",monitoredSyncContext));
+mSyncJobService.callJobFinished(monitoredSyncContext.mSyncOperation.jobId,false);
+runSyncFinishedOrCanceledH(null,monitoredSyncContext);
+}
+ else {
+postMonitorSyncProgressMessage(monitoredSyncContext);
+}
+break;
+}
+}
+  finally {
+mSyncTimeTracker.update();
+}
+}

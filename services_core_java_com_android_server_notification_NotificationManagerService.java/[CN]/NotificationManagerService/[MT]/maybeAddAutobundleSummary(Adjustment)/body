@@ -1,0 +1,40 @@
+{
+  if (adjustment.getSignals() != null) {
+    Bundle.setDefusable(adjustment.getSignals(),true);
+    if (adjustment.getSignals().getBoolean(Adjustment.NEEDS_AUTOGROUPING_KEY,false)) {
+      final String newAutoBundleKey=adjustment.getSignals().getString(Adjustment.GROUP_KEY_OVERRIDE_KEY,null);
+      int userId=-1;
+      NotificationRecord summaryRecord=null;
+synchronized (mNotificationList) {
+        NotificationRecord notificationRecord=mNotificationsByKey.get(adjustment.getKey());
+        if (notificationRecord == null) {
+          return;
+        }
+        final StatusBarNotification adjustedSbn=notificationRecord.sbn;
+        userId=adjustedSbn.getUser().getIdentifier();
+        ArrayMap<String,String> summaries=mAutobundledSummaries.get(userId);
+        if (summaries == null) {
+          summaries=new ArrayMap<>();
+        }
+        mAutobundledSummaries.put(userId,summaries);
+        if (!summaries.containsKey(adjustment.getPackage()) && newAutoBundleKey != null) {
+          final ApplicationInfo appInfo=adjustedSbn.getNotification().extras.getParcelable(Notification.EXTRA_BUILDER_APPLICATION_INFO);
+          final Bundle extras=new Bundle();
+          extras.putParcelable(Notification.EXTRA_BUILDER_APPLICATION_INFO,appInfo);
+          final Notification summaryNotification=new Notification.Builder(getContext()).setSmallIcon(adjustedSbn.getNotification().getSmallIcon()).setGroupSummary(true).setGroup(newAutoBundleKey).setFlag(Notification.FLAG_AUTOGROUP_SUMMARY,true).setFlag(Notification.FLAG_GROUP_SUMMARY,true).setColor(adjustedSbn.getNotification().color).build();
+          summaryNotification.extras.putAll(extras);
+          Intent appIntent=getContext().getPackageManager().getLaunchIntentForPackage(adjustment.getPackage());
+          if (appIntent != null) {
+            summaryNotification.contentIntent=PendingIntent.getActivityAsUser(getContext(),0,appIntent,0,null,UserHandle.of(userId));
+          }
+          final StatusBarNotification summarySbn=new StatusBarNotification(adjustedSbn.getPackageName(),adjustedSbn.getOpPkg(),Integer.MAX_VALUE,Adjustment.GROUP_KEY_OVERRIDE_KEY,adjustedSbn.getUid(),adjustedSbn.getInitialPid(),summaryNotification,adjustedSbn.getUser(),newAutoBundleKey,System.currentTimeMillis());
+          summaryRecord=new NotificationRecord(getContext(),summarySbn);
+          summaries.put(adjustment.getPackage(),summarySbn.getKey());
+        }
+      }
+      if (summaryRecord != null) {
+        mHandler.post(new EnqueueNotificationRunnable(userId,summaryRecord));
+      }
+    }
+  }
+}

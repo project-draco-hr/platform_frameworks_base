@@ -1,0 +1,84 @@
+{
+  ActivityRecord top=topRunningActivityLocked();
+  if (DEBUG_VISIBILITY)   Slog.v(TAG_VISIBILITY,"ensureActivitiesVisible behind " + top + " configChanges=0x"+ Integer.toHexString(configChanges));
+  if (top != null) {
+    checkTranslucentActivityWaiting(top);
+  }
+  boolean aboveTop=top != null;
+  final int stackVisibility=getStackVisibilityLocked(starting);
+  final boolean stackInvisible=stackVisibility != STACK_VISIBLE;
+  final boolean stackVisibleBehind=stackVisibility == STACK_VISIBLE_ACTIVITY_BEHIND;
+  boolean behindFullscreenActivity=stackInvisible;
+  boolean resumeNextActivity=mStackSupervisor.isFocusedStack(this) && (isInStackLocked(starting) == null);
+  boolean behindTranslucentActivity=false;
+  final ActivityRecord visibleBehind=getVisibleBehindActivity();
+  for (int taskNdx=mTaskHistory.size() - 1; taskNdx >= 0; --taskNdx) {
+    final TaskRecord task=mTaskHistory.get(taskNdx);
+    final ArrayList<ActivityRecord> activities=task.mActivities;
+    for (int activityNdx=activities.size() - 1; activityNdx >= 0; --activityNdx) {
+      final ActivityRecord r=activities.get(activityNdx);
+      if (r.finishing) {
+        if (r.mUpdateTaskThumbnailWhenHidden) {
+          r.updateThumbnailLocked(screenshotActivitiesLocked(r),null);
+          r.mUpdateTaskThumbnailWhenHidden=false;
+        }
+        continue;
+      }
+      final boolean isTop=r == top;
+      if (aboveTop && !isTop) {
+        continue;
+      }
+      aboveTop=false;
+      if (shouldBeVisible(r,behindTranslucentActivity,stackVisibleBehind,visibleBehind,behindFullscreenActivity)) {
+        if (DEBUG_VISIBILITY)         Slog.v(TAG_VISIBILITY,"Make visible? " + r + " finishing="+ r.finishing+ " state="+ r.state);
+        if (r != starting) {
+          ensureActivityConfigurationLocked(r,0,preserveWindows);
+        }
+        if (r.app == null || r.app.thread == null) {
+          if (makeVisibleAndRestartIfNeeded(starting,configChanges,isTop,resumeNextActivity,r)) {
+            if (activityNdx >= activities.size()) {
+              activityNdx=activities.size() - 1;
+            }
+ else {
+              resumeNextActivity=false;
+            }
+          }
+        }
+ else         if (r.visible) {
+          if (DEBUG_VISIBILITY)           Slog.v(TAG_VISIBILITY,"Skipping: already visible at " + r);
+          if (handleAlreadyVisible(r)) {
+            resumeNextActivity=false;
+          }
+        }
+ else {
+          makeVisibleIfNeeded(starting,r);
+        }
+        configChanges|=r.configChangeFlags;
+        behindFullscreenActivity=updateBehindFullscreen(stackInvisible,behindFullscreenActivity,task,r);
+        if (behindFullscreenActivity && !r.fullscreen) {
+          behindTranslucentActivity=true;
+        }
+      }
+ else {
+        if (DEBUG_VISIBILITY)         Slog.v(TAG_VISIBILITY,"Make invisible? " + r + " finishing="+ r.finishing+ " state="+ r.state+ " stackInvisible="+ stackInvisible+ " behindFullscreenActivity="+ behindFullscreenActivity+ " mLaunchTaskBehind="+ r.mLaunchTaskBehind);
+        makeInvisible(r,visibleBehind);
+      }
+    }
+    if (mStackId == FREEFORM_WORKSPACE_STACK_ID) {
+      behindFullscreenActivity=stackVisibility == STACK_INVISIBLE;
+    }
+ else     if (mStackId == HOME_STACK_ID) {
+      if (task.isHomeTask()) {
+        if (DEBUG_VISIBILITY)         Slog.v(TAG_VISIBILITY,"Home task: at " + task + " stackInvisible="+ stackInvisible+ " behindFullscreenActivity="+ behindFullscreenActivity);
+        behindFullscreenActivity=true;
+      }
+ else       if (task.isRecentsTask() && task.getTaskToReturnTo() == APPLICATION_ACTIVITY_TYPE) {
+        if (DEBUG_VISIBILITY)         Slog.v(TAG_VISIBILITY,"Recents task returning to app: at " + task + " stackInvisible="+ stackInvisible+ " behindFullscreenActivity="+ behindFullscreenActivity);
+        behindFullscreenActivity=true;
+      }
+    }
+  }
+  if (mTranslucentActivityWaiting != null && mUndrawnActivitiesBelowTopTranslucent.isEmpty()) {
+    notifyActivityDrawnLocked(null);
+  }
+}

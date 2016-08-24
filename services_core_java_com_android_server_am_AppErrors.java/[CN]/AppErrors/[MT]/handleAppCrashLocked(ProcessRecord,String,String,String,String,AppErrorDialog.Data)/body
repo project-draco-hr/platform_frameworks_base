@@ -1,0 +1,63 @@
+{
+  long now=SystemClock.uptimeMillis();
+  Long crashTime;
+  Long crashTimePersistent;
+  if (!app.isolated) {
+    crashTime=mProcessCrashTimes.get(app.info.processName,app.uid);
+    crashTimePersistent=mProcessCrashTimesPersistent.get(app.info.processName,app.uid);
+  }
+ else {
+    crashTime=crashTimePersistent=null;
+  }
+  if (crashTime != null && now < crashTime + ProcessList.MIN_CRASH_INTERVAL) {
+    Slog.w(TAG,"Process " + app.info.processName + " has crashed too many times: killing!");
+    EventLog.writeEvent(EventLogTags.AM_PROCESS_CRASHED_TOO_MUCH,app.userId,app.info.processName,app.uid);
+    mService.mStackSupervisor.handleAppCrashLocked(app);
+    if (!app.persistent) {
+      EventLog.writeEvent(EventLogTags.AM_PROC_BAD,app.userId,app.uid,app.info.processName);
+      if (!app.isolated) {
+        mBadProcesses.put(app.info.processName,app.uid,new BadProcessInfo(now,shortMsg,longMsg,stackTrace));
+        mProcessCrashTimes.remove(app.info.processName,app.uid);
+      }
+      app.bad=true;
+      app.removed=true;
+      mService.removeProcessLocked(app,false,false,"crash");
+      mService.mStackSupervisor.resumeFocusedStackTopActivityLocked();
+      return false;
+    }
+    mService.mStackSupervisor.resumeFocusedStackTopActivityLocked();
+  }
+ else {
+    TaskRecord affectedTask=mService.mStackSupervisor.finishTopRunningActivityLocked(app,reason);
+    if (data != null) {
+      data.task=affectedTask;
+    }
+    if (data != null && crashTimePersistent != null && now < crashTimePersistent + ProcessList.MIN_CRASH_INTERVAL) {
+      data.repeating=true;
+    }
+  }
+  for (int i=app.services.size() - 1; i >= 0; i--) {
+    ServiceRecord sr=app.services.valueAt(i);
+    sr.crashCount++;
+  }
+  final ArrayList<ActivityRecord> activities=app.activities;
+  if (app == mService.mHomeProcess && activities.size() > 0 && (mService.mHomeProcess.info.flags & ApplicationInfo.FLAG_SYSTEM) == 0) {
+    for (int activityNdx=activities.size() - 1; activityNdx >= 0; --activityNdx) {
+      final ActivityRecord r=activities.get(activityNdx);
+      if (r.isHomeActivity()) {
+        Log.i(TAG,"Clearing package preferred activities from " + r.packageName);
+        try {
+          ActivityThread.getPackageManager().clearPackagePreferredActivities(r.packageName);
+        }
+ catch (        RemoteException c) {
+        }
+      }
+    }
+  }
+  if (!app.isolated) {
+    mProcessCrashTimes.put(app.info.processName,app.uid,now);
+    mProcessCrashTimesPersistent.put(app.info.processName,app.uid,now);
+  }
+  if (app.crashHandler != null)   mService.mHandler.post(app.crashHandler);
+  return true;
+}

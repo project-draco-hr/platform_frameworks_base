@@ -4,17 +4,23 @@
   mSyncStorageEngine=SyncStorageEngine.getSingleton();
   mSyncStorageEngine.setOnSyncRequestListener(new OnSyncRequestListener(){
     @Override public void onSyncRequest(    SyncStorageEngine.EndPoint info,    int reason,    Bundle extras){
-      if (info.target_provider) {
-        scheduleSync(info.account,info.userId,reason,info.provider,extras,0,0,false);
-      }
- else       if (info.target_service) {
-        scheduleSync(info.service,info.userId,reason,extras,0,0);
-      }
+      scheduleSync(info.account,info.userId,reason,info.provider,extras,0,0,false);
+    }
+  }
+);
+  mSyncStorageEngine.setPeriodicSyncAddedListener(new SyncStorageEngine.PeriodicSyncAddedListener(){
+    @Override public void onPeriodicSyncAdded(    EndPoint target,    Bundle extras,    long pollFrequency,    long flex){
+      updateOrAddPeriodicSync(target,pollFrequency,flex,extras);
+    }
+  }
+);
+  mSyncStorageEngine.setOnAuthorityRemovedListener(new SyncStorageEngine.OnAuthorityRemovedListener(){
+    @Override public void onAuthorityRemoved(    EndPoint removedAuthority){
+      removeSyncsForAuthority(removedAuthority);
     }
   }
 );
   mSyncAdapters=new SyncAdaptersCache(mContext);
-  mSyncQueue=new SyncQueue(mContext.getPackageManager(),mSyncStorageEngine,mSyncAdapters);
   mSyncHandler=new SyncHandler(BackgroundThread.get().getLooper());
   mSyncAdapters.setListener(new RegisteredServicesCacheListener<SyncAdapterType>(){
     @Override public void onServiceChanged(    SyncAdapterType type,    int userId,    boolean removed){
@@ -24,8 +30,7 @@
     }
   }
 ,mSyncHandler);
-  mSyncAlarmIntent=PendingIntent.getBroadcast(mContext,0,new Intent(ACTION_SYNC_ALARM),0);
-  mAppIdleMonitor=new AppIdleMonitor(this);
+  mRand=new Random(System.currentTimeMillis());
   IntentFilter intentFilter=new IntentFilter(ConnectivityManager.CONNECTIVITY_ACTION);
   context.registerReceiver(mConnectivityIntentReceiver,intentFilter);
   if (!factoryTest) {
@@ -36,19 +41,16 @@
   intentFilter=new IntentFilter(Intent.ACTION_DEVICE_STORAGE_LOW);
   intentFilter.addAction(Intent.ACTION_DEVICE_STORAGE_OK);
   context.registerReceiver(mStorageIntentReceiver,intentFilter);
-  intentFilter=new IntentFilter(PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED);
-  context.registerReceiver(mDeviceIdleReceiver,intentFilter);
   intentFilter=new IntentFilter(Intent.ACTION_SHUTDOWN);
   intentFilter.setPriority(100);
   context.registerReceiver(mShutdownIntentReceiver,intentFilter);
   intentFilter=new IntentFilter();
   intentFilter.addAction(Intent.ACTION_USER_REMOVED);
-  intentFilter.addAction(Intent.ACTION_USER_STARTING);
-  intentFilter.addAction(Intent.ACTION_USER_STOPPING);
+  intentFilter.addAction(Intent.ACTION_USER_UNLOCKED);
+  intentFilter.addAction(Intent.ACTION_USER_STOPPED);
   mContext.registerReceiverAsUser(mUserIntentReceiver,UserHandle.ALL,intentFilter,null,null);
   if (!factoryTest) {
     mNotificationMgr=(NotificationManager)context.getSystemService(Context.NOTIFICATION_SERVICE);
-    context.registerReceiver(new SyncAlarmIntentReceiver(),new IntentFilter(ACTION_SYNC_ALARM));
   }
  else {
     mNotificationMgr=null;
@@ -60,12 +62,6 @@
   mHandleAlarmWakeLock.setReferenceCounted(false);
   mSyncManagerWakeLock=mPowerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,SYNC_LOOP_WAKE_LOCK);
   mSyncManagerWakeLock.setReferenceCounted(false);
-  mSyncStorageEngine.addStatusChangeListener(ContentResolver.SYNC_OBSERVER_TYPE_SETTINGS,new ISyncStatusObserver.Stub(){
-    @Override public void onStatusChanged(    int which){
-      sendCheckAlarmsMessage();
-    }
-  }
-);
   mProvisioned=isDeviceProvisioned();
   if (!mProvisioned) {
     final ContentResolver resolver=context.getContentResolver();
@@ -90,5 +86,12 @@ synchronized (mSyncHandler) {
   if (!factoryTest) {
     mContext.registerReceiverAsUser(mAccountsUpdatedReceiver,UserHandle.ALL,new IntentFilter(AccountManager.LOGIN_ACCOUNTS_CHANGED_ACTION),null,null);
   }
-  mSyncRandomOffsetMillis=mSyncStorageEngine.getSyncRandomOffset() * 1000;
+  final Intent startServiceIntent=new Intent(mContext,SyncJobService.class);
+  startServiceIntent.putExtra(SyncJobService.EXTRA_MESSENGER,new Messenger(mSyncHandler));
+  new Handler(mContext.getMainLooper()).post(new Runnable(){
+    @Override public void run(){
+      mContext.startService(startServiceIntent);
+    }
+  }
+);
 }

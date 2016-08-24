@@ -1,0 +1,38 @@
+{
+  checkManageUsersPermission("silence profile");
+  boolean changed=false;
+  UserInfo profile, parent;
+synchronized (mPackagesLock) {
+synchronized (mUsersLock) {
+      profile=getUserInfoLU(userHandle);
+      parent=getProfileParentLU(userHandle);
+    }
+    if (profile == null || !profile.isManagedProfile()) {
+      throw new IllegalArgumentException("User " + userHandle + " is not a profile");
+    }
+    if (profile.isQuietModeEnabled() != enableQuietMode) {
+      profile.flags^=UserInfo.FLAG_QUIET_MODE;
+      writeUserLP(getUserDataLU(profile.id));
+      changed=true;
+    }
+  }
+  if (changed) {
+    long identity=Binder.clearCallingIdentity();
+    try {
+      if (enableQuietMode) {
+        ActivityManagerNative.getDefault().stopUser(userHandle,true,null);
+        LocalServices.getService(ActivityManagerInternal.class).killForegroundAppsForUser(userHandle);
+      }
+ else {
+        ActivityManagerNative.getDefault().startUserInBackground(userHandle);
+      }
+    }
+ catch (    RemoteException e) {
+      Slog.e(LOG_TAG,"fail to start/stop user for quiet mode",e);
+    }
+ finally {
+      Binder.restoreCallingIdentity(identity);
+    }
+    broadcastProfileAvailabilityChanges(profile.getUserHandle(),parent.getUserHandle(),enableQuietMode);
+  }
+}

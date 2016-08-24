@@ -1,0 +1,50 @@
+{
+  int lastOrientation=SCREEN_ORIENTATION_UNSPECIFIED;
+  boolean findingBehind=false;
+  boolean lastFullscreen=false;
+  DisplayContent displayContent=getDefaultDisplayContentLocked();
+  final ArrayList<Task> tasks=displayContent.getTasks();
+  final boolean inMultiWindow=isStackVisibleLocked(DOCKED_STACK_ID) || isStackVisibleLocked(FREEFORM_WORKSPACE_STACK_ID);
+  final boolean dockMinimized=getDefaultDisplayContentLocked().mDividerControllerLocked.isMinimizedDock();
+  for (int taskNdx=tasks.size() - 1; taskNdx >= 0; --taskNdx) {
+    AppTokenList tokens=tasks.get(taskNdx).mAppTokens;
+    final int firstToken=tokens.size() - 1;
+    for (int tokenNdx=firstToken; tokenNdx >= 0; --tokenNdx) {
+      final AppWindowToken atoken=tokens.get(tokenNdx);
+      if (DEBUG_APP_ORIENTATION)       Slog.v(TAG_WM,"Checking app orientation: " + atoken);
+      if (!findingBehind && !atoken.hidden && atoken.hiddenRequested) {
+        if (DEBUG_ORIENTATION)         Slog.v(TAG_WM,"Skipping " + atoken + " -- going to hide");
+        continue;
+      }
+      if (tokenNdx == firstToken) {
+        if (lastOrientation != SCREEN_ORIENTATION_BEHIND && lastFullscreen) {
+          if (DEBUG_ORIENTATION)           Slog.v(TAG_WM,"Done at " + atoken + " -- end of group, return "+ lastOrientation);
+          return lastOrientation;
+        }
+      }
+      if (atoken.hiddenRequested) {
+        if (DEBUG_ORIENTATION)         Slog.v(TAG_WM,"Skipping " + atoken + " -- hidden on top");
+        continue;
+      }
+      if (inMultiWindow && (!atoken.mTask.isHomeTask() || !dockMinimized)) {
+        continue;
+      }
+      if (tokenNdx == 0) {
+        lastOrientation=atoken.requestedOrientation;
+      }
+      int or=atoken.requestedOrientation;
+      lastFullscreen=atoken.appFullscreen;
+      if (lastFullscreen && or != SCREEN_ORIENTATION_BEHIND) {
+        if (DEBUG_ORIENTATION)         Slog.v(TAG_WM,"Done at " + atoken + " -- full screen, return "+ or);
+        return or;
+      }
+      if (or != SCREEN_ORIENTATION_UNSPECIFIED && or != SCREEN_ORIENTATION_BEHIND) {
+        if (DEBUG_ORIENTATION)         Slog.v(TAG_WM,"Done at " + atoken + " -- explicitly set, return "+ or);
+        return or;
+      }
+      findingBehind|=(or == SCREEN_ORIENTATION_BEHIND);
+    }
+  }
+  if (DEBUG_ORIENTATION)   Slog.v(TAG_WM,"No app is requesting an orientation, return " + mForcedAppOrientation);
+  return inMultiWindow ? SCREEN_ORIENTATION_UNSPECIFIED : mForcedAppOrientation;
+}

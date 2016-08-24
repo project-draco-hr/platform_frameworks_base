@@ -1,0 +1,63 @@
+{
+  if (DEBUG)   Slog.d(TAG,"uncrypt: " + filename);
+  mContext.enforceCallingOrSelfPermission(android.Manifest.permission.RECOVERY,null);
+  RecoverySystem.UNCRYPT_PACKAGE_FILE.delete();
+  try (FileWriter uncryptFile=new FileWriter(RecoverySystem.UNCRYPT_PACKAGE_FILE)){
+    uncryptFile.write(filename + "\n");
+  }
+ catch (  IOException e) {
+    Slog.e(TAG,"IOException when writing \"" + RecoverySystem.UNCRYPT_PACKAGE_FILE + "\": ",e);
+    return false;
+  }
+  SystemProperties.set("ctl.start","uncrypt");
+  LocalSocket socket=connectService();
+  if (socket == null) {
+    Slog.e(TAG,"Failed to connect to uncrypt socket");
+    return false;
+  }
+  DataInputStream dis=null;
+  DataOutputStream dos=null;
+  try {
+    dis=new DataInputStream(socket.getInputStream());
+    dos=new DataOutputStream(socket.getOutputStream());
+    int lastStatus=Integer.MIN_VALUE;
+    while (true) {
+      int status=dis.readInt();
+      if (status == lastStatus && lastStatus != Integer.MIN_VALUE) {
+        continue;
+      }
+      lastStatus=status;
+      if (status >= 0 && status <= 100) {
+        Slog.i(TAG,"uncrypt read status: " + status);
+        if (listener != null) {
+          try {
+            listener.onProgress(status);
+          }
+ catch (          RemoteException ignored) {
+            Slog.w(TAG,"RemoteException when posting progress");
+          }
+        }
+        if (status == 100) {
+          Slog.i(TAG,"uncrypt successfully finished.");
+          dos.writeInt(0);
+          break;
+        }
+      }
+ else {
+        Slog.e(TAG,"uncrypt failed with status: " + status);
+        dos.writeInt(0);
+        return false;
+      }
+    }
+  }
+ catch (  IOException e) {
+    Slog.e(TAG,"IOException when reading status: ",e);
+    return false;
+  }
+ finally {
+    IoUtils.closeQuietly(dis);
+    IoUtils.closeQuietly(dos);
+    IoUtils.closeQuietly(socket);
+  }
+  return true;
+}

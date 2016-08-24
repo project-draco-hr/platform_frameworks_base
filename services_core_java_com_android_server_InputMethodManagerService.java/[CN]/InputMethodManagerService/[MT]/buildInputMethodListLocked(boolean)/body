@@ -1,0 +1,73 @@
+{
+  if (DEBUG) {
+    Slog.d(TAG,"--- re-buildInputMethodList reset = " + resetDefaultEnabledIme + " \n ------ caller="+ Debug.getCallers(10));
+  }
+  mMethodList.clear();
+  mMethodMap.clear();
+  final PackageManager pm=mContext.getPackageManager();
+  final List<ResolveInfo> services=pm.queryIntentServicesAsUser(new Intent(InputMethod.SERVICE_INTERFACE),PackageManager.GET_META_DATA | PackageManager.GET_DISABLED_UNTIL_USED_COMPONENTS,mSettings.getCurrentUserId());
+  final HashMap<String,List<InputMethodSubtype>> additionalSubtypes=mFileManager.getAllAdditionalInputMethodSubtypes();
+  for (int i=0; i < services.size(); ++i) {
+    ResolveInfo ri=services.get(i);
+    ServiceInfo si=ri.serviceInfo;
+    ComponentName compName=new ComponentName(si.packageName,si.name);
+    if (!android.Manifest.permission.BIND_INPUT_METHOD.equals(si.permission)) {
+      Slog.w(TAG,"Skipping input method " + compName + ": it does not require the permission "+ android.Manifest.permission.BIND_INPUT_METHOD);
+      continue;
+    }
+    if (DEBUG)     Slog.d(TAG,"Checking " + compName);
+    try {
+      InputMethodInfo p=new InputMethodInfo(mContext,ri,additionalSubtypes);
+      mMethodList.add(p);
+      final String id=p.getId();
+      mMethodMap.put(id,p);
+      if (DEBUG) {
+        Slog.d(TAG,"Found an input method " + p);
+      }
+    }
+ catch (    XmlPullParserException|IOException e) {
+      Slog.w(TAG,"Unable to load input method " + compName,e);
+    }
+  }
+  if (!resetDefaultEnabledIme) {
+    boolean enabledImeFound=false;
+    final List<InputMethodInfo> enabledImes=mSettings.getEnabledInputMethodListLocked();
+    final int N=enabledImes.size();
+    for (int i=0; i < N; ++i) {
+      final InputMethodInfo imi=enabledImes.get(i);
+      if (mMethodList.contains(imi)) {
+        enabledImeFound=true;
+        break;
+      }
+    }
+    if (!enabledImeFound) {
+      Slog.i(TAG,"All the enabled IMEs are gone. Reset default enabled IMEs.");
+      resetDefaultEnabledIme=true;
+      resetSelectedInputMethodAndSubtypeLocked("");
+    }
+  }
+  if (resetDefaultEnabledIme) {
+    final ArrayList<InputMethodInfo> defaultEnabledIme=InputMethodUtils.getDefaultEnabledImes(mContext,mSystemReady,mMethodList);
+    final int N=defaultEnabledIme.size();
+    for (int i=0; i < N; ++i) {
+      final InputMethodInfo imi=defaultEnabledIme.get(i);
+      if (DEBUG) {
+        Slog.d(TAG,"--- enable ime = " + imi);
+      }
+      setInputMethodEnabledLocked(imi.getId(),true);
+    }
+  }
+  final String defaultImiId=mSettings.getSelectedInputMethod();
+  if (!TextUtils.isEmpty(defaultImiId)) {
+    if (!mMethodMap.containsKey(defaultImiId)) {
+      Slog.w(TAG,"Default IME is uninstalled. Choose new default IME.");
+      if (chooseNewDefaultIMELocked()) {
+        updateInputMethodsFromSettingsLocked(true);
+      }
+    }
+ else {
+      setInputMethodEnabledLocked(defaultImiId,true);
+    }
+  }
+  mSwitchingController.resetCircularListLocked(mContext);
+}

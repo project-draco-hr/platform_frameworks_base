@@ -1,0 +1,89 @@
+{
+  final Context context=getContext();
+  final Uri documentUri=extras.getParcelable(DocumentsContract.EXTRA_URI);
+  final String authority=documentUri.getAuthority();
+  final String documentId=DocumentsContract.getDocumentId(documentUri);
+  if (!mAuthority.equals(authority)) {
+    throw new SecurityException("Requested authority " + authority + " doesn't match provider "+ mAuthority);
+  }
+  final Bundle out=new Bundle();
+  enforceTree(documentUri);
+  if (METHOD_IS_CHILD_DOCUMENT.equals(method)) {
+    enforceReadPermissionInner(documentUri,getCallingPackage(),null);
+    final Uri childUri=extras.getParcelable(DocumentsContract.EXTRA_TARGET_URI);
+    final String childAuthority=childUri.getAuthority();
+    final String childId=DocumentsContract.getDocumentId(childUri);
+    out.putBoolean(DocumentsContract.EXTRA_RESULT,mAuthority.equals(childAuthority) && isChildDocument(documentId,childId));
+  }
+ else   if (METHOD_CREATE_DOCUMENT.equals(method)) {
+    enforceWritePermissionInner(documentUri,getCallingPackage(),null);
+    final String mimeType=extras.getString(Document.COLUMN_MIME_TYPE);
+    final String displayName=extras.getString(Document.COLUMN_DISPLAY_NAME);
+    final String newDocumentId=createDocument(documentId,mimeType,displayName);
+    final Uri newDocumentUri=buildDocumentUriMaybeUsingTree(documentUri,newDocumentId);
+    out.putParcelable(DocumentsContract.EXTRA_URI,newDocumentUri);
+  }
+ else   if (METHOD_RENAME_DOCUMENT.equals(method)) {
+    enforceWritePermissionInner(documentUri,getCallingPackage(),null);
+    final String displayName=extras.getString(Document.COLUMN_DISPLAY_NAME);
+    final String newDocumentId=renameDocument(documentId,displayName);
+    if (newDocumentId != null) {
+      final Uri newDocumentUri=buildDocumentUriMaybeUsingTree(documentUri,newDocumentId);
+      if (!isTreeUri(newDocumentUri)) {
+        final int modeFlags=getCallingOrSelfUriPermissionModeFlags(context,documentUri);
+        context.grantUriPermission(getCallingPackage(),newDocumentUri,modeFlags);
+      }
+      out.putParcelable(DocumentsContract.EXTRA_URI,newDocumentUri);
+      revokeDocumentPermission(documentId);
+    }
+  }
+ else   if (METHOD_DELETE_DOCUMENT.equals(method)) {
+    enforceWritePermissionInner(documentUri,getCallingPackage(),null);
+    deleteDocument(documentId);
+    revokeDocumentPermission(documentId);
+  }
+ else   if (METHOD_COPY_DOCUMENT.equals(method)) {
+    final Uri targetUri=extras.getParcelable(DocumentsContract.EXTRA_TARGET_URI);
+    final String targetId=DocumentsContract.getDocumentId(targetUri);
+    enforceReadPermissionInner(documentUri,getCallingPackage(),null);
+    enforceWritePermissionInner(targetUri,getCallingPackage(),null);
+    final String newDocumentId=copyDocument(documentId,targetId);
+    if (newDocumentId != null) {
+      final Uri newDocumentUri=buildDocumentUriMaybeUsingTree(documentUri,newDocumentId);
+      if (!isTreeUri(newDocumentUri)) {
+        final int modeFlags=getCallingOrSelfUriPermissionModeFlags(context,documentUri);
+        context.grantUriPermission(getCallingPackage(),newDocumentUri,modeFlags);
+      }
+      out.putParcelable(DocumentsContract.EXTRA_URI,newDocumentUri);
+    }
+  }
+ else   if (METHOD_MOVE_DOCUMENT.equals(method)) {
+    final Uri parentSourceUri=extras.getParcelable(DocumentsContract.EXTRA_PARENT_URI);
+    final String parentSourceId=DocumentsContract.getDocumentId(parentSourceUri);
+    final Uri targetUri=extras.getParcelable(DocumentsContract.EXTRA_TARGET_URI);
+    final String targetId=DocumentsContract.getDocumentId(targetUri);
+    enforceWritePermissionInner(documentUri,getCallingPackage(),null);
+    enforceReadPermissionInner(parentSourceUri,getCallingPackage(),null);
+    enforceWritePermissionInner(targetUri,getCallingPackage(),null);
+    final String newDocumentId=moveDocument(documentId,parentSourceId,targetId);
+    if (newDocumentId != null) {
+      final Uri newDocumentUri=buildDocumentUriMaybeUsingTree(documentUri,newDocumentId);
+      if (!isTreeUri(newDocumentUri)) {
+        final int modeFlags=getCallingOrSelfUriPermissionModeFlags(context,documentUri);
+        context.grantUriPermission(getCallingPackage(),newDocumentUri,modeFlags);
+      }
+      out.putParcelable(DocumentsContract.EXTRA_URI,newDocumentUri);
+    }
+  }
+ else   if (METHOD_REMOVE_DOCUMENT.equals(method)) {
+    final Uri parentSourceUri=extras.getParcelable(DocumentsContract.EXTRA_PARENT_URI);
+    final String parentSourceId=DocumentsContract.getDocumentId(parentSourceUri);
+    enforceReadPermissionInner(parentSourceUri,getCallingPackage(),null);
+    enforceWritePermissionInner(documentUri,getCallingPackage(),null);
+    removeDocument(documentId,parentSourceId);
+  }
+ else {
+    throw new UnsupportedOperationException("Method not supported " + method);
+  }
+  return out;
+}

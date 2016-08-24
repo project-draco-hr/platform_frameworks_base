@@ -17,6 +17,7 @@
   mDischargePlugLevel=in.readInt();
   mDischargeCurrentLevel=in.readInt();
   mCurrentBatteryLevel=in.readInt();
+  mEstimatedBatteryCapacity=in.readInt();
   mLowDischargeAmountSinceCharge=in.readInt();
   mHighDischargeAmountSinceCharge=in.readInt();
   mDischargeAmountScreenOnSinceCharge=in.readInt();
@@ -25,6 +26,8 @@
   mChargeStepTracker.readFromParcel(in);
   mDailyDischargeStepTracker.readFromParcel(in);
   mDailyChargeStepTracker.readFromParcel(in);
+  mDischargeCounter.readSummaryFromParcelLocked(in);
+  mDischargeScreenOffCounter.readSummaryFromParcelLocked(in);
   int NPKG=in.readInt();
   if (NPKG > 0) {
     mDailyPackageChanges=new ArrayList<>(NPKG);
@@ -53,7 +56,11 @@
   mInteractiveTimer.readSummaryFromParcelLocked(in);
   mPhoneOn=false;
   mPowerSaveModeEnabledTimer.readSummaryFromParcelLocked(in);
-  mDeviceIdleModeEnabledTimer.readSummaryFromParcelLocked(in);
+  mLongestLightIdleTime=in.readLong();
+  mLongestFullIdleTime=in.readLong();
+  mDeviceIdleModeLightTimer.readSummaryFromParcelLocked(in);
+  mDeviceIdleModeFullTimer.readSummaryFromParcelLocked(in);
+  mDeviceLightIdlingTimer.readSummaryFromParcelLocked(in);
   mDeviceIdlingTimer.readSummaryFromParcelLocked(in);
   mPhoneOnTimer.readSummaryFromParcelLocked(in);
   for (int i=0; i < SignalStrength.NUM_SIGNAL_STRENGTH_BINS; i++) {
@@ -87,17 +94,19 @@
   for (int i=0; i < NUM_WIFI_SIGNAL_STRENGTH_BINS; i++) {
     mWifiSignalStrengthsTimer[i].readSummaryFromParcelLocked(in);
   }
-  for (int i=0; i < NUM_CONTROLLER_ACTIVITY_TYPES; i++) {
-    mBluetoothActivityCounters[i].readSummaryFromParcelLocked(in);
-  }
-  for (int i=0; i < NUM_CONTROLLER_ACTIVITY_TYPES; i++) {
-    mWifiActivityCounters[i].readSummaryFromParcelLocked(in);
-  }
+  mWifiActivity.readSummaryFromParcel(in);
+  mBluetoothActivity.readSummaryFromParcel(in);
+  mModemActivity.readSummaryFromParcel(in);
+  mHasWifiReporting=in.readInt() != 0;
+  mHasBluetoothReporting=in.readInt() != 0;
+  mHasModemReporting=in.readInt() != 0;
   mNumConnectivityChange=mLoadedNumConnectivityChange=in.readInt();
   mFlashlightOnNesting=0;
   mFlashlightOnTimer.readSummaryFromParcelLocked(in);
   mCameraOnNesting=0;
   mCameraOnTimer.readSummaryFromParcelLocked(in);
+  mBluetoothScanNesting=0;
+  mBluetoothScanTimer.readSummaryFromParcelLocked(in);
   int NKW=in.readInt();
   if (NKW > 10000) {
     throw new ParcelFormatException("File corrupt: too many kernel wake locks " + NKW);
@@ -124,7 +133,7 @@
   }
   for (int iu=0; iu < NU; iu++) {
     int uid=in.readInt();
-    Uid u=new Uid(uid);
+    Uid u=new Uid(this,uid);
     mUidStats.put(uid,u);
     u.mWifiRunning=false;
     if (in.readInt() != 0) {
@@ -164,7 +173,10 @@
     if (in.readInt() != 0) {
       u.createForegroundActivityTimerLocked().readSummaryFromParcelLocked(in);
     }
-    u.mProcessState=Uid.PROCESS_STATE_NONE;
+    if (in.readInt() != 0) {
+      u.createBluetoothScanTimerLocked().readSummaryFromParcelLocked(in);
+    }
+    u.mProcessState=ActivityManager.PROCESS_STATE_NONEXISTENT;
     for (int i=0; i < Uid.NUM_PROCESS_STATE; i++) {
       if (in.readInt() != 0) {
         u.makeProcessState(i,null);

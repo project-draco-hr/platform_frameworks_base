@@ -1,0 +1,35 @@
+{
+  double expectedDurationMs=1000.0 / mVideoFrameRate;
+  CaptureResult prevResult=resultListener.getCaptureResult(WAIT_FOR_RESULT_TIMEOUT_MS);
+  long prevTS=getValueNotNull(prevResult,CaptureResult.SENSOR_TIMESTAMP);
+  while (!resultListener.hasMoreResults()) {
+    CaptureResult currentResult=resultListener.getCaptureResult(WAIT_FOR_RESULT_TIMEOUT_MS);
+    long currentTS=getValueNotNull(currentResult,CaptureResult.SENSOR_TIMESTAMP);
+    if (currentTS == imageTimeStamp) {
+      CaptureResult nextResult=resultListener.getCaptureResult(WAIT_FOR_RESULT_TIMEOUT_MS);
+      long nextTS=getValueNotNull(nextResult,CaptureResult.SENSOR_TIMESTAMP);
+      double durationMs=(currentTS - prevTS) / 1000000.0;
+      int totalFramesDropped=0;
+      if (!mStaticInfo.isHardwareLevelLegacy()) {
+        mCollector.expectTrue(String.format("Video %dx%d Frame drop detected before video snapshot: " + "duration %.2fms (expected %.2fms)",mVideoSize.getWidth(),mVideoSize.getHeight(),durationMs,expectedDurationMs),durationMs <= (expectedDurationMs * MAX_NUM_FRAME_DROP_INTERVAL_ALLOWED));
+        if (durationMs >= expectedDurationMs * 2) {
+          Log.w(TAG,String.format("Video %dx%d Frame drop detected before video snapshot: " + "duration %.2fms (expected %.2fms)",mVideoSize.getWidth(),mVideoSize.getHeight(),durationMs,expectedDurationMs));
+        }
+        durationMs=(nextTS - currentTS) / 1000000.0;
+        mCollector.expectTrue(String.format("Video %dx%d Frame drop detected after video snapshot: " + "duration %.2fms (expected %.2fms)",mVideoSize.getWidth(),mVideoSize.getHeight(),durationMs,expectedDurationMs),durationMs <= (expectedDurationMs * MAX_NUM_FRAME_DROP_INTERVAL_ALLOWED));
+        if (durationMs >= expectedDurationMs * 2) {
+          Log.w(TAG,String.format("Video %dx%d Frame drop detected after video snapshot: " + "duration %fms (expected %fms)",mVideoSize.getWidth(),mVideoSize.getHeight(),durationMs,expectedDurationMs));
+        }
+        double totalDurationMs=(nextTS - prevTS) / 1000000.0;
+        totalFramesDropped=(int)(totalDurationMs / expectedDurationMs) - 2;
+        if (totalFramesDropped < 0) {
+          Log.w(TAG,"totalFrameDropped is " + totalFramesDropped + ". Video frame rate might be too fast.");
+        }
+        totalFramesDropped=Math.max(0,totalFramesDropped);
+      }
+      return totalFramesDropped;
+    }
+    prevTS=currentTS;
+  }
+  throw new AssertionFailedError("Video snapshot timestamp does not match any of capture results!");
+}

@@ -1,0 +1,113 @@
+{
+  final int NUM_SINGLE_SHOT_TEST=5;
+  final int FRAMEDROP_TOLERANCE=8;
+  final int FRAME_SIZE_15M=15000000;
+  final float FRAME_DROP_TOLERENCE_FACTOR=1.5f;
+  int kFrameDrop_Tolerence=FRAMEDROP_TOLERANCE;
+  for (  int profileId : mCamcorderProfileList) {
+    int cameraId=Integer.parseInt(mCamera.getId());
+    if (!CamcorderProfile.hasProfile(cameraId,profileId) || allowedUnsupported(cameraId,profileId)) {
+      continue;
+    }
+    CamcorderProfile profile=CamcorderProfile.get(cameraId,profileId);
+    Size videoSz=new Size(profile.videoFrameWidth,profile.videoFrameHeight);
+    Size maxPreviewSize=mOrderedPreviewSizes.get(0);
+    if (mStaticInfo.isHardwareLevelLegacy() && (videoSz.getWidth() > maxPreviewSize.getWidth() || videoSz.getHeight() > maxPreviewSize.getHeight())) {
+      continue;
+    }
+    if (!mSupportedVideoSizes.contains(videoSz)) {
+      mCollector.addMessage("Video size " + videoSz.toString() + " for profile ID "+ profileId+ " must be one of the camera device supported video size!");
+      continue;
+    }
+    Size videoSnapshotSz=mOrderedStillSizes.get(mOrderedStillSizes.size() - 1);
+    final float FRAME_DURATION_TOLERANCE=0.01f;
+    long videoFrameDuration=(long)(1e9 / profile.videoFrameRate * (1.0 + FRAME_DURATION_TOLERANCE));
+    HashMap<Size,Long> minFrameDurationMap=mStaticInfo.getAvailableMinFrameDurationsForFormatChecked(ImageFormat.JPEG);
+    for (int i=mOrderedStillSizes.size() - 2; i >= 0; i--) {
+      Size candidateSize=mOrderedStillSizes.get(i);
+      if (mStaticInfo.isHardwareLevelLegacy()) {
+        if (candidateSize.getWidth() <= videoSz.getWidth() && candidateSize.getHeight() <= videoSz.getHeight()) {
+          videoSnapshotSz=candidateSize;
+        }
+      }
+ else {
+        Long jpegFrameDuration=minFrameDurationMap.get(candidateSize);
+        assertTrue("Cannot find minimum frame duration for jpeg size " + candidateSize,jpegFrameDuration != null);
+        if (candidateSize.getWidth() <= videoSz.getWidth() && candidateSize.getHeight() <= videoSz.getHeight() && jpegFrameDuration <= videoFrameDuration) {
+          videoSnapshotSz=candidateSize;
+        }
+      }
+    }
+    if (mStaticInfo.isHardwareLevelFull() && videoSz.getWidth() <= maxPreviewSize.getWidth() && videoSz.getHeight() <= maxPreviewSize.getHeight()) {
+      for (      Size jpegSize : mOrderedStillSizes) {
+        Long jpegFrameDuration=minFrameDurationMap.get(jpegSize);
+        assertTrue("Cannot find minimum frame duration for jpeg size " + jpegSize,jpegFrameDuration != null);
+        if (jpegFrameDuration <= videoFrameDuration) {
+          videoSnapshotSz=jpegSize;
+          break;
+        }
+        if (jpegSize.equals(videoSz)) {
+          throw new AssertionFailedError("Cannot find adequate video snapshot size for video size" + videoSz);
+        }
+      }
+    }
+    Log.i(TAG,"Testing video snapshot size " + videoSnapshotSz + " for video size "+ videoSz);
+    if (videoSnapshotSz.getWidth() * videoSnapshotSz.getHeight() > FRAME_SIZE_15M)     kFrameDrop_Tolerence=(int)(FRAMEDROP_TOLERANCE * FRAME_DROP_TOLERENCE_FACTOR);
+    createImageReader(videoSnapshotSz,ImageFormat.JPEG,MAX_VIDEO_SNAPSHOT_IMAGES,null);
+    if (VERBOSE) {
+      Log.v(TAG,"Testing camera recording with video size " + videoSz.toString());
+    }
+    mOutMediaFileName=VIDEO_FILE_PATH + "/test_video.mp4";
+    if (DEBUG_DUMP) {
+      mOutMediaFileName=VIDEO_FILE_PATH + "/test_video_" + cameraId+ "_"+ videoSz.toString()+ ".mp4";
+    }
+    int numTestIterations=burstTest ? 1 : NUM_SINGLE_SHOT_TEST;
+    int totalDroppedFrames=0;
+    for (int numTested=0; numTested < numTestIterations; numTested++) {
+      prepareRecordingWithProfile(profile);
+      SimpleCaptureCallback resultListener=new SimpleCaptureCallback();
+      SimpleImageReaderListener imageListener=new SimpleImageReaderListener();
+      CaptureRequest.Builder videoSnapshotRequestBuilder=mCamera.createCaptureRequest((mStaticInfo.isHardwareLevelLegacy()) ? CameraDevice.TEMPLATE_RECORD : CameraDevice.TEMPLATE_VIDEO_SNAPSHOT);
+      updatePreviewSurfaceWithVideo(videoSz,profile.videoFrameRate);
+      prepareVideoSnapshot(videoSnapshotRequestBuilder,imageListener);
+      CaptureRequest request=videoSnapshotRequestBuilder.build();
+      startRecording(true,resultListener,false);
+      long startTime=SystemClock.elapsedRealtime();
+      SystemClock.sleep(RECORDING_DURATION_MS / 2);
+      if (burstTest) {
+        List<CaptureRequest> requests=new ArrayList<CaptureRequest>(BURST_VIDEO_SNAPSHOT_NUM);
+        for (int i=0; i < BURST_VIDEO_SNAPSHOT_NUM; i++) {
+          requests.add(request);
+        }
+        mSession.captureBurst(requests,resultListener,mHandler);
+      }
+ else {
+        mSession.capture(request,resultListener,mHandler);
+      }
+      SystemClock.sleep(RECORDING_DURATION_MS / 2);
+      int durationMs=stopRecording(true);
+      if (!burstTest) {
+        durationMs=(int)(resultListener.getTotalNumFrames() * 1000.0f / profile.videoFrameRate);
+      }
+      validateRecording(videoSz,durationMs);
+      if (burstTest) {
+        for (int i=0; i < BURST_VIDEO_SNAPSHOT_NUM; i++) {
+          Image image=imageListener.getImage(CAPTURE_IMAGE_TIMEOUT_MS);
+          validateVideoSnapshotCapture(image,videoSnapshotSz);
+          image.close();
+        }
+      }
+ else {
+        Image image=imageListener.getImage(CAPTURE_IMAGE_TIMEOUT_MS);
+        validateVideoSnapshotCapture(image,videoSnapshotSz);
+        totalDroppedFrames+=validateFrameDropAroundVideoSnapshot(resultListener,image.getTimestamp());
+        image.close();
+      }
+    }
+    if (!burstTest) {
+      Log.w(TAG,String.format("Camera %d Video size %s: Number of dropped frames " + "detected in %d trials is %d frames.",cameraId,videoSz.toString(),numTestIterations,totalDroppedFrames));
+      mCollector.expectLessOrEqual(String.format("Camera %d Video size %s: Number of dropped frames %d must not" + " be larger than %d",cameraId,videoSz.toString(),totalDroppedFrames,kFrameDrop_Tolerence),kFrameDrop_Tolerence,totalDroppedFrames);
+    }
+    closeImageReader();
+  }
+}

@@ -25,9 +25,9 @@
       pw.println("    -h: print this help");
       pw.println("  cmd may be one of:");
       pw.println("    l[ibraries]: list known shared libraries");
-      pw.println("    f[ibraries]: list device features");
+      pw.println("    f[eatures]: list device features");
       pw.println("    k[eysets]: print known keysets");
-      pw.println("    r[esolvers]: dump intent resolvers");
+      pw.println("    r[esolvers] [activity|service|receiver|content]: dump intent resolvers");
       pw.println("    perm[issions]: dump permissions");
       pw.println("    permission [name ...]: dump declaration and use of given permission");
       pw.println("    pref[erred]: print preferred package settings");
@@ -43,6 +43,7 @@
       pw.println("    write: write current settings now");
       pw.println("    installs: details about install sessions");
       pw.println("    check-permission <permission> <package> [<user>]: does pkg hold perm?");
+      pw.println("    dexopt: dump dexopt state");
       pw.println("    <package.name>: info about given package");
       return;
     }
@@ -96,7 +97,31 @@
       dumpState.setDump(DumpState.DUMP_FEATURES);
     }
  else     if ("r".equals(cmd) || "resolvers".equals(cmd)) {
-      dumpState.setDump(DumpState.DUMP_RESOLVERS);
+      if (opti >= args.length) {
+        dumpState.setDump(DumpState.DUMP_ACTIVITY_RESOLVERS | DumpState.DUMP_SERVICE_RESOLVERS | DumpState.DUMP_RECEIVER_RESOLVERS| DumpState.DUMP_CONTENT_RESOLVERS);
+      }
+ else {
+        while (opti < args.length) {
+          String name=args[opti];
+          if ("a".equals(name) || "activity".equals(name)) {
+            dumpState.setDump(DumpState.DUMP_ACTIVITY_RESOLVERS);
+          }
+ else           if ("s".equals(name) || "service".equals(name)) {
+            dumpState.setDump(DumpState.DUMP_SERVICE_RESOLVERS);
+          }
+ else           if ("r".equals(name) || "receiver".equals(name)) {
+            dumpState.setDump(DumpState.DUMP_RECEIVER_RESOLVERS);
+          }
+ else           if ("c".equals(name) || "content".equals(name)) {
+            dumpState.setDump(DumpState.DUMP_CONTENT_RESOLVERS);
+          }
+ else {
+            pw.println("Error: unknown resolver table type: " + name);
+            return;
+          }
+          opti++;
+        }
+      }
     }
  else     if ("perm".equals(cmd) || "permissions".equals(cmd)) {
       dumpState.setDump(DumpState.DUMP_PERMISSIONS);
@@ -153,6 +178,12 @@
  else     if ("installs".equals(cmd)) {
       dumpState.setDump(DumpState.DUMP_INSTALLS);
     }
+ else     if ("frozen".equals(cmd)) {
+      dumpState.setDump(DumpState.DUMP_FROZEN);
+    }
+ else     if ("dexopt".equals(cmd)) {
+      dumpState.setDump(DumpState.DUMP_DEXOPT);
+    }
  else     if ("write".equals(cmd)) {
 synchronized (mPackages) {
         mSettings.writeLPr();
@@ -179,14 +210,14 @@ synchronized (mPackages) {
         pw.print("  Required: ");
         pw.print(mRequiredVerifierPackage);
         pw.print(" (uid=");
-        pw.print(getPackageUid(mRequiredVerifierPackage,0));
+        pw.print(getPackageUid(mRequiredVerifierPackage,MATCH_DEBUG_TRIAGED_MISSING,UserHandle.USER_SYSTEM));
         pw.println(")");
       }
  else       if (mRequiredVerifierPackage != null) {
         pw.print("vrfy,");
         pw.print(mRequiredVerifierPackage);
         pw.print(",");
-        pw.println(getPackageUid(mRequiredVerifierPackage,0));
+        pw.println(getPackageUid(mRequiredVerifierPackage,MATCH_DEBUG_TRIAGED_MISSING,UserHandle.USER_SYSTEM));
       }
     }
     if (dumpState.isDumping(DumpState.DUMP_INTENT_FILTER_VERIFIERS) && packageName == null) {
@@ -198,14 +229,14 @@ synchronized (mPackages) {
           pw.print("  Using: ");
           pw.print(verifierPackageName);
           pw.print(" (uid=");
-          pw.print(getPackageUid(verifierPackageName,0));
+          pw.print(getPackageUid(verifierPackageName,MATCH_DEBUG_TRIAGED_MISSING,UserHandle.USER_SYSTEM));
           pw.println(")");
         }
  else         if (verifierPackageName != null) {
           pw.print("ifv,");
           pw.print(verifierPackageName);
           pw.print(",");
-          pw.println(getPackageUid(verifierPackageName,0));
+          pw.println(getPackageUid(verifierPackageName,MATCH_DEBUG_TRIAGED_MISSING,UserHandle.USER_SYSTEM));
         }
       }
  else {
@@ -262,28 +293,40 @@ synchronized (mPackages) {
       if (!checkin) {
         pw.println("Features:");
       }
-      Iterator<String> it=mAvailableFeatures.keySet().iterator();
-      while (it.hasNext()) {
-        String name=it.next();
-        if (!checkin) {
-          pw.print("  ");
+      for (      FeatureInfo feat : mAvailableFeatures.values()) {
+        if (checkin) {
+          pw.print("feat,");
+          pw.print(feat.name);
+          pw.print(",");
+          pw.println(feat.version);
         }
  else {
-          pw.print("feat,");
+          pw.print("  ");
+          pw.print(feat.name);
+          if (feat.version > 0) {
+            pw.print(" version=");
+            pw.print(feat.version);
+          }
+          pw.println();
         }
-        pw.println(name);
       }
     }
-    if (!checkin && dumpState.isDumping(DumpState.DUMP_RESOLVERS)) {
+    if (!checkin && dumpState.isDumping(DumpState.DUMP_ACTIVITY_RESOLVERS)) {
       if (mActivities.dump(pw,dumpState.getTitlePrinted() ? "\nActivity Resolver Table:" : "Activity Resolver Table:","  ",packageName,dumpState.isOptionEnabled(DumpState.OPTION_SHOW_FILTERS),true)) {
         dumpState.setTitlePrinted(true);
       }
+    }
+    if (!checkin && dumpState.isDumping(DumpState.DUMP_RECEIVER_RESOLVERS)) {
       if (mReceivers.dump(pw,dumpState.getTitlePrinted() ? "\nReceiver Resolver Table:" : "Receiver Resolver Table:","  ",packageName,dumpState.isOptionEnabled(DumpState.OPTION_SHOW_FILTERS),true)) {
         dumpState.setTitlePrinted(true);
       }
+    }
+    if (!checkin && dumpState.isDumping(DumpState.DUMP_SERVICE_RESOLVERS)) {
       if (mServices.dump(pw,dumpState.getTitlePrinted() ? "\nService Resolver Table:" : "Service Resolver Table:","  ",packageName,dumpState.isOptionEnabled(DumpState.OPTION_SHOW_FILTERS),true)) {
         dumpState.setTitlePrinted(true);
       }
+    }
+    if (!checkin && dumpState.isDumping(DumpState.DUMP_CONTENT_RESOLVERS)) {
       if (mProviders.dump(pw,dumpState.getTitlePrinted() ? "\nProvider Resolver Table:" : "Provider Resolver Table:","  ",packageName,dumpState.isOptionEnabled(DumpState.OPTION_SHOW_FILTERS),true)) {
         dumpState.setTitlePrinted(true);
       }
@@ -443,9 +486,32 @@ catch (      IOException e) {
     if (dumpState.isDumping(DumpState.DUMP_SHARED_USERS)) {
       mSettings.dumpSharedUsersLPr(pw,packageName,permissionNames,dumpState,checkin);
     }
+    if (!checkin && dumpState.isDumping(DumpState.DUMP_PERMISSIONS) && packageName == null) {
+      mSettings.dumpRestoredPermissionGrantsLPr(pw,dumpState);
+    }
     if (!checkin && dumpState.isDumping(DumpState.DUMP_INSTALLS) && packageName == null) {
       if (dumpState.onTitlePrinted())       pw.println();
       mInstallerService.dump(new IndentingPrintWriter(pw,"  ",120));
+    }
+    if (!checkin && dumpState.isDumping(DumpState.DUMP_FROZEN) && packageName == null) {
+      if (dumpState.onTitlePrinted())       pw.println();
+      final IndentingPrintWriter ipw=new IndentingPrintWriter(pw,"  ",120);
+      ipw.println();
+      ipw.println("Frozen packages:");
+      ipw.increaseIndent();
+      if (mFrozenPackages.size() == 0) {
+        ipw.println("(none)");
+      }
+ else {
+        for (int i=0; i < mFrozenPackages.size(); i++) {
+          ipw.println(mFrozenPackages.valueAt(i));
+        }
+      }
+      ipw.decreaseIndent();
+    }
+    if (!checkin && dumpState.isDumping(DumpState.DUMP_DEXOPT)) {
+      if (dumpState.onTitlePrinted())       pw.println();
+      dumpDexoptStateLPr(pw,packageName);
     }
     if (!checkin && dumpState.isDumping(DumpState.DUMP_MESSAGES) && packageName == null) {
       if (dumpState.onTitlePrinted())       pw.println();

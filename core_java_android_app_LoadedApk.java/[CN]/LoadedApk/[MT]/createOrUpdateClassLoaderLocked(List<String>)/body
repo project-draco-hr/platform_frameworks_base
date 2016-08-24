@@ -1,0 +1,65 @@
+{
+  if (mPackageName.equals("android")) {
+    if (mClassLoader != null) {
+      return;
+    }
+    if (mBaseClassLoader != null) {
+      mClassLoader=mBaseClassLoader;
+    }
+ else {
+      mClassLoader=ClassLoader.getSystemClassLoader();
+    }
+    return;
+  }
+  if (!Objects.equals(mPackageName,ActivityThread.currentPackageName())) {
+    VMRuntime.getRuntime().vmInstructionSet();
+    try {
+      ActivityThread.getPackageManager().notifyPackageUse(mPackageName,PackageManager.NOTIFY_PACKAGE_USE_CROSS_PACKAGE);
+    }
+ catch (    RemoteException re) {
+      throw re.rethrowFromSystemServer();
+    }
+  }
+  if (mRegisterPackage) {
+    try {
+      ActivityManagerNative.getDefault().addPackageDependency(mPackageName);
+    }
+ catch (    RemoteException e) {
+      throw e.rethrowFromSystemServer();
+    }
+  }
+  final List<String> zipPaths=new ArrayList<>(10);
+  final List<String> libPaths=new ArrayList<>(10);
+  makePaths(mActivityThread,mApplicationInfo,zipPaths,libPaths);
+  final boolean isBundledApp=mApplicationInfo.isSystemApp() && !mApplicationInfo.isUpdatedSystemApp();
+  String libraryPermittedPath=mDataDir;
+  if (isBundledApp) {
+    libraryPermittedPath+=File.pathSeparator + System.getProperty("java.library.path");
+  }
+  final String librarySearchPath=TextUtils.join(File.pathSeparator,libPaths);
+  if (!mIncludeCode) {
+    if (mClassLoader == null) {
+      StrictMode.ThreadPolicy oldPolicy=StrictMode.allowThreadDiskReads();
+      mClassLoader=ApplicationLoaders.getDefault().getClassLoader("",mApplicationInfo.targetSdkVersion,isBundledApp,librarySearchPath,libraryPermittedPath,mBaseClassLoader);
+      StrictMode.setThreadPolicy(oldPolicy);
+    }
+    return;
+  }
+  final String zip=(zipPaths.size() == 1) ? zipPaths.get(0) : TextUtils.join(File.pathSeparator,zipPaths);
+  if (ActivityThread.localLOGV)   Slog.v(ActivityThread.TAG,"Class path: " + zip + ", JNI path: "+ librarySearchPath);
+  boolean needToSetupJitProfiles=false;
+  if (mClassLoader == null) {
+    StrictMode.ThreadPolicy oldPolicy=StrictMode.allowThreadDiskReads();
+    mClassLoader=ApplicationLoaders.getDefault().getClassLoader(zip,mApplicationInfo.targetSdkVersion,isBundledApp,librarySearchPath,libraryPermittedPath,mBaseClassLoader);
+    StrictMode.setThreadPolicy(oldPolicy);
+    needToSetupJitProfiles=true;
+  }
+  if (addedPaths != null && addedPaths.size() > 0) {
+    final String add=TextUtils.join(File.pathSeparator,addedPaths);
+    ApplicationLoaders.getDefault().addPath(mClassLoader,add);
+    needToSetupJitProfiles=true;
+  }
+  if (needToSetupJitProfiles && !ActivityThread.isSystem()) {
+    setupJitProfileSupport();
+  }
+}

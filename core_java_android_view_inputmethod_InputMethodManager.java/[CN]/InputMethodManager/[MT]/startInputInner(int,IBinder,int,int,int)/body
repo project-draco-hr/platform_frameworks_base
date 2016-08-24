@@ -1,0 +1,118 @@
+{
+  final View view;
+synchronized (mH) {
+    view=mServedView;
+    if (DEBUG) {
+      Log.v(TAG,"Starting input: view=" + dumpViewInfo(view) + " reason="+ InputMethodClient.getStartInputReason(startInputReason));
+    }
+    if (view == null) {
+      if (DEBUG)       Log.v(TAG,"ABORT input: no served view!");
+      return false;
+    }
+  }
+  Handler vh=view.getHandler();
+  if (vh == null) {
+    if (DEBUG)     Log.v(TAG,"ABORT input: no handler for view! Close current input.");
+    closeCurrentInput();
+    return false;
+  }
+  if (vh.getLooper() != Looper.myLooper()) {
+    if (DEBUG)     Log.v(TAG,"Starting input: reschedule to view thread");
+    vh.post(new Runnable(){
+      @Override public void run(){
+        startInputInner(startInputReason,null,0,0,0);
+      }
+    }
+);
+    return false;
+  }
+  EditorInfo tba=new EditorInfo();
+  tba.packageName=view.getContext().getOpPackageName();
+  tba.fieldId=view.getId();
+  InputConnection ic=view.onCreateInputConnection(tba);
+  if (DEBUG)   Log.v(TAG,"Starting input: tba=" + tba + " ic="+ ic);
+synchronized (mH) {
+    if (mServedView != view || !mServedConnecting) {
+      if (DEBUG)       Log.v(TAG,"Starting input: finished by someone else. view=" + dumpViewInfo(view) + " mServedView="+ dumpViewInfo(mServedView)+ " mServedConnecting="+ mServedConnecting);
+      return false;
+    }
+    if (mCurrentTextBoxAttribute == null) {
+      controlFlags|=CONTROL_START_INITIAL;
+    }
+    mCurrentTextBoxAttribute=tba;
+    mServedConnecting=false;
+    if (mServedInputConnectionWrapper != null) {
+      mServedInputConnectionWrapper.deactivate();
+      mServedInputConnectionWrapper=null;
+    }
+    ControlledInputConnectionWrapper servedContext;
+    final int missingMethodFlags;
+    if (ic != null) {
+      mCursorSelStart=tba.initialSelStart;
+      mCursorSelEnd=tba.initialSelEnd;
+      mCursorCandStart=-1;
+      mCursorCandEnd=-1;
+      mCursorRect.setEmpty();
+      mCursorAnchorInfo=null;
+      final Handler icHandler;
+      missingMethodFlags=InputConnectionInspector.getMissingMethodFlags(ic);
+      if ((missingMethodFlags & InputConnectionInspector.MissingMethodFlags.GET_HANDLER) != 0) {
+        icHandler=null;
+      }
+ else {
+        icHandler=ic.getHandler();
+      }
+      servedContext=new ControlledInputConnectionWrapper(icHandler != null ? icHandler.getLooper() : vh.getLooper(),ic,this);
+    }
+ else {
+      servedContext=null;
+      missingMethodFlags=0;
+    }
+    mServedInputConnectionWrapper=servedContext;
+    try {
+      if (DEBUG)       Log.v(TAG,"START INPUT: view=" + dumpViewInfo(view) + " ic="+ ic+ " tba="+ tba+ " controlFlags=#"+ Integer.toHexString(controlFlags));
+      final InputBindResult res=mService.startInputOrWindowGainedFocus(startInputReason,mClient,windowGainingFocus,controlFlags,softInputMode,windowFlags,tba,servedContext,missingMethodFlags);
+      if (DEBUG)       Log.v(TAG,"Starting input: Bind result=" + res);
+      if (res != null) {
+        if (res.id != null) {
+          setInputChannelLocked(res.channel);
+          mBindSequence=res.sequence;
+          mCurMethod=res.method;
+          mCurId=res.id;
+          mNextUserActionNotificationSequenceNumber=res.userActionNotificationSequenceNumber;
+          if (mServedInputConnectionWrapper != null) {
+            mServedInputConnectionWrapper.setInputMethodId(mCurId);
+          }
+        }
+ else {
+          if (res.channel != null && res.channel != mCurChannel) {
+            res.channel.dispose();
+          }
+          if (mCurMethod == null) {
+            if (DEBUG)             Log.v(TAG,"ABORT input: no input method!");
+            return true;
+          }
+        }
+      }
+ else {
+        if (startInputReason == InputMethodClient.START_INPUT_REASON_WINDOW_FOCUS_GAIN) {
+          if (DEBUG)           Log.w(TAG,"startInputOrWindowGainedFocus failed. " + "Window focus may have already been lost. " + "win=" + windowGainingFocus + " view="+ dumpViewInfo(view));
+          if (!mActive) {
+            mHasBeenInactive=true;
+          }
+        }
+      }
+      if (mCurMethod != null && mCompletions != null) {
+        try {
+          mCurMethod.displayCompletions(mCompletions);
+        }
+ catch (        RemoteException e) {
+        }
+      }
+    }
+ catch (    RemoteException e) {
+      Log.w(TAG,"IME died: " + mCurId,e);
+    }
+  }
+  return true;
+}

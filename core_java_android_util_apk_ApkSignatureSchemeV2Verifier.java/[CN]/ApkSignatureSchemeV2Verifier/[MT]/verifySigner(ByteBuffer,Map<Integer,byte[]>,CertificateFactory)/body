@@ -1,0 +1,114 @@
+{
+  ByteBuffer signedData=getLengthPrefixedSlice(signerBlock);
+  ByteBuffer signatures=getLengthPrefixedSlice(signerBlock);
+  byte[] publicKeyBytes=readLengthPrefixedByteArray(signerBlock);
+  int signatureCount=0;
+  int bestSigAlgorithm=-1;
+  byte[] bestSigAlgorithmSignatureBytes=null;
+  List<Integer> signaturesSigAlgorithms=new ArrayList<>();
+  while (signatures.hasRemaining()) {
+    signatureCount++;
+    try {
+      ByteBuffer signature=getLengthPrefixedSlice(signatures);
+      if (signature.remaining() < 8) {
+        throw new SecurityException("Signature record too short");
+      }
+      int sigAlgorithm=signature.getInt();
+      signaturesSigAlgorithms.add(sigAlgorithm);
+      if (!isSupportedSignatureAlgorithm(sigAlgorithm)) {
+        continue;
+      }
+      if ((bestSigAlgorithm == -1) || (compareSignatureAlgorithm(sigAlgorithm,bestSigAlgorithm) > 0)) {
+        bestSigAlgorithm=sigAlgorithm;
+        bestSigAlgorithmSignatureBytes=readLengthPrefixedByteArray(signature);
+      }
+    }
+ catch (    IOException|BufferUnderflowException e) {
+      throw new SecurityException("Failed to parse signature record #" + signatureCount,e);
+    }
+  }
+  if (bestSigAlgorithm == -1) {
+    if (signatureCount == 0) {
+      throw new SecurityException("No signatures found");
+    }
+ else {
+      throw new SecurityException("No supported signatures found");
+    }
+  }
+  String keyAlgorithm=getSignatureAlgorithmJcaKeyAlgorithm(bestSigAlgorithm);
+  Pair<String,? extends AlgorithmParameterSpec> signatureAlgorithmParams=getSignatureAlgorithmJcaSignatureAlgorithm(bestSigAlgorithm);
+  String jcaSignatureAlgorithm=signatureAlgorithmParams.first;
+  AlgorithmParameterSpec jcaSignatureAlgorithmParams=signatureAlgorithmParams.second;
+  boolean sigVerified;
+  try {
+    PublicKey publicKey=KeyFactory.getInstance(keyAlgorithm).generatePublic(new X509EncodedKeySpec(publicKeyBytes));
+    Signature sig=Signature.getInstance(jcaSignatureAlgorithm);
+    sig.initVerify(publicKey);
+    if (jcaSignatureAlgorithmParams != null) {
+      sig.setParameter(jcaSignatureAlgorithmParams);
+    }
+    sig.update(signedData);
+    sigVerified=sig.verify(bestSigAlgorithmSignatureBytes);
+  }
+ catch (  NoSuchAlgorithmException|InvalidKeySpecException|InvalidKeyException|InvalidAlgorithmParameterException|SignatureException e) {
+    throw new SecurityException("Failed to verify " + jcaSignatureAlgorithm + " signature",e);
+  }
+  if (!sigVerified) {
+    throw new SecurityException(jcaSignatureAlgorithm + " signature did not verify");
+  }
+  byte[] contentDigest=null;
+  signedData.clear();
+  ByteBuffer digests=getLengthPrefixedSlice(signedData);
+  List<Integer> digestsSigAlgorithms=new ArrayList<>();
+  int digestCount=0;
+  while (digests.hasRemaining()) {
+    digestCount++;
+    try {
+      ByteBuffer digest=getLengthPrefixedSlice(digests);
+      if (digest.remaining() < 8) {
+        throw new IOException("Record too short");
+      }
+      int sigAlgorithm=digest.getInt();
+      digestsSigAlgorithms.add(sigAlgorithm);
+      if (sigAlgorithm == bestSigAlgorithm) {
+        contentDigest=readLengthPrefixedByteArray(digest);
+      }
+    }
+ catch (    IOException|BufferUnderflowException e) {
+      throw new IOException("Failed to parse digest record #" + digestCount,e);
+    }
+  }
+  if (!signaturesSigAlgorithms.equals(digestsSigAlgorithms)) {
+    throw new SecurityException("Signature algorithms don't match between digests and signatures records");
+  }
+  int digestAlgorithm=getSignatureAlgorithmContentDigestAlgorithm(bestSigAlgorithm);
+  byte[] previousSignerDigest=contentDigests.put(digestAlgorithm,contentDigest);
+  if ((previousSignerDigest != null) && (!MessageDigest.isEqual(previousSignerDigest,contentDigest))) {
+    throw new SecurityException(getContentDigestAlgorithmJcaDigestAlgorithm(digestAlgorithm) + " contents digest does not match the digest specified by a preceding signer");
+  }
+  ByteBuffer certificates=getLengthPrefixedSlice(signedData);
+  List<X509Certificate> certs=new ArrayList<>();
+  int certificateCount=0;
+  while (certificates.hasRemaining()) {
+    certificateCount++;
+    byte[] encodedCert=readLengthPrefixedByteArray(certificates);
+    X509Certificate certificate;
+    try {
+      certificate=(X509Certificate)certFactory.generateCertificate(new ByteArrayInputStream(encodedCert));
+    }
+ catch (    CertificateException e) {
+      throw new SecurityException("Failed to decode certificate #" + certificateCount,e);
+    }
+    certificate=new VerbatimX509Certificate(certificate,encodedCert);
+    certs.add(certificate);
+  }
+  if (certs.isEmpty()) {
+    throw new SecurityException("No certificates listed");
+  }
+  X509Certificate mainCertificate=certs.get(0);
+  byte[] certificatePublicKeyBytes=mainCertificate.getPublicKey().getEncoded();
+  if (!Arrays.equals(publicKeyBytes,certificatePublicKeyBytes)) {
+    throw new SecurityException("Public key mismatch between certificate and signature record");
+  }
+  return certs.toArray(new X509Certificate[certs.size()]);
+}

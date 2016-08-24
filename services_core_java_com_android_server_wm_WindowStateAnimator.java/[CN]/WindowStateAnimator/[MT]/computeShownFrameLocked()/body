@@ -2,19 +2,19 @@
   final boolean selfTransformation=mHasLocalTransformation;
   Transformation attachedTransformation=(mAttachedWinAnimator != null && mAttachedWinAnimator.mHasLocalTransformation) ? mAttachedWinAnimator.mTransformation : null;
   Transformation appTransformation=(mAppAnimator != null && mAppAnimator.hasTransformation) ? mAppAnimator.transformation : null;
-  final WindowState wallpaperTarget=mService.mWallpaperTarget;
+  final WindowState wallpaperTarget=mWallpaperControllerLocked.getWallpaperTarget();
   if (mIsWallpaper && wallpaperTarget != null && mService.mAnimateWallpaperWithTarget) {
     final WindowStateAnimator wallpaperAnimator=wallpaperTarget.mWinAnimator;
     if (wallpaperAnimator.mHasLocalTransformation && wallpaperAnimator.mAnimation != null && !wallpaperAnimator.mAnimation.getDetachWallpaper()) {
       attachedTransformation=wallpaperAnimator.mTransformation;
-      if (WindowManagerService.DEBUG_WALLPAPER && attachedTransformation != null) {
+      if (DEBUG_WALLPAPER && attachedTransformation != null) {
         Slog.v(TAG,"WP target attached xform: " + attachedTransformation);
       }
     }
     final AppWindowAnimator wpAppAnimator=wallpaperTarget.mAppToken == null ? null : wallpaperTarget.mAppToken.mAppAnimator;
     if (wpAppAnimator != null && wpAppAnimator.hasTransformation && wpAppAnimator.animation != null && !wpAppAnimator.animation.getDetachWallpaper()) {
       appTransformation=wpAppAnimator.transformation;
-      if (WindowManagerService.DEBUG_WALLPAPER && appTransformation != null) {
+      if (DEBUG_WALLPAPER && appTransformation != null) {
         Slog.v(TAG,"WP target app xform: " + appTransformation);
       }
     }
@@ -44,17 +44,17 @@
     if (selfTransformation) {
       tmpMatrix.postConcat(mTransformation.getMatrix());
     }
-    tmpMatrix.postTranslate(frame.left + mWin.mXOffset,frame.top + mWin.mYOffset);
     if (attachedTransformation != null) {
       tmpMatrix.postConcat(attachedTransformation.getMatrix());
     }
     if (appTransformation != null) {
       tmpMatrix.postConcat(appTransformation.getMatrix());
     }
+    tmpMatrix.postTranslate(frame.left + mWin.mXOffset,frame.top + mWin.mYOffset);
     if (screenAnimation) {
       tmpMatrix.postConcat(screenRotationAnimation.getEnterTransformation().getMatrix());
     }
-    if (mService.mAccessibilityController != null && displayId == Display.DEFAULT_DISPLAY) {
+    if (mService.mAccessibilityController != null && displayId == DEFAULT_DISPLAY) {
       MagnificationSpec spec=mService.mAccessibilityController.getMagnificationSpecForWindowLocked(mWin);
       if (spec != null && !spec.isNop()) {
         tmpMatrix.postScale(spec.scale,spec.scale);
@@ -69,9 +69,7 @@
     mDtDy=tmpFloats[Matrix.MSCALE_Y];
     float x=tmpFloats[Matrix.MTRANS_X];
     float y=tmpFloats[Matrix.MTRANS_Y];
-    int w=frame.width();
-    int h=frame.height();
-    mWin.mShownFrame.set(x,y,x + w,y + h);
+    mWin.mShownPosition.set((int)x,(int)y);
     mShownAlpha=mAlpha;
     if (!mService.mLimitedAlphaCompositing || (!PixelFormat.formatHasAlpha(mWin.mAttrs.format) || (mWin.isIdentityMatrix(mDsDx,mDtDx,mDsDy,mDtDy) && x == frame.left && y == frame.top))) {
       if (selfTransformation) {
@@ -84,15 +82,10 @@
         mShownAlpha*=appTransformation.getAlpha();
         if (appTransformation.hasClipRect()) {
           mClipRect.set(appTransformation.getClipRect());
-          if (mWin.mHScale > 0) {
-            mClipRect.left/=mWin.mHScale;
-            mClipRect.right/=mWin.mHScale;
-          }
-          if (mWin.mVScale > 0) {
-            mClipRect.top/=mWin.mVScale;
-            mClipRect.bottom/=mWin.mVScale;
-          }
           mHasClipRect=true;
+          if (mWin.layoutInParentFrame()) {
+            mClipRect.offset((mWin.mContainingFrame.left - mWin.mFrame.left),mWin.mContainingFrame.top - mWin.mFrame.top);
+          }
         }
       }
       if (screenAnimation) {
@@ -104,12 +97,15 @@
     if ((DEBUG_SURFACE_TRACE || WindowManagerService.localLOGV) && (mShownAlpha == 1.0 || mShownAlpha == 0.0))     Slog.v(TAG,"computeShownFrameLocked: Animating " + this + " mAlpha="+ mAlpha+ " self="+ (selfTransformation ? mTransformation.getAlpha() : "null")+ " attached="+ (attachedTransformation == null ? "null" : attachedTransformation.getAlpha())+ " app="+ (appTransformation == null ? "null" : appTransformation.getAlpha())+ " screen="+ (screenAnimation ? screenRotationAnimation.getEnterTransformation().getAlpha() : "null"));
     return;
   }
- else   if (mIsWallpaper && mService.mInnerFields.mWallpaperActionPending) {
+ else   if (mIsWallpaper && mService.mWindowPlacerLocked.mWallpaperActionPending) {
+    return;
+  }
+ else   if (mWin.isDragResizeChanged()) {
     return;
   }
   if (WindowManagerService.localLOGV)   Slog.v(TAG,"computeShownFrameLocked: " + this + " not attached, mAlpha="+ mAlpha);
   MagnificationSpec spec=null;
-  if (mService.mAccessibilityController != null && displayId == Display.DEFAULT_DISPLAY) {
+  if (mService.mAccessibilityController != null && displayId == DEFAULT_DISPLAY) {
     spec=mService.mAccessibilityController.getMagnificationSpecForWindowLocked(mWin);
   }
   if (spec != null) {
@@ -130,15 +126,13 @@
     mDtDy=tmpFloats[Matrix.MSCALE_Y];
     float x=tmpFloats[Matrix.MTRANS_X];
     float y=tmpFloats[Matrix.MTRANS_Y];
-    int w=frame.width();
-    int h=frame.height();
-    mWin.mShownFrame.set(x,y,x + w,y + h);
+    mWin.mShownPosition.set((int)x,(int)y);
     mShownAlpha=mAlpha;
   }
  else {
-    mWin.mShownFrame.set(mWin.mFrame);
+    mWin.mShownPosition.set(mWin.mFrame.left,mWin.mFrame.top);
     if (mWin.mXOffset != 0 || mWin.mYOffset != 0) {
-      mWin.mShownFrame.offset(mWin.mXOffset,mWin.mYOffset);
+      mWin.mShownPosition.offset(mWin.mXOffset,mWin.mYOffset);
     }
     mShownAlpha=mAlpha;
     mHaveMatrix=false;

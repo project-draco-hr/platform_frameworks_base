@@ -16,9 +16,8 @@ synchronized (mPidsSelfLocked) {
   checkTime(startTime,"startProcess: done updating cpu stats");
   try {
     try {
-      if (AppGlobals.getPackageManager().isPackageFrozen(app.info.packageName)) {
-        throw new RuntimeException("Package " + app.info.packageName + " is frozen!");
-      }
+      final int userId=UserHandle.getUserId(app.uid);
+      AppGlobals.getPackageManager().checkPackageStartable(app.info.packageName,userId);
     }
  catch (    RemoteException e) {
       throw e.rethrowAsRuntimeException();
@@ -31,7 +30,7 @@ synchronized (mPidsSelfLocked) {
       try {
         checkTime(startTime,"startProcess: getting gids from package manager");
         final IPackageManager pm=AppGlobals.getPackageManager();
-        permGids=pm.getPackageGids(app.info.packageName,app.userId);
+        permGids=pm.getPackageGids(app.info.packageName,MATCH_DEBUG_TRIAGED_MISSING,app.userId);
         MountServiceInternal mountServiceInternal=LocalServices.getService(MountServiceInternal.class);
         mountExternal=mountServiceInternal.getExternalStorageMountMode(uid,app.info.packageName);
       }
@@ -108,6 +107,11 @@ synchronized (mPidsSelfLocked) {
     mBatteryStatsService.noteProcessStart(app.processName,app.info.uid);
     checkTime(startTime,"startProcess: done updating battery stats");
     EventLog.writeEvent(EventLogTags.AM_PROC_START,UserHandle.getUserId(uid),startResult.pid,uid,app.processName,hostingType,hostingNameStr != null ? hostingNameStr : "");
+    try {
+      AppGlobals.getPackageManager().logAppProcessStartIfNeeded(app.processName,app.uid,app.info.seinfo,app.info.sourceDir,startResult.pid);
+    }
+ catch (    RemoteException ex) {
+    }
     if (app.persistent) {
       Watchdog.getInstance().processStarted(app.processName,startResult.pid);
     }
@@ -149,11 +153,7 @@ synchronized (mPidsSelfLocked) {
     checkTime(startTime,"startProcess: done updating pids map");
   }
  catch (  RuntimeException e) {
-    app.setPid(0);
-    mBatteryStatsService.noteProcessFinish(app.processName,app.info.uid);
-    if (app.isolated) {
-      mBatteryStatsService.removeIsolatedUid(app.uid,app.info.uid);
-    }
     Slog.e(TAG,"Failure starting process " + app.processName,e);
+    forceStopPackageLocked(app.info.packageName,UserHandle.getAppId(app.uid),false,false,true,false,false,UserHandle.getUserId(app.userId),"start failure");
   }
 }

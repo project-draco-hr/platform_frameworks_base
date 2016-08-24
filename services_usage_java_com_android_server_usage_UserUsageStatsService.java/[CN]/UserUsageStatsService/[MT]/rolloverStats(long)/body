@@ -1,0 +1,34 @@
+{
+  final long startTime=SystemClock.elapsedRealtime();
+  Slog.i(TAG,mLogPrefix + "Rolling over usage stats");
+  final Configuration previousConfig=mCurrentStats[UsageStatsManager.INTERVAL_DAILY].activeConfiguration;
+  ArraySet<String> continuePreviousDay=new ArraySet<>();
+  for (  IntervalStats stat : mCurrentStats) {
+    final int pkgCount=stat.packageStats.size();
+    for (int i=0; i < pkgCount; i++) {
+      UsageStats pkgStats=stat.packageStats.valueAt(i);
+      if (pkgStats.mLastEvent == UsageEvents.Event.MOVE_TO_FOREGROUND || pkgStats.mLastEvent == UsageEvents.Event.CONTINUE_PREVIOUS_DAY) {
+        continuePreviousDay.add(pkgStats.mPackageName);
+        stat.update(pkgStats.mPackageName,mDailyExpiryDate.getTimeInMillis() - 1,UsageEvents.Event.END_OF_DAY);
+        notifyStatsChanged();
+      }
+    }
+    stat.updateConfigurationStats(null,mDailyExpiryDate.getTimeInMillis() - 1);
+  }
+  persistActiveStats();
+  mDatabase.prune(currentTimeMillis);
+  loadActiveStats(currentTimeMillis);
+  final int continueCount=continuePreviousDay.size();
+  for (int i=0; i < continueCount; i++) {
+    String name=continuePreviousDay.valueAt(i);
+    final long beginTime=mCurrentStats[UsageStatsManager.INTERVAL_DAILY].beginTime;
+    for (    IntervalStats stat : mCurrentStats) {
+      stat.update(name,beginTime,UsageEvents.Event.CONTINUE_PREVIOUS_DAY);
+      stat.updateConfigurationStats(previousConfig,beginTime);
+      notifyStatsChanged();
+    }
+  }
+  persistActiveStats();
+  final long totalTime=SystemClock.elapsedRealtime() - startTime;
+  Slog.i(TAG,mLogPrefix + "Rolling over usage stats complete. Took " + totalTime+ " milliseconds");
+}

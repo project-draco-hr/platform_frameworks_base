@@ -40,14 +40,15 @@ synchronized (mPidsSelfLocked) {
   }
   EventLog.writeEvent(EventLogTags.AM_PROC_BOUND,app.userId,app.pid,app.processName);
   app.makeActive(thread,mProcessStats);
-  app.curAdj=app.setAdj=-100;
-  app.curSchedGroup=app.setSchedGroup=Process.THREAD_GROUP_DEFAULT;
+  app.curAdj=app.setAdj=app.verifiedAdj=ProcessList.INVALID_ADJ;
+  app.curSchedGroup=app.setSchedGroup=ProcessList.SCHED_GROUP_DEFAULT;
   app.forcingToForeground=null;
   updateProcessForegroundLocked(app,false,false);
   app.hasShownUi=false;
   app.debugging=false;
   app.cached=false;
   app.killedByAm=false;
+  app.unlocked=StorageManager.isUserKeyUnlocked(app.userId);
   mHandler.removeMessages(PROC_START_TIMEOUT_MSG,app);
   boolean normalMode=mProcessesReady || isAllowedWhileBooting(app.info);
   List<ProviderInfo> providers=normalMode ? generateApplicationProvidersLocked(app) : null;
@@ -81,11 +82,6 @@ synchronized (mPidsSelfLocked) {
       samplingInterval=mSamplingInterval;
       profileAutoStop=mAutoStopProfiler;
     }
-    boolean enableOpenGlTrace=false;
-    if (mOpenGlTraceApp != null && mOpenGlTraceApp.equals(processName)) {
-      enableOpenGlTrace=true;
-      mOpenGlTraceApp=null;
-    }
     boolean enableTrackAllocation=false;
     if (mTrackAllocationApp != null && mTrackAllocationApp.equals(processName)) {
       enableTrackAllocation=true;
@@ -93,11 +89,10 @@ synchronized (mPidsSelfLocked) {
     }
     boolean isRestrictedBackupMode=false;
     if (mBackupTarget != null && mBackupAppName.equals(processName)) {
-      isRestrictedBackupMode=(mBackupTarget.backupMode == BackupRecord.RESTORE) || (mBackupTarget.backupMode == BackupRecord.RESTORE_FULL) || (mBackupTarget.backupMode == BackupRecord.BACKUP_FULL);
+      isRestrictedBackupMode=mBackupTarget.appInfo.uid >= Process.FIRST_APPLICATION_UID && ((mBackupTarget.backupMode == BackupRecord.RESTORE) || (mBackupTarget.backupMode == BackupRecord.RESTORE_FULL) || (mBackupTarget.backupMode == BackupRecord.BACKUP_FULL));
     }
-    ensurePackageDexOpt(app.instrumentationInfo != null ? app.instrumentationInfo.packageName : app.info.packageName);
     if (app.instrumentationClass != null) {
-      ensurePackageDexOpt(app.instrumentationClass.getPackageName());
+      notifyPackageUse(app.instrumentationClass.getPackageName(),PackageManager.NOTIFY_PACKAGE_USE_INSTRUMENTATION);
     }
     if (DEBUG_CONFIGURATION)     Slog.v(TAG_CONFIGURATION,"Binding proc " + processName + " with config "+ mConfiguration);
     ApplicationInfo appInfo=app.instrumentationInfo != null ? app.instrumentationInfo : app.info;
@@ -106,7 +101,7 @@ synchronized (mPidsSelfLocked) {
       profileFd=profileFd.dup();
     }
     ProfilerInfo profilerInfo=profileFile == null ? null : new ProfilerInfo(profileFile,profileFd,samplingInterval,profileAutoStop);
-    thread.bindApplication(processName,appInfo,providers,app.instrumentationClass,profilerInfo,app.instrumentationArguments,app.instrumentationWatcher,app.instrumentationUiAutomationConnection,testMode,enableOpenGlTrace,enableTrackAllocation,isRestrictedBackupMode || !normalMode,app.persistent,new Configuration(mConfiguration),app.compat,getCommonServicesLocked(app.isolated),mCoreSettingsObserver.getCoreSettingsLocked());
+    thread.bindApplication(processName,appInfo,providers,app.instrumentationClass,profilerInfo,app.instrumentationArguments,app.instrumentationWatcher,app.instrumentationUiAutomationConnection,testMode,mBinderTransactionTrackingEnabled,enableTrackAllocation,isRestrictedBackupMode || !normalMode,app.persistent,new Configuration(mConfiguration),app.compat,getCommonServicesLocked(app.isolated),mCoreSettingsObserver.getCoreSettingsLocked());
     updateLruProcessLocked(app,false,null);
     app.lastRequestedGc=app.lastLowMemory=SystemClock.uptimeMillis();
   }
@@ -153,7 +148,7 @@ synchronized (mPidsSelfLocked) {
   }
   if (!badApp && mBackupTarget != null && mBackupTarget.appInfo.uid == app.uid) {
     if (DEBUG_BACKUP)     Slog.v(TAG_BACKUP,"New app is backup target, launching agent for " + app);
-    ensurePackageDexOpt(mBackupTarget.appInfo.packageName);
+    notifyPackageUse(mBackupTarget.appInfo.packageName,PackageManager.NOTIFY_PACKAGE_USE_BACKUP);
     try {
       thread.scheduleCreateBackupAgent(mBackupTarget.appInfo,compatibilityInfoForPackageLocked(mBackupTarget.appInfo),mBackupTarget.backupMode);
     }

@@ -1,0 +1,59 @@
+{
+  boolean sendUpdatedCaller=false;
+  final long identity=Binder.clearCallingIdentity();
+  try {
+    boolean validUserComponent=(mComponentObserver.isValid(component,userId) == EnabledComponentsObserver.NO_ERROR);
+    if (!mVrModeEnabled && !enabled) {
+      return validUserComponent;
+    }
+    String oldVrServicePackage=mCurrentVrService != null ? mCurrentVrService.getComponent().getPackageName() : null;
+    final int oldUserId=mCurrentVrModeUser;
+    changeVrModeLocked(enabled);
+    if (!enabled || !validUserComponent) {
+      if (mCurrentVrService != null) {
+        Slog.i(TAG,"Disconnecting " + mCurrentVrService.getComponent() + " for user "+ mCurrentVrService.getUserId());
+        mCurrentVrService.disconnect();
+        mCurrentVrService=null;
+      }
+    }
+ else {
+      if (mCurrentVrService != null) {
+        if (mCurrentVrService.disconnectIfNotMatching(component,userId)) {
+          Slog.i(TAG,"Disconnecting " + mCurrentVrService.getComponent() + " for user "+ mCurrentVrService.getUserId());
+          createAndConnectService(component,userId);
+          sendUpdatedCaller=true;
+        }
+      }
+ else {
+        createAndConnectService(component,userId);
+        sendUpdatedCaller=true;
+      }
+    }
+    if (calling != null && !Objects.equals(calling,mCurrentVrModeComponent)) {
+      mCurrentVrModeComponent=calling;
+      sendUpdatedCaller=true;
+    }
+    if (mCurrentVrModeUser != userId) {
+      mCurrentVrModeUser=userId;
+      sendUpdatedCaller=true;
+    }
+    String newVrServicePackage=mCurrentVrService != null ? mCurrentVrService.getComponent().getPackageName() : null;
+    final int newUserId=mCurrentVrModeUser;
+    updateDependentAppOpsLocked(newVrServicePackage,newUserId,oldVrServicePackage,oldUserId);
+    if (mCurrentVrService != null && sendUpdatedCaller) {
+      final ComponentName c=mCurrentVrModeComponent;
+      mCurrentVrService.sendEvent(new PendingEvent(){
+        @Override public void runEvent(        IInterface service) throws RemoteException {
+          IVrListener l=(IVrListener)service;
+          l.focusedActivityChanged(c);
+        }
+      }
+);
+    }
+    logStateLocked();
+    return validUserComponent;
+  }
+  finally {
+    Binder.restoreCallingIdentity(identity);
+  }
+}

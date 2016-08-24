@@ -1,31 +1,31 @@
 {
-  if (sInstance == null) {
-    sInstance=this;
-  }
-  RecentsTaskLoader.initialize(mContext);
-  mInflater=LayoutInflater.from(mContext);
-  mSystemServicesProxy=new SystemServicesProxy(mContext);
+  sDebugFlags=new RecentsDebugFlags(mContext);
+  sSystemServicesProxy=SystemServicesProxy.getInstance(mContext);
+  sTaskLoader=new RecentsTaskLoader(mContext);
+  sConfiguration=new RecentsConfiguration(mContext);
   mHandler=new Handler();
-  mTaskStackBounds=new Rect();
-  mAppWidgetHost=new RecentsAppWidgetHost(mContext,Constants.Values.App.AppWidgetHostId);
-  mTaskStackListener=new TaskStackListenerImpl(mHandler);
-  mSystemServicesProxy.registerTaskStackListener(mTaskStackListener);
-  if (mSystemServicesProxy.isForegroundUserOwner()) {
-    mProxyBroadcastReceiver=new RecentsOwnerEventProxyReceiver();
-    IntentFilter filter=new IntentFilter();
-    filter.addAction(Recents.ACTION_PROXY_NOTIFY_RECENTS_VISIBLITY_TO_OWNER);
-    filter.addAction(Recents.ACTION_PROXY_SCREEN_PINNING_REQUEST_TO_OWNER);
-    mContext.registerReceiverAsUser(mProxyBroadcastReceiver,UserHandle.CURRENT,filter,null,mHandler);
+  UiModeManager uiModeManager=(UiModeManager)mContext.getSystemService(Context.UI_MODE_SERVICE);
+  if (uiModeManager.getCurrentModeType() == Configuration.UI_MODE_TYPE_TELEVISION) {
+    mImpl=new RecentsTvImpl(mContext);
   }
-  TaskStackViewLayoutAlgorithm.initializeCurve();
-  reloadHeaderBarLayout();
-  RecentsTaskLoader loader=RecentsTaskLoader.getInstance();
-  RecentsTaskLoadPlan plan=loader.createLoadPlan(mContext);
-  loader.preloadTasks(plan,true);
-  RecentsTaskLoadPlan.Options launchOpts=new RecentsTaskLoadPlan.Options();
-  launchOpts.numVisibleTasks=loader.getApplicationIconCacheSize();
-  launchOpts.numVisibleTaskThumbnails=loader.getThumbnailCacheSize();
-  launchOpts.onlyLoadForCache=true;
-  loader.loadTasks(mContext,plan,launchOpts);
+ else {
+    mImpl=new RecentsImpl(mContext);
+  }
+  if ("userdebug".equals(Build.TYPE) || "eng".equals(Build.TYPE)) {
+    String cnStr=SystemProperties.get(RECENTS_OVERRIDE_SYSPROP_KEY);
+    if (!cnStr.isEmpty()) {
+      mOverrideRecentsPackageName=cnStr;
+    }
+  }
+  EventBus.getDefault().register(this,EVENT_BUS_PRIORITY);
+  EventBus.getDefault().register(sSystemServicesProxy,EVENT_BUS_PRIORITY);
+  EventBus.getDefault().register(sTaskLoader,EVENT_BUS_PRIORITY);
+  final int processUser=sSystemServicesProxy.getProcessUser();
+  if (sSystemServicesProxy.isSystemUser(processUser)) {
+    mSystemToUserCallbacks=new RecentsSystemUser(mContext,mImpl);
+  }
+ else {
+    registerWithSystemUser();
+  }
   putComponent(Recents.class,this);
 }

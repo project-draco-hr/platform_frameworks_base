@@ -14,6 +14,7 @@
   final int baselineChildIndex=mBaselineAlignedChildIndex;
   final boolean useLargestChild=mUseLargestChild;
   int largestChildHeight=Integer.MIN_VALUE;
+  int consumedExcessSpace=0;
   for (int i=0; i < count; ++i) {
     final View child=getVirtualChildAt(i);
     if (child == null) {
@@ -27,24 +28,25 @@
     if (hasDividerBeforeChildAt(i)) {
       mTotalLength+=mDividerHeight;
     }
-    LinearLayout.LayoutParams lp=(LinearLayout.LayoutParams)child.getLayoutParams();
+    final LayoutParams lp=(LayoutParams)child.getLayoutParams();
     totalWeight+=lp.weight;
-    if (heightMode == MeasureSpec.EXACTLY && lp.height == 0 && lp.weight > 0) {
+    final boolean useExcessSpace=lp.height == 0 && lp.weight > 0;
+    if (heightMode == MeasureSpec.EXACTLY && useExcessSpace) {
       final int totalLength=mTotalLength;
       mTotalLength=Math.max(totalLength,totalLength + lp.topMargin + lp.bottomMargin);
       skippedMeasure=true;
     }
  else {
-      int oldHeight=Integer.MIN_VALUE;
-      if (lp.height == 0 && lp.weight > 0) {
-        oldHeight=0;
+      if (useExcessSpace) {
         lp.height=LayoutParams.WRAP_CONTENT;
       }
-      measureChildBeforeLayout(child,i,widthMeasureSpec,0,heightMeasureSpec,totalWeight == 0 ? mTotalLength : 0);
-      if (oldHeight != Integer.MIN_VALUE) {
-        lp.height=oldHeight;
-      }
+      final int usedHeight=totalWeight == 0 ? mTotalLength : 0;
+      measureChildBeforeLayout(child,i,widthMeasureSpec,0,heightMeasureSpec,usedHeight);
       final int childHeight=child.getMeasuredHeight();
+      if (useExcessSpace) {
+        lp.height=0;
+        consumedExcessSpace+=childHeight;
+      }
       final int totalLength=mTotalLength;
       mTotalLength=Math.max(totalLength,totalLength + childHeight + lp.topMargin+ lp.bottomMargin+ getNextLocationOffset(child));
       if (useLargestChild) {
@@ -100,32 +102,31 @@
   heightSize=Math.max(heightSize,getSuggestedMinimumHeight());
   int heightSizeAndState=resolveSizeAndState(heightSize,heightMeasureSpec,0);
   heightSize=heightSizeAndState & MEASURED_SIZE_MASK;
-  int delta=heightSize - mTotalLength;
-  if (skippedMeasure || delta != 0 && totalWeight > 0.0f) {
-    float weightSum=mWeightSum > 0.0f ? mWeightSum : totalWeight;
+  int remainingExcess=heightSize - mTotalLength + (mAllowInconsistentMeasurement ? 0 : consumedExcessSpace);
+  if (skippedMeasure || remainingExcess != 0 && totalWeight > 0.0f) {
+    float remainingWeightSum=mWeightSum > 0.0f ? mWeightSum : totalWeight;
     mTotalLength=0;
     for (int i=0; i < count; ++i) {
       final View child=getVirtualChildAt(i);
-      if (child.getVisibility() == View.GONE) {
+      if (child == null || child.getVisibility() == View.GONE) {
         continue;
       }
-      LinearLayout.LayoutParams lp=(LinearLayout.LayoutParams)child.getLayoutParams();
-      float childExtra=lp.weight;
-      if (childExtra > 0) {
-        int share=(int)(childExtra * delta / weightSum);
-        weightSum-=childExtra;
-        delta-=share;
-        final int childWidthMeasureSpec=getChildMeasureSpec(widthMeasureSpec,mPaddingLeft + mPaddingRight + lp.leftMargin+ lp.rightMargin,lp.width);
-        if ((lp.height != 0) || (heightMode != MeasureSpec.EXACTLY)) {
-          int childHeight=child.getMeasuredHeight() + share;
-          if (childHeight < 0) {
-            childHeight=0;
-          }
-          child.measure(childWidthMeasureSpec,MeasureSpec.makeMeasureSpec(childHeight,MeasureSpec.EXACTLY));
+      final LayoutParams lp=(LayoutParams)child.getLayoutParams();
+      final float childWeight=lp.weight;
+      if (childWeight > 0) {
+        final int share=(int)(childWeight * remainingExcess / remainingWeightSum);
+        remainingExcess-=share;
+        remainingWeightSum-=childWeight;
+        final int childHeight;
+        if (lp.height == 0 && (!mAllowInconsistentMeasurement || heightMode == MeasureSpec.EXACTLY)) {
+          childHeight=share;
         }
  else {
-          child.measure(childWidthMeasureSpec,MeasureSpec.makeMeasureSpec(share > 0 ? share : 0,MeasureSpec.EXACTLY));
+          childHeight=child.getMeasuredHeight() + share;
         }
+        final int childHeightMeasureSpec=MeasureSpec.makeMeasureSpec(Math.max(0,childHeight),MeasureSpec.EXACTLY);
+        final int childWidthMeasureSpec=getChildMeasureSpec(widthMeasureSpec,mPaddingLeft + mPaddingRight + lp.leftMargin+ lp.rightMargin,lp.width);
+        child.measure(childWidthMeasureSpec,childHeightMeasureSpec);
         childState=combineMeasuredStates(childState,child.getMeasuredState() & (MEASURED_STATE_MASK >> MEASURED_HEIGHT_STATE_SHIFT));
       }
       final int margin=lp.leftMargin + lp.rightMargin;

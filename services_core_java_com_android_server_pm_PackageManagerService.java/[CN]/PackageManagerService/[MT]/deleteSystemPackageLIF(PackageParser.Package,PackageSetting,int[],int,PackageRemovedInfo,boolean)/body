@@ -1,0 +1,92 @@
+{
+  if (deletedPs.parentPackageName != null) {
+    Slog.w(TAG,"Attempt to delete child system package " + deletedPkg.packageName);
+    return false;
+  }
+  final boolean applyUserRestrictions=(allUserHandles != null) && (outInfo.origUsers != null);
+  final PackageSetting disabledPs;
+synchronized (mPackages) {
+    disabledPs=mSettings.getDisabledSystemPkgLPr(deletedPs.name);
+  }
+  if (DEBUG_REMOVE)   Slog.d(TAG,"deleteSystemPackageLI: newPs=" + deletedPkg.packageName + " disabledPs="+ disabledPs);
+  if (disabledPs == null) {
+    Slog.w(TAG,"Attempt to delete unknown system package " + deletedPkg.packageName);
+    return false;
+  }
+ else   if (DEBUG_REMOVE) {
+    Slog.d(TAG,"Deleting system pkg from data partition");
+  }
+  if (DEBUG_REMOVE) {
+    if (applyUserRestrictions) {
+      Slog.d(TAG,"Remembering install states:");
+      for (      int userId : allUserHandles) {
+        final boolean finstalled=ArrayUtils.contains(outInfo.origUsers,userId);
+        Slog.d(TAG,"   u=" + userId + " inst="+ finstalled);
+      }
+    }
+  }
+  outInfo.isRemovedPackageSystemUpdate=true;
+  if (outInfo.removedChildPackages != null) {
+    final int childCount=(deletedPs.childPackageNames != null) ? deletedPs.childPackageNames.size() : 0;
+    for (int i=0; i < childCount; i++) {
+      String childPackageName=deletedPs.childPackageNames.get(i);
+      if (disabledPs.childPackageNames != null && disabledPs.childPackageNames.contains(childPackageName)) {
+        PackageRemovedInfo childInfo=outInfo.removedChildPackages.get(childPackageName);
+        if (childInfo != null) {
+          childInfo.isRemovedPackageSystemUpdate=true;
+        }
+      }
+    }
+  }
+  if (disabledPs.versionCode < deletedPs.versionCode) {
+    flags&=~PackageManager.DELETE_KEEP_DATA;
+  }
+ else {
+    flags|=PackageManager.DELETE_KEEP_DATA;
+  }
+  boolean ret=deleteInstalledPackageLIF(deletedPs,true,flags,allUserHandles,outInfo,writeSettings,disabledPs.pkg);
+  if (!ret) {
+    return false;
+  }
+synchronized (mPackages) {
+    enableSystemPackageLPw(disabledPs.pkg);
+    removeNativeBinariesLI(deletedPs);
+  }
+  if (DEBUG_REMOVE)   Slog.d(TAG,"Re-installing system package: " + disabledPs);
+  int parseFlags=mDefParseFlags | PackageParser.PARSE_MUST_BE_APK | PackageParser.PARSE_IS_SYSTEM| PackageParser.PARSE_IS_SYSTEM_DIR;
+  if (locationIsPrivileged(disabledPs.codePath)) {
+    parseFlags|=PackageParser.PARSE_IS_PRIVILEGED;
+  }
+  final PackageParser.Package newPkg;
+  try {
+    newPkg=scanPackageTracedLI(disabledPs.codePath,parseFlags,SCAN_NO_PATHS,0,null);
+  }
+ catch (  PackageManagerException e) {
+    Slog.w(TAG,"Failed to restore system package:" + deletedPkg.packageName + ": "+ e.getMessage());
+    return false;
+  }
+  prepareAppDataAfterInstallLIF(newPkg);
+synchronized (mPackages) {
+    PackageSetting ps=mSettings.mPackages.get(newPkg.packageName);
+    ps.getPermissionsState().copyFrom(deletedPs.getPermissionsState());
+    updatePermissionsLPw(newPkg.packageName,newPkg,UPDATE_PERMISSIONS_ALL | UPDATE_PERMISSIONS_REPLACE_PKG);
+    if (applyUserRestrictions) {
+      if (DEBUG_REMOVE) {
+        Slog.d(TAG,"Propagating install state across reinstall");
+      }
+      for (      int userId : allUserHandles) {
+        final boolean installed=ArrayUtils.contains(outInfo.origUsers,userId);
+        if (DEBUG_REMOVE) {
+          Slog.d(TAG,"    user " + userId + " => "+ installed);
+        }
+        ps.setInstalled(installed,userId);
+        mSettings.writeRuntimePermissionsForUserLPr(userId,false);
+      }
+      mSettings.writeAllUsersPackageRestrictionsLPr();
+    }
+    if (writeSettings) {
+      mSettings.writeLPr();
+    }
+  }
+  return true;
+}

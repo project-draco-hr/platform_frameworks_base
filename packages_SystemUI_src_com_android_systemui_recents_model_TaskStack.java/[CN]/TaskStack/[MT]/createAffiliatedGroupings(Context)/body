@@ -1,0 +1,104 @@
+{
+  mGroups.clear();
+  mAffinitiesGroups.clear();
+  if (RecentsDebugFlags.Static.EnableMockTaskGroups) {
+    ArrayMap<Task.TaskKey,Task> taskMap=new ArrayMap<>();
+    ArrayList<Task> tasks=mStackTaskList.getTasks();
+    Collections.sort(tasks,new Comparator<Task>(){
+      @Override public int compare(      Task task,      Task task2){
+        return Long.compare(task.key.firstActiveTime,task2.key.firstActiveTime);
+      }
+    }
+);
+    NamedCounter counter=new NamedCounter("task-group","");
+    int taskCount=tasks.size();
+    String prevPackage="";
+    int prevAffiliation=-1;
+    Random r=new Random();
+    int groupCountDown=RecentsDebugFlags.Static.MockTaskGroupsTaskCount;
+    for (int i=0; i < taskCount; i++) {
+      Task t=tasks.get(i);
+      String packageName=t.key.getComponent().getPackageName();
+      packageName="pkg";
+      TaskGrouping group;
+      if (packageName.equals(prevPackage) && groupCountDown > 0) {
+        group=getGroupWithAffiliation(prevAffiliation);
+        groupCountDown--;
+      }
+ else {
+        int affiliation=IndividualTaskIdOffset + t.key.id;
+        group=new TaskGrouping(affiliation);
+        addGroup(group);
+        prevAffiliation=affiliation;
+        prevPackage=packageName;
+        groupCountDown=RecentsDebugFlags.Static.MockTaskGroupsTaskCount;
+      }
+      group.addTask(t);
+      taskMap.put(t.key,t);
+    }
+    Collections.sort(mGroups,new Comparator<TaskGrouping>(){
+      @Override public int compare(      TaskGrouping taskGrouping,      TaskGrouping taskGrouping2){
+        return Long.compare(taskGrouping.latestActiveTimeInGroup,taskGrouping2.latestActiveTimeInGroup);
+      }
+    }
+);
+    int taskIndex=0;
+    int groupCount=mGroups.size();
+    for (int i=0; i < groupCount; i++) {
+      TaskGrouping group=mGroups.get(i);
+      Collections.sort(group.mTaskKeys,new Comparator<Task.TaskKey>(){
+        @Override public int compare(        Task.TaskKey taskKey,        Task.TaskKey taskKey2){
+          return Long.compare(taskKey.firstActiveTime,taskKey2.firstActiveTime);
+        }
+      }
+);
+      ArrayList<Task.TaskKey> groupTasks=group.mTaskKeys;
+      int groupTaskCount=groupTasks.size();
+      for (int j=0; j < groupTaskCount; j++) {
+        tasks.set(taskIndex,taskMap.get(groupTasks.get(j)));
+        taskIndex++;
+      }
+    }
+    mStackTaskList.set(tasks);
+  }
+ else {
+    ArrayMap<Task.TaskKey,Task> tasksMap=new ArrayMap<>();
+    ArrayList<Task> tasks=mStackTaskList.getTasks();
+    int taskCount=tasks.size();
+    for (int i=0; i < taskCount; i++) {
+      Task t=tasks.get(i);
+      TaskGrouping group;
+      if (RecentsDebugFlags.Static.EnableAffiliatedTaskGroups) {
+        int affiliation=t.affiliationTaskId > 0 ? t.affiliationTaskId : IndividualTaskIdOffset + t.key.id;
+        if (mAffinitiesGroups.containsKey(affiliation)) {
+          group=getGroupWithAffiliation(affiliation);
+        }
+ else {
+          group=new TaskGrouping(affiliation);
+          addGroup(group);
+        }
+      }
+ else {
+        group=new TaskGrouping(t.key.id);
+        addGroup(group);
+      }
+      group.addTask(t);
+      tasksMap.put(t.key,t);
+    }
+    float minAlpha=context.getResources().getFloat(R.dimen.recents_task_affiliation_color_min_alpha_percentage);
+    int taskGroupCount=mGroups.size();
+    for (int i=0; i < taskGroupCount; i++) {
+      TaskGrouping group=mGroups.get(i);
+      taskCount=group.getTaskCount();
+      if (taskCount <= 1)       continue;
+      int affiliationColor=tasksMap.get(group.mTaskKeys.get(0)).affiliationColor;
+      float alphaStep=(1f - minAlpha) / taskCount;
+      float alpha=1f;
+      for (int j=0; j < taskCount; j++) {
+        Task t=tasksMap.get(group.mTaskKeys.get(j));
+        t.colorPrimary=Utilities.getColorWithOverlay(affiliationColor,Color.WHITE,alpha);
+        alpha-=alphaStep;
+      }
+    }
+  }
+}

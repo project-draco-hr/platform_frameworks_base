@@ -1,0 +1,51 @@
+{
+  try {
+synchronized (this) {
+      mBinderTransactionTrackingEnabled=false;
+      if (checkCallingPermission(android.Manifest.permission.SET_ACTIVITY_WATCHER) != PackageManager.PERMISSION_GRANTED) {
+        throw new SecurityException("Requires permission " + android.Manifest.permission.SET_ACTIVITY_WATCHER);
+      }
+      if (fd == null) {
+        throw new IllegalArgumentException("null fd");
+      }
+      PrintWriter pw=new FastPrintWriter(new FileOutputStream(fd.getFileDescriptor()));
+      pw.println("Binder transaction traces for all processes.\n");
+      for (      ProcessRecord process : mLruProcesses) {
+        if (!processSanityChecksLocked(process)) {
+          continue;
+        }
+        pw.println("Traces for process: " + process.processName);
+        pw.flush();
+        try {
+          TransferPipe tp=new TransferPipe();
+          try {
+            process.thread.stopBinderTrackingAndDump(tp.getWriteFd().getFileDescriptor());
+            tp.go(fd.getFileDescriptor());
+          }
+  finally {
+            tp.kill();
+          }
+        }
+ catch (        IOException e) {
+          pw.println("Failure while dumping IPC traces from " + process + ".  Exception: "+ e);
+          pw.flush();
+        }
+catch (        RemoteException e) {
+          pw.println("Got a RemoteException while dumping IPC traces from " + process + ".  Exception: "+ e);
+          pw.flush();
+        }
+      }
+      fd=null;
+      return true;
+    }
+  }
+  finally {
+    if (fd != null) {
+      try {
+        fd.close();
+      }
+ catch (      IOException e) {
+      }
+    }
+  }
+}

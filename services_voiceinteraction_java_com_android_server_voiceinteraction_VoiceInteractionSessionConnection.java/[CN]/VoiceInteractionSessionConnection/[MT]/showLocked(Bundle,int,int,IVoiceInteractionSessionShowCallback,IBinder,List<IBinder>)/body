@@ -1,0 +1,100 @@
+{
+  if (mBound) {
+    if (!mFullyBound) {
+      mFullyBound=mContext.bindServiceAsUser(mBindIntent,mFullConnection,Context.BIND_AUTO_CREATE | Context.BIND_TREAT_LIKE_ACTIVITY | Context.BIND_FOREGROUND_SERVICE,new UserHandle(mUser));
+    }
+    mShown=true;
+    boolean isAssistDataAllowed=true;
+    try {
+      isAssistDataAllowed=mAm.isAssistDataAllowedOnCurrentActivity();
+    }
+ catch (    RemoteException e) {
+    }
+    disabledContext|=getUserDisabledShowContextLocked();
+    boolean structureEnabled=isAssistDataAllowed && (disabledContext & VoiceInteractionSession.SHOW_WITH_ASSIST) == 0;
+    boolean screenshotEnabled=isAssistDataAllowed && structureEnabled && (disabledContext & VoiceInteractionSession.SHOW_WITH_SCREENSHOT) == 0;
+    mShowArgs=args;
+    mShowFlags=flags;
+    mHaveAssistData=false;
+    mPendingAssistDataCount=0;
+    boolean needDisclosure=false;
+    if ((flags & VoiceInteractionSession.SHOW_WITH_ASSIST) != 0) {
+      if (mAppOps.noteOpNoThrow(AppOpsManager.OP_ASSIST_STRUCTURE,mCallingUid,mSessionComponentName.getPackageName()) == AppOpsManager.MODE_ALLOWED && structureEnabled) {
+        mAssistData.clear();
+        final int count=activityToken != null ? 1 : topActivities.size();
+        for (int i=0; i < count && i < 1; i++) {
+          IBinder topActivity=count == 1 ? activityToken : topActivities.get(i);
+          try {
+            MetricsLogger.count(mContext,"assist_with_context",1);
+            Bundle receiverExtras=new Bundle();
+            receiverExtras.putInt(KEY_RECEIVER_EXTRA_INDEX,i);
+            receiverExtras.putInt(KEY_RECEIVER_EXTRA_COUNT,count);
+            if (mAm.requestAssistContextExtras(ActivityManager.ASSIST_CONTEXT_FULL,mAssistReceiver,receiverExtras,topActivity,i == 0,i == 0)) {
+              needDisclosure=true;
+              mPendingAssistDataCount++;
+            }
+ else             if (i == 0) {
+              mHaveAssistData=true;
+              mAssistData.clear();
+              screenshotEnabled=false;
+              break;
+            }
+          }
+ catch (          RemoteException e) {
+          }
+        }
+      }
+ else {
+        mHaveAssistData=true;
+        mAssistData.clear();
+      }
+    }
+ else {
+      mAssistData.clear();
+    }
+    mHaveScreenshot=false;
+    if ((flags & VoiceInteractionSession.SHOW_WITH_SCREENSHOT) != 0) {
+      if (mAppOps.noteOpNoThrow(AppOpsManager.OP_ASSIST_SCREENSHOT,mCallingUid,mSessionComponentName.getPackageName()) == AppOpsManager.MODE_ALLOWED && screenshotEnabled) {
+        try {
+          MetricsLogger.count(mContext,"assist_with_screen",1);
+          needDisclosure=true;
+          mIWindowManager.requestAssistScreenshot(mScreenshotReceiver);
+        }
+ catch (        RemoteException e) {
+        }
+      }
+ else {
+        mHaveScreenshot=true;
+        mScreenshot=null;
+      }
+    }
+ else {
+      mScreenshot=null;
+    }
+    if (needDisclosure) {
+      mHandler.post(mShowAssistDisclosureRunnable);
+    }
+    if (mSession != null) {
+      try {
+        mSession.show(mShowArgs,mShowFlags,showCallback);
+        mShowArgs=null;
+        mShowFlags=0;
+      }
+ catch (      RemoteException e) {
+      }
+      deliverSessionDataLocked();
+    }
+ else     if (showCallback != null) {
+      mPendingShowCallbacks.add(showCallback);
+    }
+    return true;
+  }
+  if (showCallback != null) {
+    try {
+      showCallback.onFailed();
+    }
+ catch (    RemoteException e) {
+    }
+  }
+  return false;
+}

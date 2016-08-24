@@ -15,14 +15,14 @@
   int desiredWindowWidth;
   int desiredWindowHeight;
   final int viewVisibility=getHostVisibility();
-  boolean viewVisibilityChanged=mViewVisibility != viewVisibility || mNewSurfaceNeeded;
+  final boolean viewVisibilityChanged=!mFirst && (mViewVisibility != viewVisibility || mNewSurfaceNeeded);
   WindowManager.LayoutParams params=null;
   if (mWindowAttributesChanged) {
     mWindowAttributesChanged=false;
     surfaceChanged=true;
     params=lp;
   }
-  CompatibilityInfo compatibilityInfo=mDisplayAdjustments.getCompatibilityInfo();
+  CompatibilityInfo compatibilityInfo=mDisplay.getDisplayAdjustments().getCompatibilityInfo();
   if (compatibilityInfo.supportsScreen() == mLastInCompatMode) {
     params=lp;
     mFullRedrawNeeded=true;
@@ -41,22 +41,21 @@
   if (mFirst) {
     mFullRedrawNeeded=true;
     mLayoutRequested=true;
-    if (lp.type == WindowManager.LayoutParams.TYPE_STATUS_BAR_PANEL || lp.type == WindowManager.LayoutParams.TYPE_INPUT_METHOD) {
+    if (shouldUseDisplaySize(lp)) {
       Point size=new Point();
       mDisplay.getRealSize(size);
       desiredWindowWidth=size.x;
       desiredWindowHeight=size.y;
     }
  else {
-      DisplayMetrics packageMetrics=mView.getContext().getResources().getDisplayMetrics();
-      desiredWindowWidth=packageMetrics.widthPixels;
-      desiredWindowHeight=packageMetrics.heightPixels;
+      Configuration config=mContext.getResources().getConfiguration();
+      desiredWindowWidth=dipToPx(config.screenWidthDp);
+      desiredWindowHeight=dipToPx(config.screenHeightDp);
     }
     mAttachInfo.mUse32BitDrawingCache=true;
     mAttachInfo.mHasWindowFocus=false;
     mAttachInfo.mWindowVisibility=viewVisibility;
     mAttachInfo.mRecomputeGlobalAttributes=false;
-    viewVisibilityChanged=false;
     mLastConfiguration.setTo(host.getResources().getConfiguration());
     mLastSystemUiVisibility=mAttachInfo.mSystemUiVisibility;
     if (mViewLayoutDirectionInitial == View.LAYOUT_DIRECTION_INHERIT) {
@@ -70,7 +69,7 @@
     desiredWindowWidth=frame.width();
     desiredWindowHeight=frame.height();
     if (desiredWindowWidth != mWidth || desiredWindowHeight != mHeight) {
-      if (DEBUG_ORIENTATION)       Log.v(TAG,"View " + host + " resized to: "+ frame);
+      if (DEBUG_ORIENTATION)       Log.v(mTag,"View " + host + " resized to: "+ frame);
       mFullRedrawNeeded=true;
       mLayoutRequested=true;
       windowSizeMayChange=true;
@@ -79,7 +78,9 @@
   if (viewVisibilityChanged) {
     mAttachInfo.mWindowVisibility=viewVisibility;
     host.dispatchWindowVisibilityChanged(viewVisibility);
+    host.dispatchVisibilityAggregated(viewVisibility == View.VISIBLE);
     if (viewVisibility != View.VISIBLE || mNewSurfaceNeeded) {
+      endDragResizing();
       destroyHardwareResources();
     }
     if (viewVisibility == View.GONE) {
@@ -110,23 +111,26 @@
       }
       if (!mPendingVisibleInsets.equals(mAttachInfo.mVisibleInsets)) {
         mAttachInfo.mVisibleInsets.set(mPendingVisibleInsets);
-        if (DEBUG_LAYOUT)         Log.v(TAG,"Visible insets changing to: " + mAttachInfo.mVisibleInsets);
+        if (DEBUG_LAYOUT)         Log.v(mTag,"Visible insets changing to: " + mAttachInfo.mVisibleInsets);
       }
       if (!mPendingOutsets.equals(mAttachInfo.mOutsets)) {
         insetsChanged=true;
       }
+      if (mPendingAlwaysConsumeNavBar != mAttachInfo.mAlwaysConsumeNavBar) {
+        insetsChanged=true;
+      }
       if (lp.width == ViewGroup.LayoutParams.WRAP_CONTENT || lp.height == ViewGroup.LayoutParams.WRAP_CONTENT) {
         windowSizeMayChange=true;
-        if (lp.type == WindowManager.LayoutParams.TYPE_STATUS_BAR_PANEL || lp.type == WindowManager.LayoutParams.TYPE_INPUT_METHOD) {
+        if (shouldUseDisplaySize(lp)) {
           Point size=new Point();
           mDisplay.getRealSize(size);
           desiredWindowWidth=size.x;
           desiredWindowHeight=size.y;
         }
  else {
-          DisplayMetrics packageMetrics=res.getDisplayMetrics();
-          desiredWindowWidth=packageMetrics.widthPixels;
-          desiredWindowHeight=packageMetrics.heightPixels;
+          Configuration config=res.getConfiguration();
+          desiredWindowWidth=dipToPx(config.screenWidthDp);
+          desiredWindowHeight=dipToPx(config.screenHeightDp);
         }
       }
     }
@@ -178,11 +182,17 @@
     mLayoutRequested=false;
   }
   boolean windowShouldResize=layoutRequested && windowSizeMayChange && ((mWidth != host.getMeasuredWidth() || mHeight != host.getMeasuredHeight()) || (lp.width == ViewGroup.LayoutParams.WRAP_CONTENT && frame.width() < desiredWindowWidth && frame.width() != mWidth) || (lp.height == ViewGroup.LayoutParams.WRAP_CONTENT && frame.height() < desiredWindowHeight && frame.height() != mHeight));
+  windowShouldResize|=mDragResizing && mResizeMode == RESIZE_MODE_FREEFORM;
+  windowShouldResize|=mActivityRelaunched;
   final boolean computesInternalInsets=mAttachInfo.mTreeObserver.hasComputeInternalInsetsListeners() || mAttachInfo.mHasNonEmptyGivenInternalInsets;
   boolean insetsPending=false;
   int relayoutResult=0;
-  if (mFirst || windowShouldResize || insetsChanged|| viewVisibilityChanged|| params != null) {
-    if (viewVisibility == View.VISIBLE) {
+  boolean updatedConfiguration=false;
+  final int surfaceGenerationId=mSurface.getGenerationId();
+  final boolean isViewVisible=viewVisibility == View.VISIBLE;
+  if (mFirst || windowShouldResize || insetsChanged|| viewVisibilityChanged|| params != null || mForceNextWindowRelayout) {
+    mForceNextWindowRelayout=false;
+    if (isViewVisible) {
       insetsPending=computesInternalInsets && (mFirst || viewVisibilityChanged);
     }
     if (mSurfaceHolder != null) {
@@ -190,11 +200,11 @@
       mDrawingAllowed=true;
     }
     boolean hwInitialized=false;
-    boolean contentInsetsChanged=false;
+    boolean framesChanged=false;
     boolean hadSurface=mSurface.isValid();
     try {
       if (DEBUG_LAYOUT) {
-        Log.i(TAG,"host=w:" + host.getMeasuredWidth() + ", h:"+ host.getMeasuredHeight()+ ", params="+ params);
+        Log.i(mTag,"host=w:" + host.getMeasuredWidth() + ", h:"+ host.getMeasuredHeight()+ ", params="+ params);
       }
       if (mAttachInfo.mHardwareRenderer != null) {
         if (mAttachInfo.mHardwareRenderer.pauseSurface(mSurface)) {
@@ -202,34 +212,37 @@
         }
         mChoreographer.mFrameInfo.addFlags(FrameInfo.FLAG_WINDOW_LAYOUT_CHANGED);
       }
-      final int surfaceGenerationId=mSurface.getGenerationId();
       relayoutResult=relayoutWindow(params,viewVisibility,insetsPending);
-      if (DEBUG_LAYOUT)       Log.v(TAG,"relayout: frame=" + frame.toShortString() + " overscan="+ mPendingOverscanInsets.toShortString()+ " content="+ mPendingContentInsets.toShortString()+ " visible="+ mPendingVisibleInsets.toShortString()+ " visible="+ mPendingStableInsets.toShortString()+ " outsets="+ mPendingOutsets.toShortString()+ " surface="+ mSurface);
+      if (DEBUG_LAYOUT)       Log.v(mTag,"relayout: frame=" + frame.toShortString() + " overscan="+ mPendingOverscanInsets.toShortString()+ " content="+ mPendingContentInsets.toShortString()+ " visible="+ mPendingVisibleInsets.toShortString()+ " visible="+ mPendingStableInsets.toShortString()+ " outsets="+ mPendingOutsets.toShortString()+ " surface="+ mSurface);
       if (mPendingConfiguration.seq != 0) {
-        if (DEBUG_CONFIGURATION)         Log.v(TAG,"Visible with new config: " + mPendingConfiguration);
+        if (DEBUG_CONFIGURATION)         Log.v(mTag,"Visible with new config: " + mPendingConfiguration);
         updateConfiguration(new Configuration(mPendingConfiguration),!mFirst);
         mPendingConfiguration.seq=0;
+        updatedConfiguration=true;
       }
       final boolean overscanInsetsChanged=!mPendingOverscanInsets.equals(mAttachInfo.mOverscanInsets);
-      contentInsetsChanged=!mPendingContentInsets.equals(mAttachInfo.mContentInsets);
+      boolean contentInsetsChanged=!mPendingContentInsets.equals(mAttachInfo.mContentInsets);
       final boolean visibleInsetsChanged=!mPendingVisibleInsets.equals(mAttachInfo.mVisibleInsets);
       final boolean stableInsetsChanged=!mPendingStableInsets.equals(mAttachInfo.mStableInsets);
       final boolean outsetsChanged=!mPendingOutsets.equals(mAttachInfo.mOutsets);
+      final boolean surfaceSizeChanged=(relayoutResult & WindowManagerGlobal.RELAYOUT_RES_SURFACE_RESIZED) != 0;
+      final boolean alwaysConsumeNavBarChanged=mPendingAlwaysConsumeNavBar != mAttachInfo.mAlwaysConsumeNavBar;
       if (contentInsetsChanged) {
-        if (mWidth > 0 && mHeight > 0 && lp != null && ((lp.systemUiVisibility | lp.subtreeSystemUiVisibility) & View.SYSTEM_UI_LAYOUT_FLAGS) == 0 && mSurface != null && mSurface.isValid() && !mAttachInfo.mTurnOffWindowResizeAnim && mAttachInfo.mHardwareRenderer != null && mAttachInfo.mHardwareRenderer.isEnabled() && lp != null && !PixelFormat.formatHasAlpha(lp.format) && !mBlockResizeBuffer) {
-          disposeResizeBuffer();
-        }
         mAttachInfo.mContentInsets.set(mPendingContentInsets);
-        if (DEBUG_LAYOUT)         Log.v(TAG,"Content insets changing to: " + mAttachInfo.mContentInsets);
+        if (DEBUG_LAYOUT)         Log.v(mTag,"Content insets changing to: " + mAttachInfo.mContentInsets);
       }
       if (overscanInsetsChanged) {
         mAttachInfo.mOverscanInsets.set(mPendingOverscanInsets);
-        if (DEBUG_LAYOUT)         Log.v(TAG,"Overscan insets changing to: " + mAttachInfo.mOverscanInsets);
+        if (DEBUG_LAYOUT)         Log.v(mTag,"Overscan insets changing to: " + mAttachInfo.mOverscanInsets);
         contentInsetsChanged=true;
       }
       if (stableInsetsChanged) {
         mAttachInfo.mStableInsets.set(mPendingStableInsets);
-        if (DEBUG_LAYOUT)         Log.v(TAG,"Decor insets changing to: " + mAttachInfo.mStableInsets);
+        if (DEBUG_LAYOUT)         Log.v(mTag,"Decor insets changing to: " + mAttachInfo.mStableInsets);
+        contentInsetsChanged=true;
+      }
+      if (alwaysConsumeNavBarChanged) {
+        mAttachInfo.mAlwaysConsumeNavBar=mPendingAlwaysConsumeNavBar;
         contentInsetsChanged=true;
       }
       if (contentInsetsChanged || mLastSystemUiVisibility != mAttachInfo.mSystemUiVisibility || mApplyInsetsRequested || mLastOverscanRequested != mAttachInfo.mOverscanRequested || outsetsChanged) {
@@ -241,7 +254,11 @@
       }
       if (visibleInsetsChanged) {
         mAttachInfo.mVisibleInsets.set(mPendingVisibleInsets);
-        if (DEBUG_LAYOUT)         Log.v(TAG,"Visible insets changing to: " + mAttachInfo.mVisibleInsets);
+        if (DEBUG_LAYOUT)         Log.v(mTag,"Visible insets changing to: " + mAttachInfo.mVisibleInsets);
+      }
+      framesChanged=overscanInsetsChanged || contentInsetsChanged || stableInsetsChanged|| visibleInsetsChanged|| outsetsChanged;
+      if (mAdded && mView != null && framesChanged) {
+        forceLayout(mView);
       }
       if (!hadSurface) {
         if (mSurface.isValid()) {
@@ -273,12 +290,11 @@
         if (mScroller != null) {
           mScroller.abortAnimation();
         }
-        disposeResizeBuffer();
         if (mAttachInfo.mHardwareRenderer != null && mAttachInfo.mHardwareRenderer.isEnabled()) {
           mAttachInfo.mHardwareRenderer.destroy();
         }
       }
- else       if (surfaceGenerationId != mSurface.getGenerationId() && mSurfaceHolder == null && mAttachInfo.mHardwareRenderer != null) {
+ else       if ((surfaceGenerationId != mSurface.getGenerationId() || surfaceSizeChanged) && mSurfaceHolder == null && mAttachInfo.mHardwareRenderer != null) {
         mFullRedrawNeeded=true;
         try {
           mAttachInfo.mHardwareRenderer.updateSurface(mSurface);
@@ -286,6 +302,27 @@
  catch (        OutOfResourcesException e) {
           handleOutOfResourcesException(e);
           return;
+        }
+      }
+      final boolean freeformResizing=(relayoutResult & WindowManagerGlobal.RELAYOUT_RES_DRAG_RESIZING_FREEFORM) != 0;
+      final boolean dockedResizing=(relayoutResult & WindowManagerGlobal.RELAYOUT_RES_DRAG_RESIZING_DOCKED) != 0;
+      final boolean dragResizing=freeformResizing || dockedResizing;
+      if (mDragResizing != dragResizing) {
+        if (dragResizing) {
+          mResizeMode=freeformResizing ? RESIZE_MODE_FREEFORM : RESIZE_MODE_DOCKED_DIVIDER;
+          startDragResizing(mPendingBackDropFrame,mWinFrame.equals(mPendingBackDropFrame),mPendingVisibleInsets,mPendingStableInsets,mResizeMode);
+        }
+ else {
+          endDragResizing();
+        }
+      }
+      if (!USE_MT_RENDERER) {
+        if (dragResizing) {
+          mCanvasOffsetX=mWinFrame.left;
+          mCanvasOffsetY=mWinFrame.top;
+        }
+ else {
+          mCanvasOffsetX=mCanvasOffsetY=0;
         }
       }
     }
@@ -317,7 +354,7 @@
           }
           surfaceChanged=true;
         }
-        if (surfaceChanged) {
+        if (surfaceChanged || surfaceGenerationId != mSurface.getGenerationId()) {
           mSurfaceHolderCallback.surfaceChanged(mSurfaceHolder,lp.format,mWidth,mHeight);
           SurfaceHolder.Callback callbacks[]=mSurfaceHolder.getCallbacks();
           if (callbacks != null) {
@@ -346,22 +383,19 @@
         }
       }
     }
-    final HardwareRenderer hardwareRenderer=mAttachInfo.mHardwareRenderer;
+    final ThreadedRenderer hardwareRenderer=mAttachInfo.mHardwareRenderer;
     if (hardwareRenderer != null && hardwareRenderer.isEnabled()) {
-      if (hwInitialized || mWidth != hardwareRenderer.getWidth() || mHeight != hardwareRenderer.getHeight()) {
+      if (hwInitialized || mWidth != hardwareRenderer.getWidth() || mHeight != hardwareRenderer.getHeight() || mNeedsHwRendererSetup) {
         hardwareRenderer.setup(mWidth,mHeight,mAttachInfo,mWindowAttributes.surfaceInsets);
-        if (!hwInitialized) {
-          hardwareRenderer.invalidate(mSurface);
-          mFullRedrawNeeded=true;
-        }
+        mNeedsHwRendererSetup=false;
       }
     }
     if (!mStopped || mReportNextDraw) {
       boolean focusChangedDueToTouchMode=ensureTouchModeLocally((relayoutResult & WindowManagerGlobal.RELAYOUT_RES_IN_TOUCH_MODE) != 0);
-      if (focusChangedDueToTouchMode || mWidth != host.getMeasuredWidth() || mHeight != host.getMeasuredHeight() || contentInsetsChanged) {
+      if (focusChangedDueToTouchMode || mWidth != host.getMeasuredWidth() || mHeight != host.getMeasuredHeight() || framesChanged || updatedConfiguration) {
         int childWidthMeasureSpec=getRootMeasureSpec(mWidth,lp.width);
         int childHeightMeasureSpec=getRootMeasureSpec(mHeight,lp.height);
-        if (DEBUG_LAYOUT)         Log.v(TAG,"Ooops, something changed!  mWidth=" + mWidth + " measuredWidth="+ host.getMeasuredWidth()+ " mHeight="+ mHeight+ " measuredHeight="+ host.getMeasuredHeight()+ " coveredInsetsChanged="+ contentInsetsChanged);
+        if (DEBUG_LAYOUT)         Log.v(mTag,"Ooops, something changed!  mWidth=" + mWidth + " measuredWidth="+ host.getMeasuredWidth()+ " mHeight="+ mHeight+ " measuredHeight="+ host.getMeasuredHeight()+ " framesChanged="+ framesChanged);
         performMeasure(childWidthMeasureSpec,childHeightMeasureSpec);
         int width=host.getMeasuredWidth();
         int height=host.getMeasuredHeight();
@@ -377,7 +411,7 @@
           measureAgain=true;
         }
         if (measureAgain) {
-          if (DEBUG_LAYOUT)           Log.v(TAG,"And hey let's measure once more: width=" + width + " height="+ height);
+          if (DEBUG_LAYOUT)           Log.v(mTag,"And hey let's measure once more: width=" + width + " height="+ height);
           performMeasure(childWidthMeasureSpec,childHeightMeasureSpec);
         }
         layoutRequested=true;
@@ -385,22 +419,12 @@
     }
   }
  else {
-    final boolean windowMoved=(mAttachInfo.mWindowLeft != frame.left || mAttachInfo.mWindowTop != frame.top);
-    if (windowMoved) {
-      if (mTranslator != null) {
-        mTranslator.translateRectInScreenToAppWinFrame(frame);
-      }
-      mAttachInfo.mWindowLeft=frame.left;
-      mAttachInfo.mWindowTop=frame.top;
-      if (mAttachInfo.mHardwareRenderer != null) {
-        mAttachInfo.mHardwareRenderer.setLightCenter(mAttachInfo);
-      }
-    }
+    maybeHandleWindowMove(frame);
   }
   final boolean didLayout=layoutRequested && (!mStopped || mReportNextDraw);
   boolean triggerGlobalLayoutListener=didLayout || mAttachInfo.mRecomputeGlobalAttributes;
   if (didLayout) {
-    performLayout(lp,desiredWindowWidth,desiredWindowHeight);
+    performLayout(lp,mWidth,mHeight);
     if ((host.mPrivateFlags & View.PFLAG_REQUEST_TRANSPARENT_REGIONS) != 0) {
       host.getLocationInWindow(mTmpLocation);
       mTransparentRegion.set(mTmpLocation[0],mTmpLocation[1],mTmpLocation[0] + host.mRight - host.mLeft,mTmpLocation[1] + host.mBottom - host.mTop);
@@ -455,36 +479,43 @@
       }
     }
   }
-  boolean skipDraw=false;
   if (mFirst) {
-    if (DEBUG_INPUT_RESIZE)     Log.v(TAG,"First: mView.hasFocus()=" + mView.hasFocus());
+    if (DEBUG_INPUT_RESIZE)     Log.v(mTag,"First: mView.hasFocus()=" + mView.hasFocus());
     if (mView != null) {
       if (!mView.hasFocus()) {
         mView.requestFocus(View.FOCUS_FORWARD);
-        if (DEBUG_INPUT_RESIZE)         Log.v(TAG,"First: requested focused view=" + mView.findFocus());
+        if (DEBUG_INPUT_RESIZE)         Log.v(mTag,"First: requested focused view=" + mView.findFocus());
       }
  else {
-        if (DEBUG_INPUT_RESIZE)         Log.v(TAG,"First: existing focused view=" + mView.findFocus());
+        if (DEBUG_INPUT_RESIZE)         Log.v(mTag,"First: existing focused view=" + mView.findFocus());
       }
     }
   }
- else   if (mWindowsAnimating) {
-    if (mRemainingFrameCount <= 0) {
-      skipDraw=true;
-    }
-    mRemainingFrameCount--;
+  final boolean changedVisibility=(viewVisibilityChanged || mFirst) && isViewVisible;
+  final boolean hasWindowFocus=mAttachInfo.mHasWindowFocus && isViewVisible;
+  final boolean regainedFocus=hasWindowFocus && mLostWindowFocus;
+  if (regainedFocus) {
+    mLostWindowFocus=false;
+  }
+ else   if (!hasWindowFocus && mHadWindowFocus) {
+    mLostWindowFocus=true;
+  }
+  if (changedVisibility || regainedFocus) {
+    host.sendAccessibilityEvent(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED);
   }
   mFirst=false;
   mWillDrawSoon=false;
   mNewSurfaceNeeded=false;
+  mActivityRelaunched=false;
   mViewVisibility=viewVisibility;
-  if (mAttachInfo.mHasWindowFocus && !isInLocalFocusMode()) {
+  mHadWindowFocus=hasWindowFocus;
+  if (hasWindowFocus && !isInLocalFocusMode()) {
     final boolean imTarget=WindowManager.LayoutParams.mayUseInputMethod(mWindowAttributes.flags);
     if (imTarget != mLastWasImTarget) {
       mLastWasImTarget=imTarget;
       InputMethodManager imm=InputMethodManager.peekInstance();
       if (imm != null && imTarget) {
-        imm.onPreWindowFocus(mView,true);
+        imm.onPreWindowFocus(mView,hasWindowFocus);
         imm.onPostWindowFocus(mView,mView.findFocus(),mWindowAttributes.softInputMode,!mHasHadWindowFocus,mWindowAttributes.flags);
       }
     }
@@ -492,20 +523,18 @@
   if ((relayoutResult & WindowManagerGlobal.RELAYOUT_RES_FIRST_TIME) != 0) {
     mReportNextDraw=true;
   }
-  boolean cancelDraw=mAttachInfo.mTreeObserver.dispatchOnPreDraw() || viewVisibility != View.VISIBLE;
+  boolean cancelDraw=mAttachInfo.mTreeObserver.dispatchOnPreDraw() || !isViewVisible;
   if (!cancelDraw && !newSurface) {
-    if (!skipDraw || mReportNextDraw) {
-      if (mPendingTransitions != null && mPendingTransitions.size() > 0) {
-        for (int i=0; i < mPendingTransitions.size(); ++i) {
-          mPendingTransitions.get(i).startChangingAnimations();
-        }
-        mPendingTransitions.clear();
+    if (mPendingTransitions != null && mPendingTransitions.size() > 0) {
+      for (int i=0; i < mPendingTransitions.size(); ++i) {
+        mPendingTransitions.get(i).startChangingAnimations();
       }
-      performDraw();
+      mPendingTransitions.clear();
     }
+    performDraw();
   }
  else {
-    if (viewVisibility == View.VISIBLE) {
+    if (isViewVisible) {
       scheduleTraversals();
     }
  else     if (mPendingTransitions != null && mPendingTransitions.size() > 0) {

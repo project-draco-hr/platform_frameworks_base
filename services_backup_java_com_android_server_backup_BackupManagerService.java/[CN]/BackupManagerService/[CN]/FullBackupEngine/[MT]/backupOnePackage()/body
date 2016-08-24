@@ -1,0 +1,51 @@
+{
+  int result=BackupTransport.AGENT_ERROR;
+  if (initializeAgent()) {
+    ParcelFileDescriptor[] pipes=null;
+    try {
+      pipes=ParcelFileDescriptor.createPipe();
+      ApplicationInfo app=mPkg.applicationInfo;
+      final boolean isSharedStorage=mPkg.packageName.equals(SHARED_BACKUP_AGENT_PACKAGE);
+      final boolean sendApk=mIncludeApks && !isSharedStorage && ((app.privateFlags & ApplicationInfo.PRIVATE_FLAG_FORWARD_LOCK) == 0)&& ((app.flags & ApplicationInfo.FLAG_SYSTEM) == 0 || (app.flags & ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0);
+      byte[] widgetBlob=AppWidgetBackupBridge.getWidgetState(mPkg.packageName,UserHandle.USER_SYSTEM);
+      final int token=generateToken();
+      FullBackupRunner runner=new FullBackupRunner(mPkg,mAgent,pipes[1],token,sendApk,!isSharedStorage,widgetBlob);
+      pipes[1].close();
+      pipes[1]=null;
+      Thread t=new Thread(runner,"app-data-runner");
+      t.start();
+      routeSocketDataToOutput(pipes[0],mOutput);
+      if (!waitUntilOperationComplete(token)) {
+        Slog.e(TAG,"Full backup failed on package " + mPkg.packageName);
+      }
+ else {
+        if (MORE_DEBUG) {
+          Slog.d(TAG,"Full package backup success: " + mPkg.packageName);
+        }
+        result=BackupTransport.TRANSPORT_OK;
+      }
+    }
+ catch (    IOException e) {
+      Slog.e(TAG,"Error backing up " + mPkg.packageName + ": "+ e.getMessage());
+      result=BackupTransport.AGENT_ERROR;
+    }
+ finally {
+      try {
+        mOutput.flush();
+        if (pipes != null) {
+          if (pipes[0] != null)           pipes[0].close();
+          if (pipes[1] != null)           pipes[1].close();
+        }
+      }
+ catch (      IOException e) {
+        Slog.w(TAG,"Error bringing down backup stack");
+        result=BackupTransport.TRANSPORT_ERROR;
+      }
+    }
+  }
+ else {
+    Slog.w(TAG,"Unable to bind to full agent for " + mPkg.packageName);
+  }
+  tearDown();
+  return result;
+}

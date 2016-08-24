@@ -1,0 +1,63 @@
+{
+switch (msg.what) {
+default :
+    return false;
+case NetworkMonitor.EVENT_NETWORK_TESTED:
+{
+    final NetworkAgentInfo nai;
+synchronized (mNetworkForNetId) {
+      nai=mNetworkForNetId.get(msg.arg2);
+    }
+    if (nai != null) {
+      final boolean valid=(msg.arg1 == NetworkMonitor.NETWORK_TEST_RESULT_VALID);
+      if (DBG)       log(nai.name() + " validation " + (valid ? "passed" : "failed")+ (msg.obj == null ? "" : " with redirect to " + (String)msg.obj));
+      if (valid != nai.lastValidated) {
+        final int oldScore=nai.getCurrentScore();
+        nai.lastValidated=valid;
+        nai.everValidated|=valid;
+        updateCapabilities(nai,nai.networkCapabilities);
+        if (oldScore != nai.getCurrentScore())         sendUpdatedScoreToFactories(nai);
+      }
+      updateInetCondition(nai);
+      Bundle redirectUrlBundle=new Bundle();
+      redirectUrlBundle.putString(NetworkAgent.REDIRECT_URL_KEY,(String)msg.obj);
+      nai.asyncChannel.sendMessage(NetworkAgent.CMD_REPORT_NETWORK_STATUS,(valid ? NetworkAgent.VALID_NETWORK : NetworkAgent.INVALID_NETWORK),0,redirectUrlBundle);
+    }
+    break;
+  }
+case NetworkMonitor.EVENT_NETWORK_LINGER_COMPLETE:
+{
+  NetworkAgentInfo nai=(NetworkAgentInfo)msg.obj;
+  if (isLiveNetworkAgent(nai,msg.what)) {
+    handleLingerComplete(nai);
+  }
+  break;
+}
+case NetworkMonitor.EVENT_PROVISIONING_NOTIFICATION:
+{
+final int netId=msg.arg2;
+final boolean visible=(msg.arg1 != 0);
+final NetworkAgentInfo nai;
+synchronized (mNetworkForNetId) {
+  nai=mNetworkForNetId.get(netId);
+}
+if (nai != null && (visible != nai.lastCaptivePortalDetected)) {
+  nai.lastCaptivePortalDetected=visible;
+  nai.everCaptivePortalDetected|=visible;
+  updateCapabilities(nai,nai.networkCapabilities);
+}
+if (!visible) {
+  setProvNotificationVisibleIntent(false,netId,null,0,null,null,false);
+}
+ else {
+  if (nai == null) {
+    loge("EVENT_PROVISIONING_NOTIFICATION from unknown NetworkMonitor");
+    break;
+  }
+  setProvNotificationVisibleIntent(true,netId,NotificationType.SIGN_IN,nai.networkInfo.getType(),nai.networkInfo.getExtraInfo(),(PendingIntent)msg.obj,nai.networkMisc.explicitlySelected);
+}
+break;
+}
+}
+return true;
+}

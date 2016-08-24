@@ -1,0 +1,41 @@
+{
+synchronized (mFullDynamicSensorsList) {
+    if (mDynamicSensorListDirty) {
+      List<Sensor> list=new ArrayList<>();
+      nativeGetDynamicSensors(mNativeInstance,list);
+      final List<Sensor> updatedList=new ArrayList<>();
+      final List<Sensor> addedList=new ArrayList<>();
+      final List<Sensor> removedList=new ArrayList<>();
+      boolean changed=diffSortedSensorList(mFullDynamicSensorsList,list,updatedList,addedList,removedList);
+      if (changed) {
+        if (DEBUG_DYNAMIC_SENSOR) {
+          Log.i(TAG,"DYNS dynamic sensor list cached should be updated");
+        }
+        mFullDynamicSensorsList=updatedList;
+        for (        Sensor s : addedList) {
+          mHandleToSensor.put(s.getHandle(),s);
+        }
+        Handler mainHandler=new Handler(mContext.getMainLooper());
+        for (        Map.Entry<DynamicSensorCallback,Handler> entry : mDynamicSensorCallbacks.entrySet()) {
+          final DynamicSensorCallback callback=entry.getKey();
+          Handler handler=entry.getValue() == null ? mainHandler : entry.getValue();
+          handler.post(new Runnable(){
+            @Override public void run(){
+              for (              Sensor s : addedList) {
+                callback.onDynamicSensorConnected(s);
+              }
+              for (              Sensor s : removedList) {
+                callback.onDynamicSensorDisconnected(s);
+              }
+            }
+          }
+);
+        }
+        for (        Sensor s : removedList) {
+          cleanupSensorConnection(s);
+        }
+      }
+      mDynamicSensorListDirty=false;
+    }
+  }
+}

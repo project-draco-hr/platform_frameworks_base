@@ -1,16 +1,38 @@
 {
   mWebViewUpdatedReceiver=new BroadcastReceiver(){
     @Override public void onReceive(    Context context,    Intent intent){
-      String webviewPackage="package:" + WebViewFactory.getWebViewPackageName();
-      if (webviewPackage.equals(intent.getDataString())) {
-        onWebViewUpdateInstalled();
-      }
-    }
+      int userId=intent.getIntExtra(Intent.EXTRA_USER_HANDLE,UserHandle.USER_NULL);
+switch (intent.getAction()) {
+case Intent.ACTION_PACKAGE_REMOVED:
+        if (intent.getExtras().getBoolean(Intent.EXTRA_REPLACING))         return;
+      mImpl.packageStateChanged(packageNameFromIntent(intent),PACKAGE_REMOVED,userId);
+    break;
+case Intent.ACTION_PACKAGE_CHANGED:
+  if (entirePackageChanged(intent)) {
+    mImpl.packageStateChanged(packageNameFromIntent(intent),PACKAGE_CHANGED,userId);
   }
+break;
+case Intent.ACTION_PACKAGE_ADDED:
+mImpl.packageStateChanged(packageNameFromIntent(intent),(intent.getExtras().getBoolean(Intent.EXTRA_REPLACING) ? PACKAGE_ADDED_REPLACED : PACKAGE_ADDED),userId);
+break;
+case Intent.ACTION_USER_ADDED:
+mImpl.handleNewUser(userId);
+break;
+}
+}
+}
 ;
-  IntentFilter filter=new IntentFilter();
-  filter.addAction(Intent.ACTION_PACKAGE_REPLACED);
-  filter.addDataScheme("package");
-  getContext().registerReceiver(mWebViewUpdatedReceiver,filter);
-  publishBinderService("webviewupdate",new BinderService());
+IntentFilter filter=new IntentFilter();
+filter.addAction(Intent.ACTION_PACKAGE_ADDED);
+filter.addAction(Intent.ACTION_PACKAGE_REMOVED);
+filter.addAction(Intent.ACTION_PACKAGE_CHANGED);
+filter.addDataScheme("package");
+for (WebViewProviderInfo provider : mImpl.getWebViewPackages()) {
+filter.addDataSchemeSpecificPart(provider.packageName,PatternMatcher.PATTERN_LITERAL);
+}
+getContext().registerReceiverAsUser(mWebViewUpdatedReceiver,UserHandle.ALL,filter,null,null);
+IntentFilter userAddedFilter=new IntentFilter();
+userAddedFilter.addAction(Intent.ACTION_USER_ADDED);
+getContext().registerReceiverAsUser(mWebViewUpdatedReceiver,UserHandle.ALL,userAddedFilter,null,null);
+publishBinderService("webviewupdate",new BinderService(),true);
 }

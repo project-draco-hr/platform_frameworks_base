@@ -1,0 +1,74 @@
+{
+  if (shortcut.hasIconFile() || shortcut.hasIconResource()) {
+    return;
+  }
+  final long token=injectClearCallingIdentity();
+  try {
+    shortcut.setIconResourceId(0);
+    shortcut.setBitmapPath(null);
+    final Icon icon=shortcut.getIcon();
+    if (icon == null) {
+      return;
+    }
+    Bitmap bitmap;
+    Bitmap bitmapToRecycle=null;
+    try {
+switch (icon.getType()) {
+case Icon.TYPE_RESOURCE:
+{
+          injectValidateIconResPackage(shortcut,icon);
+          shortcut.setIconResourceId(icon.getResId());
+          shortcut.addFlags(ShortcutInfo.FLAG_HAS_ICON_RES);
+          return;
+        }
+case Icon.TYPE_BITMAP:
+{
+        bitmap=icon.getBitmap();
+        break;
+      }
+default :
+    throw ShortcutInfo.getInvalidIconException();
+}
+if (bitmap == null) {
+  Slog.e(TAG,"Null bitmap detected");
+  return;
+}
+File path=null;
+try {
+  final FileOutputStreamWithPath out=openIconFileForWrite(userId,shortcut);
+  try {
+    path=out.getFile();
+    Bitmap shrunk=shrinkBitmap(bitmap,mMaxIconDimension);
+    try {
+      shrunk.compress(mIconPersistFormat,mIconPersistQuality,out);
+    }
+  finally {
+      if (bitmap != shrunk) {
+        shrunk.recycle();
+      }
+    }
+    shortcut.setBitmapPath(out.getFile().getAbsolutePath());
+    shortcut.addFlags(ShortcutInfo.FLAG_HAS_ICON_FILE);
+  }
+  finally {
+    IoUtils.closeQuietly(out);
+  }
+}
+ catch (IOException|RuntimeException e) {
+  Slog.wtf(ShortcutService.TAG,"Unable to write bitmap to file",e);
+  if (path != null && path.exists()) {
+    path.delete();
+  }
+}
+}
+  finally {
+if (bitmapToRecycle != null) {
+  bitmapToRecycle.recycle();
+}
+shortcut.clearIcon();
+}
+}
+  finally {
+injectRestoreCallingIdentity(token);
+}
+}

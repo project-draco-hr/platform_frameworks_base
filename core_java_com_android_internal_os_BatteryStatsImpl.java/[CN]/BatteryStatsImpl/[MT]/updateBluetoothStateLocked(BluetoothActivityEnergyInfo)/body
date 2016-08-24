@@ -1,15 +1,104 @@
 {
   if (DEBUG_ENERGY) {
-    Slog.d(TAG,"Updating bluetooth stats");
+    Slog.d(TAG,"Updating bluetooth stats: " + info);
   }
-  if (info != null && mOnBatteryInternal) {
-    mHasBluetoothEnergyReporting=true;
-    mBluetoothActivityCounters[CONTROLLER_RX_TIME].addCountLocked(info.getControllerRxTimeMillis());
-    mBluetoothActivityCounters[CONTROLLER_TX_TIME].addCountLocked(info.getControllerTxTimeMillis());
-    mBluetoothActivityCounters[CONTROLLER_IDLE_TIME].addCountLocked(info.getControllerIdleTimeMillis());
-    final double opVolt=mPowerProfile.getAveragePower(PowerProfile.POWER_BLUETOOTH_CONTROLLER_OPERATING_VOLTAGE) / 1000.0;
-    if (opVolt != 0) {
-      mBluetoothActivityCounters[CONTROLLER_POWER_DRAIN].addCountLocked((long)(info.getControllerEnergyUsed() / opVolt));
+  if (info == null || !mOnBatteryInternal) {
+    return;
+  }
+  mHasBluetoothReporting=true;
+  final long elapsedRealtimeMs=SystemClock.elapsedRealtime();
+  final long rxTimeMs=info.getControllerRxTimeMillis();
+  final long txTimeMs=info.getControllerTxTimeMillis();
+  if (DEBUG_ENERGY) {
+    Slog.d(TAG,"------ BEGIN BLE power blaming ------");
+    Slog.d(TAG,"  Tx Time:    " + txTimeMs + " ms");
+    Slog.d(TAG,"  Rx Time:    " + rxTimeMs + " ms");
+    Slog.d(TAG,"  Idle Time:  " + info.getControllerIdleTimeMillis() + " ms");
+  }
+  long totalScanTimeMs=0;
+  final int uidCount=mUidStats.size();
+  for (int i=0; i < uidCount; i++) {
+    final Uid u=mUidStats.valueAt(i);
+    if (u.mBluetoothScanTimer == null) {
+      continue;
     }
+    totalScanTimeMs+=u.mBluetoothScanTimer.getTimeSinceMarkLocked(elapsedRealtimeMs * 1000) / 1000;
+  }
+  final boolean normalizeScanRxTime=(totalScanTimeMs > rxTimeMs);
+  final boolean normalizeScanTxTime=(totalScanTimeMs > txTimeMs);
+  if (DEBUG_ENERGY) {
+    Slog.d(TAG,"Normalizing scan power for RX=" + normalizeScanRxTime + " TX="+ normalizeScanTxTime);
+  }
+  long leftOverRxTimeMs=rxTimeMs;
+  long leftOverTxTimeMs=txTimeMs;
+  for (int i=0; i < uidCount; i++) {
+    final Uid u=mUidStats.valueAt(i);
+    if (u.mBluetoothScanTimer == null) {
+      continue;
+    }
+    long scanTimeSinceMarkMs=u.mBluetoothScanTimer.getTimeSinceMarkLocked(elapsedRealtimeMs * 1000) / 1000;
+    if (scanTimeSinceMarkMs > 0) {
+      u.mBluetoothScanTimer.setMark(elapsedRealtimeMs);
+      long scanTimeRxSinceMarkMs=scanTimeSinceMarkMs;
+      long scanTimeTxSinceMarkMs=scanTimeSinceMarkMs;
+      if (normalizeScanRxTime) {
+        scanTimeRxSinceMarkMs=(rxTimeMs * scanTimeRxSinceMarkMs) / totalScanTimeMs;
+      }
+      if (normalizeScanTxTime) {
+        scanTimeTxSinceMarkMs=(txTimeMs * scanTimeTxSinceMarkMs) / totalScanTimeMs;
+      }
+      final ControllerActivityCounterImpl counter=u.getOrCreateBluetoothControllerActivityLocked();
+      counter.getRxTimeCounter().addCountLocked(scanTimeRxSinceMarkMs);
+      counter.getTxTimeCounters()[0].addCountLocked(scanTimeTxSinceMarkMs);
+      leftOverRxTimeMs-=scanTimeRxSinceMarkMs;
+      leftOverTxTimeMs-=scanTimeTxSinceMarkMs;
+    }
+  }
+  if (DEBUG_ENERGY) {
+    Slog.d(TAG,"Left over time for traffic RX=" + leftOverRxTimeMs + " TX="+ leftOverTxTimeMs);
+  }
+  long totalTxBytes=0;
+  long totalRxBytes=0;
+  final UidTraffic[] uidTraffic=info.getUidTraffic();
+  final int numUids=uidTraffic != null ? uidTraffic.length : 0;
+  for (int i=0; i < numUids; i++) {
+    final UidTraffic traffic=uidTraffic[i];
+    mNetworkByteActivityCounters[NETWORK_BT_RX_DATA].addCountLocked(traffic.getRxBytes());
+    mNetworkByteActivityCounters[NETWORK_BT_TX_DATA].addCountLocked(traffic.getTxBytes());
+    final Uid u=getUidStatsLocked(mapUid(traffic.getUid()));
+    u.noteNetworkActivityLocked(NETWORK_BT_RX_DATA,traffic.getRxBytes(),0);
+    u.noteNetworkActivityLocked(NETWORK_BT_TX_DATA,traffic.getTxBytes(),0);
+    totalTxBytes+=traffic.getTxBytes();
+    totalRxBytes+=traffic.getRxBytes();
+  }
+  if ((totalTxBytes != 0 || totalRxBytes != 0) && (leftOverRxTimeMs != 0 || leftOverTxTimeMs != 0)) {
+    for (int i=0; i < numUids; i++) {
+      final UidTraffic traffic=uidTraffic[i];
+      final Uid u=getUidStatsLocked(mapUid(traffic.getUid()));
+      final ControllerActivityCounterImpl counter=u.getOrCreateBluetoothControllerActivityLocked();
+      if (totalRxBytes > 0 && traffic.getRxBytes() > 0) {
+        final long timeRxMs=(leftOverRxTimeMs * traffic.getRxBytes()) / totalRxBytes;
+        if (DEBUG_ENERGY) {
+          Slog.d(TAG,"UID=" + traffic.getUid() + " rx_bytes="+ traffic.getRxBytes()+ " rx_time="+ timeRxMs);
+        }
+        counter.getRxTimeCounter().addCountLocked(timeRxMs);
+        leftOverRxTimeMs-=timeRxMs;
+      }
+      if (totalTxBytes > 0 && traffic.getTxBytes() > 0) {
+        final long timeTxMs=(leftOverTxTimeMs * traffic.getTxBytes()) / totalTxBytes;
+        if (DEBUG_ENERGY) {
+          Slog.d(TAG,"UID=" + traffic.getUid() + " tx_bytes="+ traffic.getTxBytes()+ " tx_time="+ timeTxMs);
+        }
+        counter.getTxTimeCounters()[0].addCountLocked(timeTxMs);
+        leftOverTxTimeMs-=timeTxMs;
+      }
+    }
+  }
+  mBluetoothActivity.getRxTimeCounter().addCountLocked(info.getControllerRxTimeMillis());
+  mBluetoothActivity.getTxTimeCounters()[0].addCountLocked(info.getControllerTxTimeMillis());
+  mBluetoothActivity.getIdleTimeCounter().addCountLocked(info.getControllerIdleTimeMillis());
+  final double opVolt=mPowerProfile.getAveragePower(PowerProfile.POWER_BLUETOOTH_CONTROLLER_OPERATING_VOLTAGE) / 1000.0;
+  if (opVolt != 0) {
+    mBluetoothActivity.getPowerCounter().addCountLocked((long)(info.getControllerEnergyUsed() / opVolt));
   }
 }

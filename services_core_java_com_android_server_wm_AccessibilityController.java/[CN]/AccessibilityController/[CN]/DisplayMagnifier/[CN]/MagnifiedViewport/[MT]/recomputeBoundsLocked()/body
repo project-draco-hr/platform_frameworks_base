@@ -2,9 +2,8 @@
   mWindowManager.getDefaultDisplay().getRealSize(mTempPoint);
   final int screenWidth=mTempPoint.x;
   final int screenHeight=mTempPoint.y;
-  Region magnifiedBounds=mMagnifiedBounds;
-  magnifiedBounds.set(0,0,0,0);
-  Region availableBounds=mTempRegion1;
+  mMagnificationRegion.set(0,0,0,0);
+  final Region availableBounds=mTempRegion1;
   availableBounds.set(0,0,screenWidth,screenHeight);
   if (mCircularPath != null) {
     availableBounds.setPath(mCircularPath,availableBounds);
@@ -20,33 +19,32 @@
     if (windowState.mAttrs.type == WindowManager.LayoutParams.TYPE_MAGNIFICATION_OVERLAY) {
       continue;
     }
-    Region windowBounds=mTempRegion2;
     Matrix matrix=mTempMatrix;
     populateTransformationMatrixLocked(windowState,matrix);
+    Region touchableRegion=mTempRegion3;
+    windowState.getTouchableRegion(touchableRegion);
+    Rect touchableFrame=mTempRect1;
+    touchableRegion.getBounds(touchableFrame);
     RectF windowFrame=mTempRectF;
+    windowFrame.set(touchableFrame);
+    windowFrame.offset(-windowState.mFrame.left,-windowState.mFrame.top);
+    matrix.mapRect(windowFrame);
+    Region windowBounds=mTempRegion2;
+    windowBounds.set((int)windowFrame.left,(int)windowFrame.top,(int)windowFrame.right,(int)windowFrame.bottom);
+    Region portionOfWindowAlreadyAccountedFor=mTempRegion3;
+    portionOfWindowAlreadyAccountedFor.set(mMagnificationRegion);
+    portionOfWindowAlreadyAccountedFor.op(nonMagnifiedBounds,Region.Op.UNION);
+    windowBounds.op(portionOfWindowAlreadyAccountedFor,Region.Op.DIFFERENCE);
     if (mWindowManagerService.mPolicy.canMagnifyWindow(windowState.mAttrs.type)) {
-      windowFrame.set(windowState.mFrame);
-      windowFrame.offset(-windowFrame.left,-windowFrame.top);
-      matrix.mapRect(windowFrame);
-      windowBounds.set((int)windowFrame.left,(int)windowFrame.top,(int)windowFrame.right,(int)windowFrame.bottom);
-      magnifiedBounds.op(windowBounds,Region.Op.UNION);
-      magnifiedBounds.op(availableBounds,Region.Op.INTERSECT);
+      mMagnificationRegion.op(windowBounds,Region.Op.UNION);
+      mMagnificationRegion.op(availableBounds,Region.Op.INTERSECT);
     }
  else {
-      Region touchableRegion=mTempRegion3;
-      windowState.getTouchableRegion(touchableRegion);
-      Rect touchableFrame=mTempRect1;
-      touchableRegion.getBounds(touchableFrame);
-      windowFrame.set(touchableFrame);
-      windowFrame.offset(-windowState.mFrame.left,-windowState.mFrame.top);
-      matrix.mapRect(windowFrame);
-      windowBounds.set((int)windowFrame.left,(int)windowFrame.top,(int)windowFrame.right,(int)windowFrame.bottom);
       nonMagnifiedBounds.op(windowBounds,Region.Op.UNION);
-      windowBounds.op(magnifiedBounds,Region.Op.DIFFERENCE);
       availableBounds.op(windowBounds,Region.Op.DIFFERENCE);
     }
     Region accountedBounds=mTempRegion2;
-    accountedBounds.set(magnifiedBounds);
+    accountedBounds.set(mMagnificationRegion);
     accountedBounds.op(nonMagnifiedBounds,Region.Op.UNION);
     accountedBounds.op(0,0,screenWidth,screenHeight,Region.Op.INTERSECT);
     if (accountedBounds.isRect()) {
@@ -58,26 +56,27 @@
     }
   }
   visibleWindows.clear();
-  magnifiedBounds.op(mDrawBorderInset,mDrawBorderInset,screenWidth - mDrawBorderInset,screenHeight - mDrawBorderInset,Region.Op.INTERSECT);
-  if (!mOldMagnifiedBounds.equals(magnifiedBounds)) {
-    Region bounds=Region.obtain();
-    bounds.set(magnifiedBounds);
-    mHandler.obtainMessage(MyHandler.MESSAGE_NOTIFY_MAGNIFIED_BOUNDS_CHANGED,bounds).sendToTarget();
-    mWindow.setBounds(magnifiedBounds);
-    Rect dirtyRect=mTempRect1;
+  mMagnificationRegion.op(mDrawBorderInset,mDrawBorderInset,screenWidth - mDrawBorderInset,screenHeight - mDrawBorderInset,Region.Op.INTERSECT);
+  final boolean magnifiedChanged=!mOldMagnificationRegion.equals(mMagnificationRegion);
+  if (magnifiedChanged) {
+    mWindow.setBounds(mMagnificationRegion);
+    final Rect dirtyRect=mTempRect1;
     if (mFullRedrawNeeded) {
       mFullRedrawNeeded=false;
       dirtyRect.set(mDrawBorderInset,mDrawBorderInset,screenWidth - mDrawBorderInset,screenHeight - mDrawBorderInset);
       mWindow.invalidate(dirtyRect);
     }
  else {
-      Region dirtyRegion=mTempRegion3;
-      dirtyRegion.set(magnifiedBounds);
-      dirtyRegion.op(mOldMagnifiedBounds,Region.Op.UNION);
+      final Region dirtyRegion=mTempRegion3;
+      dirtyRegion.set(mMagnificationRegion);
+      dirtyRegion.op(mOldMagnificationRegion,Region.Op.UNION);
       dirtyRegion.op(nonMagnifiedBounds,Region.Op.INTERSECT);
       dirtyRegion.getBounds(dirtyRect);
       mWindow.invalidate(dirtyRect);
     }
-    mOldMagnifiedBounds.set(magnifiedBounds);
+    mOldMagnificationRegion.set(mMagnificationRegion);
+    final SomeArgs args=SomeArgs.obtain();
+    args.arg1=Region.obtain(mMagnificationRegion);
+    mHandler.obtainMessage(MyHandler.MESSAGE_NOTIFY_MAGNIFICATION_REGION_CHANGED,args).sendToTarget();
   }
 }

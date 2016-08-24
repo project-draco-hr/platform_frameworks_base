@@ -1,7 +1,6 @@
 {
   return new SwipeHelper.LongPressListener(){
-    @Override public boolean onLongPress(    View v,    int x,    int y){
-      dismissPopups();
+    @Override public boolean onLongPress(    View v,    final int x,    final int y){
       if (!(v instanceof ExpandableNotificationRow)) {
         return false;
       }
@@ -9,26 +8,43 @@
         Log.e(TAG,"Trying to show notification guts, but not attached to window");
         return false;
       }
-      ExpandableNotificationRow row=(ExpandableNotificationRow)v;
+      final ExpandableNotificationRow row=(ExpandableNotificationRow)v;
       bindGuts(row);
       final NotificationGuts guts=row.getGuts();
       if (guts == null) {
         return false;
       }
       if (guts.getVisibility() == View.VISIBLE) {
-        Log.e(TAG,"Trying to show notification guts, but already visible");
+        dismissPopups(x,y);
         return false;
       }
-      MetricsLogger.action(mContext,MetricsLogger.ACTION_NOTE_CONTROLS);
-      guts.setVisibility(View.VISIBLE);
-      final double horz=Math.max(guts.getWidth() - x,x);
-      final double vert=Math.max(guts.getActualHeight() - y,y);
-      final float r=(float)Math.hypot(horz,vert);
-      final Animator a=ViewAnimationUtils.createCircularReveal(guts,x,y,0,r);
-      a.setDuration(400);
-      a.setInterpolator(mLinearOutSlowIn);
-      a.start();
-      mNotificationGutsExposed=guts;
+      MetricsLogger.action(mContext,MetricsEvent.ACTION_NOTE_CONTROLS);
+      guts.setVisibility(View.INVISIBLE);
+      guts.post(new Runnable(){
+        public void run(){
+          dismissPopups(-1,-1,false,false);
+          guts.setVisibility(View.VISIBLE);
+          final double horz=Math.max(guts.getWidth() - x,x);
+          final double vert=Math.max(guts.getHeight() - y,y);
+          final float r=(float)Math.hypot(horz,vert);
+          final Animator a=ViewAnimationUtils.createCircularReveal(guts,x,y,0,r);
+          a.setDuration(StackStateAnimator.ANIMATION_DURATION_STANDARD);
+          a.setInterpolator(Interpolators.LINEAR_OUT_SLOW_IN);
+          a.addListener(new AnimatorListenerAdapter(){
+            @Override public void onAnimationEnd(            Animator animation){
+              super.onAnimationEnd(animation);
+              row.resetTranslation();
+            }
+          }
+);
+          a.start();
+          guts.setExposed(true,mState == StatusBarState.KEYGUARD);
+          row.closeRemoteInput();
+          mStackScroller.onHeightChanged(null,true);
+          mNotificationGutsExposed=guts;
+        }
+      }
+);
       return true;
     }
   }

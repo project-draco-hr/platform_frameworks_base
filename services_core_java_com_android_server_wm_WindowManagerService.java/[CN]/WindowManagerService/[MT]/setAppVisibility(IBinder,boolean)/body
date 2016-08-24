@@ -6,33 +6,49 @@
 synchronized (mWindowMap) {
     wtoken=findAppWindowToken(token);
     if (wtoken == null) {
-      Slog.w(TAG,"Attempted to set visibility of non-existing app token: " + token);
+      Slog.w(TAG_WM,"Attempted to set visibility of non-existing app token: " + token);
       return;
     }
-    if (DEBUG_APP_TRANSITIONS || DEBUG_ORIENTATION)     Slog.v(TAG,"setAppVisibility(" + token + ", visible="+ visible+ "): "+ mAppTransition+ " hidden="+ wtoken.hidden+ " hiddenRequested="+ wtoken.hiddenRequested+ " Callers="+ Debug.getCallers(6));
+    if (DEBUG_APP_TRANSITIONS || DEBUG_ORIENTATION)     Slog.v(TAG_WM,"setAppVisibility(" + token + ", visible="+ visible+ "): "+ mAppTransition+ " hidden="+ wtoken.hidden+ " hiddenRequested="+ wtoken.hiddenRequested+ " Callers="+ Debug.getCallers(6));
     mOpeningApps.remove(wtoken);
     mClosingApps.remove(wtoken);
     wtoken.waitingToShow=false;
     wtoken.hiddenRequested=!visible;
+    if (!visible) {
+      wtoken.removeAllDeadWindows();
+      wtoken.setVisibleBeforeClientHidden();
+    }
+ else     if (visible) {
+      if (!mAppTransition.isTransitionSet() && mAppTransition.isReady()) {
+        mOpeningApps.add(wtoken);
+      }
+      wtoken.startingMoved=false;
+      if (wtoken.hidden || wtoken.mAppStopped) {
+        wtoken.clearAllDrawn();
+        if (wtoken.hidden) {
+          wtoken.waitingToShow=true;
+        }
+        if (wtoken.clientHidden) {
+          wtoken.clientHidden=false;
+          wtoken.sendAppVisibilityToClients();
+        }
+      }
+      wtoken.requestUpdateWallpaperIfNeeded();
+      if (DEBUG_ADD_REMOVE)       Slog.v(TAG_WM,"No longer Stopped: " + wtoken);
+      wtoken.mAppStopped=false;
+    }
     if (okToDisplay() && mAppTransition.isTransitionSet()) {
+      if (wtoken.mAppAnimator.usingTransferredAnimation && wtoken.mAppAnimator.animation == null) {
+        Slog.wtf(TAG_WM,"Will NOT set dummy animation on: " + wtoken + ", using null transfered animation!");
+      }
       if (!wtoken.mAppAnimator.usingTransferredAnimation && (!wtoken.startingDisplayed || mSkipAppTransitionAnimation)) {
-        if (DEBUG_APP_TRANSITIONS)         Slog.v(TAG,"Setting dummy animation on: " + wtoken);
+        if (DEBUG_APP_TRANSITIONS)         Slog.v(TAG_WM,"Setting dummy animation on: " + wtoken);
         wtoken.mAppAnimator.setDummyAnimation();
       }
       wtoken.inPendingTransaction=true;
       if (visible) {
         mOpeningApps.add(wtoken);
-        wtoken.startingMoved=false;
         wtoken.mEnteringAnimation=true;
-        if (wtoken.hidden) {
-          wtoken.allDrawn=false;
-          wtoken.deferClearAllDrawn=false;
-          wtoken.waitingToShow=true;
-          if (wtoken.clientHidden) {
-            wtoken.clientHidden=false;
-            wtoken.sendAppVisibilityToClients();
-          }
-        }
       }
  else {
         mClosingApps.add(wtoken);
@@ -43,7 +59,7 @@ synchronized (mWindowMap) {
         if (win != null) {
           final AppWindowToken focusedToken=win.mAppToken;
           if (focusedToken != null) {
-            if (DEBUG_APP_TRANSITIONS)             Slog.d(TAG,"TRANSIT_TASK_OPEN_BEHIND, " + " adding " + focusedToken + " to mOpeningApps");
+            if (DEBUG_APP_TRANSITIONS)             Slog.d(TAG_WM,"TRANSIT_TASK_OPEN_BEHIND, " + " adding " + focusedToken + " to mOpeningApps");
             focusedToken.hidden=true;
             mOpeningApps.add(focusedToken);
           }

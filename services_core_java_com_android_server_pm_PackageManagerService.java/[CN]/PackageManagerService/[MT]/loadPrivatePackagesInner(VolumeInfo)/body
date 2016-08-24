@@ -1,36 +1,70 @@
 {
+  final String volumeUuid=vol.fsUuid;
+  if (TextUtils.isEmpty(volumeUuid)) {
+    Slog.e(TAG,"Loading internal storage is probably a mistake; ignoring");
+    return;
+  }
+  final ArrayList<PackageFreezer> freezers=new ArrayList<>();
   final ArrayList<ApplicationInfo> loaded=new ArrayList<>();
   final int parseFlags=mDefParseFlags | PackageParser.PARSE_EXTERNAL_STORAGE;
   final VersionInfo ver;
   final List<PackageSetting> packages;
 synchronized (mPackages) {
-    ver=mSettings.findOrCreateVersion(vol.fsUuid);
-    packages=mSettings.getVolumePackagesLPr(vol.fsUuid);
+    ver=mSettings.findOrCreateVersion(volumeUuid);
+    packages=mSettings.getVolumePackagesLPr(volumeUuid);
   }
   for (  PackageSetting ps : packages) {
+    freezers.add(freezePackage(ps.name,"loadPrivatePackagesInner"));
 synchronized (mInstallLock) {
       final PackageParser.Package pkg;
       try {
-        pkg=scanPackageLI(ps.codePath,parseFlags,SCAN_INITIAL,0L,null);
+        pkg=scanPackageTracedLI(ps.codePath,parseFlags,SCAN_INITIAL,0,null);
         loaded.add(pkg.applicationInfo);
       }
  catch (      PackageManagerException e) {
         Slog.w(TAG,"Failed to scan " + ps.codePath + ": "+ e.getMessage());
       }
       if (!Build.FINGERPRINT.equals(ver.fingerprint)) {
-        deleteCodeCacheDirsLI(ps.volumeUuid,ps.name);
+        clearAppDataLIF(ps.pkg,UserHandle.USER_ALL,StorageManager.FLAG_STORAGE_DE | StorageManager.FLAG_STORAGE_CE | Installer.FLAG_CLEAR_CODE_CACHE_ONLY);
       }
+    }
+  }
+  final StorageManager sm=mContext.getSystemService(StorageManager.class);
+  final UserManager um=mContext.getSystemService(UserManager.class);
+  UserManagerInternal umInternal=getUserManagerInternal();
+  for (  UserInfo user : um.getUsers()) {
+    final int flags;
+    if (umInternal.isUserUnlockingOrUnlocked(user.id)) {
+      flags=StorageManager.FLAG_STORAGE_DE | StorageManager.FLAG_STORAGE_CE;
+    }
+ else     if (umInternal.isUserRunning(user.id)) {
+      flags=StorageManager.FLAG_STORAGE_DE;
+    }
+ else {
+      continue;
+    }
+    try {
+      sm.prepareUserStorage(volumeUuid,user.id,user.serialNumber,flags);
+synchronized (mInstallLock) {
+        reconcileAppsDataLI(volumeUuid,user.id,flags);
+      }
+    }
+ catch (    IllegalStateException e) {
+      Slog.w(TAG,"Failed to prepare storage: " + e);
     }
   }
 synchronized (mPackages) {
     int updateFlags=UPDATE_PERMISSIONS_ALL;
     if (ver.sdkVersion != mSdkVersion) {
-      logCriticalInfo(Log.INFO,"Platform changed from " + ver.sdkVersion + " to "+ mSdkVersion+ "; regranting permissions for "+ vol.fsUuid);
+      logCriticalInfo(Log.INFO,"Platform changed from " + ver.sdkVersion + " to "+ mSdkVersion+ "; regranting permissions for "+ volumeUuid);
       updateFlags|=UPDATE_PERMISSIONS_REPLACE_PKG | UPDATE_PERMISSIONS_REPLACE_ALL;
     }
-    updatePermissionsLPw(null,null,vol.fsUuid,updateFlags);
+    updatePermissionsLPw(null,null,volumeUuid,updateFlags);
     ver.forceCurrent();
     mSettings.writeLPr();
+  }
+  for (  PackageFreezer freezer : freezers) {
+    freezer.close();
   }
   if (DEBUG_INSTALL)   Slog.d(TAG,"Loaded packages " + loaded);
   sendResourcesChangedBroadcast(true,false,loaded,null);

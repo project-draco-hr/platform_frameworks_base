@@ -1,0 +1,96 @@
+{
+  if (DEBUG)   Slog.d(TAG,"stepIdleStateLocked: mState=" + mState);
+  EventLogTags.writeDeviceIdleStep();
+  final long now=SystemClock.elapsedRealtime();
+  if ((now + mConstants.MIN_TIME_TO_ALARM) > mAlarmManager.getNextWakeFromIdleTime()) {
+    if (mState != STATE_ACTIVE) {
+      becomeActiveLocked("alarm",Process.myUid());
+      becomeInactiveIfAppropriateLocked();
+    }
+    return;
+  }
+switch (mState) {
+case STATE_INACTIVE:
+    startMonitoringMotionLocked();
+  scheduleAlarmLocked(mConstants.IDLE_AFTER_INACTIVE_TIMEOUT,false);
+mNextIdlePendingDelay=mConstants.IDLE_PENDING_TIMEOUT;
+mNextIdleDelay=mConstants.IDLE_TIMEOUT;
+mState=STATE_IDLE_PENDING;
+if (DEBUG) Slog.d(TAG,"Moved from STATE_INACTIVE to STATE_IDLE_PENDING.");
+EventLogTags.writeDeviceIdle(mState,reason);
+break;
+case STATE_IDLE_PENDING:
+mState=STATE_SENSING;
+if (DEBUG) Slog.d(TAG,"Moved from STATE_IDLE_PENDING to STATE_SENSING.");
+EventLogTags.writeDeviceIdle(mState,reason);
+scheduleSensingTimeoutAlarmLocked(mConstants.SENSING_TIMEOUT);
+cancelLocatingLocked();
+mNotMoving=false;
+mLocated=false;
+mLastGenericLocation=null;
+mLastGpsLocation=null;
+mAnyMotionDetector.checkForAnyMotion();
+break;
+case STATE_SENSING:
+cancelSensingTimeoutAlarmLocked();
+mState=STATE_LOCATING;
+if (DEBUG) Slog.d(TAG,"Moved from STATE_SENSING to STATE_LOCATING.");
+EventLogTags.writeDeviceIdle(mState,reason);
+scheduleAlarmLocked(mConstants.LOCATING_TIMEOUT,false);
+if (mLocationManager != null && mLocationManager.getProvider(LocationManager.NETWORK_PROVIDER) != null) {
+mLocationManager.requestLocationUpdates(mLocationRequest,mGenericLocationListener,mHandler.getLooper());
+mLocating=true;
+}
+ else {
+mHasNetworkLocation=false;
+}
+if (mLocationManager != null && mLocationManager.getProvider(LocationManager.GPS_PROVIDER) != null) {
+mHasGps=true;
+mLocationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER,1000,5,mGpsLocationListener,mHandler.getLooper());
+mLocating=true;
+}
+ else {
+mHasGps=false;
+}
+if (mLocating) {
+break;
+}
+case STATE_LOCATING:
+cancelAlarmLocked();
+cancelLocatingLocked();
+mAnyMotionDetector.stop();
+case STATE_IDLE_MAINTENANCE:
+scheduleAlarmLocked(mNextIdleDelay,true);
+if (DEBUG) Slog.d(TAG,"Moved to STATE_IDLE. Next alarm in " + mNextIdleDelay + " ms.");
+mNextIdleDelay=(long)(mNextIdleDelay * mConstants.IDLE_FACTOR);
+if (DEBUG) Slog.d(TAG,"Setting mNextIdleDelay = " + mNextIdleDelay);
+mNextIdleDelay=Math.min(mNextIdleDelay,mConstants.MAX_IDLE_TIMEOUT);
+if (mNextIdleDelay < mConstants.IDLE_TIMEOUT) {
+mNextIdleDelay=mConstants.IDLE_TIMEOUT;
+}
+mState=STATE_IDLE;
+if (mLightState != LIGHT_STATE_OVERRIDE) {
+mLightState=LIGHT_STATE_OVERRIDE;
+cancelLightAlarmLocked();
+}
+EventLogTags.writeDeviceIdle(mState,reason);
+addEvent(EVENT_DEEP_IDLE);
+mHandler.sendEmptyMessage(MSG_REPORT_IDLE_ON);
+break;
+case STATE_IDLE:
+mActiveIdleOpCount=1;
+mActiveIdleWakeLock.acquire();
+scheduleAlarmLocked(mNextIdlePendingDelay,false);
+if (DEBUG) Slog.d(TAG,"Moved from STATE_IDLE to STATE_IDLE_MAINTENANCE. " + "Next alarm in " + mNextIdlePendingDelay + " ms.");
+mMaintenanceStartTime=SystemClock.elapsedRealtime();
+mNextIdlePendingDelay=Math.min(mConstants.MAX_IDLE_PENDING_TIMEOUT,(long)(mNextIdlePendingDelay * mConstants.IDLE_PENDING_FACTOR));
+if (mNextIdlePendingDelay < mConstants.IDLE_PENDING_TIMEOUT) {
+mNextIdlePendingDelay=mConstants.IDLE_PENDING_TIMEOUT;
+}
+mState=STATE_IDLE_MAINTENANCE;
+EventLogTags.writeDeviceIdle(mState,reason);
+addEvent(EVENT_DEEP_MAINTENANCE);
+mHandler.sendEmptyMessage(MSG_REPORT_IDLE_OFF);
+break;
+}
+}

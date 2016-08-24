@@ -21,7 +21,7 @@ break;
 case MSG_RESIZED:
 {
 SomeArgs args=(SomeArgs)msg.obj;
-if (mWinFrame.equals(args.arg1) && mPendingOverscanInsets.equals(args.arg5) && mPendingContentInsets.equals(args.arg2)&& mPendingStableInsets.equals(args.arg6)&& mPendingVisibleInsets.equals(args.arg3)&& mPendingOutsets.equals(args.arg7)&& args.arg4 == null) {
+if (mWinFrame.equals(args.arg1) && mPendingOverscanInsets.equals(args.arg5) && mPendingContentInsets.equals(args.arg2)&& mPendingStableInsets.equals(args.arg6)&& mPendingVisibleInsets.equals(args.arg3)&& mPendingOutsets.equals(args.arg7)&& mPendingBackDropFrame.equals(args.arg8)&& args.arg4 == null && args.argi1 == 0) {
 break;
 }
 }
@@ -32,17 +32,21 @@ Configuration config=(Configuration)args.arg4;
 if (config != null) {
 updateConfiguration(config,false);
 }
+final boolean framesChanged=!mWinFrame.equals(args.arg1) || !mPendingOverscanInsets.equals(args.arg5) || !mPendingContentInsets.equals(args.arg2)|| !mPendingStableInsets.equals(args.arg6)|| !mPendingVisibleInsets.equals(args.arg3)|| !mPendingOutsets.equals(args.arg7);
 mWinFrame.set((Rect)args.arg1);
 mPendingOverscanInsets.set((Rect)args.arg5);
 mPendingContentInsets.set((Rect)args.arg2);
 mPendingStableInsets.set((Rect)args.arg6);
 mPendingVisibleInsets.set((Rect)args.arg3);
 mPendingOutsets.set((Rect)args.arg7);
+mPendingBackDropFrame.set((Rect)args.arg8);
+mForceNextWindowRelayout=args.argi1 != 0;
+mPendingAlwaysConsumeNavBar=args.argi2 != 0;
 args.recycle();
 if (msg.what == MSG_RESIZED_REPORT) {
 mReportNextDraw=true;
 }
-if (mView != null) {
+if (mView != null && framesChanged) {
 forceLayout(mView);
 }
 requestLayout();
@@ -58,10 +62,18 @@ mWinFrame.left=l;
 mWinFrame.right=l + w;
 mWinFrame.top=t;
 mWinFrame.bottom=t + h;
+mPendingBackDropFrame.set(mWinFrame);
+boolean isDockedDivider=mWindowAttributes.type == TYPE_DOCK_DIVIDER;
+boolean suppress=(mDragResizing && mResizeMode == RESIZE_MODE_DOCKED_DIVIDER) || isDockedDivider;
+if (!suppress) {
 if (mView != null) {
 forceLayout(mView);
 }
 requestLayout();
+}
+ else {
+maybeHandleWindowMove(mWinFrame);
+}
 }
 break;
 case MSG_WINDOW_FOCUS_CHANGED:
@@ -81,10 +93,10 @@ final Rect surfaceInsets=lp != null ? lp.surfaceInsets : null;
 mAttachInfo.mHardwareRenderer.initializeIfNeeded(mWidth,mHeight,mAttachInfo,mSurface,surfaceInsets);
 }
  catch (OutOfResourcesException e) {
-Log.e(TAG,"OutOfResourcesException locking surface",e);
+Log.e(mTag,"OutOfResourcesException locking surface",e);
 try {
 if (!mWindowSession.outOfMemory(mWindow)) {
-Slog.w(TAG,"No processes killed for memory; killing self");
+Slog.w(mTag,"No processes killed for memory; killing self");
 Process.killProcess(Process.myPid());
 }
 }
@@ -112,11 +124,6 @@ imm.onPostWindowFocus(mView,mView.findFocus(),mWindowAttributes.softInputMode,!m
 mWindowAttributes.softInputMode&=~WindowManager.LayoutParams.SOFT_INPUT_IS_FORWARD_NAVIGATION;
 ((WindowManager.LayoutParams)mView.getLayoutParams()).softInputMode&=~WindowManager.LayoutParams.SOFT_INPUT_IS_FORWARD_NAVIGATION;
 mHasHadWindowFocus=true;
-}
-if (mView != null && mAccessibilityManager.isEnabled()) {
-if (hasWindowFocus) {
-mView.sendAccessibilityEvent(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED);
-}
 }
 }
 }
@@ -147,14 +154,6 @@ if ((event.getFlags() & KeyEvent.FLAG_FROM_SYSTEM) != 0) {
 event=KeyEvent.changeFlags(event,event.getFlags() & ~KeyEvent.FLAG_FROM_SYSTEM);
 }
 enqueueInputEvent(event,null,QueuedInputEvent.FLAG_DELIVER_POST_IME,true);
-}
-break;
-case MSG_FINISH_INPUT_CONNECTION:
-{
-InputMethodManager imm=InputMethodManager.peekInstance();
-if (imm != null) {
-imm.reportFinishInputConnection((InputConnection)msg.obj);
-}
 }
 break;
 case MSG_CHECK_FOCUS:
@@ -199,17 +198,6 @@ case MSG_CLEAR_ACCESSIBILITY_FOCUS_HOST:
 setAccessibilityFocus(null,null);
 }
 break;
-case MSG_DISPATCH_WINDOW_ANIMATION_STARTED:
-{
-int remainingFrameCount=msg.arg1;
-handleDispatchWindowAnimationStarted(remainingFrameCount);
-}
-break;
-case MSG_DISPATCH_WINDOW_ANIMATION_STOPPED:
-{
-handleDispatchWindowAnimationStopped();
-}
-break;
 case MSG_INVALIDATE_WORLD:
 {
 if (mView != null) {
@@ -221,5 +209,19 @@ case MSG_DISPATCH_WINDOW_SHOWN:
 {
 handleDispatchWindowShown();
 }
+break;
+case MSG_REQUEST_KEYBOARD_SHORTCUTS:
+{
+final IResultReceiver receiver=(IResultReceiver)msg.obj;
+final int deviceId=msg.arg1;
+handleRequestKeyboardShortcuts(receiver,deviceId);
+}
+break;
+case MSG_UPDATE_POINTER_ICON:
+{
+MotionEvent event=(MotionEvent)msg.obj;
+resetPointerIcon(event);
+}
+break;
 }
 }

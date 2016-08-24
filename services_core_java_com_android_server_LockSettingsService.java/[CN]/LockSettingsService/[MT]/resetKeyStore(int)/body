@@ -1,0 +1,36 @@
+{
+  checkWritePermission(userId);
+  if (DEBUG)   Slog.v(TAG,"Reset keystore for user: " + userId);
+  int managedUserId=-1;
+  String managedUserDecryptedPassword=null;
+  final List<UserInfo> profiles=mUserManager.getProfiles(userId);
+  for (  UserInfo pi : profiles) {
+    if (pi.isManagedProfile() && !mLockPatternUtils.isSeparateProfileChallengeEnabled(pi.id) && mStorage.hasChildProfileLock(pi.id)) {
+      try {
+        if (managedUserId == -1) {
+          managedUserDecryptedPassword=getDecryptedPasswordForTiedProfile(pi.id);
+          managedUserId=pi.id;
+        }
+ else {
+          Slog.e(TAG,"More than one managed profile, uid1:" + managedUserId + ", uid2:"+ pi.id);
+        }
+      }
+ catch (      UnrecoverableKeyException|InvalidKeyException|KeyStoreException|NoSuchAlgorithmException|NoSuchPaddingException|InvalidAlgorithmParameterException|IllegalBlockSizeException|BadPaddingException|CertificateException|IOException e) {
+        Slog.e(TAG,"Failed to decrypt child profile key",e);
+      }
+    }
+  }
+  try {
+    for (    int profileId : mUserManager.getProfileIdsWithDisabled(userId)) {
+      for (      int uid : SYSTEM_CREDENTIAL_UIDS) {
+        mKeyStore.clearUid(UserHandle.getUid(profileId,uid));
+      }
+    }
+  }
+  finally {
+    if (managedUserId != -1 && managedUserDecryptedPassword != null) {
+      if (DEBUG)       Slog.v(TAG,"Restore tied profile lock");
+      tieProfileLockToParent(managedUserId,managedUserDecryptedPassword);
+    }
+  }
+}

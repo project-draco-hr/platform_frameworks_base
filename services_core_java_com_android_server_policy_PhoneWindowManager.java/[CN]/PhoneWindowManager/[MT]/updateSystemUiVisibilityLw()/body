@@ -10,27 +10,31 @@
   if (mForcingShowNavBar && win.getSurfaceLayer() < mForcingShowNavBarLayer) {
     tmpVisibility&=~PolicyControl.adjustClearableFlags(win,View.SYSTEM_UI_CLEARABLE_FLAGS);
   }
-  tmpVisibility=updateLightStatusBarLw(tmpVisibility);
+  final int fullscreenVisibility=updateLightStatusBarLw(0,mTopFullscreenOpaqueWindowState,mTopFullscreenOpaqueOrDimmingWindowState);
+  final int dockedVisibility=updateLightStatusBarLw(0,mTopDockedOpaqueWindowState,mTopDockedOpaqueOrDimmingWindowState);
+  mWindowManagerFuncs.getStackBounds(HOME_STACK_ID,mNonDockedStackBounds);
+  mWindowManagerFuncs.getStackBounds(DOCKED_STACK_ID,mDockedStackBounds);
   final int visibility=updateSystemBarsLw(win,mLastSystemUiFlags,tmpVisibility);
   final int diff=visibility ^ mLastSystemUiFlags;
+  final int fullscreenDiff=fullscreenVisibility ^ mLastFullscreenStackSysUiFlags;
+  final int dockedDiff=dockedVisibility ^ mLastDockedStackSysUiFlags;
   final boolean needsMenu=win.getNeedsMenuLw(mTopFullscreenOpaqueWindowState);
-  if (diff == 0 && mLastFocusNeedsMenu == needsMenu && mFocusedApp == win.getAppToken()) {
+  if (diff == 0 && fullscreenDiff == 0 && dockedDiff == 0 && mLastFocusNeedsMenu == needsMenu && mFocusedApp == win.getAppToken() && mLastNonDockedStackBounds.equals(mNonDockedStackBounds) && mLastDockedStackBounds.equals(mDockedStackBounds)) {
     return 0;
   }
   mLastSystemUiFlags=visibility;
+  mLastFullscreenStackSysUiFlags=fullscreenVisibility;
+  mLastDockedStackSysUiFlags=dockedVisibility;
   mLastFocusNeedsMenu=needsMenu;
   mFocusedApp=win.getAppToken();
+  final Rect fullscreenStackBounds=new Rect(mNonDockedStackBounds);
+  final Rect dockedStackBounds=new Rect(mDockedStackBounds);
   mHandler.post(new Runnable(){
     @Override public void run(){
-      try {
-        IStatusBarService statusbar=getStatusBarService();
-        if (statusbar != null) {
-          statusbar.setSystemUiVisibility(visibility,0xffffffff,win.toString());
-          statusbar.topAppWindowChanged(needsMenu);
-        }
-      }
- catch (      RemoteException e) {
-        mStatusBarService=null;
+      StatusBarManagerInternal statusbar=getStatusBarManagerInternal();
+      if (statusbar != null) {
+        statusbar.setSystemUiVisibility(visibility,fullscreenVisibility,dockedVisibility,0xffffffff,fullscreenStackBounds,dockedStackBounds,win.toString());
+        statusbar.topAppWindowChanged(needsMenu);
       }
     }
   }

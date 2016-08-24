@@ -1,42 +1,45 @@
 {
   final PackageRemovedInfo info=new PackageRemovedInfo();
   final boolean res;
-  final UserHandle removeForUser=(flags & PackageManager.DELETE_ALL_USERS) != 0 ? UserHandle.ALL : new UserHandle(userId);
-  if (isPackageDeviceAdmin(packageName,removeForUser.getIdentifier())) {
+  final int removeUser=(deleteFlags & PackageManager.DELETE_ALL_USERS) != 0 ? UserHandle.USER_ALL : userId;
+  if (isPackageDeviceAdmin(packageName,removeUser)) {
     Slog.w(TAG,"Not removing package " + packageName + ": has active device admin");
     return PackageManager.DELETE_FAILED_DEVICE_POLICY_MANAGER;
   }
-  boolean removedForAllUsers=false;
-  boolean systemUpdate=false;
+  PackageSetting uninstalledPs=null;
   int[] allUsers;
-  boolean[] perUserInstalled;
 synchronized (mPackages) {
-    PackageSetting ps=mSettings.mPackages.get(packageName);
-    allUsers=sUserManager.getUserIds();
-    perUserInstalled=new boolean[allUsers.length];
-    for (int i=0; i < allUsers.length; i++) {
-      perUserInstalled[i]=ps != null ? ps.getInstalled(allUsers[i]) : false;
+    uninstalledPs=mSettings.mPackages.get(packageName);
+    if (uninstalledPs == null) {
+      Slog.w(TAG,"Not removing non-existent package " + packageName);
+      return PackageManager.DELETE_FAILED_INTERNAL_ERROR;
     }
+    allUsers=sUserManager.getUserIds();
+    info.origUsers=uninstalledPs.queryInstalledUsers(allUsers,true);
+  }
+  final int freezeUser;
+  if (isUpdatedSystemApp(uninstalledPs) && ((deleteFlags & PackageManager.DELETE_SYSTEM_APP) == 0)) {
+    freezeUser=UserHandle.USER_ALL;
+  }
+ else {
+    freezeUser=removeUser;
   }
 synchronized (mInstallLock) {
     if (DEBUG_REMOVE)     Slog.d(TAG,"deletePackageX: pkg=" + packageName + " user="+ userId);
-    res=deletePackageLI(packageName,removeForUser,true,allUsers,perUserInstalled,flags | REMOVE_CHATTY,info,true);
-    systemUpdate=info.isRemovedPackageSystemUpdate;
-    if (res && !systemUpdate && mPackages.get(packageName) == null) {
-      removedForAllUsers=true;
+    try (PackageFreezer freezer=freezePackageForDelete(packageName,freezeUser,deleteFlags,"deletePackageX")){
+      res=deletePackageLIF(packageName,UserHandle.of(removeUser),true,allUsers,deleteFlags | REMOVE_CHATTY,info,true,null);
     }
-    if (DEBUG_REMOVE)     Slog.d(TAG,"delete res: systemUpdate=" + systemUpdate + " removedForAllUsers="+ removedForAllUsers);
+ synchronized (mPackages) {
+      if (res) {
+        mEphemeralApplicationRegistry.onPackageUninstalledLPw(uninstalledPs.pkg);
+      }
+    }
   }
   if (res) {
-    info.sendBroadcast(true,systemUpdate,removedForAllUsers);
-    if (systemUpdate) {
-      Bundle extras=new Bundle(1);
-      extras.putInt(Intent.EXTRA_UID,info.removedAppId >= 0 ? info.removedAppId : info.uid);
-      extras.putBoolean(Intent.EXTRA_REPLACING,true);
-      sendPackageBroadcast(Intent.ACTION_PACKAGE_ADDED,packageName,extras,null,null,null);
-      sendPackageBroadcast(Intent.ACTION_PACKAGE_REPLACED,packageName,extras,null,null,null);
-      sendPackageBroadcast(Intent.ACTION_MY_PACKAGE_REPLACED,null,null,packageName,null,null);
-    }
+    final boolean killApp=(deleteFlags & PackageManager.DELETE_DONT_KILL_APP) == 0;
+    info.sendPackageRemovedBroadcasts(killApp);
+    info.sendSystemPackageUpdatedBroadcasts();
+    info.sendSystemPackageAppearedBroadcasts();
   }
   Runtime.getRuntime().gc();
   if (info.args != null) {

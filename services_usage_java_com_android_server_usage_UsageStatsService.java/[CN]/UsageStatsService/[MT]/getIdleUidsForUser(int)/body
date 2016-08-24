@@ -2,14 +2,7 @@
   if (!mAppIdleEnabled) {
     return new int[0];
   }
-  final long timeNow;
-  final UserUsageStatsService userService;
-  final long screenOnTime;
-synchronized (mLock) {
-    timeNow=checkAndGetTimeLocked();
-    userService=getUserDataAndInitializeIfNeededLocked(userId,timeNow);
-    screenOnTime=getScreenOnTimeLocked(timeNow);
-  }
+  final long elapsedRealtime=SystemClock.elapsedRealtime();
   List<ApplicationInfo> apps;
   try {
     ParceledListSlice<ApplicationInfo> slice=AppGlobals.getPackageManager().getInstalledApplications(0,userId);
@@ -19,12 +12,12 @@ synchronized (mLock) {
     apps=slice.getList();
   }
  catch (  RemoteException e) {
-    return new int[0];
+    throw e.rethrowFromSystemServer();
   }
   SparseIntArray uidStates=new SparseIntArray();
   for (int i=apps.size() - 1; i >= 0; i--) {
     ApplicationInfo ai=apps.get(i);
-    boolean idle=isAppIdleFiltered(ai.packageName,UserHandle.getAppId(ai.uid),userId,userService,timeNow,screenOnTime);
+    boolean idle=isAppIdleFiltered(ai.packageName,UserHandle.getAppId(ai.uid),userId,elapsedRealtime);
     int index=uidStates.indexOfKey(ai.uid);
     if (index < 0) {
       uidStates.put(ai.uid,1 + (idle ? 1 << 16 : 0));
@@ -33,6 +26,9 @@ synchronized (mLock) {
       int value=uidStates.valueAt(index);
       uidStates.setValueAt(index,value + 1 + (idle ? 1 << 16 : 0));
     }
+  }
+  if (DEBUG) {
+    Slog.d(TAG,"getIdleUids took " + (SystemClock.elapsedRealtime() - elapsedRealtime));
   }
   int numIdle=0;
   for (int i=uidStates.size() - 1; i >= 0; i--) {

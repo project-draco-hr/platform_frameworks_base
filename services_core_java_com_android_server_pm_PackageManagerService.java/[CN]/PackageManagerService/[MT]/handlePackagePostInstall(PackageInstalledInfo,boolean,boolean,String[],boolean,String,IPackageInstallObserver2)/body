@@ -1,0 +1,97 @@
+{
+  if (res.returnCode == PackageManager.INSTALL_SUCCEEDED) {
+    if (res.removedInfo != null) {
+      res.removedInfo.sendPackageRemovedBroadcasts(killApp);
+    }
+    if (grantPermissions && res.pkg.applicationInfo.targetSdkVersion >= Build.VERSION_CODES.M) {
+      grantRequestedRuntimePermissions(res.pkg,res.newUsers,grantedPermissions);
+    }
+    final boolean update=res.removedInfo != null && res.removedInfo.removedPackage != null;
+    if (res.pkg.parentPackage != null) {
+synchronized (mPackages) {
+        grantRuntimePermissionsGrantedToDisabledPrivSysPackageParentLPw(res.pkg);
+      }
+    }
+synchronized (mPackages) {
+      mEphemeralApplicationRegistry.onPackageInstalledLPw(res.pkg);
+    }
+    final String packageName=res.pkg.applicationInfo.packageName;
+    Bundle extras=new Bundle(1);
+    extras.putInt(Intent.EXTRA_UID,res.uid);
+    int[] firstUsers=EMPTY_INT_ARRAY;
+    int[] updateUsers=EMPTY_INT_ARRAY;
+    if (res.origUsers == null || res.origUsers.length == 0) {
+      firstUsers=res.newUsers;
+    }
+ else {
+      for (      int newUser : res.newUsers) {
+        boolean isNew=true;
+        for (        int origUser : res.origUsers) {
+          if (origUser == newUser) {
+            isNew=false;
+            break;
+          }
+        }
+        if (isNew) {
+          firstUsers=ArrayUtils.appendInt(firstUsers,newUser);
+        }
+ else {
+          updateUsers=ArrayUtils.appendInt(updateUsers,newUser);
+        }
+      }
+    }
+    if (!isEphemeral(res.pkg)) {
+      mProcessLoggingHandler.invalidateProcessLoggingBaseApkHash(res.pkg.baseCodePath);
+      sendPackageBroadcast(Intent.ACTION_PACKAGE_ADDED,packageName,extras,0,null,null,firstUsers);
+      if (update) {
+        extras.putBoolean(Intent.EXTRA_REPLACING,true);
+      }
+      sendPackageBroadcast(Intent.ACTION_PACKAGE_ADDED,packageName,extras,0,null,null,updateUsers);
+      if (update) {
+        sendPackageBroadcast(Intent.ACTION_PACKAGE_REPLACED,packageName,extras,0,null,null,updateUsers);
+        sendPackageBroadcast(Intent.ACTION_MY_PACKAGE_REPLACED,null,null,0,packageName,null,updateUsers);
+      }
+ else       if (launchedForRestore && !isSystemApp(res.pkg)) {
+        if (DEBUG_BACKUP) {
+          Slog.i(TAG,"Post-restore of " + packageName + " sending FIRST_LAUNCH in "+ Arrays.toString(firstUsers));
+        }
+        sendFirstLaunchBroadcast(packageName,installerPackage,firstUsers);
+      }
+      if (res.pkg.isForwardLocked() || isExternal(res.pkg)) {
+        if (DEBUG_INSTALL) {
+          Slog.i(TAG,"upgrading pkg " + res.pkg + " is ASEC-hosted -> AVAILABLE");
+        }
+        final int[] uidArray=new int[]{res.pkg.applicationInfo.uid};
+        ArrayList<String> pkgList=new ArrayList<>(1);
+        pkgList.add(packageName);
+        sendResourcesChangedBroadcast(true,true,pkgList,uidArray,null);
+      }
+    }
+    if (firstUsers != null && firstUsers.length > 0) {
+synchronized (mPackages) {
+        for (        int userId : firstUsers) {
+          if (packageIsBrowser(packageName,userId)) {
+            mSettings.setDefaultBrowserPackageNameLPw(null,userId);
+          }
+          mSettings.applyPendingPermissionGrantsLPw(packageName,userId);
+        }
+      }
+    }
+    EventLog.writeEvent(EventLogTags.UNKNOWN_SOURCES_ENABLED,getUnknownSourcesSettings());
+    Runtime.getRuntime().gc();
+    if (res.removedInfo != null && res.removedInfo.args != null) {
+synchronized (mInstallLock) {
+        res.removedInfo.args.doPostDeleteLI(true);
+      }
+    }
+  }
+  if (installObserver != null) {
+    try {
+      Bundle extras=extrasForInstallResult(res);
+      installObserver.onPackageInstalled(res.name,res.returnCode,res.returnMsg,extras);
+    }
+ catch (    RemoteException e) {
+      Slog.i(TAG,"Observer no longer exists.");
+    }
+  }
+}

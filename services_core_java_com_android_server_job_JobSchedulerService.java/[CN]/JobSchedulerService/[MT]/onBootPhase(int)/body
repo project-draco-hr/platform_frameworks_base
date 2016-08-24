@@ -1,28 +1,37 @@
 {
   if (PHASE_SYSTEM_SERVICES_READY == phase) {
-    final IntentFilter filter=new IntentFilter(Intent.ACTION_PACKAGE_REMOVED);
+    mConstants.start(getContext().getContentResolver());
+    final IntentFilter filter=new IntentFilter();
+    filter.addAction(Intent.ACTION_PACKAGE_REMOVED);
+    filter.addAction(Intent.ACTION_PACKAGE_CHANGED);
     filter.addDataScheme("package");
     getContext().registerReceiverAsUser(mBroadcastReceiver,UserHandle.ALL,filter,null,null);
     final IntentFilter userFilter=new IntentFilter(Intent.ACTION_USER_REMOVED);
-    userFilter.addAction(PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED);
     getContext().registerReceiverAsUser(mBroadcastReceiver,UserHandle.ALL,userFilter,null,null);
     mPowerManager=(PowerManager)getContext().getSystemService(Context.POWER_SERVICE);
+    try {
+      ActivityManagerNative.getDefault().registerUidObserver(mUidObserver,ActivityManager.UID_OBSERVER_PROCSTATE | ActivityManager.UID_OBSERVER_GONE | ActivityManager.UID_OBSERVER_IDLE);
+    }
+ catch (    RemoteException e) {
+    }
   }
  else   if (phase == PHASE_THIRD_PARTY_APPS_CAN_START) {
-synchronized (mJobs) {
+synchronized (mLock) {
       mReadyToRock=true;
       mBatteryStats=IBatteryStats.Stub.asInterface(ServiceManager.getService(BatteryStats.SERVICE_NAME));
+      mLocalDeviceIdleController=LocalServices.getService(DeviceIdleController.LocalService.class);
       for (int i=0; i < MAX_JOB_CONTEXTS_COUNT; i++) {
-        mActiveServices.add(new JobServiceContext(this,mBatteryStats,getContext().getMainLooper()));
+        mActiveServices.add(new JobServiceContext(this,mBatteryStats,mJobPackageTracker,getContext().getMainLooper()));
       }
-      ArraySet<JobStatus> jobs=mJobs.getJobs();
-      for (int i=0; i < jobs.size(); i++) {
-        JobStatus job=jobs.valueAt(i);
-        for (int controller=0; controller < mControllers.size(); controller++) {
-          mControllers.get(controller).deviceIdleModeChanged(mDeviceIdleMode);
-          mControllers.get(controller).maybeStartTrackingJob(job);
+      mJobs.forEachJob(new JobStatusFunctor(){
+        @Override public void process(        JobStatus job){
+          for (int controller=0; controller < mControllers.size(); controller++) {
+            final StateController sc=mControllers.get(controller);
+            sc.maybeStartTrackingJobLocked(job,null);
+          }
         }
       }
+);
       mHandler.obtainMessage(MSG_CHECK_JOB).sendToTarget();
     }
   }

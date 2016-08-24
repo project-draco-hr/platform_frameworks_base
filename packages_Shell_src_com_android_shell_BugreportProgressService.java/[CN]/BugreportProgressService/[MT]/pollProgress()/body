@@ -1,0 +1,63 @@
+{
+  final int total=mProcesses.size();
+  if (total == 0) {
+    Log.d(TAG,"No process to poll progress.");
+  }
+  int activeProcesses=0;
+  for (int i=0; i < total; i++) {
+    final BugreportInfo info=mProcesses.valueAt(i);
+    if (info == null) {
+      Log.wtf(TAG,"pollProgress(): null info at index " + i + "(ID = "+ mProcesses.keyAt(i)+ ")");
+      continue;
+    }
+    final int pid=info.pid;
+    final int id=info.id;
+    if (info.finished) {
+      if (DEBUG)       Log.v(TAG,"Skipping finished process " + pid + " (id: "+ id+ ")");
+      continue;
+    }
+    activeProcesses++;
+    final String progressKey=DUMPSTATE_PREFIX + pid + PROGRESS_SUFFIX;
+    info.realProgress=SystemProperties.getInt(progressKey,0);
+    if (info.realProgress == 0) {
+      Log.v(TAG,"System property " + progressKey + " is not set yet");
+    }
+    final String maxKey=DUMPSTATE_PREFIX + pid + MAX_SUFFIX;
+    info.realMax=SystemProperties.getInt(maxKey,info.max);
+    if (info.realMax <= 0) {
+      Log.w(TAG,"Property " + maxKey + " is not positive: "+ info.max);
+      continue;
+    }
+    final int oldPercentage=(CAPPED_MAX * info.progress) / info.max;
+    int newPercentage=(CAPPED_MAX * info.realProgress) / info.realMax;
+    int max=info.realMax;
+    int progress=info.realProgress;
+    if (newPercentage > CAPPED_PROGRESS) {
+      progress=newPercentage=CAPPED_PROGRESS;
+      max=CAPPED_MAX;
+    }
+    if (newPercentage > oldPercentage) {
+      if (DEBUG) {
+        if (progress != info.progress) {
+          Log.v(TAG,"Updating progress for PID " + pid + "(id: "+ id+ ") from "+ info.progress+ " to "+ progress);
+        }
+        if (max != info.max) {
+          Log.v(TAG,"Updating max progress for PID " + pid + "(id: "+ id+ ") from "+ info.max+ " to "+ max);
+        }
+      }
+      info.progress=progress;
+      info.max=max;
+      info.lastUpdate=System.currentTimeMillis();
+      updateProgress(info);
+    }
+ else {
+      long inactiveTime=System.currentTimeMillis() - info.lastUpdate;
+      if (inactiveTime >= INACTIVITY_TIMEOUT) {
+        Log.w(TAG,"No progress update for PID " + pid + " since "+ info.getFormattedLastUpdate());
+        stopProgress(info.id);
+      }
+    }
+  }
+  if (DEBUG)   Log.v(TAG,"pollProgress() total=" + total + ", actives="+ activeProcesses);
+  return activeProcesses > 0;
+}

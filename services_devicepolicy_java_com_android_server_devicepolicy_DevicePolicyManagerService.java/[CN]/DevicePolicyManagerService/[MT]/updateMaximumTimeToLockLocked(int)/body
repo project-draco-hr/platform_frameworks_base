@@ -1,0 +1,35 @@
+{
+  long timeMs=Long.MAX_VALUE;
+  int[] profileIds=mUserManager.getProfileIdsWithDisabled(userHandle);
+  for (  int profileId : profileIds) {
+    DevicePolicyData policy=getUserDataUnchecked(profileId);
+    final int N=policy.mAdminList.size();
+    for (int i=0; i < N; i++) {
+      ActiveAdmin admin=policy.mAdminList.get(i);
+      if (admin.maximumTimeToUnlock > 0 && timeMs > admin.maximumTimeToUnlock) {
+        timeMs=admin.maximumTimeToUnlock;
+      }
+      if (admin.hasParentActiveAdmin()) {
+        final ActiveAdmin parentAdmin=admin.getParentActiveAdmin();
+        if (parentAdmin.maximumTimeToUnlock > 0 && timeMs > parentAdmin.maximumTimeToUnlock) {
+          timeMs=parentAdmin.maximumTimeToUnlock;
+        }
+      }
+    }
+  }
+  DevicePolicyData policy=getUserDataUnchecked(getProfileParentId(userHandle));
+  if (policy.mLastMaximumTimeToLock == timeMs) {
+    return;
+  }
+  policy.mLastMaximumTimeToLock=timeMs;
+  final long ident=mInjector.binderClearCallingIdentity();
+  try {
+    if (policy.mLastMaximumTimeToLock != Long.MAX_VALUE) {
+      mInjector.settingsGlobalPutInt(Settings.Global.STAY_ON_WHILE_PLUGGED_IN,0);
+    }
+    mInjector.getPowerManagerInternal().setMaximumScreenOffTimeoutFromDeviceAdmin((int)Math.min(policy.mLastMaximumTimeToLock,Integer.MAX_VALUE));
+  }
+  finally {
+    mInjector.binderRestoreCallingIdentity(ident);
+  }
+}

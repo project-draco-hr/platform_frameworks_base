@@ -1,0 +1,54 @@
+{
+  final boolean isLoggable=Log.isLoggable(TAG,Log.VERBOSE);
+  if (isLoggable)   Slog.v(TAG,op.toString());
+  if (mStorageIsLow) {
+    deferSyncH(op,SYNC_DELAY_ON_LOW_STORAGE);
+    return;
+  }
+  if (op.isPeriodic) {
+    List<SyncOperation> ops=getAllPendingSyncs();
+    for (    SyncOperation syncOperation : ops) {
+      if (syncOperation.sourcePeriodicId == op.jobId) {
+        mSyncJobService.callJobFinished(op.jobId,false);
+        return;
+      }
+    }
+    for (    ActiveSyncContext asc : mActiveSyncContexts) {
+      if (asc.mSyncOperation.sourcePeriodicId == op.jobId) {
+        mSyncJobService.callJobFinished(op.jobId,false);
+        return;
+      }
+    }
+    if (isAdapterDelayed(op.target)) {
+      deferSyncH(op,0);
+      return;
+    }
+  }
+  for (  ActiveSyncContext asc : mActiveSyncContexts) {
+    if (asc.mSyncOperation.isConflict(op)) {
+      if (asc.mSyncOperation.findPriority() >= op.findPriority()) {
+        if (isLoggable) {
+          Slog.v(TAG,"Rescheduling sync due to conflict " + op.toString());
+        }
+        deferSyncH(op,SYNC_DELAY_ON_CONFLICT);
+        return;
+      }
+ else {
+        if (isLoggable) {
+          Slog.v(TAG,"Pushing back running sync due to a higher priority sync");
+        }
+        deferActiveSyncH(asc);
+        break;
+      }
+    }
+  }
+  if (isOperationValid(op)) {
+    if (!dispatchSyncOperation(op)) {
+      mSyncJobService.callJobFinished(op.jobId,false);
+    }
+  }
+ else {
+    mSyncJobService.callJobFinished(op.jobId,false);
+  }
+  setAuthorityPendingState(op.target);
+}

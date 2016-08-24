@@ -11,6 +11,10 @@ synchronized (this) {
         mWindowAttributes.packageName=mBasePackageName;
       }
       attrs=mWindowAttributes;
+      setTag();
+      if (DEBUG_KEEP_SCREEN_ON && (mClientWindowLayoutFlags & WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) != 0 && (attrs.flags & WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) == 0) {
+        Slog.d(mTag,"setView: FLAG_KEEP_SCREEN_ON changed from true to false!");
+      }
       mClientWindowLayoutFlags=attrs.flags;
       setAccessibilityFocus(null,null);
       if (view instanceof RootViewSurfaceTaker) {
@@ -21,10 +25,9 @@ synchronized (this) {
         }
       }
       if (!attrs.hasManualSurfaceInsets) {
-        final int surfaceInset=(int)Math.ceil(view.getZ() * 2);
-        attrs.surfaceInsets.set(surfaceInset,surfaceInset,surfaceInset,surfaceInset);
+        attrs.setSurfaceInsets(view,false,true);
       }
-      CompatibilityInfo compatibilityInfo=mDisplayAdjustments.getCompatibilityInfo();
+      CompatibilityInfo compatibilityInfo=mDisplay.getDisplayAdjustments().getCompatibilityInfo();
       mTranslator=compatibilityInfo.getTranslator();
       if (mSurfaceHolder == null) {
         enableHardwareAcceleration(attrs);
@@ -36,7 +39,7 @@ synchronized (this) {
         attrs.backup();
         mTranslator.translateWindowLayout(attrs);
       }
-      if (DEBUG_LAYOUT)       Log.d(TAG,"WindowLayout in setView:" + attrs);
+      if (DEBUG_LAYOUT)       Log.d(mTag,"WindowLayout in setView:" + attrs);
       if (!compatibilityInfo.supportsScreen()) {
         attrs.privateFlags|=WindowManager.LayoutParams.PRIVATE_FLAG_COMPATIBLE_WINDOW;
         mLastInCompatMode=true;
@@ -56,6 +59,7 @@ synchronized (this) {
       if ((mWindowAttributes.inputFeatures & WindowManager.LayoutParams.INPUT_FEATURE_NO_INPUT_CHANNEL) == 0) {
         mInputChannel=new InputChannel();
       }
+      mForceDecorViewVisibility=(mWindowAttributes.privateFlags & PRIVATE_FLAG_FORCE_DECOR_VIEW_VISIBILITY) != 0;
       try {
         mOrigWindowType=mWindowAttributes.type;
         mAttachInfo.mRecomputeGlobalAttributes=true;
@@ -84,7 +88,9 @@ synchronized (this) {
       mPendingContentInsets.set(mAttachInfo.mContentInsets);
       mPendingStableInsets.set(mAttachInfo.mStableInsets);
       mPendingVisibleInsets.set(0,0,0,0);
-      if (DEBUG_LAYOUT)       Log.v(TAG,"Added window " + mWindow);
+      mAttachInfo.mAlwaysConsumeNavBar=(res & WindowManagerGlobal.ADD_FLAG_ALWAYS_CONSUME_NAV_BAR) != 0;
+      mPendingAlwaysConsumeNavBar=mAttachInfo.mAlwaysConsumeNavBar;
+      if (DEBUG_LAYOUT)       Log.v(mTag,"Added window " + mWindow);
       if (res < WindowManagerGlobal.ADD_OKAY) {
         mAttachInfo.mRootView=null;
         mAdded=false;
@@ -104,13 +110,13 @@ case WindowManagerGlobal.ADD_DUPLICATE_ADD:
 case WindowManagerGlobal.ADD_STARTING_NOT_NEEDED:
   return;
 case WindowManagerGlobal.ADD_MULTIPLE_SINGLETON:
-throw new WindowManager.BadTokenException("Unable to add window " + mWindow + " -- another window of this type already exists");
+throw new WindowManager.BadTokenException("Unable to add window " + mWindow + " -- another window of type "+ mWindowAttributes.type+ " already exists");
 case WindowManagerGlobal.ADD_PERMISSION_DENIED:
-throw new WindowManager.BadTokenException("Unable to add window " + mWindow + " -- permission denied for this window type");
+throw new WindowManager.BadTokenException("Unable to add window " + mWindow + " -- permission denied for window type "+ mWindowAttributes.type);
 case WindowManagerGlobal.ADD_INVALID_DISPLAY:
 throw new WindowManager.InvalidDisplayException("Unable to add window " + mWindow + " -- the specified display can not be found");
 case WindowManagerGlobal.ADD_INVALID_TYPE:
-throw new WindowManager.InvalidDisplayException("Unable to add window " + mWindow + " -- the specified window type is not valid");
+throw new WindowManager.InvalidDisplayException("Unable to add window " + mWindow + " -- the specified window type "+ mWindowAttributes.type+ " is not valid");
 }
 throw new RuntimeException("Unable to add window -- unknown error code " + res);
 }

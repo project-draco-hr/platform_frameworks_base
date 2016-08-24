@@ -1,46 +1,67 @@
 {
   PackageMonitor monitor=new PackageMonitor(){
-    @Override public void onPackageModified(    String packageName){
-synchronized (mLock) {
-        boolean servicesChanged=false;
-        UserState userState=getOrCreateUserStateLocked(getChangingUserId());
-        Iterator<ComponentName> iterator=userState.getEnabledServices().iterator();
-        while (iterator.hasNext()) {
-          ComponentName componentName=iterator.next();
-          if (packageName.equals(componentName.getPackageName())) {
-            servicesChanged=true;
-          }
+    /** 
+ * Checks if the package contains a print service.
+ * @param packageName The name of the package
+ * @return true iff the package contains a print service
+ */
+    private boolean hasPrintService(    String packageName){
+      Intent intent=new Intent(android.printservice.PrintService.SERVICE_INTERFACE);
+      intent.setPackage(packageName);
+      List<ResolveInfo> installedServices=mContext.getPackageManager().queryIntentServicesAsUser(intent,GET_SERVICES | MATCH_DEBUG_TRIAGED_MISSING,getChangingUserId());
+      return installedServices != null && !installedServices.isEmpty();
+    }
+    /** 
+ * Checks if there is a print service currently registered for this package.
+ * @param userState The userstate for the current user
+ * @param packageName The name of the package
+ * @return true iff the package contained (and might still contain) a print service
+ */
+    private boolean hadPrintService(    @NonNull UserState userState,    String packageName){
+      List<PrintServiceInfo> installedServices=userState.getPrintServices(PrintManager.ALL_SERVICES);
+      if (installedServices == null) {
+        return false;
+      }
+      final int numInstalledServices=installedServices.size();
+      for (int i=0; i < numInstalledServices; i++) {
+        if (installedServices.get(i).getResolveInfo().serviceInfo.packageName.equals(packageName)) {
+          return true;
         }
-        if (servicesChanged) {
+      }
+      return false;
+    }
+    @Override public void onPackageModified(    String packageName){
+      if (!mUserManager.isUserUnlockingOrUnlocked(getChangingUserId()))       return;
+      UserState userState=getOrCreateUserStateLocked(getChangingUserId(),false);
+synchronized (mLock) {
+        if (hadPrintService(userState,packageName) || hasPrintService(packageName)) {
           userState.updateIfNeededLocked();
         }
       }
+      userState.prunePrintServices();
     }
     @Override public void onPackageRemoved(    String packageName,    int uid){
+      if (!mUserManager.isUserUnlockingOrUnlocked(getChangingUserId()))       return;
+      UserState userState=getOrCreateUserStateLocked(getChangingUserId(),false);
 synchronized (mLock) {
-        boolean servicesRemoved=false;
-        UserState userState=getOrCreateUserStateLocked(getChangingUserId());
-        Iterator<ComponentName> iterator=userState.getEnabledServices().iterator();
-        while (iterator.hasNext()) {
-          ComponentName componentName=iterator.next();
-          if (packageName.equals(componentName.getPackageName())) {
-            iterator.remove();
-            servicesRemoved=true;
-          }
-        }
-        if (servicesRemoved) {
-          persistComponentNamesToSettingLocked(Settings.Secure.ENABLED_PRINT_SERVICES,userState.getEnabledServices(),getChangingUserId());
+        if (hadPrintService(userState,packageName)) {
           userState.updateIfNeededLocked();
         }
       }
+      userState.prunePrintServices();
     }
     @Override public boolean onHandleForceStop(    Intent intent,    String[] stoppedPackages,    int uid,    boolean doit){
+      if (!mUserManager.isUserUnlockingOrUnlocked(getChangingUserId()))       return false;
 synchronized (mLock) {
-        UserState userState=getOrCreateUserStateLocked(getChangingUserId());
+        UserState userState=getOrCreateUserStateLocked(getChangingUserId(),false);
         boolean stoppedSomePackages=false;
-        Iterator<ComponentName> iterator=userState.getEnabledServices().iterator();
+        List<PrintServiceInfo> enabledServices=userState.getPrintServices(PrintManager.ENABLED_SERVICES);
+        if (enabledServices == null) {
+          return false;
+        }
+        Iterator<PrintServiceInfo> iterator=enabledServices.iterator();
         while (iterator.hasNext()) {
-          ComponentName componentName=iterator.next();
+          ComponentName componentName=iterator.next().getComponentName();
           String componentPackage=componentName.getPackageName();
           for (          String stoppedPackage : stoppedPackages) {
             if (componentPackage.equals(stoppedPackage)) {
@@ -59,29 +80,13 @@ synchronized (mLock) {
       }
     }
     @Override public void onPackageAdded(    String packageName,    int uid){
-      Intent intent=new Intent(android.printservice.PrintService.SERVICE_INTERFACE);
-      intent.setPackage(packageName);
-      List<ResolveInfo> installedServices=mContext.getPackageManager().queryIntentServicesAsUser(intent,PackageManager.GET_SERVICES,getChangingUserId());
-      if (installedServices == null) {
-        return;
-      }
-      final int installedServiceCount=installedServices.size();
-      for (int i=0; i < installedServiceCount; i++) {
-        ServiceInfo serviceInfo=installedServices.get(i).serviceInfo;
-        ComponentName component=new ComponentName(serviceInfo.packageName,serviceInfo.name);
-        String label=serviceInfo.loadLabel(mContext.getPackageManager()).toString();
-        showEnableInstalledPrintServiceNotification(component,label,getChangingUserId());
-      }
-    }
-    private void persistComponentNamesToSettingLocked(    String settingName,    Set<ComponentName> componentNames,    int userId){
-      StringBuilder builder=new StringBuilder();
-      for (      ComponentName componentName : componentNames) {
-        if (builder.length() > 0) {
-          builder.append(COMPONENT_NAME_SEPARATOR);
+      if (!mUserManager.isUserUnlockingOrUnlocked(getChangingUserId()))       return;
+synchronized (mLock) {
+        if (hasPrintService(packageName)) {
+          UserState userState=getOrCreateUserStateLocked(getChangingUserId(),false);
+          userState.updateIfNeededLocked();
         }
-        builder.append(componentName.flattenToShortString());
       }
-      Settings.Secure.putStringForUser(mContext.getContentResolver(),settingName,builder.toString(),userId);
     }
   }
 ;

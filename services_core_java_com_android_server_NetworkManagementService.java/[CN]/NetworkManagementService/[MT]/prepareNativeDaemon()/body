@@ -12,7 +12,7 @@
     }
   }
  else {
-    Slog.d(TAG,"not enabling bandwidth control");
+    Slog.i(TAG,"not enabling bandwidth control");
   }
   SystemProperties.set(PROP_QTAGUID_ENABLED,mBandwidthControlEnabled ? "1" : "0");
   if (mBandwidthControlEnabled) {
@@ -30,9 +30,10 @@
     Log.wtf(TAG,"Failed strict enable",e);
   }
 synchronized (mQuotaLock) {
+    setDataSaverModeEnabled(mDataSaverMode);
     int size=mActiveQuotas.size();
     if (size > 0) {
-      Slog.d(TAG,"Pushing " + size + " active quota rules");
+      if (DBG)       Slog.d(TAG,"Pushing " + size + " active quota rules");
       final HashMap<String,Long> activeQuotas=mActiveQuotas;
       mActiveQuotas=Maps.newHashMap();
       for (      Map.Entry<String,Long> entry : activeQuotas.entrySet()) {
@@ -41,25 +42,34 @@ synchronized (mQuotaLock) {
     }
     size=mActiveAlerts.size();
     if (size > 0) {
-      Slog.d(TAG,"Pushing " + size + " active alert rules");
+      if (DBG)       Slog.d(TAG,"Pushing " + size + " active alert rules");
       final HashMap<String,Long> activeAlerts=mActiveAlerts;
       mActiveAlerts=Maps.newHashMap();
       for (      Map.Entry<String,Long> entry : activeAlerts.entrySet()) {
         setInterfaceAlert(entry.getKey(),entry.getValue());
       }
     }
-    size=mUidRejectOnQuota.size();
+    size=mUidRejectOnMetered.size();
     if (size > 0) {
-      Slog.d(TAG,"Pushing " + size + " active UID rules");
-      final SparseBooleanArray uidRejectOnQuota=mUidRejectOnQuota;
-      mUidRejectOnQuota=new SparseBooleanArray();
+      if (DBG)       Slog.d(TAG,"Pushing " + size + " UIDs to metered whitelist rules");
+      final SparseBooleanArray uidRejectOnQuota=mUidRejectOnMetered;
+      mUidRejectOnMetered=new SparseBooleanArray();
       for (int i=0; i < uidRejectOnQuota.size(); i++) {
-        setUidNetworkRules(uidRejectOnQuota.keyAt(i),uidRejectOnQuota.valueAt(i));
+        setUidMeteredNetworkBlacklist(uidRejectOnQuota.keyAt(i),uidRejectOnQuota.valueAt(i));
+      }
+    }
+    size=mUidAllowOnMetered.size();
+    if (size > 0) {
+      if (DBG)       Slog.d(TAG,"Pushing " + size + " UIDs to metered blacklist rules");
+      final SparseBooleanArray uidAcceptOnQuota=mUidAllowOnMetered;
+      mUidAllowOnMetered=new SparseBooleanArray();
+      for (int i=0; i < uidAcceptOnQuota.size(); i++) {
+        setUidMeteredNetworkWhitelist(uidAcceptOnQuota.keyAt(i),uidAcceptOnQuota.valueAt(i));
       }
     }
     size=mUidCleartextPolicy.size();
     if (size > 0) {
-      Slog.d(TAG,"Pushing " + size + " active UID cleartext policies");
+      if (DBG)       Slog.d(TAG,"Pushing " + size + " active UID cleartext policies");
       final SparseIntArray local=mUidCleartextPolicy;
       mUidCleartextPolicy=new SparseIntArray();
       for (int i=0; i < local.size(); i++) {
@@ -67,38 +77,18 @@ synchronized (mQuotaLock) {
       }
     }
     setFirewallEnabled(mFirewallEnabled || LockdownVpnTracker.isEnabled());
-    size=mUidFirewallRules.size();
-    if (size > 0) {
-      Slog.d(TAG,"Pushing " + size + " active firewall UID rules");
-      final SparseIntArray uidFirewallRules=mUidFirewallRules;
-      mUidFirewallRules=new SparseIntArray();
-      for (int i=0; i < uidFirewallRules.size(); i++) {
-        setFirewallUidRuleInternal(FIREWALL_CHAIN_NONE,uidFirewallRules.keyAt(i),uidFirewallRules.valueAt(i));
-      }
-    }
-    size=mUidFirewallStandbyRules.size();
-    if (size > 0) {
-      Slog.d(TAG,"Pushing " + size + " active firewall standby UID rules");
-      final SparseIntArray uidFirewallRules=mUidFirewallStandbyRules;
-      mUidFirewallStandbyRules=new SparseIntArray();
-      for (int i=0; i < uidFirewallRules.size(); i++) {
-        setFirewallUidRuleInternal(FIREWALL_CHAIN_STANDBY,uidFirewallRules.keyAt(i),uidFirewallRules.valueAt(i));
-      }
-    }
+    syncFirewallChainLocked(FIREWALL_CHAIN_NONE,mUidFirewallRules,"");
+    syncFirewallChainLocked(FIREWALL_CHAIN_STANDBY,mUidFirewallStandbyRules,"standby ");
+    syncFirewallChainLocked(FIREWALL_CHAIN_DOZABLE,mUidFirewallDozableRules,"dozable ");
+    syncFirewallChainLocked(FIREWALL_CHAIN_POWERSAVE,mUidFirewallPowerSaveRules,"powersave ");
     if (mFirewallChainStates.get(FIREWALL_CHAIN_STANDBY)) {
       setFirewallChainEnabled(FIREWALL_CHAIN_STANDBY,true);
     }
-    size=mUidFirewallDozableRules.size();
-    if (size > 0) {
-      Slog.d(TAG,"Pushing " + size + " active firewall dozable UID rules");
-      final SparseIntArray uidFirewallRules=mUidFirewallDozableRules;
-      mUidFirewallDozableRules=new SparseIntArray();
-      for (int i=0; i < uidFirewallRules.size(); i++) {
-        setFirewallUidRuleInternal(FIREWALL_CHAIN_DOZABLE,uidFirewallRules.keyAt(i),uidFirewallRules.valueAt(i));
-      }
-    }
     if (mFirewallChainStates.get(FIREWALL_CHAIN_DOZABLE)) {
       setFirewallChainEnabled(FIREWALL_CHAIN_DOZABLE,true);
+    }
+    if (mFirewallChainStates.get(FIREWALL_CHAIN_POWERSAVE)) {
+      setFirewallChainEnabled(FIREWALL_CHAIN_POWERSAVE,true);
     }
   }
 }

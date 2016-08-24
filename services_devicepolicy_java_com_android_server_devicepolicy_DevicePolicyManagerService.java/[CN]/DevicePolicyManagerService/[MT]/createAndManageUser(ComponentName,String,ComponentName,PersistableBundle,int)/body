@@ -1,0 +1,65 @@
+{
+  Preconditions.checkNotNull(admin,"admin is null");
+  Preconditions.checkNotNull(profileOwner,"profileOwner is null");
+  if (!admin.getPackageName().equals(profileOwner.getPackageName())) {
+    throw new IllegalArgumentException("profileOwner " + profileOwner + " and admin "+ admin+ " are not in the same package");
+  }
+  if (!mInjector.binderGetCallingUserHandle().isSystem()) {
+    throw new SecurityException("createAndManageUser was called from non-system user");
+  }
+  if (!mInjector.userManagerIsSplitSystemUser() && (flags & DevicePolicyManager.MAKE_USER_EPHEMERAL) != 0) {
+    throw new IllegalArgumentException("Ephemeral users are only supported on systems with a split system user.");
+  }
+  UserHandle user=null;
+synchronized (this) {
+    getActiveAdminForCallerLocked(admin,DeviceAdminInfo.USES_POLICY_DEVICE_OWNER);
+    final long id=mInjector.binderClearCallingIdentity();
+    try {
+      int userInfoFlags=0;
+      if ((flags & DevicePolicyManager.MAKE_USER_EPHEMERAL) != 0) {
+        userInfoFlags|=UserInfo.FLAG_EPHEMERAL;
+      }
+      UserInfo userInfo=mUserManagerInternal.createUserEvenWhenDisallowed(name,userInfoFlags);
+      if (userInfo != null) {
+        user=userInfo.getUserHandle();
+      }
+    }
+  finally {
+      mInjector.binderRestoreCallingIdentity(id);
+    }
+  }
+  if (user == null) {
+    return null;
+  }
+  final long id=mInjector.binderClearCallingIdentity();
+  try {
+    final String adminPkg=admin.getPackageName();
+    final int userHandle=user.getIdentifier();
+    try {
+      if (!mIPackageManager.isPackageAvailable(adminPkg,userHandle)) {
+        mIPackageManager.installExistingPackageAsUser(adminPkg,userHandle);
+      }
+    }
+ catch (    RemoteException e) {
+      Slog.e(LOG_TAG,"Failed to make remote calls for createAndManageUser, " + "removing created user",e);
+      mUserManager.removeUser(user.getIdentifier());
+      return null;
+    }
+    setActiveAdmin(profileOwner,true,userHandle);
+synchronized (this) {
+      DevicePolicyData policyData=getUserData(userHandle);
+      policyData.mInitBundle=adminExtras;
+      policyData.mAdminBroadcastPending=true;
+      saveSettingsLocked(userHandle);
+    }
+    final String ownerName=getProfileOwnerName(Process.myUserHandle().getIdentifier());
+    setProfileOwner(profileOwner,ownerName,userHandle);
+    if ((flags & DevicePolicyManager.SKIP_SETUP_WIZARD) != 0) {
+      Settings.Secure.putIntForUser(mContext.getContentResolver(),Settings.Secure.USER_SETUP_COMPLETE,1,userHandle);
+    }
+    return user;
+  }
+  finally {
+    mInjector.binderRestoreCallingIdentity(id);
+  }
+}

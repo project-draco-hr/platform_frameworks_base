@@ -1,14 +1,9 @@
 {
-  boolean isLoggable=Log.isLoggable(TAG,Log.VERBOSE);
+  final boolean isLoggable=Log.isLoggable(TAG,Log.VERBOSE);
   final SyncOperation syncOperation=activeSyncContext.mSyncOperation;
   final SyncStorageEngine.EndPoint info=syncOperation.target;
   if (activeSyncContext.mIsLinkedToDeath) {
-    if (info.target_provider) {
-      activeSyncContext.mSyncAdapter.asBinder().unlinkToDeath(activeSyncContext,0);
-    }
- else {
-      activeSyncContext.mSyncServiceAdapter.asBinder().unlinkToDeath(activeSyncContext,0);
-    }
+    activeSyncContext.mSyncAdapter.asBinder().unlinkToDeath(activeSyncContext,0);
     activeSyncContext.mIsLinkedToDeath=false;
   }
   closeActiveSyncContext(activeSyncContext);
@@ -16,40 +11,44 @@
   String historyMessage;
   int downstreamActivity;
   int upstreamActivity;
+  if (!syncOperation.isPeriodic) {
+    getJobScheduler().cancel(syncOperation.jobId);
+  }
   if (syncResult != null) {
     if (isLoggable) {
-      Log.v(TAG,"runSyncFinishedOrCanceled [finished]: " + syncOperation + ", result "+ syncResult);
+      Slog.v(TAG,"runSyncFinishedOrCanceled [finished]: " + syncOperation + ", result "+ syncResult);
     }
     if (!syncResult.hasError()) {
       historyMessage=SyncStorageEngine.MESG_SUCCESS;
       downstreamActivity=0;
       upstreamActivity=0;
-      clearBackoffSetting(syncOperation);
+      clearBackoffSetting(syncOperation.target);
+      if (syncOperation.isDerivedFromFailedPeriodicSync()) {
+        reschedulePeriodicSyncH(syncOperation);
+      }
     }
  else {
       Log.d(TAG,"failed sync operation " + syncOperation + ", "+ syncResult);
-      increaseBackoffSetting(syncOperation);
-      maybeRescheduleSync(syncResult,syncOperation);
+      increaseBackoffSetting(syncOperation.target);
+      if (!syncOperation.isPeriodic) {
+        maybeRescheduleSync(syncResult,syncOperation);
+      }
+ else {
+        postScheduleSyncMessage(syncOperation.createOneTimeSyncOperation());
+      }
       historyMessage=ContentResolver.syncErrorToString(syncResultToErrorNumber(syncResult));
       downstreamActivity=0;
       upstreamActivity=0;
     }
-    setDelayUntilTime(syncOperation,syncResult.delayUntil);
+    setDelayUntilTime(syncOperation.target,syncResult.delayUntil);
   }
  else {
     if (isLoggable) {
-      Log.v(TAG,"runSyncFinishedOrCanceled [canceled]: " + syncOperation);
+      Slog.v(TAG,"runSyncFinishedOrCanceled [canceled]: " + syncOperation);
     }
     if (activeSyncContext.mSyncAdapter != null) {
       try {
         activeSyncContext.mSyncAdapter.cancelSync(activeSyncContext);
-      }
- catch (      RemoteException e) {
-      }
-    }
- else     if (activeSyncContext.mSyncServiceAdapter != null) {
-      try {
-        activeSyncContext.mSyncServiceAdapter.cancelSync(activeSyncContext);
       }
  catch (      RemoteException e) {
       }
@@ -59,20 +58,13 @@
     upstreamActivity=0;
   }
   stopSyncEvent(activeSyncContext.mHistoryRowId,syncOperation,historyMessage,upstreamActivity,downstreamActivity,elapsedTime);
-  if (info.target_provider) {
-    if (syncResult != null && syncResult.tooManyDeletions) {
-      installHandleTooManyDeletesNotification(info.account,info.provider,syncResult.stats.numDeletes,info.userId);
-    }
- else {
-      mNotificationMgr.cancelAsUser(null,info.account.hashCode() ^ info.provider.hashCode(),new UserHandle(info.userId));
-    }
-    if (syncResult != null && syncResult.fullSyncRequested) {
-      scheduleSyncOperation(new SyncOperation(info.account,info.userId,syncOperation.reason,syncOperation.syncSource,info.provider,new Bundle(),0,0,syncOperation.backoff,syncOperation.delayUntil,syncOperation.allowParallelSyncs));
-    }
+  if (syncResult != null && syncResult.tooManyDeletions) {
+    installHandleTooManyDeletesNotification(info.account,info.provider,syncResult.stats.numDeletes,info.userId);
   }
  else {
-    if (syncResult != null && syncResult.fullSyncRequested) {
-      scheduleSyncOperation(new SyncOperation(info.service,info.userId,syncOperation.reason,syncOperation.syncSource,new Bundle(),0,0,syncOperation.backoff,syncOperation.delayUntil));
-    }
+    mNotificationMgr.cancelAsUser(null,info.account.hashCode() ^ info.provider.hashCode(),new UserHandle(info.userId));
+  }
+  if (syncResult != null && syncResult.fullSyncRequested) {
+    scheduleSyncOperationH(new SyncOperation(info.account,info.userId,syncOperation.owningUid,syncOperation.owningPackage,syncOperation.reason,syncOperation.syncSource,info.provider,new Bundle(),syncOperation.allowParallelSyncs));
   }
 }

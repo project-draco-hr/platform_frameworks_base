@@ -1,0 +1,92 @@
+{
+  if (DEBUG)   Log.d(TAG,"showFragment() for volume " + storageVolume.dump() + ", directory "+ directoryName+ ", and user "+ userId);
+  final boolean isRoot=directoryName.equals(DIRECTORY_ROOT);
+  final boolean isPrimary=storageVolume.isPrimary();
+  if (isRoot && isPrimary) {
+    if (DEBUG)     Log.d(TAG,"root access requested on primary volume");
+    return false;
+  }
+  final File volumeRoot=storageVolume.getPathFile();
+  File file;
+  try {
+    file=isRoot ? volumeRoot : new File(volumeRoot,directoryName).getCanonicalFile();
+  }
+ catch (  IOException e) {
+    Log.e(TAG,"Could not get canonical file for volume " + storageVolume.dump() + " and directory "+ directoryName);
+    logInvalidScopedAccessRequest(activity,SCOPED_DIRECTORY_ACCESS_ERROR);
+    return false;
+  }
+  final StorageManager sm=(StorageManager)activity.getSystemService(Context.STORAGE_SERVICE);
+  final String root, directory;
+  if (isRoot) {
+    root=volumeRoot.getAbsolutePath();
+    directory=".";
+  }
+ else {
+    root=file.getParent();
+    directory=file.getName();
+    if (TextUtils.isEmpty(directory) || !isStandardDirectory(directory)) {
+      if (DEBUG)       Log.d(TAG,"Directory '" + directory + "' is not standard (full path: '"+ file.getAbsolutePath()+ "')");
+      logInvalidScopedAccessRequest(activity,SCOPED_DIRECTORY_ACCESS_INVALID_DIRECTORY);
+      return false;
+    }
+  }
+  String volumeLabel=null;
+  String volumeUuid=null;
+  final List<VolumeInfo> volumes=sm.getVolumes();
+  if (DEBUG)   Log.d(TAG,"Number of volumes: " + volumes.size());
+  File internalRoot=null;
+  boolean found=true;
+  for (  VolumeInfo volume : volumes) {
+    if (isRightVolume(volume,root,userId)) {
+      found=true;
+      internalRoot=volume.getInternalPathForUser(userId);
+      if (DEBUG)       Log.d(TAG,"Converting " + root + " to "+ internalRoot);
+      file=isRoot ? internalRoot : new File(internalRoot,directory);
+      volumeUuid=storageVolume.getUuid();
+      volumeLabel=sm.getBestVolumeDescription(volume);
+      if (TextUtils.isEmpty(volumeLabel)) {
+        volumeLabel=storageVolume.getDescription(activity);
+      }
+      if (TextUtils.isEmpty(volumeLabel)) {
+        volumeLabel=activity.getString(android.R.string.unknownName);
+        Log.w(TAG,"No volume description  for " + volume + "; using "+ volumeLabel);
+      }
+      break;
+    }
+  }
+  if (internalRoot == null) {
+    Log.e(TAG,"Didn't find right volume for '" + storageVolume.dump() + "' on "+ volumes);
+    return false;
+  }
+  final Intent intent=getIntentForExistingPermission(activity,isRoot,internalRoot,file);
+  if (intent != null) {
+    logValidScopedAccessRequest(activity,directory,SCOPED_DIRECTORY_ACCESS_ALREADY_GRANTED);
+    activity.setResult(RESULT_OK,intent);
+    activity.finish();
+    return true;
+  }
+  if (!found) {
+    Log.e(TAG,"Could not get volume for " + file);
+    logInvalidScopedAccessRequest(activity,SCOPED_DIRECTORY_ACCESS_ERROR);
+    return false;
+  }
+  final String appLabel=getAppLabel(activity);
+  if (appLabel == null) {
+    return false;
+  }
+  final Bundle args=new Bundle();
+  args.putString(EXTRA_FILE,file.getAbsolutePath());
+  args.putString(EXTRA_VOLUME_LABEL,volumeLabel);
+  args.putString(EXTRA_VOLUME_UUID,volumeUuid);
+  args.putString(EXTRA_APP_LABEL,appLabel);
+  args.putBoolean(EXTRA_IS_ROOT,isRoot);
+  args.putBoolean(EXTRA_IS_PRIMARY,isPrimary);
+  final FragmentManager fm=activity.getFragmentManager();
+  final FragmentTransaction ft=fm.beginTransaction();
+  final OpenExternalDirectoryDialogFragment fragment=new OpenExternalDirectoryDialogFragment();
+  fragment.setArguments(args);
+  ft.add(fragment,FM_TAG);
+  ft.commitAllowingStateLoss();
+  return true;
+}

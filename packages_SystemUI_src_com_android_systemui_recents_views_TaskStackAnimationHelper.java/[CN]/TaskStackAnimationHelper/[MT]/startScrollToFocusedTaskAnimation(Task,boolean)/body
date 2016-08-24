@@ -1,0 +1,68 @@
+{
+  TaskStackLayoutAlgorithm stackLayout=mStackView.getStackAlgorithm();
+  TaskStackViewScroller stackScroller=mStackView.getScroller();
+  TaskStack stack=mStackView.getStack();
+  final float curScroll=stackScroller.getStackScroll();
+  final float newScroll=stackScroller.getBoundedStackScroll(stackLayout.getStackScrollForTask(newFocusedTask));
+  boolean willScrollToFront=newScroll > curScroll;
+  boolean willScroll=Float.compare(newScroll,curScroll) != 0;
+  int taskViewCount=mStackView.getTaskViews().size();
+  ArrayList<Task> stackTasks=stack.getStackTasks();
+  mStackView.getCurrentTaskTransforms(stackTasks,mTmpCurrentTaskTransforms);
+  mStackView.bindVisibleTaskViews(newScroll);
+  stackLayout.setFocusState(TaskStackLayoutAlgorithm.STATE_FOCUSED);
+  stackScroller.setStackScroll(newScroll,null);
+  mStackView.cancelDeferredTaskViewLayoutAnimation();
+  mStackView.getLayoutTaskTransforms(newScroll,stackLayout.getFocusState(),stackTasks,true,mTmpFinalTaskTransforms);
+  TaskView newFocusedTaskView=mStackView.getChildViewForTask(newFocusedTask);
+  if (newFocusedTaskView == null) {
+    Log.e("TaskStackAnimationHelper","b/27389156 null-task-view prebind:" + taskViewCount + " postbind:"+ mStackView.getTaskViews().size()+ " prescroll:"+ curScroll+ " postscroll: "+ newScroll);
+    return false;
+  }
+  newFocusedTaskView.setFocusedState(true,requestViewFocus);
+  ReferenceCountedTrigger postAnimTrigger=new ReferenceCountedTrigger();
+  postAnimTrigger.addLastDecrementRunnable(new Runnable(){
+    @Override public void run(){
+      mStackView.bindVisibleTaskViews(newScroll);
+    }
+  }
+);
+  List<TaskView> taskViews=mStackView.getTaskViews();
+  taskViewCount=taskViews.size();
+  int newFocusTaskViewIndex=taskViews.indexOf(newFocusedTaskView);
+  for (int i=0; i < taskViewCount; i++) {
+    TaskView tv=taskViews.get(i);
+    Task task=tv.getTask();
+    if (mStackView.isIgnoredTask(task)) {
+      continue;
+    }
+    int taskIndex=stackTasks.indexOf(task);
+    TaskViewTransform fromTransform=mTmpCurrentTaskTransforms.get(taskIndex);
+    TaskViewTransform toTransform=mTmpFinalTaskTransforms.get(taskIndex);
+    mStackView.updateTaskViewToTransform(tv,fromTransform,AnimationProps.IMMEDIATE);
+    int duration;
+    Interpolator interpolator;
+    if (willScrollToFront) {
+      duration=calculateStaggeredAnimDuration(i);
+      interpolator=FOCUS_BEHIND_NEXT_TASK_INTERPOLATOR;
+    }
+ else {
+      if (i < newFocusTaskViewIndex) {
+        duration=150 + ((newFocusTaskViewIndex - i - 1) * 50);
+        interpolator=FOCUS_BEHIND_NEXT_TASK_INTERPOLATOR;
+      }
+ else       if (i > newFocusTaskViewIndex) {
+        duration=Math.max(100,150 - ((i - newFocusTaskViewIndex - 1) * 50));
+        interpolator=FOCUS_IN_FRONT_NEXT_TASK_INTERPOLATOR;
+      }
+ else {
+        duration=200;
+        interpolator=FOCUS_NEXT_TASK_INTERPOLATOR;
+      }
+    }
+    AnimationProps anim=new AnimationProps().setDuration(AnimationProps.BOUNDS,duration).setInterpolator(AnimationProps.BOUNDS,interpolator).setListener(postAnimTrigger.decrementOnAnimationEnd());
+    postAnimTrigger.increment();
+    mStackView.updateTaskViewToTransform(tv,toTransform,anim);
+  }
+  return willScroll;
+}

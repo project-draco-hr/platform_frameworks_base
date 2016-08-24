@@ -2,23 +2,62 @@
   if (path == null) {
     return;
   }
-synchronized (mLock) {
-    File changedFile=new File(mWallpaperDir,path);
-    if (mWallpaperFile.equals(changedFile) || mWallpaperInfoFile.equals(changedFile)) {
-      long origId=Binder.clearCallingIdentity();
-      BackupManager bm=new BackupManager(mContext);
-      bm.dataChanged();
-      Binder.restoreCallingIdentity(origId);
+  final boolean moved=(event == MOVED_TO);
+  final boolean written=(event == CLOSE_WRITE || moved);
+  final File changedFile=new File(mWallpaperDir,path);
+  final boolean sysWallpaperChanged=(mWallpaperFile.equals(changedFile));
+  final boolean lockWallpaperChanged=(mWallpaperLockFile.equals(changedFile));
+  WallpaperData wallpaper=dataForEvent(sysWallpaperChanged,lockWallpaperChanged);
+  if (DEBUG) {
+    Slog.v(TAG,"Wallpaper file change: evt=" + event + " path="+ path+ " sys="+ sysWallpaperChanged+ " lock="+ lockWallpaperChanged+ " imagePending="+ wallpaper.imageWallpaperPending+ " whichPending=0x"+ Integer.toHexString(wallpaper.whichPending)+ " written="+ written);
+  }
+  if (moved && lockWallpaperChanged) {
+    if (DEBUG) {
+      Slog.i(TAG,"Sys -> lock MOVED_TO");
     }
-    if (mWallpaperFile.equals(changedFile)) {
-      notifyCallbacksLocked(mWallpaper);
-      final boolean written=(event == CLOSE_WRITE || event == MOVED_TO);
-      if (mWallpaper.wallpaperComponent == null || event != CLOSE_WRITE || mWallpaper.imageWallpaperPending) {
+    notifyLockWallpaperChanged();
+    return;
+  }
+synchronized (mLock) {
+    if (sysWallpaperChanged || lockWallpaperChanged) {
+      notifyCallbacksLocked(wallpaper);
+      if (wallpaper.wallpaperComponent == null || event != CLOSE_WRITE || wallpaper.imageWallpaperPending) {
         if (written) {
-          mWallpaper.imageWallpaperPending=false;
+          if (DEBUG) {
+            Slog.v(TAG,"Wallpaper written; generating crop");
+          }
+          if (moved) {
+            if (DEBUG) {
+              Slog.v(TAG,"moved-to, therefore restore; reloading metadata");
+            }
+            loadSettingsLocked(wallpaper.userId,true);
+          }
+          generateCrop(wallpaper);
+          if (DEBUG) {
+            Slog.v(TAG,"Crop done; invoking completion callback");
+          }
+          wallpaper.imageWallpaperPending=false;
+          if (wallpaper.setComplete != null) {
+            try {
+              wallpaper.setComplete.onWallpaperChanged();
+            }
+ catch (            RemoteException e) {
+            }
+          }
+          if (sysWallpaperChanged) {
+            bindWallpaperComponentLocked(mImageWallpaper,true,false,wallpaper,null);
+          }
+          if (lockWallpaperChanged || (wallpaper.whichPending & FLAG_LOCK) != 0) {
+            if (DEBUG) {
+              Slog.i(TAG,"Lock-relevant wallpaper changed");
+            }
+            if (!lockWallpaperChanged) {
+              mLockWallpaperMap.remove(wallpaper.userId);
+            }
+            notifyLockWallpaperChanged();
+          }
+          saveSettingsLocked(wallpaper.userId);
         }
-        bindWallpaperComponentLocked(mImageWallpaper,true,false,mWallpaper,null);
-        saveSettingsLocked(mWallpaper);
       }
     }
   }

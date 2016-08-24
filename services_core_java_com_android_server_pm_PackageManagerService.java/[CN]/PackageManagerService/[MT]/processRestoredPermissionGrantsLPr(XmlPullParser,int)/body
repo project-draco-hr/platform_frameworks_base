@@ -1,0 +1,62 @@
+{
+  String pkgName=null;
+  int outerDepth=parser.getDepth();
+  int type;
+  while ((type=parser.next()) != XmlPullParser.END_DOCUMENT && (type != XmlPullParser.END_TAG || parser.getDepth() > outerDepth)) {
+    if (type == XmlPullParser.END_TAG || type == XmlPullParser.TEXT) {
+      continue;
+    }
+    final String tagName=parser.getName();
+    if (tagName.equals(TAG_GRANT)) {
+      pkgName=parser.getAttributeValue(null,ATTR_PACKAGE_NAME);
+      if (DEBUG_BACKUP) {
+        Slog.v(TAG,"+++ Restoring grants for package " + pkgName);
+      }
+    }
+ else     if (tagName.equals(TAG_PERMISSION)) {
+      final boolean isGranted="true".equals(parser.getAttributeValue(null,ATTR_IS_GRANTED));
+      final String permName=parser.getAttributeValue(null,ATTR_PERMISSION_NAME);
+      int newFlagSet=0;
+      if ("true".equals(parser.getAttributeValue(null,ATTR_USER_SET))) {
+        newFlagSet|=FLAG_PERMISSION_USER_SET;
+      }
+      if ("true".equals(parser.getAttributeValue(null,ATTR_USER_FIXED))) {
+        newFlagSet|=FLAG_PERMISSION_USER_FIXED;
+      }
+      if ("true".equals(parser.getAttributeValue(null,ATTR_REVOKE_ON_UPGRADE))) {
+        newFlagSet|=FLAG_PERMISSION_REVOKE_ON_UPGRADE;
+      }
+      if (DEBUG_BACKUP) {
+        Slog.v(TAG,"  + Restoring grant: pkg=" + pkgName + " perm="+ permName+ " granted="+ isGranted+ " bits=0x"+ Integer.toHexString(newFlagSet));
+      }
+      final PackageSetting ps=mSettings.mPackages.get(pkgName);
+      if (ps != null) {
+        if (DEBUG_BACKUP) {
+          Slog.v(TAG,"        + already installed; applying");
+        }
+        PermissionsState perms=ps.getPermissionsState();
+        BasePermission bp=mSettings.mPermissions.get(permName);
+        if (bp != null) {
+          if (isGranted) {
+            perms.grantRuntimePermission(bp,userId);
+          }
+          if (newFlagSet != 0) {
+            perms.updatePermissionFlags(bp,userId,USER_RUNTIME_GRANT_MASK,newFlagSet);
+          }
+        }
+      }
+ else {
+        if (DEBUG_BACKUP) {
+          Slog.v(TAG,"        - not yet installed; saving for later");
+        }
+        mSettings.processRestoredPermissionGrantLPr(pkgName,permName,isGranted,newFlagSet,userId);
+      }
+    }
+ else {
+      PackageManagerService.reportSettingsProblem(Log.WARN,"Unknown element under <" + TAG_PERMISSION_BACKUP + ">: "+ tagName);
+      XmlUtils.skipCurrentTag(parser);
+    }
+  }
+  scheduleWriteSettingsLocked();
+  mSettings.writeRuntimePermissionsForUserLPr(userId,false);
+}

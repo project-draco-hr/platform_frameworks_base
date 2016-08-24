@@ -3,35 +3,57 @@
     return;
   }
   mUpdateInputWindowsNeeded=false;
-  if (false)   Slog.d(WindowManagerService.TAG,">>>>>> ENTERED updateInputWindowsLw");
+  if (false)   Slog.d(TAG_WM,">>>>>> ENTERED updateInputWindowsLw");
   boolean disableWallpaperTouchEvents=false;
   final boolean inDrag=(mService.mDragState != null);
   if (inDrag) {
-    if (WindowManagerService.DEBUG_DRAG) {
-      Log.d(WindowManagerService.TAG,"Inserting drag window");
+    if (DEBUG_DRAG) {
+      Log.d(TAG_WM,"Inserting drag window");
     }
     final InputWindowHandle dragWindowHandle=mService.mDragState.mDragWindowHandle;
     if (dragWindowHandle != null) {
       addInputWindowHandleLw(dragWindowHandle);
     }
  else {
-      Slog.w(WindowManagerService.TAG,"Drag is in progress but there is no " + "drag window handle.");
+      Slog.w(TAG_WM,"Drag is in progress but there is no " + "drag window handle.");
+    }
+  }
+  final boolean inPositioning=(mService.mTaskPositioner != null);
+  if (inPositioning) {
+    if (DEBUG_TASK_POSITIONING) {
+      Log.d(TAG_WM,"Inserting window handle for repositioning");
+    }
+    final InputWindowHandle dragWindowHandle=mService.mTaskPositioner.mDragWindowHandle;
+    if (dragWindowHandle != null) {
+      addInputWindowHandleLw(dragWindowHandle);
+    }
+ else {
+      Slog.e(TAG_WM,"Repositioning is in progress but there is no drag window handle.");
     }
   }
   boolean addInputConsumerHandle=mService.mInputConsumer != null;
+  boolean addWallpaperInputConsumerHandle=mService.mWallpaperInputConsumer != null;
   final int numDisplays=mService.mDisplayContents.size();
+  final WallpaperController wallpaperController=mService.mWallpaperControllerLocked;
   for (int displayNdx=0; displayNdx < numDisplays; ++displayNdx) {
-    WindowList windows=mService.mDisplayContents.valueAt(displayNdx).getWindowList();
+    final DisplayContent displayContent=mService.mDisplayContents.valueAt(displayNdx);
+    final WindowList windows=displayContent.getWindowList();
     for (int winNdx=windows.size() - 1; winNdx >= 0; --winNdx) {
       final WindowState child=windows.get(winNdx);
       final InputChannel inputChannel=child.mInputChannel;
       final InputWindowHandle inputWindowHandle=child.mInputWindowHandle;
-      if (inputChannel == null || inputWindowHandle == null || child.mRemoved) {
+      if (inputChannel == null || inputWindowHandle == null || child.mRemoved || child.isAdjustedForMinimizedDock()) {
         continue;
       }
       if (addInputConsumerHandle && inputWindowHandle.layer <= mService.mInputConsumer.mWindowHandle.layer) {
         addInputWindowHandleLw(mService.mInputConsumer.mWindowHandle);
         addInputConsumerHandle=false;
+      }
+      if (addWallpaperInputConsumerHandle) {
+        if (child.mAttrs.type == WindowManager.LayoutParams.TYPE_WALLPAPER) {
+          addInputWindowHandleLw(mService.mWallpaperInputConsumer.mWindowHandle);
+          addWallpaperInputConsumerHandle=false;
+        }
       }
       final int flags=child.mAttrs.flags;
       final int privateFlags=child.mAttrs.privateFlags;
@@ -41,7 +63,7 @@
       if ((privateFlags & WindowManager.LayoutParams.PRIVATE_FLAG_DISABLE_WALLPAPER_TOUCH_EVENTS) != 0) {
         disableWallpaperTouchEvents=true;
       }
-      final boolean hasWallpaper=(child == mService.mWallpaperTarget) && (privateFlags & WindowManager.LayoutParams.PRIVATE_FLAG_KEYGUARD) == 0 && !disableWallpaperTouchEvents;
+      final boolean hasWallpaper=wallpaperController.isWallpaperTarget(child) && (privateFlags & WindowManager.LayoutParams.PRIVATE_FLAG_KEYGUARD) == 0 && !disableWallpaperTouchEvents;
       final boolean onDefaultDisplay=(child.getDisplayId() == Display.DEFAULT_DISPLAY);
       if (inDrag && isVisible && onDefaultDisplay) {
         mService.mDragState.sendDragStartedIfNeededLw(child);
@@ -49,7 +71,10 @@
       addInputWindowHandleLw(inputWindowHandle,child,flags,type,isVisible,hasFocus,hasWallpaper);
     }
   }
+  if (addWallpaperInputConsumerHandle) {
+    addInputWindowHandleLw(mService.mWallpaperInputConsumer.mWindowHandle);
+  }
   mService.mInputManager.setInputWindows(mInputWindowHandles);
   clearInputWindowHandlesLw();
-  if (false)   Slog.d(WindowManagerService.TAG,"<<<<<<< EXITED updateInputWindowsLw");
+  if (false)   Slog.d(TAG_WM,"<<<<<<< EXITED updateInputWindowsLw");
 }

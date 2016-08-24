@@ -1,0 +1,103 @@
+{
+  if (DEBUG_INSTALL)   Slog.d(TAG,"replaceNonSystemPackageLI: new=" + pkg + ", old="+ deletedPackage);
+  String pkgName=deletedPackage.packageName;
+  boolean deletedPkg=true;
+  boolean addedPkg=false;
+  boolean updatedSettings=false;
+  final boolean killApp=(scanFlags & SCAN_DONT_KILL_APP) == 0;
+  final int deleteFlags=PackageManager.DELETE_KEEP_DATA | (killApp ? 0 : PackageManager.DELETE_DONT_KILL_APP);
+  final long origUpdateTime=(pkg.mExtras != null) ? ((PackageSetting)pkg.mExtras).lastUpdateTime : 0;
+  if (!deletePackageLIF(pkgName,null,true,allUsers,deleteFlags,res.removedInfo,true,pkg)) {
+    res.setError(INSTALL_FAILED_REPLACE_COULDNT_DELETE,"replaceNonSystemPackageLI");
+    deletedPkg=false;
+  }
+ else {
+    if (deletedPackage.isForwardLocked() || isExternal(deletedPackage)) {
+      if (DEBUG_INSTALL) {
+        Slog.i(TAG,"upgrading pkg " + deletedPackage + " is ASEC-hosted -> UNAVAILABLE");
+      }
+      final int[] uidArray=new int[]{deletedPackage.applicationInfo.uid};
+      final ArrayList<String> pkgList=new ArrayList<String>(1);
+      pkgList.add(deletedPackage.applicationInfo.packageName);
+      sendResourcesChangedBroadcast(false,true,pkgList,uidArray,null);
+    }
+    clearAppDataLIF(pkg,UserHandle.USER_ALL,StorageManager.FLAG_STORAGE_DE | StorageManager.FLAG_STORAGE_CE | Installer.FLAG_CLEAR_CODE_CACHE_ONLY);
+    clearAppProfilesLIF(deletedPackage,UserHandle.USER_ALL);
+    try {
+      final PackageParser.Package newPackage=scanPackageTracedLI(pkg,policyFlags,scanFlags | SCAN_UPDATE_TIME,System.currentTimeMillis(),user);
+      updateSettingsLI(newPackage,installerPackageName,allUsers,res,user);
+      PackageSetting ps=mSettings.mPackages.get(pkgName);
+      if (!killApp) {
+        if (ps.oldCodePaths == null) {
+          ps.oldCodePaths=new ArraySet<>();
+        }
+        Collections.addAll(ps.oldCodePaths,deletedPackage.baseCodePath);
+        if (deletedPackage.splitCodePaths != null) {
+          Collections.addAll(ps.oldCodePaths,deletedPackage.splitCodePaths);
+        }
+      }
+ else {
+        ps.oldCodePaths=null;
+      }
+      if (ps.childPackageNames != null) {
+        for (int i=ps.childPackageNames.size() - 1; i >= 0; --i) {
+          final String childPkgName=ps.childPackageNames.get(i);
+          final PackageSetting childPs=mSettings.mPackages.get(childPkgName);
+          childPs.oldCodePaths=ps.oldCodePaths;
+        }
+      }
+      prepareAppDataAfterInstallLIF(newPackage);
+      addedPkg=true;
+    }
+ catch (    PackageManagerException e) {
+      res.setError("Package couldn't be installed in " + pkg.codePath,e);
+    }
+  }
+  if (res.returnCode != PackageManager.INSTALL_SUCCEEDED) {
+    if (DEBUG_INSTALL)     Slog.d(TAG,"Install failed, rolling pack: " + pkgName);
+    if (addedPkg) {
+      deletePackageLIF(pkgName,null,true,allUsers,deleteFlags,res.removedInfo,true,null);
+    }
+    if (deletedPkg) {
+      if (DEBUG_INSTALL)       Slog.d(TAG,"Install failed, reinstalling: " + deletedPackage);
+      File restoreFile=new File(deletedPackage.codePath);
+      boolean oldExternal=isExternal(deletedPackage);
+      int oldParseFlags=mDefParseFlags | PackageParser.PARSE_CHATTY | (deletedPackage.isForwardLocked() ? PackageParser.PARSE_FORWARD_LOCK : 0)| (oldExternal ? PackageParser.PARSE_EXTERNAL_STORAGE : 0);
+      int oldScanFlags=SCAN_UPDATE_SIGNATURE | SCAN_UPDATE_TIME;
+      try {
+        scanPackageTracedLI(restoreFile,oldParseFlags,oldScanFlags,origUpdateTime,null);
+      }
+ catch (      PackageManagerException e) {
+        Slog.e(TAG,"Failed to restore package : " + pkgName + " after failed upgrade: "+ e.getMessage());
+        return;
+      }
+synchronized (mPackages) {
+        setInstallerPackageNameLPw(deletedPackage,installerPackageName);
+        updatePermissionsLPw(deletedPackage,UPDATE_PERMISSIONS_ALL);
+        mSettings.writeLPr();
+      }
+      Slog.i(TAG,"Successfully restored package : " + pkgName + " after failed upgrade");
+    }
+  }
+ else {
+synchronized (mPackages) {
+      PackageSetting ps=mSettings.peekPackageLPr(pkg.packageName);
+      if (ps != null) {
+        res.removedInfo.removedForAllUsers=mPackages.get(ps.name) == null;
+        if (res.removedInfo.removedChildPackages != null) {
+          final int childCount=res.removedInfo.removedChildPackages.size();
+          for (int i=childCount - 1; i >= 0; i--) {
+            String childPackageName=res.removedInfo.removedChildPackages.keyAt(i);
+            if (res.addedChildPackages.containsKey(childPackageName)) {
+              res.removedInfo.removedChildPackages.removeAt(i);
+            }
+ else {
+              PackageRemovedInfo childInfo=res.removedInfo.removedChildPackages.valueAt(i);
+              childInfo.removedForAllUsers=mPackages.get(childInfo.removedPackage) == null;
+            }
+          }
+        }
+      }
+    }
+  }
+}

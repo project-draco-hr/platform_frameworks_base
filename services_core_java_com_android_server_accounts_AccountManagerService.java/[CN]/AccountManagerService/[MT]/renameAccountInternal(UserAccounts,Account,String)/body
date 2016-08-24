@@ -10,17 +10,18 @@ synchronized (accounts.credentialsPermissionNotificationIds) {
     }
   }
 synchronized (accounts.cacheLock) {
-    final SQLiteDatabase db=accounts.openHelper.getWritableDatabase();
+    final SQLiteDatabase db=accounts.openHelper.getWritableDatabaseUserIsUnlocked();
     db.beginTransaction();
     boolean isSuccessful=false;
     Account renamedAccount=new Account(newName,accountToRename.type);
     try {
-      final ContentValues values=new ContentValues();
-      values.put(ACCOUNTS_NAME,newName);
-      values.put(ACCOUNTS_PREVIOUS_NAME,accountToRename.name);
       final long accountId=getAccountIdLocked(db,accountToRename);
       if (accountId >= 0) {
+        final ContentValues values=new ContentValues();
+        values.put(ACCOUNTS_NAME,newName);
         final String[] argsAccountId={String.valueOf(accountId)};
+        db.update(CE_TABLE_ACCOUNTS,values,ACCOUNTS_ID + "=?",argsAccountId);
+        values.put(ACCOUNTS_PREVIOUS_NAME,accountToRename.name);
         db.update(TABLE_ACCOUNTS,values,ACCOUNTS_ID + "=?",argsAccountId);
         db.setTransactionSuccessful();
         isSuccessful=true;
@@ -38,10 +39,11 @@ synchronized (accounts.cacheLock) {
         accounts.authTokenCache.put(renamedAccount,tmpTokens);
         accounts.previousNameCache.put(renamedAccount,new AtomicReference<String>(accountToRename.name));
         resultAccount=renamedAccount;
-        if (accounts.userId == UserHandle.USER_OWNER) {
-          List<UserInfo> users=mUserManager.getUsers(true);
+        int parentUserId=accounts.userId;
+        if (canHaveProfile(parentUserId)) {
+          List<UserInfo> users=getUserManager().getUsers(true);
           for (          UserInfo user : users) {
-            if (!user.isPrimary() && user.isRestricted()) {
+            if (user.isRestricted() && (user.restrictedProfileParentId == parentUserId)) {
               renameSharedAccountAsUser(accountToRename,newName,user.id);
             }
           }

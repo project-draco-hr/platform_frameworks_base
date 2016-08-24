@@ -1,0 +1,191 @@
+{
+  long totalTime=DumpUtils.dumpSingleTime(null,null,mMemFactorDurations,mMemFactor,mStartTime,now);
+  boolean sepNeeded=false;
+  if (mSysMemUsage.getKeyCount() > 0) {
+    pw.println("System memory usage:");
+    mSysMemUsage.dump(pw,"  ",ALL_SCREEN_ADJ,ALL_MEM_ADJ);
+    sepNeeded=true;
+  }
+  ArrayMap<String,SparseArray<SparseArray<PackageState>>> pkgMap=mPackages.getMap();
+  boolean printedHeader=false;
+  for (int ip=0; ip < pkgMap.size(); ip++) {
+    final String pkgName=pkgMap.keyAt(ip);
+    final SparseArray<SparseArray<PackageState>> uids=pkgMap.valueAt(ip);
+    for (int iu=0; iu < uids.size(); iu++) {
+      final int uid=uids.keyAt(iu);
+      final SparseArray<PackageState> vpkgs=uids.valueAt(iu);
+      for (int iv=0; iv < vpkgs.size(); iv++) {
+        final int vers=vpkgs.keyAt(iv);
+        final PackageState pkgState=vpkgs.valueAt(iv);
+        final int NPROCS=pkgState.mProcesses.size();
+        final int NSRVS=pkgState.mServices.size();
+        final boolean pkgMatch=reqPackage == null || reqPackage.equals(pkgName);
+        if (!pkgMatch) {
+          boolean procMatch=false;
+          for (int iproc=0; iproc < NPROCS; iproc++) {
+            ProcessState proc=pkgState.mProcesses.valueAt(iproc);
+            if (reqPackage.equals(proc.getName())) {
+              procMatch=true;
+              break;
+            }
+          }
+          if (!procMatch) {
+            continue;
+          }
+        }
+        if (NPROCS > 0 || NSRVS > 0) {
+          if (!printedHeader) {
+            if (sepNeeded)             pw.println();
+            pw.println("Per-Package Stats:");
+            printedHeader=true;
+            sepNeeded=true;
+          }
+          pw.print("  * ");
+          pw.print(pkgName);
+          pw.print(" / ");
+          UserHandle.formatUid(pw,uid);
+          pw.print(" / v");
+          pw.print(vers);
+          pw.println(":");
+        }
+        if (!dumpSummary || dumpAll) {
+          for (int iproc=0; iproc < NPROCS; iproc++) {
+            ProcessState proc=pkgState.mProcesses.valueAt(iproc);
+            if (!pkgMatch && !reqPackage.equals(proc.getName())) {
+              continue;
+            }
+            if (activeOnly && !proc.isInUse()) {
+              pw.print("      (Not active: ");
+              pw.print(pkgState.mProcesses.keyAt(iproc));
+              pw.println(")");
+              continue;
+            }
+            pw.print("      Process ");
+            pw.print(pkgState.mProcesses.keyAt(iproc));
+            if (proc.getCommonProcess().isMultiPackage()) {
+              pw.print(" (multi, ");
+            }
+ else {
+              pw.print(" (unique, ");
+            }
+            pw.print(proc.getDurationsBucketCount());
+            pw.print(" entries)");
+            pw.println(":");
+            proc.dumpProcessState(pw,"        ",ALL_SCREEN_ADJ,ALL_MEM_ADJ,ALL_PROC_STATES,now);
+            proc.dumpPss(pw,"        ",ALL_SCREEN_ADJ,ALL_MEM_ADJ,ALL_PROC_STATES);
+            proc.dumpInternalLocked(pw,"        ",dumpAll);
+          }
+        }
+ else {
+          ArrayList<ProcessState> procs=new ArrayList<ProcessState>();
+          for (int iproc=0; iproc < NPROCS; iproc++) {
+            ProcessState proc=pkgState.mProcesses.valueAt(iproc);
+            if (!pkgMatch && !reqPackage.equals(proc.getName())) {
+              continue;
+            }
+            if (activeOnly && !proc.isInUse()) {
+              continue;
+            }
+            procs.add(proc);
+          }
+          DumpUtils.dumpProcessSummaryLocked(pw,"      ",procs,ALL_SCREEN_ADJ,ALL_MEM_ADJ,NON_CACHED_PROC_STATES,now,totalTime);
+        }
+        for (int isvc=0; isvc < NSRVS; isvc++) {
+          ServiceState svc=pkgState.mServices.valueAt(isvc);
+          if (!pkgMatch && !reqPackage.equals(svc.getProcessName())) {
+            continue;
+          }
+          if (activeOnly && !svc.isInUse()) {
+            pw.print("      (Not active: ");
+            pw.print(pkgState.mServices.keyAt(isvc));
+            pw.println(")");
+            continue;
+          }
+          if (dumpAll) {
+            pw.print("      Service ");
+          }
+ else {
+            pw.print("      * ");
+          }
+          pw.print(pkgState.mServices.keyAt(isvc));
+          pw.println(":");
+          pw.print("        Process: ");
+          pw.println(svc.getProcessName());
+          svc.dumpStats(pw,"        ","          ","    ",now,totalTime,dumpSummary,dumpAll);
+        }
+      }
+    }
+  }
+  ArrayMap<String,SparseArray<ProcessState>> procMap=mProcesses.getMap();
+  printedHeader=false;
+  int numShownProcs=0, numTotalProcs=0;
+  for (int ip=0; ip < procMap.size(); ip++) {
+    String procName=procMap.keyAt(ip);
+    SparseArray<ProcessState> uids=procMap.valueAt(ip);
+    for (int iu=0; iu < uids.size(); iu++) {
+      int uid=uids.keyAt(iu);
+      numTotalProcs++;
+      final ProcessState proc=uids.valueAt(iu);
+      if (proc.hasAnyData()) {
+        continue;
+      }
+      if (!proc.isMultiPackage()) {
+        continue;
+      }
+      if (reqPackage != null && !reqPackage.equals(procName) && !reqPackage.equals(proc.getPackage())) {
+        continue;
+      }
+      numShownProcs++;
+      if (sepNeeded) {
+        pw.println();
+      }
+      sepNeeded=true;
+      if (!printedHeader) {
+        pw.println("Multi-Package Common Processes:");
+        printedHeader=true;
+      }
+      if (activeOnly && !proc.isInUse()) {
+        pw.print("      (Not active: ");
+        pw.print(procName);
+        pw.println(")");
+        continue;
+      }
+      pw.print("  * ");
+      pw.print(procName);
+      pw.print(" / ");
+      UserHandle.formatUid(pw,uid);
+      pw.print(" (");
+      pw.print(proc.getDurationsBucketCount());
+      pw.print(" entries)");
+      pw.println(":");
+      proc.dumpProcessState(pw,"        ",ALL_SCREEN_ADJ,ALL_MEM_ADJ,ALL_PROC_STATES,now);
+      proc.dumpPss(pw,"        ",ALL_SCREEN_ADJ,ALL_MEM_ADJ,ALL_PROC_STATES);
+      proc.dumpInternalLocked(pw,"        ",dumpAll);
+    }
+  }
+  if (dumpAll) {
+    pw.println();
+    pw.print("  Total procs: ");
+    pw.print(numShownProcs);
+    pw.print(" shown of ");
+    pw.print(numTotalProcs);
+    pw.println(" total");
+  }
+  if (sepNeeded) {
+    pw.println();
+  }
+  if (dumpSummary) {
+    pw.println("Summary:");
+    dumpSummaryLocked(pw,reqPackage,now,activeOnly);
+  }
+ else {
+    dumpTotalsLocked(pw,now);
+  }
+  if (dumpAll) {
+    pw.println();
+    pw.println("Internal state:");
+    pw.print("  mRunning=");
+    pw.println(mRunning);
+  }
+  dumpFragmentationLocked(pw);
+}

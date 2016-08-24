@@ -1,0 +1,129 @@
+{
+  ArrayList<Integer> firstPids=new ArrayList<Integer>(5);
+  SparseArray<Boolean> lastPids=new SparseArray<Boolean>(20);
+  if (mService.mController != null) {
+    try {
+      int res=mService.mController.appEarlyNotResponding(app.processName,app.pid,annotation);
+      if (res < 0 && app.pid != MY_PID) {
+        app.kill("anr",true);
+      }
+    }
+ catch (    RemoteException e) {
+      mService.mController=null;
+      Watchdog.getInstance().setActivityController(null);
+    }
+  }
+  long anrTime=SystemClock.uptimeMillis();
+  if (ActivityManagerService.MONITOR_CPU_USAGE) {
+    mService.updateCpuStatsNow();
+  }
+synchronized (mService) {
+    if (mService.mShuttingDown) {
+      Slog.i(TAG,"During shutdown skipping ANR: " + app + " "+ annotation);
+      return;
+    }
+ else     if (app.notResponding) {
+      Slog.i(TAG,"Skipping duplicate ANR: " + app + " "+ annotation);
+      return;
+    }
+ else     if (app.crashing) {
+      Slog.i(TAG,"Crashing app skipping ANR: " + app + " "+ annotation);
+      return;
+    }
+    app.notResponding=true;
+    EventLog.writeEvent(EventLogTags.AM_ANR,app.userId,app.pid,app.processName,app.info.flags,annotation);
+    firstPids.add(app.pid);
+    int parentPid=app.pid;
+    if (parent != null && parent.app != null && parent.app.pid > 0) {
+      parentPid=parent.app.pid;
+    }
+    if (parentPid != app.pid)     firstPids.add(parentPid);
+    if (MY_PID != app.pid && MY_PID != parentPid)     firstPids.add(MY_PID);
+    for (int i=mService.mLruProcesses.size() - 1; i >= 0; i--) {
+      ProcessRecord r=mService.mLruProcesses.get(i);
+      if (r != null && r.thread != null) {
+        int pid=r.pid;
+        if (pid > 0 && pid != app.pid && pid != parentPid && pid != MY_PID) {
+          if (r.persistent) {
+            firstPids.add(pid);
+            if (DEBUG_ANR)             Slog.i(TAG,"Adding persistent proc: " + r);
+          }
+ else {
+            lastPids.put(pid,Boolean.TRUE);
+            if (DEBUG_ANR)             Slog.i(TAG,"Adding ANR proc: " + r);
+          }
+        }
+      }
+    }
+  }
+  StringBuilder info=new StringBuilder();
+  info.setLength(0);
+  info.append("ANR in ").append(app.processName);
+  if (activity != null && activity.shortComponentName != null) {
+    info.append(" (").append(activity.shortComponentName).append(")");
+  }
+  info.append("\n");
+  info.append("PID: ").append(app.pid).append("\n");
+  if (annotation != null) {
+    info.append("Reason: ").append(annotation).append("\n");
+  }
+  if (parent != null && parent != activity) {
+    info.append("Parent: ").append(parent.shortComponentName).append("\n");
+  }
+  final ProcessCpuTracker processCpuTracker=new ProcessCpuTracker(true);
+  File tracesFile=mService.dumpStackTraces(true,firstPids,processCpuTracker,lastPids,NATIVE_STACKS_OF_INTEREST);
+  String cpuInfo=null;
+  if (ActivityManagerService.MONITOR_CPU_USAGE) {
+    mService.updateCpuStatsNow();
+synchronized (mService.mProcessCpuTracker) {
+      cpuInfo=mService.mProcessCpuTracker.printCurrentState(anrTime);
+    }
+    info.append(processCpuTracker.printCurrentLoad());
+    info.append(cpuInfo);
+  }
+  info.append(processCpuTracker.printCurrentState(anrTime));
+  Slog.e(TAG,info.toString());
+  if (tracesFile == null) {
+    Process.sendSignal(app.pid,Process.SIGNAL_QUIT);
+  }
+  mService.addErrorToDropBox("anr",app,app.processName,activity,parent,annotation,cpuInfo,tracesFile,null);
+  if (mService.mController != null) {
+    try {
+      int res=mService.mController.appNotResponding(app.processName,app.pid,info.toString());
+      if (res != 0) {
+        if (res < 0 && app.pid != MY_PID) {
+          app.kill("anr",true);
+        }
+ else {
+synchronized (mService) {
+            mService.mServices.scheduleServiceTimeoutLocked(app);
+          }
+        }
+        return;
+      }
+    }
+ catch (    RemoteException e) {
+      mService.mController=null;
+      Watchdog.getInstance().setActivityController(null);
+    }
+  }
+  boolean showBackground=Settings.Secure.getInt(mContext.getContentResolver(),Settings.Secure.ANR_SHOW_BACKGROUND,0) != 0;
+synchronized (mService) {
+    mService.mBatteryStatsService.noteProcessAnr(app.processName,app.uid);
+    if (!showBackground && !app.isInterestingToUserLocked() && app.pid != MY_PID) {
+      app.kill("bg anr",true);
+      return;
+    }
+    makeAppNotRespondingLocked(app,activity != null ? activity.shortComponentName : null,annotation != null ? "ANR " + annotation : "ANR",info.toString());
+    Message msg=Message.obtain();
+    HashMap<String,Object> map=new HashMap<String,Object>();
+    msg.what=ActivityManagerService.SHOW_NOT_RESPONDING_UI_MSG;
+    msg.obj=map;
+    msg.arg1=aboveSystem ? 1 : 0;
+    map.put("app",app);
+    if (activity != null) {
+      map.put("activity",activity);
+    }
+    mService.mUiHandler.sendMessage(msg);
+  }
+}

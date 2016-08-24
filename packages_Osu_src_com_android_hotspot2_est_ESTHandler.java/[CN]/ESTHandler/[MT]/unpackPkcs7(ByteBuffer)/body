@@ -1,0 +1,58 @@
+{
+  Collection<Asn1Object> pkcs7Content=Asn1Decoder.decode(pkcs7);
+  if (pkcs7Content.size() != 1) {
+    throw new IOException("Unexpected pkcs 7 container: " + pkcs7Content.size());
+  }
+  Asn1Object data=pkcs7Content.iterator().next();
+  if (!data.isConstructed() || !data.matches(sSEQUENCE)) {
+    throw new IOException("Expected SEQ OF, got " + data.toSimpleString());
+  }
+ else   if (data.getChildren().size() != 2) {
+    throw new IOException("Expected content info to have two children, got " + data.getChildren().size());
+  }
+  Iterator<Asn1Object> children=data.getChildren().iterator();
+  Asn1Object contentType=children.next();
+  if (!contentType.equals(Asn1Oid.PKCS7SignedData)) {
+    throw new IOException("Content not PKCS7 signed data");
+  }
+  Asn1Object content=children.next();
+  if (!content.isConstructed() || !content.matches(sCTXT0)) {
+    throw new IOException("Expected [CONTEXT 0] with one child, got " + content.toSimpleString() + ", "+ content.getChildren().size());
+  }
+  Asn1Object signedData=content.getChildren().iterator().next();
+  Map<Integer,Asn1Object> itemMap=new HashMap<>();
+  for (  Asn1Object item : signedData.getChildren()) {
+    if (itemMap.put(item.getTag(),item) != null && item.getTag() != Asn1Decoder.TAG_SET) {
+      throw new IOException("Duplicate item in SignedData: " + item.toSimpleString());
+    }
+  }
+  Asn1Object versionObject=itemMap.get(Asn1Decoder.TAG_INTEGER);
+  if (versionObject == null || !(versionObject instanceof Asn1Integer)) {
+    throw new IOException("Bad or missing PKCS7 version: " + versionObject);
+  }
+  int pkcs7version=(int)((Asn1Integer)versionObject).getValue();
+  Asn1Object innerContentInfo=itemMap.get(Asn1Decoder.TAG_SEQ);
+  if (innerContentInfo == null || !innerContentInfo.isConstructed() || !innerContentInfo.matches(sSEQUENCE) || innerContentInfo.getChildren().size() != 1) {
+    throw new IOException("Bad or missing PKCS7 contentInfo");
+  }
+  Asn1Object contentID=innerContentInfo.getChildren().iterator().next();
+  if (pkcs7version == PKCS7DataVersion && !contentID.equals(Asn1Oid.PKCS7Data) || pkcs7version == PKCS7SignedDataVersion && !contentID.equals(Asn1Oid.PKCS7SignedData)) {
+    throw new IOException("Inner PKCS7 content (" + contentID + ") not expected for version "+ pkcs7version);
+  }
+  Asn1Object certWrapper=itemMap.get(0);
+  if (certWrapper == null || !certWrapper.isConstructed() || !certWrapper.matches(sCTXT0)) {
+    throw new IOException("Expected [CONTEXT 0], got: " + certWrapper);
+  }
+  List<X509Certificate> certList=new ArrayList<>(certWrapper.getChildren().size());
+  CertificateFactory certFactory=CertificateFactory.getInstance("X.509");
+  for (  Asn1Object certObject : certWrapper.getChildren()) {
+    ByteBuffer certOctets=((Asn1Constructed)certObject).getEncoding();
+    if (certOctets == null) {
+      throw new IOException("No cert payload in: " + certObject);
+    }
+    byte[] certBytes=new byte[certOctets.remaining()];
+    certOctets.get(certBytes);
+    certList.add((X509Certificate)certFactory.generateCertificate(new ByteArrayInputStream(certBytes)));
+  }
+  return certList;
+}

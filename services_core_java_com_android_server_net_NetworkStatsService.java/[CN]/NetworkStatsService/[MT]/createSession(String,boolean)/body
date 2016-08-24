@@ -30,15 +30,17 @@ synchronized (mStatsLock) {
       }
     }
     @Override public int[] getRelevantUids(){
-      enforcePermissionForManagedAdmin(mCallingPackage);
-      return getUidComplete().getRelevantUids();
+      return getUidComplete().getRelevantUids(checkAccessLevel(mCallingPackage));
     }
     @Override public NetworkStats getDeviceSummaryForNetwork(    NetworkTemplate template,    long start,    long end){
-      enforcePermission(mCallingPackage);
+      @NetworkStatsAccess.Level int accessLevel=checkAccessLevel(mCallingPackage);
+      if (accessLevel < NetworkStatsAccess.Level.DEVICESUMMARY) {
+        throw new SecurityException("Calling package " + mCallingPackage + " cannot access device summary network stats");
+      }
       NetworkStats result=new NetworkStats(end - start,1);
       final long ident=Binder.clearCallingIdentity();
       try {
-        result.combineAllValues(internalGetSummaryForNetwork(template,start,end));
+        result.combineAllValues(internalGetSummaryForNetwork(template,start,end,NetworkStatsAccess.Level.DEVICE));
       }
   finally {
         Binder.restoreCallingIdentity(ident);
@@ -46,37 +48,41 @@ synchronized (mStatsLock) {
       return result;
     }
     @Override public NetworkStats getSummaryForNetwork(    NetworkTemplate template,    long start,    long end){
-      enforcePermission(mCallingPackage);
-      return internalGetSummaryForNetwork(template,start,end);
+      @NetworkStatsAccess.Level int accessLevel=checkAccessLevel(mCallingPackage);
+      return internalGetSummaryForNetwork(template,start,end,accessLevel);
     }
     @Override public NetworkStatsHistory getHistoryForNetwork(    NetworkTemplate template,    int fields){
-      return internalGetHistoryForNetwork(template,fields);
+      @NetworkStatsAccess.Level int accessLevel=checkAccessLevel(mCallingPackage);
+      return internalGetHistoryForNetwork(template,fields,accessLevel);
     }
     @Override public NetworkStats getSummaryForAllUid(    NetworkTemplate template,    long start,    long end,    boolean includeTags){
-      enforcePermissionForManagedAdmin(mCallingPackage);
-      final NetworkStats stats=getUidComplete().getSummary(template,start,end);
+      @NetworkStatsAccess.Level int accessLevel=checkAccessLevel(mCallingPackage);
+      final NetworkStats stats=getUidComplete().getSummary(template,start,end,accessLevel);
       if (includeTags) {
-        final NetworkStats tagStats=getUidTagComplete().getSummary(template,start,end);
+        final NetworkStats tagStats=getUidTagComplete().getSummary(template,start,end,accessLevel);
         stats.combineAllValues(tagStats);
       }
       return stats;
     }
     @Override public NetworkStatsHistory getHistoryForUid(    NetworkTemplate template,    int uid,    int set,    int tag,    int fields){
-      enforcePermissionForManagedAdmin(mCallingPackage);
+      @NetworkStatsAccess.Level int accessLevel=checkAccessLevel(mCallingPackage);
       if (tag == TAG_NONE) {
-        return getUidComplete().getHistory(template,uid,set,tag,fields);
+        return getUidComplete().getHistory(template,uid,set,tag,fields,accessLevel);
       }
  else {
-        return getUidTagComplete().getHistory(template,uid,set,tag,fields);
+        return getUidTagComplete().getHistory(template,uid,set,tag,fields,accessLevel);
       }
     }
     @Override public NetworkStatsHistory getHistoryIntervalForUid(    NetworkTemplate template,    int uid,    int set,    int tag,    int fields,    long start,    long end){
-      enforcePermissionForManagedAdmin(mCallingPackage);
+      @NetworkStatsAccess.Level int accessLevel=checkAccessLevel(mCallingPackage);
       if (tag == TAG_NONE) {
-        return getUidComplete().getHistory(template,uid,set,tag,fields,start,end);
+        return getUidComplete().getHistory(template,uid,set,tag,fields,start,end,accessLevel);
+      }
+ else       if (uid == Binder.getCallingUid()) {
+        return getUidTagComplete().getHistory(template,uid,set,tag,fields,start,end,accessLevel);
       }
  else {
-        return getUidTagComplete().getHistory(template,uid,set,tag,fields,start,end);
+        throw new SecurityException("Calling package " + mCallingPackage + " cannot access tag information from a different uid");
       }
     }
     @Override public void close(){

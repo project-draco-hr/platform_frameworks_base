@@ -1,0 +1,59 @@
+{
+  if (resultData != null && resultData.hasFileDescriptors() == true) {
+    throw new IllegalArgumentException("File descriptors passed in Intent");
+  }
+synchronized (this) {
+    ActivityRecord r=ActivityRecord.isInStackLocked(token);
+    if (r == null) {
+      return true;
+    }
+    TaskRecord tr=r.task;
+    ActivityRecord rootR=tr.getRootActivity();
+    if (rootR == null) {
+      Slog.w(TAG,"Finishing task with all activities already finished");
+    }
+    if (tr.mLockTaskAuth != LOCK_TASK_AUTH_LAUNCHABLE_PRIV && rootR == r && mStackSupervisor.isLastLockedTask(tr)) {
+      Slog.i(TAG,"Not finishing task in lock task mode");
+      mStackSupervisor.showLockTaskToast();
+      return false;
+    }
+    if (mController != null) {
+      ActivityRecord next=r.task.stack.topRunningActivityLocked(token,0);
+      if (next != null) {
+        boolean resumeOK=true;
+        try {
+          resumeOK=mController.activityResuming(next.packageName);
+        }
+ catch (        RemoteException e) {
+          mController=null;
+          Watchdog.getInstance().setActivityController(null);
+        }
+        if (!resumeOK) {
+          Slog.i(TAG,"Not finishing activity because controller resumed");
+          return false;
+        }
+      }
+    }
+    final long origId=Binder.clearCallingIdentity();
+    try {
+      boolean res;
+      final boolean finishWithRootActivity=finishTask == Activity.FINISH_TASK_WITH_ROOT_ACTIVITY;
+      if (finishTask == Activity.FINISH_TASK_WITH_ACTIVITY || (finishWithRootActivity && r == rootR)) {
+        res=removeTaskByIdLocked(tr.taskId,false,finishWithRootActivity);
+        if (!res) {
+          Slog.i(TAG,"Removing task failed to finish activity");
+        }
+      }
+ else {
+        res=tr.stack.requestFinishActivityLocked(token,resultCode,resultData,"app-request",true);
+        if (!res) {
+          Slog.i(TAG,"Failed to finish by app-request");
+        }
+      }
+      return res;
+    }
+  finally {
+      Binder.restoreCallingIdentity(origId);
+    }
+  }
+}

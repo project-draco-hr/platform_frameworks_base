@@ -12,8 +12,11 @@
   mDisplayManagerInternal=LocalServices.getService(DisplayManagerInternal.class);
   mDisplaySettings=new DisplaySettings();
   mDisplaySettings.readSettingsLocked();
+  mWallpaperControllerLocked=new WallpaperController(this);
+  mWindowPlacerLocked=new WindowSurfacePlacer(this);
+  mLayersController=new WindowLayersController(this);
   LocalServices.addService(WindowManagerPolicy.class,mPolicy);
-  mPointerEventDispatcher=new PointerEventDispatcher(mInputManager.monitorInput(TAG));
+  mPointerEventDispatcher=new PointerEventDispatcher(mInputManager.monitorInput(TAG_WM));
   mFxSession=new SurfaceSession();
   mDisplayManager=(DisplayManager)context.getSystemService(Context.DISPLAY_SERVICE);
   mDisplays=mDisplayManager.getDisplays();
@@ -37,10 +40,11 @@ synchronized (mWindowMap) {
   mAnimationsDisabled=mPowerManagerInternal.getLowPowerModeEnabled();
   mScreenFrozenLock=mPowerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,"SCREEN_FROZEN");
   mScreenFrozenLock.setReferenceCounted(false);
-  mAppTransition=new AppTransition(context,mH);
+  mAppTransition=new AppTransition(context,this);
   mAppTransition.registerListenerLocked(mActivityManagerAppTransitionNotifier);
+  mBoundsAnimationController=new BoundsAnimationController(mAppTransition,UiThread.getHandler());
   mActivityManager=ActivityManagerNative.getDefault();
-  mBatteryStats=BatteryStatsService.getService();
+  mAmInternal=LocalServices.getService(ActivityManagerInternal.class);
   mAppOps=(AppOpsManager)context.getSystemService(Context.APP_OPS_SERVICE);
   AppOpsManager.OnOpChangedInternalListener opListener=new AppOpsManager.OnOpChangedInternalListener(){
     @Override public void onOpChanged(    int op,    String packageName){
@@ -57,8 +61,7 @@ synchronized (mWindowMap) {
   filter.addAction(DevicePolicyManager.ACTION_DEVICE_POLICY_MANAGER_STATE_CHANGED);
   mContext.registerReceiver(mBroadcastReceiver,filter);
   mSettingsObserver=new SettingsObserver();
-  updateShowImeWithHardKeyboard();
-  mHoldingScreenWakeLock=mPowerManager.newWakeLock(PowerManager.SCREEN_BRIGHT_WAKE_LOCK | PowerManager.ON_AFTER_RELEASE,TAG);
+  mHoldingScreenWakeLock=mPowerManager.newWakeLock(PowerManager.SCREEN_BRIGHT_WAKE_LOCK | PowerManager.ON_AFTER_RELEASE,TAG_WM);
   mHoldingScreenWakeLock.setReferenceCounted(false);
   mAnimator=new WindowAnimator(this);
   mAllowTheaterModeWakeFromLayout=context.getResources().getBoolean(com.android.internal.R.bool.config_allowTheaterModeWakeFromWindowLayout);
@@ -68,7 +71,6 @@ synchronized (mWindowMap) {
   SurfaceControl.openTransaction();
   try {
     createWatermarkInTransaction();
-    mFocusedStackFrame=new FocusedStackFrame(getDefaultDisplayContentLocked().getDisplay(),mFxSession);
   }
   finally {
     SurfaceControl.closeTransaction();

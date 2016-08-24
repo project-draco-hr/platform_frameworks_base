@@ -1,0 +1,103 @@
+{
+  int changes=0;
+  if (mWindowManager != null) {
+    mWindowManager.deferSurfaceLayout();
+  }
+  if (values != null) {
+    Configuration newConfig=new Configuration(mConfiguration);
+    changes=newConfig.updateFrom(values);
+    if (changes != 0) {
+      if (DEBUG_SWITCH || DEBUG_CONFIGURATION)       Slog.i(TAG_CONFIGURATION,"Updating configuration to: " + values);
+      EventLog.writeEvent(EventLogTags.CONFIGURATION_CHANGED,changes);
+      if (!initLocale && !values.getLocales().isEmpty() && values.userSetLocale) {
+        final LocaleList locales=values.getLocales();
+        int bestLocaleIndex=0;
+        if (locales.size() > 1) {
+          if (mSupportedSystemLocales == null) {
+            mSupportedSystemLocales=Resources.getSystem().getAssets().getLocales();
+          }
+          bestLocaleIndex=Math.max(0,locales.getFirstMatchIndex(mSupportedSystemLocales));
+        }
+        SystemProperties.set("persist.sys.locale",locales.get(bestLocaleIndex).toLanguageTag());
+        LocaleList.setDefault(locales,bestLocaleIndex);
+        mHandler.sendMessage(mHandler.obtainMessage(SEND_LOCALE_TO_MOUNT_DAEMON_MSG,locales.get(bestLocaleIndex)));
+      }
+      mConfigurationSeq++;
+      if (mConfigurationSeq <= 0) {
+        mConfigurationSeq=1;
+      }
+      newConfig.seq=mConfigurationSeq;
+      mConfiguration=newConfig;
+      Slog.i(TAG,"Config changes=" + Integer.toHexString(changes) + " "+ newConfig);
+      mUsageStatsService.reportConfigurationChange(newConfig,mUserController.getCurrentUserIdLocked());
+      final Configuration configCopy=new Configuration(mConfiguration);
+      mShowDialogs=shouldShowDialogs(newConfig,mInVrMode);
+      AttributeCache ac=AttributeCache.instance();
+      if (ac != null) {
+        ac.updateConfiguration(configCopy);
+      }
+      mSystemThread.applyConfigurationToResources(configCopy);
+      if (persistent && Settings.System.hasInterestingConfigurationChanges(changes)) {
+        Message msg=mHandler.obtainMessage(UPDATE_CONFIGURATION_MSG);
+        msg.obj=new Configuration(configCopy);
+        msg.arg1=userId;
+        mHandler.sendMessage(msg);
+      }
+      final boolean isDensityChange=(changes & ActivityInfo.CONFIG_DENSITY) != 0;
+      if (isDensityChange) {
+        mUiHandler.sendEmptyMessage(SHOW_UNSUPPORTED_DISPLAY_SIZE_DIALOG_MSG);
+        killAllBackgroundProcessesExcept(Build.VERSION_CODES.N,ActivityManager.PROCESS_STATE_FOREGROUND_SERVICE);
+      }
+      for (int i=mLruProcesses.size() - 1; i >= 0; i--) {
+        ProcessRecord app=mLruProcesses.get(i);
+        try {
+          if (app.thread != null) {
+            if (DEBUG_CONFIGURATION)             Slog.v(TAG_CONFIGURATION,"Sending to proc " + app.processName + " new config "+ mConfiguration);
+            app.thread.scheduleConfigurationChanged(configCopy);
+          }
+        }
+ catch (        Exception e) {
+        }
+      }
+      Intent intent=new Intent(Intent.ACTION_CONFIGURATION_CHANGED);
+      intent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY | Intent.FLAG_RECEIVER_REPLACE_PENDING | Intent.FLAG_RECEIVER_FOREGROUND);
+      broadcastIntentLocked(null,null,intent,null,null,0,null,null,null,AppOpsManager.OP_NONE,null,false,false,MY_PID,Process.SYSTEM_UID,UserHandle.USER_ALL);
+      if ((changes & ActivityInfo.CONFIG_LOCALE) != 0) {
+        final ShortcutServiceInternal shortcutService=LocalServices.getService(ShortcutServiceInternal.class);
+        if (shortcutService != null) {
+          shortcutService.onSystemLocaleChangedNoLock();
+        }
+        intent=new Intent(Intent.ACTION_LOCALE_CHANGED);
+        intent.addFlags(Intent.FLAG_RECEIVER_FOREGROUND);
+        if (!mProcessesReady) {
+          intent.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY);
+        }
+        broadcastIntentLocked(null,null,intent,null,null,0,null,null,null,AppOpsManager.OP_NONE,null,false,false,MY_PID,Process.SYSTEM_UID,UserHandle.USER_ALL);
+      }
+    }
+    if (mWindowManager != null) {
+      final int[] resizedStacks=mWindowManager.setNewConfiguration(mConfiguration);
+      if (resizedStacks != null) {
+        for (        int stackId : resizedStacks) {
+          final Rect newBounds=mWindowManager.getBoundsForNewConfiguration(stackId);
+          mStackSupervisor.resizeStackLocked(stackId,newBounds,null,null,false,false,!DEFER_RESUME);
+        }
+      }
+    }
+  }
+  boolean kept=true;
+  final ActivityStack mainStack=mStackSupervisor.getFocusedStack();
+  if (mainStack != null) {
+    if (changes != 0 && starting == null) {
+      starting=mainStack.topRunningActivityLocked();
+    }
+    if (starting != null) {
+      kept=mainStack.ensureActivityConfigurationLocked(starting,changes,false);
+      mStackSupervisor.ensureActivitiesVisibleLocked(starting,changes,!PRESERVE_WINDOWS);
+    }
+  }
+  if (mWindowManager != null) {
+    mWindowManager.continueSurfaceLayout();
+  }
+  return kept;
+}

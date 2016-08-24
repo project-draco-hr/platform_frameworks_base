@@ -1,0 +1,62 @@
+{
+  ByteOrderAwarenessDataInputStream dataInputStream=new ByteOrderAwarenessDataInputStream(exifBytes);
+  short byteOrder=dataInputStream.readShort();
+switch (byteOrder) {
+case BYTE_ALIGN_II:
+    if (DEBUG) {
+      Log.d(TAG,"readExifSegment: Byte Align II");
+    }
+  mExifByteOrder=ByteOrder.LITTLE_ENDIAN;
+break;
+case BYTE_ALIGN_MM:
+if (DEBUG) {
+Log.d(TAG,"readExifSegment: Byte Align MM");
+}
+mExifByteOrder=ByteOrder.BIG_ENDIAN;
+break;
+default :
+throw new IOException("Invalid byte order: " + Integer.toHexString(byteOrder));
+}
+dataInputStream.setByteOrder(mExifByteOrder);
+int startCode=dataInputStream.readUnsignedShort();
+if (startCode != 0x2a) {
+throw new IOException("Invalid exif start: " + Integer.toHexString(startCode));
+}
+long firstIfdOffset=dataInputStream.readUnsignedInt();
+if (firstIfdOffset < 8 || firstIfdOffset >= exifBytes.length) {
+throw new IOException("Invalid first Ifd offset: " + firstIfdOffset);
+}
+firstIfdOffset-=8;
+if (firstIfdOffset > 0) {
+if (dataInputStream.skip(firstIfdOffset) != firstIfdOffset) {
+throw new IOException("Couldn't jump to first Ifd: " + firstIfdOffset);
+}
+}
+readImageFileDirectory(dataInputStream,IFD_TIFF_HINT);
+String jpegInterchangeFormatString=getAttribute(JPEG_INTERCHANGE_FORMAT_TAG.name);
+String jpegInterchangeFormatLengthString=getAttribute(JPEG_INTERCHANGE_FORMAT_LENGTH_TAG.name);
+if (jpegInterchangeFormatString != null && jpegInterchangeFormatLengthString != null) {
+try {
+int jpegInterchangeFormat=Integer.parseInt(jpegInterchangeFormatString);
+int jpegInterchangeFormatLength=Integer.parseInt(jpegInterchangeFormatLengthString);
+jpegInterchangeFormatLength=Math.min(jpegInterchangeFormat + jpegInterchangeFormatLength,exifBytes.length) - jpegInterchangeFormat;
+if (jpegInterchangeFormat > 0 && jpegInterchangeFormatLength > 0) {
+mHasThumbnail=true;
+mThumbnailOffset=exifOffsetFromBeginning + jpegInterchangeFormat;
+mThumbnailLength=jpegInterchangeFormatLength;
+if (mFilename == null && mAssetInputStream == null && mSeekableFileDescriptor == null) {
+byte[] thumbnailBytes=new byte[jpegInterchangeFormatLength];
+dataInputStream.seek(jpegInterchangeFormat);
+dataInputStream.readFully(thumbnailBytes);
+mThumbnailBytes=thumbnailBytes;
+if (DEBUG) {
+Bitmap bitmap=BitmapFactory.decodeByteArray(thumbnailBytes,0,thumbnailBytes.length);
+Log.d(TAG,"Thumbnail offset: " + mThumbnailOffset + ", length: "+ mThumbnailLength+ ", width: "+ bitmap.getWidth()+ ", height: "+ bitmap.getHeight());
+}
+}
+}
+}
+ catch (NumberFormatException e) {
+}
+}
+}

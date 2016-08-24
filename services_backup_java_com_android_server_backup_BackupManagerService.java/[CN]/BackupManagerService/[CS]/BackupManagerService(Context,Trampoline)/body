@@ -15,12 +15,12 @@
   mAutoRestore=Settings.Secure.getInt(resolver,Settings.Secure.BACKUP_AUTO_RESTORE,1) != 0;
   mProvisionedObserver=new ProvisionedObserver(mBackupHandler);
   resolver.registerContentObserver(Settings.Global.getUriFor(Settings.Global.DEVICE_PROVISIONED),false,mProvisionedObserver);
-  mBaseStateDir=new File(Environment.getSecureDataDirectory(),"backup");
+  mBaseStateDir=new File(Environment.getDataDirectory(),"backup");
   mBaseStateDir.mkdirs();
   if (!SELinux.restorecon(mBaseStateDir)) {
     Slog.e(TAG,"SELinux restorecon failed on " + mBaseStateDir);
   }
-  mDataDir=Environment.getDownloadCacheDirectory();
+  mDataDir=new File(Environment.getDownloadCacheDirectory(),"backup_stage");
   mPasswordVersion=1;
   mPasswordVersionFile=new File(mBaseStateDir,"pwversion");
   if (mPasswordVersionFile.exists()) {
@@ -92,22 +92,25 @@
 synchronized (mBackupParticipants) {
     addPackageParticipantsLocked(null);
   }
-  mCurrentTransport=Settings.Secure.getString(context.getContentResolver(),Settings.Secure.BACKUP_TRANSPORT);
-  if ("".equals(mCurrentTransport)) {
-    mCurrentTransport=null;
+  SystemConfig systemConfig=SystemConfig.getInstance();
+  mTransportWhitelist=systemConfig.getBackupTransportWhitelist();
+  String transport=Settings.Secure.getString(context.getContentResolver(),Settings.Secure.BACKUP_TRANSPORT);
+  if (TextUtils.isEmpty(transport)) {
+    transport=null;
   }
+  mCurrentTransport=transport;
   if (DEBUG)   Slog.v(TAG,"Starting with transport " + mCurrentTransport);
-  List<ResolveInfo> hosts=mPackageManager.queryIntentServicesAsUser(mTransportServiceIntent,0,UserHandle.USER_OWNER);
+  List<ResolveInfo> hosts=mPackageManager.queryIntentServicesAsUser(mTransportServiceIntent,0,UserHandle.USER_SYSTEM);
   if (DEBUG) {
     Slog.v(TAG,"Found transports: " + ((hosts == null) ? "null" : hosts.size()));
   }
   if (hosts != null) {
     for (int i=0; i < hosts.size(); i++) {
-      final ServiceInfo transport=hosts.get(i).serviceInfo;
+      final ServiceInfo transportService=hosts.get(i).serviceInfo;
       if (MORE_DEBUG) {
-        Slog.v(TAG,"   " + transport.packageName + "/"+ transport.name);
+        Slog.v(TAG,"   " + transportService.packageName + "/"+ transportService.name);
       }
-      tryBindTransport(transport);
+      tryBindTransport(transportService);
     }
   }
   parseLeftoverJournals();

@@ -1,6 +1,7 @@
 {
   mAppOps=(AppOpsManager)getContext().getSystemService(Context.APP_OPS_SERVICE);
   mUserManager=(UserManager)getContext().getSystemService(Context.USER_SERVICE);
+  mPackageManager=getContext().getPackageManager();
   mHandler=new H(BackgroundThread.get().getLooper());
   File systemDataDir=new File(Environment.getDataDirectory(),"system");
   mUsageStatsDir=new File(systemDataDir,"usagestats");
@@ -8,9 +9,15 @@
   if (!mUsageStatsDir.exists()) {
     throw new IllegalStateException("Usage stats directory does not exist: " + mUsageStatsDir.getAbsolutePath());
   }
-  IntentFilter userActions=new IntentFilter(Intent.ACTION_USER_REMOVED);
-  userActions.addAction(Intent.ACTION_USER_STARTED);
-  getContext().registerReceiverAsUser(new UserActionsReceiver(),UserHandle.ALL,userActions,null,null);
+  IntentFilter filter=new IntentFilter(Intent.ACTION_USER_REMOVED);
+  filter.addAction(Intent.ACTION_USER_STARTED);
+  getContext().registerReceiverAsUser(new UserActionsReceiver(),UserHandle.ALL,filter,null,mHandler);
+  IntentFilter packageFilter=new IntentFilter();
+  packageFilter.addAction(Intent.ACTION_PACKAGE_ADDED);
+  packageFilter.addAction(Intent.ACTION_PACKAGE_CHANGED);
+  packageFilter.addAction(Intent.ACTION_PACKAGE_REMOVED);
+  packageFilter.addDataScheme("package");
+  getContext().registerReceiverAsUser(new PackageReceiver(),UserHandle.ALL,packageFilter,null,mHandler);
   mAppIdleEnabled=getContext().getResources().getBoolean(com.android.internal.R.bool.config_enableAutoPowerModes);
   if (mAppIdleEnabled) {
     IntentFilter deviceStates=new IntentFilter(BatteryManager.ACTION_CHARGING);
@@ -20,6 +27,7 @@
   }
 synchronized (mLock) {
     cleanUpRemovedUsersLocked();
+    mAppIdleHistory=new AppIdleHistory(SystemClock.elapsedRealtime());
   }
   mRealTimeSnapshot=SystemClock.elapsedRealtime();
   mSystemTimeSnapshot=System.currentTimeMillis();

@@ -5,12 +5,12 @@
   mCurrentTime=frameTimeNs / TimeUtils.NANOS_PER_MS;
   mBulkUpdateParams=SET_ORIENTATION_CHANGE_COMPLETE;
   boolean wasAnimating=mAnimating;
-  mAnimating=false;
+  setAnimating(false);
   mAppWindowAnimating=false;
-  if (WindowManagerService.DEBUG_WINDOW_TRACE) {
+  if (DEBUG_WINDOW_TRACE) {
     Slog.i(TAG,"!!! animate: entry time=" + mCurrentTime);
   }
-  if (WindowManagerService.SHOW_TRANSACTIONS)   Slog.i(TAG,">>> OPEN TRANSACTION animateLocked");
+  if (SHOW_TRANSACTIONS)   Slog.i(TAG,">>> OPEN TRANSACTION animateLocked");
   SurfaceControl.openTransaction();
   SurfaceControl.setAnimationTransaction();
   try {
@@ -22,7 +22,7 @@
       final ScreenRotationAnimation screenRotationAnimation=displayAnimator.mScreenRotationAnimation;
       if (screenRotationAnimation != null && screenRotationAnimation.isAnimating()) {
         if (screenRotationAnimation.stepAnimationLocked(mCurrentTime)) {
-          mAnimating=true;
+          setAnimating(true);
         }
  else {
           mBulkUpdateParams|=SET_UPDATE_ROTATION;
@@ -48,15 +48,18 @@
       if (screenRotationAnimation != null) {
         screenRotationAnimation.updateSurfacesInTransaction();
       }
-      mAnimating|=mService.getDisplayContentLocked(displayId).animateDimLayers();
+      orAnimating(mService.getDisplayContentLocked(displayId).animateDimLayers());
+      orAnimating(mService.getDisplayContentLocked(displayId).getDockedDividerController().animate(mCurrentTime));
       if (mService.mAccessibilityController != null && displayId == Display.DEFAULT_DISPLAY) {
         mService.mAccessibilityController.drawMagnifiedRegionBorderIfNeededLocked();
       }
     }
+    if (mService.mDragState != null) {
+      mAnimating|=mService.mDragState.stepAnimationLocked(mCurrentTime);
+    }
     if (mAnimating) {
       mService.scheduleAnimationLocked();
     }
-    mService.setFocusedStackLayer();
     if (mService.mWatermark != null) {
       mService.mWatermark.drawIfNeeded();
     }
@@ -66,7 +69,7 @@
   }
  finally {
     SurfaceControl.closeTransaction();
-    if (WindowManagerService.SHOW_TRANSACTIONS)     Slog.i(TAG,"<<< CLOSE TRANSACTION animateLocked");
+    if (SHOW_TRANSACTIONS)     Slog.i(TAG,"<<< CLOSE TRANSACTION animateLocked");
   }
   boolean hasPendingLayoutChanges=false;
   final int numDisplays=mService.mDisplayContents.size();
@@ -82,15 +85,27 @@
   }
   boolean doRequest=false;
   if (mBulkUpdateParams != 0) {
-    doRequest=mService.copyAnimToLayoutParamsLocked();
+    doRequest=mWindowPlacerLocked.copyAnimToLayoutParamsLocked();
   }
   if (hasPendingLayoutChanges || doRequest) {
-    mService.requestTraversalLocked();
+    mWindowPlacerLocked.requestTraversal();
+  }
+  if (mAnimating && !wasAnimating && Trace.isTagEnabled(Trace.TRACE_TAG_WINDOW_MANAGER)) {
+    Trace.asyncTraceBegin(Trace.TRACE_TAG_WINDOW_MANAGER,"animating",0);
   }
   if (!mAnimating && wasAnimating) {
-    mService.requestTraversalLocked();
+    mWindowPlacerLocked.requestTraversal();
+    if (Trace.isTagEnabled(Trace.TRACE_TAG_WINDOW_MANAGER)) {
+      Trace.asyncTraceEnd(Trace.TRACE_TAG_WINDOW_MANAGER,"animating",0);
+    }
   }
-  if (WindowManagerService.DEBUG_WINDOW_TRACE) {
+  if (mRemoveReplacedWindows) {
+    removeReplacedWindowsLocked();
+  }
+  mService.stopUsingSavedSurfaceLocked();
+  mService.destroyPreservedSurfaceLocked();
+  mService.mWindowPlacerLocked.destroyPendingSurfaces();
+  if (DEBUG_WINDOW_TRACE) {
     Slog.i(TAG,"!!! animate: exit mAnimating=" + mAnimating + " mBulkUpdateParams="+ Integer.toHexString(mBulkUpdateParams)+ " mPendingLayoutChanges(DEFAULT_DISPLAY)="+ Integer.toHexString(getPendingLayoutChanges(Display.DEFAULT_DISPLAY)));
   }
 }

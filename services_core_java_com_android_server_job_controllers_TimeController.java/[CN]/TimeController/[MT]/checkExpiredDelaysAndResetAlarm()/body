@@ -1,31 +1,35 @@
 {
-  final long nowElapsedMillis=SystemClock.elapsedRealtime();
-  long nextDelayTime=Long.MAX_VALUE;
-  boolean ready=false;
-  Iterator<JobStatus> it=mTrackedJobs.iterator();
-  while (it.hasNext()) {
-    final JobStatus job=it.next();
-    if (!job.hasTimingDelayConstraint()) {
-      continue;
-    }
-    final long jobDelayTime=job.getEarliestRunTime();
-    if (jobDelayTime <= nowElapsedMillis) {
-      job.timeDelayConstraintSatisfied.set(true);
-      if (canStopTrackingJob(job)) {
-        it.remove();
+synchronized (mLock) {
+    final long nowElapsedMillis=SystemClock.elapsedRealtime();
+    long nextDelayTime=Long.MAX_VALUE;
+    int nextDelayUid=0;
+    boolean ready=false;
+    Iterator<JobStatus> it=mTrackedJobs.iterator();
+    while (it.hasNext()) {
+      final JobStatus job=it.next();
+      if (!job.hasTimingDelayConstraint()) {
+        continue;
       }
-      if (job.isReady()) {
-        ready=true;
+      final long jobDelayTime=job.getEarliestRunTime();
+      if (jobDelayTime <= nowElapsedMillis) {
+        job.setTimingDelayConstraintSatisfied(true);
+        if (canStopTrackingJobLocked(job)) {
+          it.remove();
+        }
+        if (job.isReady()) {
+          ready=true;
+        }
+      }
+ else       if (!job.isConstraintSatisfied(JobStatus.CONSTRAINT_TIMING_DELAY)) {
+        if (nextDelayTime > jobDelayTime) {
+          nextDelayTime=jobDelayTime;
+          nextDelayUid=job.getSourceUid();
+        }
       }
     }
- else {
-      if (nextDelayTime > jobDelayTime) {
-        nextDelayTime=jobDelayTime;
-      }
+    if (ready) {
+      mStateChangedListener.onControllerStateChanged();
     }
+    setDelayExpiredAlarmLocked(nextDelayTime,nextDelayUid);
   }
-  if (ready) {
-    mStateChangedListener.onControllerStateChanged();
-  }
-  setDelayExpiredAlarm(nextDelayTime);
 }

@@ -8,78 +8,109 @@ switch (event.mAction) {
 case DragEvent.ACTION_DRAG_STARTED:
 {
       mCurrentDragView=null;
-      mCurrentDrag=DragEvent.obtain(event);
-      if (mDragNotifiedChildren == null) {
-        mDragNotifiedChildren=new HashSet<View>();
+      mCurrentDragStartEvent=DragEvent.obtain(event);
+      if (mChildrenInterestedInDrag == null) {
+        mChildrenInterestedInDrag=new HashSet<View>();
       }
  else {
-        mDragNotifiedChildren.clear();
+        mChildrenInterestedInDrag.clear();
       }
-      mChildAcceptsDrag=false;
       final int count=mChildrenCount;
       final View[] children=mChildren;
       for (int i=0; i < count; i++) {
         final View child=children[i];
         child.mPrivateFlags2&=~View.DRAG_MASK;
         if (child.getVisibility() == VISIBLE) {
-          final boolean handled=notifyChildOfDrag(children[i]);
-          if (handled) {
-            mChildAcceptsDrag=true;
+          if (notifyChildOfDragStart(children[i])) {
+            retval=true;
           }
         }
       }
-      if (mChildAcceptsDrag) {
+      mIsInterestedInDrag=super.dispatchDragEvent(event);
+      if (mIsInterestedInDrag) {
         retval=true;
+      }
+      if (!retval) {
+        mCurrentDragStartEvent.recycle();
+        mCurrentDragStartEvent=null;
       }
     }
   break;
 case DragEvent.ACTION_DRAG_ENDED:
 {
-  if (mDragNotifiedChildren != null) {
-    for (    View child : mDragNotifiedChildren) {
-      child.dispatchDragEvent(event);
+  final HashSet<View> childrenInterestedInDrag=mChildrenInterestedInDrag;
+  if (childrenInterestedInDrag != null) {
+    for (    View child : childrenInterestedInDrag) {
+      if (child.dispatchDragEvent(event)) {
+        retval=true;
+      }
       child.mPrivateFlags2&=~View.DRAG_MASK;
       child.refreshDrawableState();
     }
-    mDragNotifiedChildren.clear();
-    if (mCurrentDrag != null) {
-      mCurrentDrag.recycle();
-      mCurrentDrag=null;
-    }
+    childrenInterestedInDrag.clear();
   }
-  if (mChildAcceptsDrag) {
-    retval=true;
+  if (mCurrentDragStartEvent != null) {
+    mCurrentDragStartEvent.recycle();
+    mCurrentDragStartEvent=null;
+  }
+  if (mIsInterestedInDrag) {
+    if (super.dispatchDragEvent(event)) {
+      retval=true;
+    }
+    mIsInterestedInDrag=false;
   }
 }
 break;
 case DragEvent.ACTION_DRAG_LOCATION:
 {
-final View target=findFrontmostDroppableChildAt(event.mX,event.mY,localPoint);
+View target=findFrontmostDroppableChildAt(event.mX,event.mY,localPoint);
+if (target == null && mIsInterestedInDrag) {
+target=this;
+}
 if (mCurrentDragView != target) {
 root.setDragFocus(target);
 final int action=event.mAction;
+event.mX=0;
+event.mY=0;
 if (mCurrentDragView != null) {
   final View view=mCurrentDragView;
   event.mAction=DragEvent.ACTION_DRAG_EXITED;
-  view.dispatchDragEvent(event);
-  view.mPrivateFlags2&=~View.PFLAG2_DRAG_HOVERED;
-  view.refreshDrawableState();
+  if (view != this) {
+    view.dispatchDragEvent(event);
+    view.mPrivateFlags2&=~View.PFLAG2_DRAG_HOVERED;
+    view.refreshDrawableState();
+  }
+ else {
+    super.dispatchDragEvent(event);
+  }
 }
 mCurrentDragView=target;
 if (target != null) {
   event.mAction=DragEvent.ACTION_DRAG_ENTERED;
-  target.dispatchDragEvent(event);
-  target.mPrivateFlags2|=View.PFLAG2_DRAG_HOVERED;
-  target.refreshDrawableState();
+  if (target != this) {
+    target.dispatchDragEvent(event);
+    target.mPrivateFlags2|=View.PFLAG2_DRAG_HOVERED;
+    target.refreshDrawableState();
+  }
+ else {
+    super.dispatchDragEvent(event);
+  }
 }
 event.mAction=action;
-}
-if (target != null) {
-event.mX=localPoint.x;
-event.mY=localPoint.y;
-retval=target.dispatchDragEvent(event);
 event.mX=tx;
 event.mY=ty;
+}
+if (target != null) {
+if (target != this) {
+  event.mX=localPoint.x;
+  event.mY=localPoint.y;
+  retval=target.dispatchDragEvent(event);
+  event.mX=tx;
+  event.mY=ty;
+}
+ else {
+  retval=super.dispatchDragEvent(event);
+}
 }
 }
 break;
@@ -87,9 +118,14 @@ case DragEvent.ACTION_DRAG_EXITED:
 {
 if (mCurrentDragView != null) {
 final View view=mCurrentDragView;
+if (view != this) {
 view.dispatchDragEvent(event);
 view.mPrivateFlags2&=~View.PFLAG2_DRAG_HOVERED;
 view.refreshDrawableState();
+}
+ else {
+super.dispatchDragEvent(event);
+}
 mCurrentDragView=null;
 }
 }
@@ -106,6 +142,9 @@ retval=target.dispatchDragEvent(event);
 event.mX=tx;
 event.mY=ty;
 }
+ else if (mIsInterestedInDrag) {
+retval=super.dispatchDragEvent(event);
+}
  else {
 if (ViewDebug.DEBUG_DRAG) {
 Log.d(View.VIEW_LOG_TAG,"   not dropped on an accepting view");
@@ -113,9 +152,6 @@ Log.d(View.VIEW_LOG_TAG,"   not dropped on an accepting view");
 }
 }
 break;
-}
-if (!retval) {
-retval=super.dispatchDragEvent(event);
 }
 return retval;
 }

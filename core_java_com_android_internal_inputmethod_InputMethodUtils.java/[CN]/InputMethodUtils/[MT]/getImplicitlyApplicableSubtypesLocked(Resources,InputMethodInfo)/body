@@ -1,52 +1,15 @@
 {
-  final List<InputMethodSubtype> subtypes=InputMethodUtils.getSubtypes(imi);
-  final String systemLocale=res.getConfiguration().locale.toString();
-  if (TextUtils.isEmpty(systemLocale))   return new ArrayList<InputMethodSubtype>();
-  final String systemLanguage=res.getConfiguration().locale.getLanguage();
-  final HashMap<String,InputMethodSubtype> applicableModeAndSubtypesMap=new HashMap<String,InputMethodSubtype>();
-  final int N=subtypes.size();
-  for (int i=0; i < N; ++i) {
-    InputMethodSubtype subtype=subtypes.get(i);
-    if (subtype.overridesImplicitlyEnabledSubtype()) {
-      final String mode=subtype.getMode();
-      if (!applicableModeAndSubtypesMap.containsKey(mode)) {
-        applicableModeAndSubtypesMap.put(mode,subtype);
-      }
+  final LocaleList systemLocales=res.getConfiguration().getLocales();
+synchronized (sCacheLock) {
+    if (systemLocales.equals(sCachedSystemLocales) && sCachedInputMethodInfo == imi) {
+      return new ArrayList<>(sCachedResult);
     }
   }
-  if (applicableModeAndSubtypesMap.size() > 0) {
-    return new ArrayList<InputMethodSubtype>(applicableModeAndSubtypesMap.values());
+  final ArrayList<InputMethodSubtype> result=getImplicitlyApplicableSubtypesLockedImpl(res,imi);
+synchronized (sCacheLock) {
+    sCachedSystemLocales=systemLocales;
+    sCachedInputMethodInfo=imi;
+    sCachedResult=new ArrayList<>(result);
   }
-  for (int i=0; i < N; ++i) {
-    final InputMethodSubtype subtype=subtypes.get(i);
-    final String locale=subtype.getLocale();
-    final String mode=subtype.getMode();
-    final String language=getLanguageFromLocaleString(locale);
-    if (language.equals(systemLanguage) && systemLocale.startsWith(locale)) {
-      final InputMethodSubtype applicableSubtype=applicableModeAndSubtypesMap.get(mode);
-      if (applicableSubtype != null) {
-        if (systemLocale.equals(applicableSubtype.getLocale()))         continue;
-        if (!systemLocale.equals(locale))         continue;
-      }
-      applicableModeAndSubtypesMap.put(mode,subtype);
-    }
-  }
-  final InputMethodSubtype keyboardSubtype=applicableModeAndSubtypesMap.get(SUBTYPE_MODE_KEYBOARD);
-  final ArrayList<InputMethodSubtype> applicableSubtypes=new ArrayList<InputMethodSubtype>(applicableModeAndSubtypesMap.values());
-  if (keyboardSubtype != null && !keyboardSubtype.containsExtraValueKey(TAG_ASCII_CAPABLE)) {
-    for (int i=0; i < N; ++i) {
-      final InputMethodSubtype subtype=subtypes.get(i);
-      final String mode=subtype.getMode();
-      if (SUBTYPE_MODE_KEYBOARD.equals(mode) && subtype.containsExtraValueKey(TAG_ENABLED_WHEN_DEFAULT_IS_NOT_ASCII_CAPABLE)) {
-        applicableSubtypes.add(subtype);
-      }
-    }
-  }
-  if (keyboardSubtype == null) {
-    InputMethodSubtype lastResortKeyboardSubtype=findLastResortApplicableSubtypeLocked(res,subtypes,SUBTYPE_MODE_KEYBOARD,systemLocale,true);
-    if (lastResortKeyboardSubtype != null) {
-      applicableSubtypes.add(lastResortKeyboardSubtype);
-    }
-  }
-  return applicableSubtypes;
+  return result;
 }

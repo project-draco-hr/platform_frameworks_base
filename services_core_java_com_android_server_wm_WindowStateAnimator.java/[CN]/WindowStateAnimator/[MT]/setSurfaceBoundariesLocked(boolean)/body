@@ -1,74 +1,59 @@
 {
   final WindowState w=mWin;
-  int width;
-  int height;
-  if ((w.mAttrs.flags & LayoutParams.FLAG_SCALED) != 0) {
-    width=w.mRequestedWidth;
-    height=w.mRequestedHeight;
+  final Task task=w.getTask();
+  if (w.isResizedWhileNotDragResizing() && !w.isGoneForLayoutLw()) {
+    return;
+  }
+  mTmpSize.set(w.mShownPosition.x,w.mShownPosition.y,0,0);
+  calculateSurfaceBounds(w,w.getAttrs());
+  mExtraHScale=(float)1.0;
+  mExtraVScale=(float)1.0;
+  boolean wasForceScaled=mForceScaleUntilResize;
+  if (!w.inPinnedWorkspace() || (!w.mRelayoutCalled || w.mInRelayout)) {
+    mSurfaceResized=mSurfaceController.setSizeInTransaction(mTmpSize.width(),mTmpSize.height(),recoveringMemory);
   }
  else {
-    width=w.mCompatFrame.width();
-    height=w.mCompatFrame.height();
+    mSurfaceResized=false;
   }
-  if (width < 1) {
-    width=1;
-  }
-  if (height < 1) {
-    height=1;
-  }
-  float left=w.mShownFrame.left;
-  float top=w.mShownFrame.top;
-  final LayoutParams attrs=w.getAttrs();
-  final int displayId=w.getDisplayId();
-  float scale=1.0f;
-  if (mService.mAccessibilityController != null && displayId == Display.DEFAULT_DISPLAY) {
-    MagnificationSpec spec=mService.mAccessibilityController.getMagnificationSpecForWindowLocked(w);
-    if (spec != null && !spec.isNop()) {
-      scale=spec.scale;
+  mForceScaleUntilResize=mForceScaleUntilResize && !mSurfaceResized;
+  calculateSurfaceWindowCrop(mTmpClipRect,mTmpFinalClipRect);
+  float surfaceWidth=mSurfaceController.getWidth();
+  float surfaceHeight=mSurfaceController.getHeight();
+  if ((task != null && task.mStack.getForceScaleToCrop()) || mForceScaleUntilResize) {
+    int hInsets=w.getAttrs().surfaceInsets.left + w.getAttrs().surfaceInsets.right;
+    int vInsets=w.getAttrs().surfaceInsets.top + w.getAttrs().surfaceInsets.bottom;
+    if (!mForceScaleUntilResize) {
+      mSurfaceController.forceScaleableInTransaction(true);
     }
+    mExtraHScale=(mTmpClipRect.width() - hInsets) / (float)(surfaceWidth - hInsets);
+    mExtraVScale=(mTmpClipRect.height() - vInsets) / (float)(surfaceHeight - vInsets);
+    int posX=(int)(mTmpSize.left - w.mAttrs.x * (1 - mExtraHScale));
+    int posY=(int)(mTmpSize.top - w.mAttrs.y * (1 - mExtraVScale));
+    posX+=w.getAttrs().surfaceInsets.left * (1 - mExtraHScale);
+    posY+=w.getAttrs().surfaceInsets.top * (1 - mExtraVScale);
+    mSurfaceController.setPositionInTransaction((float)Math.floor(posX),(float)Math.floor(posY),recoveringMemory);
+    mTmpClipRect.set(0,0,(int)surfaceWidth,(int)surfaceHeight);
+    mTmpFinalClipRect.setEmpty();
+    mForceScaleUntilResize=true;
   }
-  width+=scale * (attrs.surfaceInsets.left + attrs.surfaceInsets.right);
-  height+=scale * (attrs.surfaceInsets.top + attrs.surfaceInsets.bottom);
-  left-=scale * attrs.surfaceInsets.left;
-  top-=scale * attrs.surfaceInsets.top;
-  final boolean surfaceMoved=mSurfaceX != left || mSurfaceY != top;
-  if (surfaceMoved) {
-    mSurfaceX=left;
-    mSurfaceY=top;
-    try {
-      if (WindowManagerService.SHOW_TRANSACTIONS)       WindowManagerService.logSurface(w,"POS " + left + ", "+ top,null);
-      mSurfaceControl.setPosition(left,top);
-    }
- catch (    RuntimeException e) {
-      Slog.w(TAG,"Error positioning surface of " + w + " pos=("+ left+ ","+ top+ ")",e);
-      if (!recoveringMemory) {
-        mService.reclaimSomeSurfaceMemoryLocked(this,"position",true);
-      }
-    }
+ else {
+    mSurfaceController.setPositionInTransaction(mTmpSize.left,mTmpSize.top,recoveringMemory);
   }
-  final boolean surfaceResized=mSurfaceW != width || mSurfaceH != height;
-  if (surfaceResized) {
-    mSurfaceW=width;
-    mSurfaceH=height;
-    mSurfaceResized=true;
-    try {
-      if (WindowManagerService.SHOW_TRANSACTIONS)       WindowManagerService.logSurface(w,"SIZE " + width + "x"+ height,null);
-      mSurfaceControl.setSize(width,height);
-      mSurfaceControl.setMatrix(mDsDx * w.mHScale,mDtDx * w.mVScale,mDsDy * w.mHScale,mDtDy * w.mVScale);
-      mAnimator.setPendingLayoutChanges(w.getDisplayId(),WindowManagerPolicy.FINISH_LAYOUT_REDO_WALLPAPER);
-      if ((w.mAttrs.flags & LayoutParams.FLAG_DIM_BEHIND) != 0) {
-        final TaskStack stack=w.getStack();
-        if (stack != null) {
-          stack.startDimmingIfNeeded(this);
-        }
-      }
-    }
- catch (    RuntimeException e) {
-      Slog.e(TAG,"Error resizing surface of " + w + " size=("+ width+ "x"+ height+ ")",e);
-      if (!recoveringMemory) {
-        mService.reclaimSomeSurfaceMemoryLocked(this,"size",true);
-      }
-    }
+  if (wasForceScaled && !mForceScaleUntilResize) {
+    mSurfaceController.setPositionAppliesWithResizeInTransaction(true);
+    mSurfaceController.forceScaleableInTransaction(false);
   }
-  updateSurfaceWindowCrop(recoveringMemory);
+  Rect clipRect=mTmpClipRect;
+  if (w.inPinnedWorkspace()) {
+    clipRect=null;
+    task.mStack.getDimBounds(mTmpFinalClipRect);
+    mTmpFinalClipRect.inset(-w.mAttrs.surfaceInsets.left,-w.mAttrs.surfaceInsets.top,-w.mAttrs.surfaceInsets.right,-w.mAttrs.surfaceInsets.bottom);
+  }
+  updateSurfaceWindowCrop(clipRect,mTmpFinalClipRect,recoveringMemory);
+  mSurfaceController.setMatrixInTransaction(mDsDx * w.mHScale * mExtraHScale,mDtDx * w.mVScale * mExtraVScale,mDsDy * w.mHScale * mExtraHScale,mDtDy * w.mVScale * mExtraVScale,recoveringMemory);
+  if (mSurfaceResized) {
+    mReportSurfaceResized=true;
+    mAnimator.setPendingLayoutChanges(w.getDisplayId(),WindowManagerPolicy.FINISH_LAYOUT_REDO_WALLPAPER);
+    w.applyDimLayerIfNeeded();
+  }
 }

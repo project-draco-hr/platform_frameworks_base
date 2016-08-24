@@ -1,0 +1,71 @@
+{
+  Intent intent=target.intent;
+  ActivityInfo info=target.info;
+  ComponentName cls=intent.getComponent();
+  if (info.targetActivity != null) {
+    cls=new ComponentName(info.packageName,info.targetActivity);
+  }
+  final int userId=UserHandle.getUserId(info.applicationInfo.uid);
+  boolean isDocument=intent != null & intent.isDocument();
+  Uri documentData=isDocument ? intent.getData() : null;
+  if (DEBUG_TASKS)   Slog.d(TAG_TASKS,"Looking for task of " + target + " in "+ this);
+  for (int taskNdx=mTaskHistory.size() - 1; taskNdx >= 0; --taskNdx) {
+    final TaskRecord task=mTaskHistory.get(taskNdx);
+    if (task.voiceSession != null) {
+      if (DEBUG_TASKS)       Slog.d(TAG_TASKS,"Skipping " + task + ": voice session");
+      continue;
+    }
+    if (task.userId != userId) {
+      if (DEBUG_TASKS)       Slog.d(TAG_TASKS,"Skipping " + task + ": different user");
+      continue;
+    }
+    final ActivityRecord r=task.getTopActivity();
+    if (r == null || r.finishing || r.userId != userId || r.launchMode == ActivityInfo.LAUNCH_SINGLE_INSTANCE) {
+      if (DEBUG_TASKS)       Slog.d(TAG_TASKS,"Skipping " + task + ": mismatch root "+ r);
+      continue;
+    }
+    if (r.mActivityType != target.mActivityType) {
+      if (DEBUG_TASKS)       Slog.d(TAG_TASKS,"Skipping " + task + ": mismatch activity type");
+      continue;
+    }
+    final Intent taskIntent=task.intent;
+    final Intent affinityIntent=task.affinityIntent;
+    final boolean taskIsDocument;
+    final Uri taskDocumentData;
+    if (taskIntent != null && taskIntent.isDocument()) {
+      taskIsDocument=true;
+      taskDocumentData=taskIntent.getData();
+    }
+ else     if (affinityIntent != null && affinityIntent.isDocument()) {
+      taskIsDocument=true;
+      taskDocumentData=affinityIntent.getData();
+    }
+ else {
+      taskIsDocument=false;
+      taskDocumentData=null;
+    }
+    if (DEBUG_TASKS)     Slog.d(TAG_TASKS,"Comparing existing cls=" + taskIntent.getComponent().flattenToShortString() + "/aff="+ r.task.rootAffinity+ " to new cls="+ intent.getComponent().flattenToShortString()+ "/aff="+ info.taskAffinity);
+    if (taskIntent != null && taskIntent.getComponent() != null && taskIntent.getComponent().compareTo(cls) == 0 && Objects.equals(documentData,taskDocumentData)) {
+      if (DEBUG_TASKS)       Slog.d(TAG_TASKS,"Found matching class!");
+      if (DEBUG_TASKS)       Slog.d(TAG_TASKS,"For Intent " + intent + " bringing to top: "+ r.intent);
+      result.r=r;
+      result.matchedByRootAffinity=false;
+      break;
+    }
+ else     if (affinityIntent != null && affinityIntent.getComponent() != null && affinityIntent.getComponent().compareTo(cls) == 0 && Objects.equals(documentData,taskDocumentData)) {
+      if (DEBUG_TASKS)       Slog.d(TAG_TASKS,"Found matching class!");
+      if (DEBUG_TASKS)       Slog.d(TAG_TASKS,"For Intent " + intent + " bringing to top: "+ r.intent);
+      result.r=r;
+      result.matchedByRootAffinity=false;
+      break;
+    }
+ else     if (!isDocument && !taskIsDocument && result.r == null && task.canMatchRootAffinity()) {
+      if (task.rootAffinity.equals(target.taskAffinity)) {
+        if (DEBUG_TASKS)         Slog.d(TAG_TASKS,"Found matching affinity candidate!");
+        result.r=r;
+        result.matchedByRootAffinity=true;
+      }
+    }
+ else     if (DEBUG_TASKS)     Slog.d(TAG_TASKS,"Not a match: " + task);
+  }
+}

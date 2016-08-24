@@ -1,16 +1,26 @@
 {
 synchronized (mLock) {
-    RuntimeException e=null;
-    try {
-      ComponentName cname=wallpaper.wallpaperComponent != null ? wallpaper.wallpaperComponent : wallpaper.nextWallpaperComponent;
-      if (bindWallpaperComponentLocked(cname,true,false,wallpaper,reply)) {
-        return;
+    mWaitingForUnlock=false;
+    final ComponentName cname=wallpaper.wallpaperComponent != null ? wallpaper.wallpaperComponent : wallpaper.nextWallpaperComponent;
+    if (!bindWallpaperComponentLocked(cname,true,false,wallpaper,reply)) {
+      ServiceInfo si=null;
+      try {
+        si=mIPackageManager.getServiceInfo(cname,PackageManager.MATCH_DIRECT_BOOT_UNAWARE,wallpaper.userId);
+      }
+ catch (      RemoteException ignored) {
+      }
+      if (si == null) {
+        Slog.w(TAG,"Failure starting previous wallpaper; clearing");
+        clearWallpaperLocked(false,FLAG_SYSTEM,wallpaper.userId,reply);
+      }
+ else {
+        Slog.w(TAG,"Wallpaper isn't direct boot aware; using fallback until unlocked");
+        wallpaper.wallpaperComponent=wallpaper.nextWallpaperComponent;
+        final WallpaperData fallback=new WallpaperData(wallpaper.userId,WALLPAPER_LOCK_ORIG,WALLPAPER_LOCK_CROP);
+        ensureSaneWallpaperData(fallback);
+        bindWallpaperComponentLocked(mImageWallpaper,true,false,fallback,reply);
+        mWaitingForUnlock=true;
       }
     }
- catch (    RuntimeException e1) {
-      e=e1;
-    }
-    Slog.w(TAG,"Failure starting previous wallpaper",e);
-    clearWallpaperLocked(false,wallpaper.userId,reply);
   }
 }

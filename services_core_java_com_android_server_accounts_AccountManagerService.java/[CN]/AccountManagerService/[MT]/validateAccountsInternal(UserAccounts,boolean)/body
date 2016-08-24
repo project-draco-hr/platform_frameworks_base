@@ -1,25 +1,73 @@
 {
+  if (Log.isLoggable(TAG,Log.DEBUG)) {
+    Log.d(TAG,"validateAccountsInternal " + accounts.userId + " isCeDatabaseAttached="+ accounts.openHelper.isCeDatabaseAttached()+ " userLocked="+ mLocalUnlockedUsers.get(accounts.userId));
+  }
   if (invalidateAuthenticatorCache) {
     mAuthenticatorCache.invalidateCache(accounts.userId);
   }
-  final HashSet<AuthenticatorDescription> knownAuth=Sets.newHashSet();
-  for (  RegisteredServicesCache.ServiceInfo<AuthenticatorDescription> service : mAuthenticatorCache.getAllServices(accounts.userId)) {
-    knownAuth.add(service.type);
-  }
+  final HashMap<String,Integer> knownAuth=getAuthenticatorTypeAndUIDForUser(mAuthenticatorCache,accounts.userId);
+  boolean userUnlocked=isLocalUnlockedUser(accounts.userId);
 synchronized (accounts.cacheLock) {
     final SQLiteDatabase db=accounts.openHelper.getWritableDatabase();
     boolean accountDeleted=false;
+    Cursor metaCursor=db.query(TABLE_META,new String[]{META_KEY,META_VALUE},SELECTION_META_BY_AUTHENTICATOR_TYPE,new String[]{META_KEY_FOR_AUTHENTICATOR_UID_FOR_TYPE_PREFIX + "%"},null,null,META_KEY);
+    HashSet<String> obsoleteAuthType=Sets.newHashSet();
+    try {
+      SparseBooleanArray knownUids=null;
+      while (metaCursor.moveToNext()) {
+        String type=TextUtils.split(metaCursor.getString(0),META_KEY_DELIMITER)[1];
+        String uid=metaCursor.getString(1);
+        if (TextUtils.isEmpty(type) || TextUtils.isEmpty(uid)) {
+          Slog.e(TAG,"Auth type empty: " + TextUtils.isEmpty(type) + ", uid empty: "+ TextUtils.isEmpty(uid));
+          continue;
+        }
+        Integer knownUid=knownAuth.get(type);
+        if (knownUid != null && uid.equals(knownUid.toString())) {
+          knownAuth.remove(type);
+        }
+ else {
+          if (knownUids == null) {
+            knownUids=getUidsOfInstalledOrUpdatedPackagesAsUser(accounts.userId);
+          }
+          if (!knownUids.get(Integer.parseInt(uid))) {
+            obsoleteAuthType.add(type);
+            db.delete(TABLE_META,META_KEY + "=? AND " + META_VALUE+ "=?",new String[]{META_KEY_FOR_AUTHENTICATOR_UID_FOR_TYPE_PREFIX + type,uid});
+          }
+        }
+      }
+    }
+  finally {
+      metaCursor.close();
+    }
+    Iterator<Entry<String,Integer>> iterator=knownAuth.entrySet().iterator();
+    while (iterator.hasNext()) {
+      Entry<String,Integer> entry=iterator.next();
+      ContentValues values=new ContentValues();
+      values.put(META_KEY,META_KEY_FOR_AUTHENTICATOR_UID_FOR_TYPE_PREFIX + entry.getKey());
+      values.put(META_VALUE,entry.getValue());
+      db.insertWithOnConflict(TABLE_META,null,values,SQLiteDatabase.CONFLICT_REPLACE);
+    }
     Cursor cursor=db.query(TABLE_ACCOUNTS,new String[]{ACCOUNTS_ID,ACCOUNTS_TYPE,ACCOUNTS_NAME},null,null,null,null,ACCOUNTS_ID);
     try {
       accounts.accountCache.clear();
-      final HashMap<String,ArrayList<String>> accountNamesByType=new LinkedHashMap<String,ArrayList<String>>();
+      final HashMap<String,ArrayList<String>> accountNamesByType=new LinkedHashMap<>();
       while (cursor.moveToNext()) {
         final long accountId=cursor.getLong(0);
         final String accountType=cursor.getString(1);
         final String accountName=cursor.getString(2);
-        if (!knownAuth.contains(AuthenticatorDescription.newKey(accountType))) {
-          Slog.w(TAG,"deleting account " + accountName + " because type "+ accountType+ " no longer has a registered authenticator");
-          db.delete(TABLE_ACCOUNTS,ACCOUNTS_ID + "=" + accountId,null);
+        if (obsoleteAuthType.contains(accountType)) {
+          Slog.w(TAG,"deleting account " + accountName + " because type "+ accountType+ "'s registered authenticator no longer exist.");
+          db.beginTransaction();
+          try {
+            db.delete(TABLE_ACCOUNTS,ACCOUNTS_ID + "=" + accountId,null);
+            if (userUnlocked) {
+              db.delete(CE_TABLE_ACCOUNTS,ACCOUNTS_ID + "=" + accountId,null);
+            }
+            db.setTransactionSuccessful();
+          }
+  finally {
+            db.endTransaction();
+          }
           accountDeleted=true;
           logRecord(db,DebugDbHelper.ACTION_AUTHENTICATOR_REMOVE,TABLE_ACCOUNTS,accountId,accounts);
           final Account account=new Account(accountName,accountType);
@@ -40,10 +88,8 @@ synchronized (accounts.cacheLock) {
         final String accountType=cur.getKey();
         final ArrayList<String> accountNames=cur.getValue();
         final Account[] accountsForType=new Account[accountNames.size()];
-        int i=0;
-        for (        String accountName : accountNames) {
-          accountsForType[i]=new Account(accountName,accountType);
-          ++i;
+        for (int i=0; i < accountsForType.length; i++) {
+          accountsForType[i]=new Account(accountNames.get(i),accountType);
         }
         accounts.accountCache.put(accountType,accountsForType);
       }

@@ -1,0 +1,63 @@
+{
+synchronized (mLock) {
+    if (mConnection != null || mPendingConnection != null) {
+      return;
+    }
+    final PendingIntent pendingIntent=PendingIntent.getActivity(mContext,0,new Intent(mSettingsAction),0);
+    final Intent intent=new Intent().setComponent(mComponent).putExtra(Intent.EXTRA_CLIENT_LABEL,mClientLabel).putExtra(Intent.EXTRA_CLIENT_INTENT,pendingIntent);
+    final ServiceConnection serviceConnection=new ServiceConnection(){
+      @Override public void onServiceConnected(      ComponentName componentName,      IBinder iBinder){
+        IInterface iface=null;
+        PendingEvent pendingEvent=null;
+synchronized (mLock) {
+          if (mPendingConnection == this) {
+            mPendingConnection=null;
+            mConnection=this;
+          }
+ else {
+            mContext.unbindService(this);
+            return;
+          }
+          try {
+            iBinder.linkToDeath(mDeathRecipient,0);
+            mBoundInterface=mChecker.asInterface(iBinder);
+            if (!mChecker.checkType(mBoundInterface)) {
+              mContext.unbindService(this);
+              mBoundInterface=null;
+            }
+            iface=mBoundInterface;
+            pendingEvent=mPendingEvent;
+            mPendingEvent=null;
+          }
+ catch (          RemoteException e) {
+            Slog.w(TAG,"Unable to bind service: " + intent,e);
+            mBoundInterface=null;
+          }
+        }
+        if (iface != null && pendingEvent != null) {
+          try {
+            pendingEvent.runEvent(iface);
+          }
+ catch (          RuntimeException|RemoteException ex) {
+            Slog.e(TAG,"Received exception from user service: ",ex);
+          }
+        }
+      }
+      @Override public void onServiceDisconnected(      ComponentName componentName){
+        Slog.w(TAG,"Service disconnected: " + intent);
+        mConnection=null;
+        mBoundInterface=null;
+      }
+    }
+;
+    mPendingConnection=serviceConnection;
+    try {
+      if (!mContext.bindServiceAsUser(intent,serviceConnection,Context.BIND_AUTO_CREATE | Context.BIND_FOREGROUND_SERVICE,new UserHandle(mUserId))) {
+        Slog.w(TAG,"Unable to bind service: " + intent);
+      }
+    }
+ catch (    SecurityException e) {
+      Slog.w(TAG,"Unable to bind service: " + intent,e);
+    }
+  }
+}

@@ -1,0 +1,156 @@
+{
+  int filterUid=-1;
+  if (!ArrayUtils.isEmpty(args)) {
+    int opti=0;
+    while (opti < args.length) {
+      String arg=args[opti];
+      if ("-h".equals(arg)) {
+        dumpHelp(pw);
+        return;
+      }
+ else       if ("-a".equals(arg)) {
+      }
+ else       if (arg.length() > 0 && arg.charAt(0) == '-') {
+        pw.println("Unknown option: " + arg);
+        return;
+      }
+ else {
+        break;
+      }
+      opti++;
+    }
+    if (opti < args.length) {
+      String pkg=args[opti];
+      try {
+        filterUid=getContext().getPackageManager().getPackageUid(pkg,PackageManager.MATCH_UNINSTALLED_PACKAGES);
+      }
+ catch (      NameNotFoundException ignored) {
+        pw.println("Invalid package: " + pkg);
+        return;
+      }
+    }
+  }
+  final int filterUidFinal=UserHandle.getAppId(filterUid);
+  final long now=SystemClock.elapsedRealtime();
+synchronized (mLock) {
+    mConstants.dump(pw);
+    pw.println();
+    pw.println("Started users: " + Arrays.toString(mStartedUsers));
+    pw.print("Registered ");
+    pw.print(mJobs.size());
+    pw.println(" jobs:");
+    if (mJobs.size() > 0) {
+      final List<JobStatus> jobs=mJobs.mJobSet.getAllJobs();
+      Collections.sort(jobs,new Comparator<JobStatus>(){
+        @Override public int compare(        JobStatus o1,        JobStatus o2){
+          int uid1=o1.getUid();
+          int uid2=o2.getUid();
+          int id1=o1.getJobId();
+          int id2=o2.getJobId();
+          if (uid1 != uid2) {
+            return uid1 < uid2 ? -1 : 1;
+          }
+          return id1 < id2 ? -1 : (id1 > id2 ? 1 : 0);
+        }
+      }
+);
+      for (      JobStatus job : jobs) {
+        pw.print("  JOB #");
+        job.printUniqueId(pw);
+        pw.print(": ");
+        pw.println(job.toShortStringExceptUniqueId());
+        if (!job.shouldDump(filterUidFinal)) {
+          continue;
+        }
+        job.dump(pw,"    ",true);
+        pw.print("    Ready: ");
+        pw.print(mHandler.isReadyToBeExecutedLocked(job));
+        pw.print(" (job=");
+        pw.print(job.isReady());
+        pw.print(" pending=");
+        pw.print(mPendingJobs.contains(job));
+        pw.print(" active=");
+        pw.print(isCurrentlyActiveLocked(job));
+        pw.print(" user=");
+        pw.print(ArrayUtils.contains(mStartedUsers,job.getUserId()));
+        pw.println(")");
+      }
+    }
+ else {
+      pw.println("  None.");
+    }
+    for (int i=0; i < mControllers.size(); i++) {
+      pw.println();
+      mControllers.get(i).dumpControllerStateLocked(pw,filterUidFinal);
+    }
+    pw.println();
+    pw.println("Uid priority overrides:");
+    for (int i=0; i < mUidPriorityOverride.size(); i++) {
+      int uid=mUidPriorityOverride.keyAt(i);
+      if (filterUidFinal == -1 || filterUidFinal == UserHandle.getAppId(uid)) {
+        pw.print("  ");
+        pw.print(UserHandle.formatUid(uid));
+        pw.print(": ");
+        pw.println(mUidPriorityOverride.valueAt(i));
+      }
+    }
+    pw.println();
+    mJobPackageTracker.dump(pw,"",filterUidFinal);
+    pw.println();
+    if (mJobPackageTracker.dumpHistory(pw,"",filterUidFinal)) {
+      pw.println();
+    }
+    pw.println("Pending queue:");
+    for (int i=0; i < mPendingJobs.size(); i++) {
+      JobStatus job=mPendingJobs.get(i);
+      pw.print("  Pending #");
+      pw.print(i);
+      pw.print(": ");
+      pw.println(job.toShortString());
+      job.dump(pw,"    ",false);
+      int priority=evaluateJobPriorityLocked(job);
+      if (priority != JobInfo.PRIORITY_DEFAULT) {
+        pw.print("    Evaluated priority: ");
+        pw.println(priority);
+      }
+      pw.print("    Tag: ");
+      pw.println(job.getTag());
+    }
+    pw.println();
+    pw.println("Active jobs:");
+    for (int i=0; i < mActiveServices.size(); i++) {
+      JobServiceContext jsc=mActiveServices.get(i);
+      pw.print("  Slot #");
+      pw.print(i);
+      pw.print(": ");
+      if (jsc.getRunningJob() == null) {
+        pw.println("inactive");
+        continue;
+      }
+ else {
+        pw.println(jsc.getRunningJob().toShortString());
+        pw.print("    Running for: ");
+        TimeUtils.formatDuration(now - jsc.getExecutionStartTimeElapsed(),pw);
+        pw.print(", timeout at: ");
+        TimeUtils.formatDuration(jsc.getTimeoutElapsed() - now,pw);
+        pw.println();
+        jsc.getRunningJob().dump(pw,"    ",false);
+        int priority=evaluateJobPriorityLocked(jsc.getRunningJob());
+        if (priority != JobInfo.PRIORITY_DEFAULT) {
+          pw.print("    Evaluated priority: ");
+          pw.println(priority);
+        }
+      }
+    }
+    if (filterUid == -1) {
+      pw.println();
+      pw.print("mReadyToRock=");
+      pw.println(mReadyToRock);
+      pw.print("mReportedActive=");
+      pw.println(mReportedActive);
+      pw.print("mMaxActiveJobs=");
+      pw.println(mMaxActiveJobs);
+    }
+  }
+  pw.println();
+}

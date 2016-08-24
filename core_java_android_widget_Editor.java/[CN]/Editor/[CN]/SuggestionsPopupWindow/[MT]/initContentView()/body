@@ -1,11 +1,60 @@
 {
-  ListView listView=new ListView(mTextView.getContext());
+  final LayoutInflater inflater=(LayoutInflater)mContext.getSystemService(Context.LAYOUT_INFLATER_SERVICE);
+  mContentView=(ViewGroup)inflater.inflate(mTextView.mTextEditSuggestionContainerLayout,null);
+  mContainerView=(LinearLayout)mContentView.findViewById(com.android.internal.R.id.suggestionWindowContainer);
+  ViewGroup.MarginLayoutParams lp=(ViewGroup.MarginLayoutParams)mContainerView.getLayoutParams();
+  mContainerMarginWidth=lp.leftMargin + lp.rightMargin;
+  mContainerMarginTop=lp.topMargin;
+  mClippingLimitLeft=lp.leftMargin;
+  mClippingLimitRight=lp.rightMargin;
+  mSuggestionListView=(ListView)mContentView.findViewById(com.android.internal.R.id.suggestionContainer);
   mSuggestionsAdapter=new SuggestionAdapter();
-  listView.setAdapter(mSuggestionsAdapter);
-  listView.setOnItemClickListener(this);
-  mContentView=listView;
-  mSuggestionInfos=new SuggestionInfo[MAX_NUMBER_SUGGESTIONS + 2];
+  mSuggestionListView.setAdapter(mSuggestionsAdapter);
+  mSuggestionListView.setOnItemClickListener(this);
+  mSuggestionInfos=new SuggestionInfo[MAX_NUMBER_SUGGESTIONS];
   for (int i=0; i < mSuggestionInfos.length; i++) {
     mSuggestionInfos[i]=new SuggestionInfo();
   }
+  mAddToDictionaryButton=(TextView)mContentView.findViewById(com.android.internal.R.id.addToDictionaryButton);
+  mAddToDictionaryButton.setOnClickListener(new View.OnClickListener(){
+    public void onClick(    View v){
+      final SuggestionSpan misspelledSpan=findEquivalentSuggestionSpan(mMisspelledSpanInfo);
+      if (misspelledSpan == null) {
+        return;
+      }
+      final Editable editable=(Editable)mTextView.getText();
+      final int spanStart=editable.getSpanStart(misspelledSpan);
+      final int spanEnd=editable.getSpanEnd(misspelledSpan);
+      if (spanStart < 0 || spanEnd <= spanStart) {
+        return;
+      }
+      final String originalText=TextUtils.substring(editable,spanStart,spanEnd);
+      final Intent intent=new Intent(Settings.ACTION_USER_DICTIONARY_INSERT);
+      intent.putExtra(USER_DICTIONARY_EXTRA_WORD,originalText);
+      intent.putExtra(USER_DICTIONARY_EXTRA_LOCALE,mTextView.getTextServicesLocale().toString());
+      intent.setFlags(intent.getFlags() | Intent.FLAG_ACTIVITY_NEW_TASK);
+      mTextView.getContext().startActivity(intent);
+      editable.removeSpan(mMisspelledSpanInfo.mSuggestionSpan);
+      Selection.setSelection(editable,spanEnd);
+      updateSpellCheckSpans(spanStart,spanEnd,false);
+      hideWithCleanUp();
+    }
+  }
+);
+  mDeleteButton=(TextView)mContentView.findViewById(com.android.internal.R.id.deleteButton);
+  mDeleteButton.setOnClickListener(new View.OnClickListener(){
+    public void onClick(    View v){
+      final Editable editable=(Editable)mTextView.getText();
+      final int spanUnionStart=editable.getSpanStart(mSuggestionRangeSpan);
+      int spanUnionEnd=editable.getSpanEnd(mSuggestionRangeSpan);
+      if (spanUnionStart >= 0 && spanUnionEnd > spanUnionStart) {
+        if (spanUnionEnd < editable.length() && Character.isSpaceChar(editable.charAt(spanUnionEnd)) && (spanUnionStart == 0 || Character.isSpaceChar(editable.charAt(spanUnionStart - 1)))) {
+          spanUnionEnd=spanUnionEnd + 1;
+        }
+        mTextView.deleteText_internal(spanUnionStart,spanUnionEnd);
+      }
+      hideWithCleanUp();
+    }
+  }
+);
 }

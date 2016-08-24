@@ -1,30 +1,31 @@
 {
-  if (DEBUG)   Slog.d(TAG,"refreshAgentList()");
+  if (DEBUG)   Slog.d(TAG,"refreshAgentList(" + userIdOrAll + ")");
   if (!mTrustAgentsCanRun) {
     return;
   }
-  if (userId != UserHandle.USER_ALL && userId < UserHandle.USER_OWNER) {
-    Log.e(TAG,"refreshAgentList(userId=" + userId + "): Invalid user handle,"+ " must be USER_ALL or a specific user.",new Throwable("here"));
-    userId=UserHandle.USER_ALL;
+  if (userIdOrAll != UserHandle.USER_ALL && userIdOrAll < UserHandle.USER_SYSTEM) {
+    Log.e(TAG,"refreshAgentList(userId=" + userIdOrAll + "): Invalid user handle,"+ " must be USER_ALL or a specific user.",new Throwable("here"));
+    userIdOrAll=UserHandle.USER_ALL;
   }
   PackageManager pm=mContext.getPackageManager();
   List<UserInfo> userInfos;
-  if (userId == UserHandle.USER_ALL) {
+  if (userIdOrAll == UserHandle.USER_ALL) {
     userInfos=mUserManager.getUsers(true);
   }
  else {
     userInfos=new ArrayList<>();
-    userInfos.add(mUserManager.getUserInfo(userId));
+    userInfos.add(mUserManager.getUserInfo(userIdOrAll));
   }
   LockPatternUtils lockPatternUtils=mLockPatternUtils;
   ArraySet<AgentInfo> obsoleteAgents=new ArraySet<>();
   obsoleteAgents.addAll(mActiveAgents);
   for (  UserInfo userInfo : userInfos) {
     if (userInfo == null || userInfo.partial || !userInfo.isEnabled() || userInfo.guestToRemove)     continue;
-    if (!userInfo.supportsSwitchTo())     continue;
+    if (!userInfo.supportsSwitchToByUser())     continue;
+    if (!StorageManager.isUserKeyUnlocked(userInfo.id))     continue;
     if (!mActivityManager.isUserRunning(userInfo.id))     continue;
     if (!lockPatternUtils.isSecure(userInfo.id))     continue;
-    if (!mStrongAuthTracker.isTrustAllowedForUser(userInfo.id))     continue;
+    if (!mStrongAuthTracker.canAgentsRunForUser(userInfo.id))     continue;
     DevicePolicyManager dpm=lockPatternUtils.getDevicePolicyManager();
     int disabledFeatures=dpm.getKeyguardDisabledFeatures(null,userInfo.id);
     final boolean disableTrustAgents=(disabledFeatures & DevicePolicyManager.KEYGUARD_DISABLE_TRUST_AGENTS) != 0;
@@ -58,7 +59,7 @@
   boolean trustMayHaveChanged=false;
   for (int i=0; i < obsoleteAgents.size(); i++) {
     AgentInfo info=obsoleteAgents.valueAt(i);
-    if (userId == UserHandle.USER_ALL || userId == info.userId) {
+    if (userIdOrAll == UserHandle.USER_ALL || userIdOrAll == info.userId) {
       if (info.agent.isManagingTrust()) {
         trustMayHaveChanged=true;
       }
@@ -67,11 +68,11 @@
     }
   }
   if (trustMayHaveChanged) {
-    if (userId == UserHandle.USER_ALL) {
+    if (userIdOrAll == UserHandle.USER_ALL) {
       updateTrustAll();
     }
  else {
-      updateTrust(userId,0);
+      updateTrust(userIdOrAll,0);
     }
   }
 }

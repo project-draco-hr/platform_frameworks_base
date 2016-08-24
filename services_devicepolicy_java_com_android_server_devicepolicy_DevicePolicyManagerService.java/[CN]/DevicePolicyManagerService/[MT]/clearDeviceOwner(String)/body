@@ -1,23 +1,30 @@
 {
   Preconditions.checkNotNull(packageName,"packageName is null");
+  final int callingUid=mInjector.binderGetCallingUid();
   try {
-    int uid=mContext.getPackageManager().getPackageUid(packageName,0);
-    if (uid != Binder.getCallingUid()) {
+    int uid=mContext.getPackageManager().getPackageUidAsUser(packageName,UserHandle.getUserId(callingUid));
+    if (uid != callingUid) {
       throw new SecurityException("Invalid packageName");
     }
   }
  catch (  NameNotFoundException e) {
     throw new SecurityException(e);
   }
-  if (!isDeviceOwner(packageName)) {
-    throw new SecurityException("clearDeviceOwner can only be called by the device owner");
-  }
 synchronized (this) {
-    clearUserPoliciesLocked(new UserHandle(UserHandle.USER_OWNER));
-    if (mDeviceOwner != null) {
-      mDeviceOwner.clearDeviceOwner();
-      mDeviceOwner.writeOwnerFile();
-      updateDeviceOwnerLocked();
+    final ComponentName deviceOwnerComponent=mOwners.getDeviceOwnerComponent();
+    final int deviceOwnerUserId=mOwners.getDeviceOwnerUserId();
+    if (!mOwners.hasDeviceOwner() || !deviceOwnerComponent.getPackageName().equals(packageName) || (deviceOwnerUserId != UserHandle.getUserId(callingUid))) {
+      throw new SecurityException("clearDeviceOwner can only be called by the device owner");
+    }
+    enforceUserUnlocked(deviceOwnerUserId);
+    final ActiveAdmin admin=getDeviceOwnerAdminLocked();
+    long ident=mInjector.binderClearCallingIdentity();
+    try {
+      clearDeviceOwnerLocked(admin,deviceOwnerUserId);
+      removeActiveAdminLocked(deviceOwnerComponent,deviceOwnerUserId);
+    }
+  finally {
+      mInjector.binderRestoreCallingIdentity(ident);
     }
   }
 }

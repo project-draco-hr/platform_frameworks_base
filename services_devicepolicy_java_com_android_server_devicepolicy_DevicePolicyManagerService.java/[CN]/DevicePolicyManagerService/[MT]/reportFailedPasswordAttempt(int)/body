@@ -1,8 +1,10 @@
 {
-  enforceCrossUserPermission(userHandle);
-  enforceNotManagedProfile(userHandle,"report failed password attempt");
+  enforceFullCrossUsersPermission(userHandle);
+  if (!isSeparateProfileChallengeEnabled(userHandle)) {
+    enforceNotManagedProfile(userHandle,"report failed password attempt if separate profile challenge is not in place");
+  }
   mContext.enforceCallingOrSelfPermission(android.Manifest.permission.BIND_DEVICE_ADMIN,null);
-  long ident=Binder.clearCallingIdentity();
+  final long ident=mInjector.binderClearCallingIdentity();
   try {
     boolean wipeData=false;
     int identifier=0;
@@ -11,13 +13,13 @@ synchronized (this) {
       policy.mFailedPasswordAttempts++;
       saveSettingsLocked(userHandle);
       if (mHasFeature) {
-        ActiveAdmin strictestAdmin=getAdminWithMinimumFailedPasswordsForWipeLocked(userHandle);
+        ActiveAdmin strictestAdmin=getAdminWithMinimumFailedPasswordsForWipeLocked(userHandle,false);
         int max=strictestAdmin != null ? strictestAdmin.maximumFailedPasswordsForWipe : 0;
         if (max > 0 && policy.mFailedPasswordAttempts >= max) {
           wipeData=true;
           identifier=strictestAdmin.getUserHandle().getIdentifier();
         }
-        sendAdminCommandToSelfAndProfilesLocked(DeviceAdminReceiver.ACTION_PASSWORD_FAILED,DeviceAdminInfo.USES_POLICY_WATCH_LOGIN,userHandle);
+        sendAdminCommandForLockscreenPoliciesLocked(DeviceAdminReceiver.ACTION_PASSWORD_FAILED,DeviceAdminInfo.USES_POLICY_WATCH_LOGIN,userHandle);
       }
     }
     if (wipeData) {
@@ -25,6 +27,9 @@ synchronized (this) {
     }
   }
   finally {
-    Binder.restoreCallingIdentity(ident);
+    mInjector.binderRestoreCallingIdentity(ident);
+  }
+  if (mInjector.securityLogIsLoggingEnabled()) {
+    SecurityLog.writeEvent(SecurityLog.TAG_KEYGUARD_DISMISS_AUTH_ATTEMPT,0,1);
   }
 }

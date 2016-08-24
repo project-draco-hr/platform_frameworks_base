@@ -1,31 +1,93 @@
 {
   int childCount=mChildren.size();
-  int yPosition=mCollapseButtonHeight;
+  int yPosition=mNotificationHeaderMargin;
   boolean firstChild=true;
+  int maxAllowedVisibleChildren=getMaxAllowedVisibleChildren();
+  int lastVisibleIndex=maxAllowedVisibleChildren - 1;
+  int firstOverflowIndex=lastVisibleIndex + 1;
+  float expandFactor=0;
+  if (mUserLocked) {
+    expandFactor=getGroupExpandFraction();
+    firstOverflowIndex=getMaxAllowedVisibleChildren(true);
+  }
+  boolean childrenExpanded=!mNotificationParent.isGroupExpansionChanging() && mChildrenExpanded;
+  int parentHeight=parentState.height;
   for (int i=0; i < childCount; i++) {
     ExpandableNotificationRow child=mChildren.get(i);
-    if (child.getVisibility() == View.GONE) {
-      continue;
-    }
     if (!firstChild) {
-      yPosition+=mChildPadding;
+      if (mUserLocked) {
+        yPosition+=NotificationUtils.interpolate(mChildPadding,mDividerHeight,expandFactor);
+      }
+ else {
+        yPosition+=mChildrenExpanded ? mDividerHeight : mChildPadding;
+      }
     }
  else {
+      if (mUserLocked) {
+        yPosition+=NotificationUtils.interpolate(0,mNotificatonTopPadding + mDividerHeight,expandFactor);
+      }
+ else {
+        yPosition+=mChildrenExpanded ? mNotificatonTopPadding + mDividerHeight : 0;
+      }
       firstChild=false;
     }
     StackViewState childState=resultState.getViewStateForView(child);
     int intrinsicHeight=child.getIntrinsicHeight();
+    if (childrenExpanded) {
+      if (updateChildStateForExpandedGroup(child,parentHeight,childState,yPosition)) {
+        childState.isBottomClipped=true;
+      }
+    }
+ else {
+      childState.hidden=false;
+      childState.height=intrinsicHeight;
+      childState.isBottomClipped=false;
+    }
     childState.yTranslation=yPosition;
-    childState.zTranslation=0;
-    childState.height=intrinsicHeight;
+    childState.zTranslation=childrenExpanded ? mNotificationParent.getTranslationZ() : 0;
     childState.dimmed=parentState.dimmed;
     childState.dark=parentState.dark;
     childState.hideSensitive=parentState.hideSensitive;
     childState.belowSpeedBump=parentState.belowSpeedBump;
-    childState.scale=parentState.scale;
     childState.clipTopAmount=0;
-    childState.topOverLap=0;
+    childState.alpha=0;
+    if (i < firstOverflowIndex) {
+      childState.alpha=1;
+    }
+ else     if (expandFactor == 1.0f && i <= lastVisibleIndex) {
+      childState.alpha=(mActualHeight - childState.yTranslation) / childState.height;
+      childState.alpha=Math.max(0.0f,Math.min(1.0f,childState.alpha));
+    }
     childState.location=parentState.location;
     yPosition+=intrinsicHeight;
+  }
+  if (mOverflowNumber != null) {
+    ExpandableNotificationRow overflowView=mChildren.get(Math.min(getMaxAllowedVisibleChildren(true),childCount) - 1);
+    mGroupOverFlowState.copyFrom(resultState.getViewStateForView(overflowView));
+    if (!mChildrenExpanded) {
+      if (mUserLocked) {
+        HybridNotificationView singleLineView=overflowView.getSingleLineView();
+        View mirrorView=singleLineView.getTextView();
+        if (mirrorView.getVisibility() == GONE) {
+          mirrorView=singleLineView.getTitleView();
+        }
+        if (mirrorView.getVisibility() == GONE) {
+          mirrorView=singleLineView;
+        }
+        mGroupOverFlowState.yTranslation+=NotificationUtils.getRelativeYOffset(mirrorView,overflowView);
+        mGroupOverFlowState.alpha=mirrorView.getAlpha();
+      }
+    }
+ else {
+      mGroupOverFlowState.yTranslation+=mNotificationHeaderMargin;
+      mGroupOverFlowState.alpha=0.0f;
+    }
+  }
+  if (mNotificationHeader != null) {
+    if (mHeaderViewState == null) {
+      mHeaderViewState=new ViewState();
+    }
+    mHeaderViewState.initFrom(mNotificationHeader);
+    mHeaderViewState.zTranslation=childrenExpanded ? mNotificationParent.getTranslationZ() : 0;
   }
 }

@@ -1,0 +1,66 @@
+{
+  if (DEBUG)   Slog.d(TAG,"Notifying update of " + uri + " for user "+ userHandle+ " from observer "+ observer+ ", flags "+ Integer.toHexString(flags));
+  if (uri == null) {
+    throw new NullPointerException("Uri must not be null");
+  }
+  final int uid=Binder.getCallingUid();
+  final int pid=Binder.getCallingPid();
+  final int callingUserHandle=UserHandle.getCallingUserId();
+  if (callingUserHandle != userHandle) {
+    if (checkUriPermission(uri,pid,uid,Intent.FLAG_GRANT_WRITE_URI_PERMISSION,userHandle) != PackageManager.PERMISSION_GRANTED) {
+      enforceCrossUserPermission(userHandle,"no permission to notify other users");
+    }
+  }
+  if (userHandle < 0) {
+    if (userHandle == UserHandle.USER_CURRENT) {
+      userHandle=ActivityManager.getCurrentUser();
+    }
+ else     if (userHandle != UserHandle.USER_ALL) {
+      throw new InvalidParameterException("Bad user handle for notifyChange: " + userHandle);
+    }
+  }
+  long identityToken=clearCallingIdentity();
+  try {
+    ArrayList<ObserverCall> calls=new ArrayList<ObserverCall>();
+synchronized (mRootNode) {
+      mRootNode.collectObserversLocked(uri,0,observer,observerWantsSelfNotifications,flags,userHandle,calls);
+    }
+    final int numCalls=calls.size();
+    for (int i=0; i < numCalls; i++) {
+      ObserverCall oc=calls.get(i);
+      try {
+        oc.mObserver.onChange(oc.mSelfChange,uri,userHandle);
+        if (DEBUG)         Slog.d(TAG,"Notified " + oc.mObserver + " of "+ "update at "+ uri);
+      }
+ catch (      RemoteException ex) {
+synchronized (mRootNode) {
+          Log.w(TAG,"Found dead observer, removing");
+          IBinder binder=oc.mObserver.asBinder();
+          final ArrayList<ObserverNode.ObserverEntry> list=oc.mNode.mObservers;
+          int numList=list.size();
+          for (int j=0; j < numList; j++) {
+            ObserverNode.ObserverEntry oe=list.get(j);
+            if (oe.observer.asBinder() == binder) {
+              list.remove(j);
+              j--;
+              numList--;
+            }
+          }
+        }
+      }
+    }
+    if ((flags & ContentResolver.NOTIFY_SYNC_TO_NETWORK) != 0) {
+      SyncManager syncManager=getSyncManager();
+      if (syncManager != null) {
+        syncManager.scheduleLocalSync(null,callingUserHandle,uid,uri.getAuthority());
+      }
+    }
+synchronized (mCache) {
+      final String providerPackageName=getProviderPackageName(uri);
+      invalidateCacheLocked(userHandle,providerPackageName,uri);
+    }
+  }
+  finally {
+    restoreCallingIdentity(identityToken);
+  }
+}

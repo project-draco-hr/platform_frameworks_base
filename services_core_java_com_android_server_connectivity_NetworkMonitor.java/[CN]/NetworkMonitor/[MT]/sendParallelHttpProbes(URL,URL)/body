@@ -1,0 +1,40 @@
+{
+  final CountDownLatch latch=new CountDownLatch(2);
+  final AtomicReference<CaptivePortalProbeResult> finalResult=new AtomicReference<>();
+final class ProbeThread extends Thread {
+    private final boolean mIsHttps;
+    private volatile CaptivePortalProbeResult mResult;
+    public ProbeThread(    boolean isHttps){
+      mIsHttps=isHttps;
+    }
+    public CaptivePortalProbeResult getResult(){
+      return mResult;
+    }
+    @Override public void run(){
+      if (mIsHttps) {
+        mResult=sendHttpProbe(httpsUrl,ValidationProbeEvent.PROBE_HTTPS);
+      }
+ else {
+        mResult=sendHttpProbe(httpUrl,ValidationProbeEvent.PROBE_HTTP);
+      }
+      if ((mIsHttps && mResult.isSuccessful()) || (!mIsHttps && mResult.isPortal())) {
+        finalResult.compareAndSet(null,mResult);
+        latch.countDown();
+      }
+      latch.countDown();
+    }
+  }
+  ProbeThread httpsProbe=new ProbeThread(true);
+  ProbeThread httpProbe=new ProbeThread(false);
+  httpsProbe.start();
+  httpProbe.start();
+  try {
+    latch.await();
+  }
+ catch (  InterruptedException e) {
+    validationLog("Error: probe wait interrupted!");
+    return CaptivePortalProbeResult.FAILED;
+  }
+  finalResult.compareAndSet(null,httpsProbe.getResult());
+  return finalResult.get();
+}

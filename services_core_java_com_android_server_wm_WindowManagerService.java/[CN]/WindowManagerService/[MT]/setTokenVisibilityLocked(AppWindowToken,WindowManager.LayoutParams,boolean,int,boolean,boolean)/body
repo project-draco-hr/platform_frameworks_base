@@ -4,14 +4,14 @@
     wtoken.clientHidden=!visible;
     wtoken.sendAppVisibilityToClients();
   }
-  wtoken.willBeHidden=false;
-  if (wtoken.hidden == visible || (wtoken.hidden && wtoken.mIsExiting)) {
+  boolean visibilityChanged=false;
+  if (wtoken.hidden == visible || (wtoken.hidden && wtoken.mIsExiting) || (visible && wtoken.waitingForReplacement())) {
     boolean changed=false;
-    if (DEBUG_APP_TRANSITIONS)     Slog.v(TAG,"Changing app " + wtoken + " hidden="+ wtoken.hidden+ " performLayout="+ performLayout);
+    if (DEBUG_APP_TRANSITIONS)     Slog.v(TAG_WM,"Changing app " + wtoken + " hidden="+ wtoken.hidden+ " performLayout="+ performLayout);
     boolean runningAppAnimation=false;
     if (transit != AppTransition.TRANSIT_UNSET) {
       if (wtoken.mAppAnimator.animation == AppWindowAnimator.sDummyAnimation) {
-        wtoken.mAppAnimator.animation=null;
+        wtoken.mAppAnimator.setNullAnimation();
       }
       if (applyAnimationLocked(wtoken,lp,transit,visible,isVoiceInteraction)) {
         delayed=runningAppAnimation=true;
@@ -26,6 +26,11 @@
     for (int i=0; i < windowsCount; i++) {
       WindowState win=wtoken.allAppWindows.get(i);
       if (win == wtoken.startingWindow) {
+        if (!visible && win.isVisibleNow() && wtoken.mAppAnimator.isAnimating()) {
+          win.mAnimatingExit=true;
+          win.mRemoveOnExit=true;
+          win.mWindowRemovalAllowed=true;
+        }
         continue;
       }
       if (visible) {
@@ -37,10 +42,7 @@
             }
           }
           changed=true;
-          final DisplayContent displayContent=win.getDisplayContent();
-          if (displayContent != null) {
-            displayContent.layoutNeeded=true;
-          }
+          win.setDisplayLayoutNeeded();
         }
       }
  else       if (win.isVisibleNow()) {
@@ -51,13 +53,11 @@
           }
         }
         changed=true;
-        final DisplayContent displayContent=win.getDisplayContent();
-        if (displayContent != null) {
-          displayContent.layoutNeeded=true;
-        }
+        win.setDisplayLayoutNeeded();
       }
     }
     wtoken.hidden=wtoken.hiddenRequested=!visible;
+    visibilityChanged=true;
     if (!visible) {
       unsetAppFreezingScreenLocked(wtoken,true,true);
     }
@@ -68,12 +68,12 @@
         swin.mPolicyVisibilityAfterAnim=false;
       }
     }
-    if (DEBUG_APP_TRANSITIONS)     Slog.v(TAG,"setTokenVisibilityLocked: " + wtoken + ": hidden="+ wtoken.hidden+ " hiddenRequested="+ wtoken.hiddenRequested);
+    if (DEBUG_APP_TRANSITIONS)     Slog.v(TAG_WM,"setTokenVisibilityLocked: " + wtoken + ": hidden="+ wtoken.hidden+ " hiddenRequested="+ wtoken.hiddenRequested);
     if (changed) {
       mInputMonitor.setUpdateInputWindowsNeededLw();
       if (performLayout) {
         updateFocusedWindowLocked(UPDATE_FOCUS_WILL_PLACE_SURFACES,false);
-        performLayoutAndPlaceSurfacesLocked();
+        mWindowPlacerLocked.performSurfacePlacement();
       }
       mInputMonitor.updateInputWindowsLw(false);
     }
@@ -82,8 +82,17 @@
     delayed=true;
   }
   for (int i=wtoken.allAppWindows.size() - 1; i >= 0 && !delayed; i--) {
-    if (wtoken.allAppWindows.get(i).mWinAnimator.isWindowAnimating()) {
+    if (wtoken.allAppWindows.get(i).mWinAnimator.isWindowAnimationSet()) {
       delayed=true;
+    }
+  }
+  if (visibilityChanged) {
+    if (visible && !delayed) {
+      wtoken.mEnteringAnimation=true;
+      mActivityManagerAppTransitionNotifier.onAppTransitionFinishedLocked(wtoken.token);
+    }
+    if (!mClosingApps.contains(wtoken) && !mOpeningApps.contains(wtoken)) {
+      getDefaultDisplayContentLocked().getDockedDividerController().notifyAppVisibilityChanged();
     }
   }
   return delayed;

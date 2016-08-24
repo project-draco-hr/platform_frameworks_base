@@ -15,6 +15,7 @@
     if (false && DEBUG_UID_OBSERVERS)     Slog.i(TAG_UID_OBSERVERS,"Starting update of " + uidRec);
     uidRec.reset();
   }
+  mStackSupervisor.rankTaskLayersIfNeeded();
   mAdjSeq++;
   mNewNumServiceProcs=0;
   mNewNumAServiceProcs=0;
@@ -156,9 +157,12 @@ memFactor=mLastMemoryLevel;
 if (DEBUG_OOM_ADJ) Slog.d(TAG_OOM_ADJ,"Keeping last mem factor!");
 }
 }
+if (memFactor != mLastMemoryLevel) {
+EventLogTags.writeAmMemFactor(memFactor,mLastMemoryLevel);
+}
 mLastMemoryLevel=memFactor;
 mLastNumProcesses=mLruProcesses.size();
-boolean allChanged=mProcessStats.setMemFactorLocked(memFactor,!isSleeping(),now);
+boolean allChanged=mProcessStats.setMemFactorLocked(memFactor,!isSleepingLocked(),now);
 final int trackerMemFactor=mProcessStats.getMemFactorLocked();
 if (memFactor != ProcessStats.ADJ_MEM_FACTOR_NORMAL) {
 if (mLowRamStartTime == 0) {
@@ -286,10 +290,27 @@ requestPssAllProcsLocked(now,false,mProcessStats.isMemFactorLowered());
 }
 for (int i=mActiveUids.size() - 1; i >= 0; i--) {
 final UidRecord uidRec=mActiveUids.valueAt(i);
+int uidChange=UidRecord.CHANGE_PROCSTATE;
 if (uidRec.setProcState != uidRec.curProcState) {
 if (DEBUG_UID_OBSERVERS) Slog.i(TAG_UID_OBSERVERS,"Changes in " + uidRec + ": proc state from "+ uidRec.setProcState+ " to "+ uidRec.curProcState);
+if (ActivityManager.isProcStateBackground(uidRec.curProcState)) {
+if (!ActivityManager.isProcStateBackground(uidRec.setProcState)) {
+uidRec.lastBackgroundTime=nowElapsed;
+if (!mHandler.hasMessages(IDLE_UIDS_MSG)) {
+mHandler.sendEmptyMessageDelayed(IDLE_UIDS_MSG,BACKGROUND_SETTLE_TIME);
+}
+}
+}
+ else {
+if (uidRec.idle) {
+uidChange=UidRecord.CHANGE_ACTIVE;
+uidRec.idle=false;
+}
+uidRec.lastBackgroundTime=0;
+}
 uidRec.setProcState=uidRec.curProcState;
-enqueueUidChangeLocked(uidRec,false);
+enqueueUidChangeLocked(uidRec,-1,uidChange);
+noteUidProcessState(uidRec.uid,uidRec.curProcState);
 }
 }
 if (mProcessStats.shouldWriteNowLocked(now)) {

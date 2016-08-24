@@ -4,69 +4,64 @@
     return;
   }
   final IPackageManager pm=AppGlobals.getPackageManager();
-  final int[] users=(userId == UserHandle.USER_ALL) ? mService.getUsersLocked() : new int[]{userId};
-  for (int userIdx=0; userIdx < users.length; userIdx++) {
-    final int user=users[userIdx];
-    recentsCount=size() - 1;
-    for (int i=recentsCount; i >= 0; i--) {
-      TaskRecord task=get(i);
-      if (task.userId != user) {
-        continue;
-      }
-      if (task.autoRemoveRecents && task.getTopActivity() == null) {
-        remove(i);
-        task.removedFromRecents();
-        Slog.w(TAG,"Removing auto-remove without activity: " + task);
-        continue;
-      }
-      if (task.realActivity != null) {
-        ActivityInfo ai=tmpAvailActCache.get(task.realActivity);
+  for (int i=recentsCount - 1; i >= 0; i--) {
+    final TaskRecord task=get(i);
+    if (userId != UserHandle.USER_ALL && task.userId != userId) {
+      continue;
+    }
+    if (task.autoRemoveRecents && task.getTopActivity() == null) {
+      remove(i);
+      task.removedFromRecents();
+      Slog.w(TAG,"Removing auto-remove without activity: " + task);
+      continue;
+    }
+    if (task.realActivity != null) {
+      ActivityInfo ai=mTmpAvailActCache.get(task.realActivity);
+      if (ai == null) {
+        try {
+          ai=pm.getActivityInfo(task.realActivity,PackageManager.MATCH_DEBUG_TRIAGED_MISSING,userId);
+        }
+ catch (        RemoteException e) {
+          continue;
+        }
         if (ai == null) {
+          ai=mTmpActivityInfo;
+        }
+        mTmpAvailActCache.put(task.realActivity,ai);
+      }
+      if (ai == mTmpActivityInfo) {
+        ApplicationInfo app=mTmpAvailAppCache.get(task.realActivity.getPackageName());
+        if (app == null) {
           try {
-            ai=pm.getActivityInfo(task.realActivity,PackageManager.GET_UNINSTALLED_PACKAGES | PackageManager.GET_DISABLED_COMPONENTS,user);
+            app=pm.getApplicationInfo(task.realActivity.getPackageName(),PackageManager.MATCH_UNINSTALLED_PACKAGES,userId);
           }
  catch (          RemoteException e) {
             continue;
           }
-          if (ai == null) {
-            ai=tmpActivityInfo;
-          }
-          tmpAvailActCache.put(task.realActivity,ai);
-        }
-        if (ai == tmpActivityInfo) {
-          ApplicationInfo app=tmpAvailAppCache.get(task.realActivity.getPackageName());
           if (app == null) {
-            try {
-              app=pm.getApplicationInfo(task.realActivity.getPackageName(),PackageManager.GET_UNINSTALLED_PACKAGES | PackageManager.GET_DISABLED_COMPONENTS,user);
-            }
- catch (            RemoteException e) {
-              continue;
-            }
-            if (app == null) {
-              app=tmpAppInfo;
-            }
-            tmpAvailAppCache.put(task.realActivity.getPackageName(),app);
+            app=mTmpAppInfo;
           }
-          if (app == tmpAppInfo || (app.flags & ApplicationInfo.FLAG_INSTALLED) == 0) {
-            remove(i);
-            task.removedFromRecents();
-            Slog.w(TAG,"Removing no longer valid recent: " + task);
-            continue;
-          }
- else {
-            if (DEBUG_RECENTS && task.isAvailable)             Slog.d(TAG_RECENTS,"Making recent unavailable: " + task);
-            task.isAvailable=false;
-          }
+          mTmpAvailAppCache.put(task.realActivity.getPackageName(),app);
+        }
+        if (app == mTmpAppInfo || (app.flags & ApplicationInfo.FLAG_INSTALLED) == 0) {
+          remove(i);
+          task.removedFromRecents();
+          Slog.w(TAG,"Removing no longer valid recent: " + task);
+          continue;
         }
  else {
-          if (!ai.enabled || !ai.applicationInfo.enabled || (ai.applicationInfo.flags & ApplicationInfo.FLAG_INSTALLED) == 0) {
-            if (DEBUG_RECENTS && task.isAvailable)             Slog.d(TAG_RECENTS,"Making recent unavailable: " + task + " (enabled="+ ai.enabled+ "/"+ ai.applicationInfo.enabled+ " flags="+ Integer.toHexString(ai.applicationInfo.flags)+ ")");
-            task.isAvailable=false;
-          }
+          if (DEBUG_RECENTS && task.isAvailable)           Slog.d(TAG_RECENTS,"Making recent unavailable: " + task);
+          task.isAvailable=false;
+        }
+      }
  else {
-            if (DEBUG_RECENTS && !task.isAvailable)             Slog.d(TAG_RECENTS,"Making recent available: " + task);
-            task.isAvailable=true;
-          }
+        if (!ai.enabled || !ai.applicationInfo.enabled || (ai.applicationInfo.flags & ApplicationInfo.FLAG_INSTALLED) == 0) {
+          if (DEBUG_RECENTS && task.isAvailable)           Slog.d(TAG_RECENTS,"Making recent unavailable: " + task + " (enabled="+ ai.enabled+ "/"+ ai.applicationInfo.enabled+ " flags="+ Integer.toHexString(ai.applicationInfo.flags)+ ")");
+          task.isAvailable=false;
+        }
+ else {
+          if (DEBUG_RECENTS && !task.isAvailable)           Slog.d(TAG_RECENTS,"Making recent available: " + task);
+          task.isAvailable=true;
         }
       }
     }

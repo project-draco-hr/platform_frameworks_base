@@ -1,0 +1,92 @@
+{
+  final ArrayList<TaskRecord> tasks=new ArrayList<TaskRecord>();
+  ArraySet<Integer> recoveredTaskIds=new ArraySet<Integer>();
+  File userTasksDir=getUserTasksDir(userId);
+  File[] recentFiles=userTasksDir.listFiles();
+  if (recentFiles == null) {
+    Slog.e(TAG,"restoreTasksForUserLocked: Unable to list files from " + userTasksDir);
+    return tasks;
+  }
+  for (int taskNdx=0; taskNdx < recentFiles.length; ++taskNdx) {
+    File taskFile=recentFiles[taskNdx];
+    if (DEBUG) {
+      Slog.d(TAG,"restoreTasksForUserLocked: userId=" + userId + ", taskFile="+ taskFile.getName());
+    }
+    BufferedReader reader=null;
+    boolean deleteFile=false;
+    try {
+      reader=new BufferedReader(new FileReader(taskFile));
+      final XmlPullParser in=Xml.newPullParser();
+      in.setInput(reader);
+      int event;
+      while (((event=in.next()) != XmlPullParser.END_DOCUMENT) && event != XmlPullParser.END_TAG) {
+        final String name=in.getName();
+        if (event == XmlPullParser.START_TAG) {
+          if (DEBUG)           Slog.d(TAG,"restoreTasksForUserLocked: START_TAG name=" + name);
+          if (TAG_TASK.equals(name)) {
+            final TaskRecord task=TaskRecord.restoreFromXml(in,mStackSupervisor);
+            if (DEBUG)             Slog.d(TAG,"restoreTasksForUserLocked: restored task=" + task);
+            if (task != null) {
+              final int taskId=task.taskId;
+              if (mStackSupervisor.anyTaskForIdLocked(taskId,false,0) != null) {
+                Slog.wtf(TAG,"Existing task with taskId " + taskId + "found");
+              }
+ else               if (userId != task.userId) {
+                Slog.wtf(TAG,"Task with userId " + task.userId + " found in "+ userTasksDir.getAbsolutePath());
+              }
+ else {
+                mStackSupervisor.setNextTaskIdForUserLocked(taskId,userId);
+                task.isPersistable=true;
+                tasks.add(task);
+                recoveredTaskIds.add(taskId);
+              }
+            }
+ else {
+              Slog.e(TAG,"restoreTasksForUserLocked: Unable to restore taskFile=" + taskFile + ": "+ fileToString(taskFile));
+            }
+          }
+ else {
+            Slog.wtf(TAG,"restoreTasksForUserLocked: Unknown xml event=" + event + " name="+ name);
+          }
+        }
+        XmlUtils.skipCurrentTag(in);
+      }
+    }
+ catch (    Exception e) {
+      Slog.wtf(TAG,"Unable to parse " + taskFile + ". Error ",e);
+      Slog.e(TAG,"Failing file: " + fileToString(taskFile));
+      deleteFile=true;
+    }
+ finally {
+      IoUtils.closeQuietly(reader);
+      if (deleteFile) {
+        if (DEBUG)         Slog.d(TAG,"Deleting file=" + taskFile.getName());
+        taskFile.delete();
+      }
+    }
+  }
+  if (!DEBUG) {
+    removeObsoleteFiles(recoveredTaskIds,userTasksDir.listFiles());
+  }
+  for (int taskNdx=tasks.size() - 1; taskNdx >= 0; --taskNdx) {
+    final TaskRecord task=tasks.get(taskNdx);
+    task.setPrevAffiliate(taskIdToTask(task.mPrevAffiliateTaskId,tasks));
+    task.setNextAffiliate(taskIdToTask(task.mNextAffiliateTaskId,tasks));
+  }
+  Collections.sort(tasks,new Comparator<TaskRecord>(){
+    @Override public int compare(    TaskRecord lhs,    TaskRecord rhs){
+      final long diff=rhs.mLastTimeMoved - lhs.mLastTimeMoved;
+      if (diff < 0) {
+        return -1;
+      }
+ else       if (diff > 0) {
+        return +1;
+      }
+ else {
+        return 0;
+      }
+    }
+  }
+);
+  return tasks;
+}

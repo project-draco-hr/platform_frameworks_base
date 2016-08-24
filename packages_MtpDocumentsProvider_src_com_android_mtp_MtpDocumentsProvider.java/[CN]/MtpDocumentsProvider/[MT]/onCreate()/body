@@ -1,0 +1,38 @@
+{
+  sSingleton=this;
+  mContext=getContext();
+  mResources=getContext().getResources();
+  mMtpManager=new MtpManager(getContext());
+  mResolver=getContext().getContentResolver();
+  mDeviceToolkits=new HashMap<Integer,DeviceToolkit>();
+  mDatabase=new MtpDatabase(getContext(),MtpDatabaseConstants.FLAG_DATABASE_IN_FILE);
+  mRootScanner=new RootScanner(mResolver,mMtpManager,mDatabase);
+  mAppFuse=new AppFuse(TAG,new AppFuseCallback());
+  mIntentSender=new ServiceIntentSender(getContext());
+  try {
+    final int bootCount=Settings.Global.getInt(mResolver,Settings.Global.BOOT_COUNT,-1);
+    final int lastBootCount=mDatabase.getLastBootCount();
+    if (bootCount != -1 && bootCount != lastBootCount) {
+      mDatabase.setLastBootCount(bootCount);
+      final List<UriPermission> permissions=mResolver.getOutgoingPersistedUriPermissions();
+      final Uri[] uris=new Uri[permissions.size()];
+      for (int i=0; i < permissions.size(); i++) {
+        uris[i]=permissions.get(i).getUri();
+      }
+      mDatabase.cleanDatabase(uris);
+    }
+  }
+ catch (  SQLiteDiskIOException error) {
+    Log.e(TAG,"Failed to clean database.",error);
+    return false;
+  }
+  try {
+    mAppFuse.mount(getContext().getSystemService(StorageManager.class));
+  }
+ catch (  IOException error) {
+    Log.e(TAG,"Failed to start app fuse.",error);
+    return false;
+  }
+  resume();
+  return true;
+}
